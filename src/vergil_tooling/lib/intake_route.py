@@ -56,7 +56,9 @@ routes each container allows:
   A one-off never goes under the hoshin epic, which holds only the hoshin
   review's logbook tasks: the ``hoshin`` sentinel is refused by name before
   anything resolves, so a refused route creates nothing, and an explicit ref
-  to a hoshin epic is refused once it resolves.
+  to a hoshin epic is refused once it resolves. A one-off may go under the
+  operations epic (``--epic operations``), so an operational problem captured
+  by hand reaches the operations queue through intake review.
 - **planning** — reparent onto the planning epic of the same queue home,
   from intake, deferred or ad hoc (an ad-hoc task found too big for one PR,
   #4598, refused while an open PR would close it), or an unparented issue.
@@ -96,15 +98,18 @@ body the trust layer trusts: an untrusted body is a stop before any write
 (:class:`~vergil_tooling.lib.trust.UntrustedContentError`), and a recreate
 copies that same trusted body, read before the move.
 
-A task in a development epic, an epic, and an unparented issue are refused
+An item under the hoshin epic, an ops issue under the operations epic, a
+task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue, the ``epic-create`` free-text
 path, and a follow-on brainstorm under a development epic), the refusal naming
 the parent. A planning item refuses drop, defer and
 one-off while any of its development epics is open (one an ``Epic:`` marker in a
 trusted comment names, as the trust layer judges it, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
-ad-hoc item refuses defer and planning while an open PR would close it. The whole route runs
-under the item owner's App token (:func:`github.target_org`).
+ad-hoc item refuses defer and planning while an open PR would close it by a
+reference the trust layer counts (:mod:`~vergil_tooling.lib.closing_refs`); an
+untrusted body or hand link never holds the route. The whole route runs under
+the item owner's App token (:func:`github.target_org`).
 
 An item opened by an outsider (its author holds no role, as the trust layer
 judges it) is never routed or sized: every route on it is a stop before
@@ -125,7 +130,14 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, security_records, trust, trusted_comments
+from vergil_tooling.lib import (
+    closing_refs,
+    epics,
+    github,
+    security_records,
+    trust,
+    trusted_comments,
+)
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     Sizing,
@@ -147,9 +159,12 @@ from vergil_tooling.lib.queue_view import (
     parse_epic_markers,
 )
 from vergil_tooling.lib.shell_ref import quoted_slug
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 DROP_COMMENT = "Dropped in {queue} review: {reason}"
 DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
@@ -173,6 +188,11 @@ HOSHIN_REFUSAL = (
 HOSHIN_ITEM_REFUSAL = (
     "{item} is under the hoshin epic {epic}, which holds only the logbook tasks "
     "/vergil:hoshin files and works; its tasks are never routed"
+)
+# The refusal of every route for an ops issue (epic vergil-project/.github#1494):
+# it stays under the operations epic until it is closed by hand.
+OPERATIONS_ITEM_REFUSAL = (
+    "{item} is an ops issue under {epic}; it is closed by hand once dealt with, never routed"
 )
 
 # A transfer carries the old parent over eventually, not atomically: a link
@@ -391,6 +411,8 @@ def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None)
         return _DEVELOPMENT
     if kind == epics.HOSHIN.key:
         raise RouteRefusedError(HOSHIN_ITEM_REFUSAL.format(item=ref.slug, epic=parent.slug))
+    if kind == epics.OPERATIONS.key:
+        raise RouteRefusedError(OPERATIONS_ITEM_REFUSAL.format(item=ref.slug, epic=parent.slug))
     if kind is None or kind not in ROUTES:
         raise RouteRefusedError(
             f"{ref.slug} is under {parent.slug}, not a container epic (intake, planning, "
@@ -613,18 +635,52 @@ def _guard_open_closing_pr(ref: IssueRef, doing: str) -> None:
 
     *doing* is the route: deferring or routing to planning. Either takes the
     item out of the ad-hoc epic, and the PR tooling refuses a queued item.
+    The PRs GitHub lists as closing the item are only candidates: one
+    refuses the route only while it is open and the trust layer counts its
+    reference to the item (:func:`_open_pr_closes`), so an untrusted PR body
+    or hand link never blocks routing. Each one passed over is reported on
+    stderr, metadata only.
     """
     view = _view(ref, "closedByPullRequestsReferences")
+    authors = load_trusted_authors()
     for pr in view.get("closedByPullRequestsReferences") or []:
         url = str(pr.get("url") or "")
         if not url:
             raise RuntimeError(f"closing PR of {ref.slug} has no URL: {pr!r}")
-        state = github.read_output("pr", "view", url, "--json", "state", "--jq", ".state")
-        if state.strip().upper() == "OPEN":
+        if _open_pr_closes(ref, url, authors):
             raise RouteRefusedError(
                 f"{ref.slug} has an open PR that would close it ({url}); {doing} it would "
                 "strand that work — finish or close the PR first"
             )
+
+
+_PR_URL_RE = re.compile(r"https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/(?P<number>[1-9]\d*)")
+
+
+def _open_pr_closes(ref: IssueRef, url: str, authors: TrustedAuthors) -> bool:
+    """True when the PR at *url* is open and the trust layer counts its reference to *ref*.
+
+    The PR is read by number through :func:`closing_refs.read_closing_refs`;
+    a read the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`. An open PR whose
+    reference is not counted is reported on stderr and does not count.
+    """
+    match = _PR_URL_RE.fullmatch(url)
+    if match is None:
+        raise RuntimeError(f"closing PR of {ref.slug} has no PR URL: {url!r}")
+    refs = closing_refs.read_closing_refs(match["repo"], int(match["number"]), authors=authors)
+    if refs.state != "OPEN":
+        return False
+    trust.report_skipped(refs.skipped, stream=sys.stderr)
+    item = _repo_of(ref).lower()
+    if any(issue.repo.lower() == item and issue.number == ref.number for issue in refs.counted):
+        return True
+    print(
+        f"{ref.slug}: open PR {refs.ref} would close it by a reference the trust layer "
+        "does not count; it does not hold the route",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day: date) -> None:
@@ -1074,6 +1130,8 @@ def _one_off_target(item: IssueRef, action: OneOff) -> IssueRef | None:
     if action.epic == epics.ADHOC.sentinel:
         owner, bare = dest.split("/", 1)
         return epics.find_standing_epic(epics.ADHOC, epics.resolve_epic_home(owner, bare), bare)
+    if action.epic == epics.OPERATIONS.sentinel:
+        return epics.find_standing_epic(epics.OPERATIONS, *epics.operations_home(dest))
     target = epics.qualify_epic_ref(action.epic, repo=dest)
     return target if target.owner == item.owner else None
 

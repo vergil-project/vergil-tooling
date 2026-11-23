@@ -178,7 +178,7 @@ def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuth
     queue = _read(
         f"the parent of {ref}",
         "not queued",
-        lambda: epics.queue_item_kind(issue.slug, default_repo=repo),
+        lambda: epics.unbuildable_parent_kind(issue.slug, default_repo=repo),
     )
     if queue is not None:
         raise BatchRuleError("not queued", epics.queue_refusal_message(ref, queue))

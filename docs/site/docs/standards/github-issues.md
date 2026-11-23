@@ -225,6 +225,14 @@ closed by hand once the problem is dealt with. It is homed in
 `vrg-epic-create --standing operations --org <org>` ensures the epic without
 filing a task. Its closed children drain into per-quarter
 `Archive (operations): <org>` archives like the other standing kinds.
+An ops issue is not PR-workable: `vrg-pr-workflow report-ready` and
+`vrg-submit-pr` refuse it as they refuse a queue item, and a code fix found
+while working one is filed as a follow-up task in its own repo. The daily
+sweep's drift close (`vrg-epic-audit --close`) never closes an ops issue that
+a merged PR names, and `vrg-intake-route` never routes one out of the
+operations epic. An intake item may be routed *into* it as a one-off
+(`--epic operations`), so an operational problem captured by hand reaches the
+queue through intake review.
 
 ### Proxy epics
 
@@ -336,8 +344,8 @@ ad-hoc epic ends up holding only its still-open children.
   closed children to the archives; it stays the one perpetual umbrella per repo.
 - **Only canonical per-repo ad-hoc epics are archived.** Both the batch drain and
   the on-close event path key on the repo named in the `Epic (ad hoc): <repo>`
-  title, so a closed child always lands in *its own repo's* quarter archive — even
-  for a public repo whose ad-hoc epic is homed centrally in `.github`. A
+  title, so a closed child always lands in *its own repo's* quarter archive, even
+  though every ad-hoc epic is homed centrally in `.github`. A
   special-purpose `ad-hoc`-labelled epic whose title bare-name is a description
   rather than a real repo (e.g. a standing reliability collection) is **left
   untouched** — it is not treated as a drainable ad-hoc epic.
@@ -761,8 +769,7 @@ worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare `vrg-queue` never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
 the repo roots: `--root DIR` (repeatable) names them, and the platform's roots
-are the default. With `--repo`, a public repo narrows the list to its own
-ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
+are the default. `--repo` narrows the list to that repo's own ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
 gives the line format, the marks and the dispositions.
 
 `vrg-queue hoshin` lists the open tasks under the org's
@@ -836,7 +843,10 @@ parent. A planning item is refused while any of its development epics is open:
 one an `Epic:` marker in its comments names, or one whose body carries a
 `Planning:` line for it. Once every such epic is closed, nothing is left to
 orphan and the item can be deferred. An ad-hoc item is refused while an open
-PR would close it.
+PR would close it by a reference the trust layer counts: a closing line in a
+trusted body, or a hand link by a trusted account, in the item's own repo. A
+reference an untrusted body or link made is reported and does not hold the
+route.
 
 **Every deferral records why, and what to check.** `--reason` and
 `--revisit-when` are both required:
@@ -935,9 +945,14 @@ The line does not begin with the keyword, so the PR is not read as a batch PR
 plan next. It checks that each item is still valid and still needs a full epic,
 and leaves it in the queue, defers it, drops it, or routes it as a one-off when
 it is small enough for a repo's ad-hoc epic. Items that `epic-create` is
-expanding or has finished are only shown, never resumed. Which item to expand
-next is the human's choice, made by running `epic-create` on it; pick only what
-will be implemented soon, since a plan left sitting goes stale.
+expanding are only shown, never resumed. A `ready-to-close` item that nothing
+closed (one from before the docs PR closed its planning item, or one whose docs
+PR did not carry the close) is closed as completed with the comment
+`Planned as <epic ref>`, and its `in-progress` label is removed. The review
+refuses to close one whose epic was closed as not planned (abandoned): that
+item is not planned, whatever its markers say, and needs planning again. Which
+item to expand next is the human's choice, made by running `epic-create` on it;
+pick only what will be implemented soon, since a plan left sitting goes stale.
 
 #### Epic size
 

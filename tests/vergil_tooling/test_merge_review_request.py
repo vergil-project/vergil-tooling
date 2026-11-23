@@ -1708,6 +1708,7 @@ def _pr_node(
         "state": state,
         "createdAt": _CREATED,
         "author": author,
+        "mergeCommit": None,
         "isCrossRepository": fork is not None,
         "headRepositoryOwner": {"login": fork or "acme"},
         "headRepository": {"name": "widget"},

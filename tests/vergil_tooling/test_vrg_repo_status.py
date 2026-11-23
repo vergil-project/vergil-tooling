@@ -1037,6 +1037,23 @@ def test_no_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
     )
 
 
+def test_untrusted_pr_change_is_problem(capsys: pytest.CaptureFixture[str]) -> None:
+    change = _change(9, None, "Fix a typo", ChangeKind.UNTRUSTED, "untrusted", _ago(3))
+    rc, _ = _run([], publish=True, pending=_pending(change))
+    out = capsys.readouterr().out
+    assert rc == 0
+    section = _section(out)
+    assert section[2].split() == ["#9", "-", "untrusted", "3h", "ago", "Fix", "a", "typo"]
+    assert section[3] == (
+        "  PROBLEM: #9 is not a same-repo PR with a trusted author; "
+        "its title, branch and labels are not read"
+    )
+    assert section[4] == (
+        "1 change pending release: 0 dependency updates, 0 release back-merges, "
+        "0 automation PRs, 0 other PRs, 1 PROBLEM: not a same-repo PR with a trusted author."
+    )
+
+
 def test_automation_pr_shows_as_automation(capsys: pytest.CaptureFixture[str]) -> None:
     sync = _change(
         4301,

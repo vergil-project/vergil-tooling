@@ -30,6 +30,14 @@ advisory helper re-raises a ``gh`` failure **without its stdout**, so no error
 message can echo advisory text. Everything else names only GHSA IDs, issue
 refs, labels and states.
 
+**Trust rule** (epic vergil-project/.github#1467). An issue's ``Security
+advisory:`` lines are read only from a body the trust layer trusts
+(:mod:`~vergil_tooling.lib.trust`); the REST issue reads never take the body.
+Where a body decides or receives a write (:func:`mark_issue`,
+:func:`unmark_issue`, :func:`retarget`, :func:`close_record`) an untrusted
+one is a stop before any write; in the sync (:func:`records_pass`) it is
+reported, metadata only, and never acted on.
+
 The advisory create is sent **exactly once** (:func:`github.post_json_once`):
 drafts cannot be deleted, so a retried create could leave a second record.
 """
@@ -40,12 +48,16 @@ import contextlib
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, labels, trusted_comments
+from vergil_tooling.lib import epics, github, labels, trust, trusted_comments
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.shell_ref import quoted_slug
-from vergil_tooling.lib.trusted_authors import load_trusted_authors
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -84,10 +96,11 @@ _LIST_JQ = (
 _DUPLICATE_JQ = (
     "[.[] | {ghsa_id, summary, names: [(.vulnerabilities // [])[] | .package.name // empty]}]"
 )
-_ISSUE_JQ = '{number, repository_url, state, labels: [.labels[].name], body: (.body // "")}'
-_SECURITY_ISSUES_JQ = (
-    '[.[] | select(.pull_request == null) | {number, state, state_reason, body: (.body // "")}]'
-)
+# The REST issue reads take no body: the body, whose ``Security advisory:``
+# lines drive the sync, retarget and close, is read only through the trust
+# layer (:func:`_judged_body`, :func:`security_issues`).
+_ISSUE_JQ = "{number, repository_url, state, labels: [.labels[].name]}"
+_SECURITY_ISSUES_JQ = "[.[] | select(.pull_request == null) | {number, state, state_reason}]"
 # The one close reason that lets the sync close an advisory (spec 6.2).
 _COMPLETED = "completed"
 
@@ -135,13 +148,17 @@ class SecurityIssue:
     ``ghsa_ids`` is in body order and empty when the body has no line.
     ``state_reason`` is GitHub's close reason, lower-cased (``completed``,
     ``not_planned``, ``duplicate`` or any reason GitHub adds), None while the
-    issue is open or when GitHub records none.
+    issue is open or when GitHub records none. ``skipped`` is the trust
+    layer's record of an untrusted body (metadata only), None for a trusted
+    one; an untrusted body's lines are never read, so its ``ghsa_ids`` is
+    empty.
     """
 
     ref: IssueRef
     open: bool
     ghsa_ids: tuple[str, ...]
     state_reason: str | None
+    skipped: trust.Skipped | None = None
 
 
 @dataclass(frozen=True)
@@ -166,13 +183,17 @@ class Classification:
     ``paired``, so nothing acts on a pair whose links are wrong. ``moved``
     holds each advisory with exactly one ``Moved to:`` line: a terminal
     state, never synced and never broken for tracking nothing
-    (:func:`moved_problems` checks the copy it names).
+    (:func:`moved_problems` checks the copy it names). ``untrusted`` holds
+    each advisory that tracks a ``security`` issue whose body the trust layer
+    does not trust: its pair cannot be checked, so it is reported and never
+    synced.
     """
 
     paired: list[Advisory]
     external: list[Advisory]
     broken: list[str]
     moved: list[Advisory] = field(default_factory=list)
+    untrusted: list[Advisory] = field(default_factory=list)
 
 
 def _scrubbed(exc: github.GitHubAPIError) -> github.GitHubAPIError:
@@ -372,19 +393,38 @@ def set_state(home: str, ghsa_id: str, state: Literal["draft", "closed"]) -> Non
 
 
 def _issue_state(ref: IssueRef) -> tuple[IssueRef, set[str], str]:
-    """*ref*'s current ref, labels and body.
+    """*ref*'s current ref, labels and trusted body.
 
     The current ref differs from *ref* only when the issue was transferred:
     the read at its old number follows GitHub's redirect to the moved issue,
     while writes and sub-resource reads at the old number fail with a 404.
+    The body is read at the current ref through the trust layer
+    (:func:`_judged_body`): every caller writes from it or decides a write
+    by it, so an untrusted body is a stop.
     """
     raw = _read_issue(ref)
     labels_ = {str(name) for name in raw.get("labels") or []}
-    return _current_ref(raw), labels_, str(raw.get("body") or "")
+    current = _current_ref(raw)
+    return current, labels_, _judged_body(current)
+
+
+def _judged_body(ref: IssueRef) -> str:
+    """*ref*'s body, read through the trust layer; an untrusted body is a stop.
+
+    Raises :class:`~vergil_tooling.lib.trust.UntrustedContentError` (metadata
+    only) when its author or an editor holds no role, and
+    :class:`~vergil_tooling.lib.trust.TrustReadError` when who wrote it cannot
+    be read in full. Nothing falls back to an untrusted copy.
+    """
+    content = trust.read_issue(f"{ref.owner}/{ref.repo}", ref.number, require_body=True)
+    return cast("str", content.body)
 
 
 def _read_issue(ref: IssueRef) -> Any:
-    """*ref*'s REST issue read, projected by ``_ISSUE_JQ``; it follows a transfer."""
+    """*ref*'s REST number, repo, state and labels (``_ISSUE_JQ``); it follows a transfer.
+
+    It never reads the body: :func:`_issue_state` reads that through the trust layer.
+    """
     return github.read_json("api", _issue_endpoint(ref), "--jq", _ISSUE_JQ)
 
 
@@ -405,9 +445,15 @@ def _append_line(text: str, line: str) -> str:
 
 
 def mark_issue(ref: IssueRef, home: str, ghsa_id: str) -> None:
-    """Give *ref* the ``security`` label and the advisory line. Idempotent."""
-    labels.ensure_labels(f"{ref.owner}/{ref.repo}", [SECURITY_LABEL])
+    """Give *ref* the ``security`` label and the advisory line. Idempotent.
+
+    The body it appends the line to, and writes back, is the trusted body
+    (:func:`_issue_state`), read before any write: an untrusted one raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError` and nothing is
+    written, so automation never re-writes text it does not trust.
+    """
     present, body = _issue_labels_body(ref)
+    labels.ensure_labels(f"{ref.owner}/{ref.repo}", [SECURITY_LABEL])
     if SECURITY_LABEL not in present:
         github.write_json("POST", f"{_issue_endpoint(ref)}/labels", {"labels": [SECURITY_LABEL]})
     line = advisory_line(home, ghsa_id)
@@ -436,6 +482,9 @@ def unmark_issue(ref: IssueRef, ghsa_id: str, moved_to: Sequence[IssueRef]) -> s
     gone and a re-run does nothing, so the comment is never posted twice. The
     comment counts as posted only when a trusted author's copy of it is on the
     issue (:func:`trusted_comments.bodies`): an outsider's never stops it.
+    The body it reads the line from, and writes back without it, is the
+    trusted body (:func:`_issue_state`): an untrusted one raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError` before any write.
 
     A *ref* that was **transferred** (its read leads to an issue under another
     ref) is never written at its old number. If the issue it moved to is in
@@ -559,7 +608,9 @@ def _source_tied_to_move(source: IssueRef, ghsa_id: str, wanted: Sequence[IssueR
     naming exactly *wanted* (a run that finished), from a trusted author
     (:func:`trusted_comments.bodies`): an outsider's copy of that comment
     never ties a source to a move. It is read at its current ref, so a
-    transferred source is judged where it now is.
+    transferred source is judged where it now is, and its body only through
+    the trust layer (:func:`_issue_state`): an untrusted body is a stop,
+    since a tie lets the move write to the source.
     """
     current, _present, body = _issue_state(source)
     if ghsa_id in parse_advisory_refs(body):
@@ -689,6 +740,12 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
       the listing does not return has its state read directly; a failed read
       fails the run.
 
+    Every issue body it reads is read through the trust layer, and each one
+    that decides a write or is written back must be trusted: a listed
+    ``security`` issue with an untrusted body (:func:`_write_listing`), or an
+    untrusted body on a target or an issue to unmark (:func:`_check_bodies`),
+    raises :class:`RetargetRefusedError` before anything is written.
+
     Then, in order: mark every target, replace every ``Tracking issue:`` line
     with one per target (skipped when the description would not change), then
     unmark every dropped issue, *source* last. Each step only starts when the
@@ -717,10 +774,10 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
     with _step(ghsa_id, "reading the tracking lines"):
         _summary, description = read_text(home, ghsa_id)
     previous = parse_tracking(description)
-    with _step(ghsa_id, "listing the security issues"):
-        listed = {issue.ref: issue for issue in security_issues(home.split("/", 1)[0])}
+    listed = {issue.ref: issue for issue in _write_listing(ghsa_id, home.split("/", 1)[0])}
     _check_source(ghsa_id, source, previous, wanted)
     unmarks = _checked_drops(ghsa_id, source, previous, wanted, drop, renamed, listed)
+    _check_bodies(ghsa_id, (*wanted, *unmarks))
     _hand_to(home, ghsa_id, wanted)
     with _step(ghsa_id, "rewriting the tracking lines"):
         _set_tracking(home, ghsa_id, description, wanted)
@@ -756,6 +813,52 @@ def _checked_drops(  # noqa: PLR0913 - the drop check's inputs, as retarget has 
     _check_drops(ghsa_id, source, wanted, others, drop, listed)
     last = [ref for ref in (source, source_now) if ref in dropped]
     return list(dict.fromkeys((*others, *last)))
+
+
+def _write_listing(
+    ghsa_id: str,
+    org: str,
+    error: type[RuntimeError] = RetargetError,
+    refused: type[RuntimeError] = RetargetRefusedError,
+) -> list[SecurityIssue]:
+    """*org*'s ``security`` issues (:func:`security_issues`), for a run that writes.
+
+    A retarget unmarks, and a close comments on, every listed issue whose
+    advisory line names *ghsa_id*. An untrusted body's lines are never read,
+    so which issues those are cannot be known: any untrusted body among them
+    is a stop before any write, raised as *refused* and naming metadata
+    only. A failed read raises *error*.
+    """
+    with _step(ghsa_id, "listing the security issues", error):
+        listed = security_issues(org)
+    for issue in listed:
+        if issue.skipped is not None:
+            stop = trust.UntrustedContentError(
+                issue.skipped,
+                "a security issue's body is untrusted, so the issues naming this advisory "
+                "cannot be read",
+            )
+            raise refused(f"advisory {ghsa_id}: {stop}")
+    return listed
+
+
+def _check_bodies(ghsa_id: str, refs: Sequence[IssueRef]) -> None:
+    """Read the trusted body of each of *refs*, every issue a retarget writes, before any write.
+
+    Each is read as its write will read it (:func:`_issue_state`), so an
+    untrusted body refuses the run with :class:`RetargetRefusedError` before
+    the first target is marked, never part-way through; a failed read raises
+    :class:`RetargetError`.
+    """
+    for ref in dict.fromkeys(refs):
+        stop: trust.UntrustedContentError | None = None
+        with _step(ghsa_id, f"reading {ref.slug}"):
+            try:
+                _issue_state(ref)
+            except trust.UntrustedContentError as exc:
+                stop = exc
+        if stop is not None:
+            raise RetargetRefusedError(f"advisory {ghsa_id}: {stop}") from stop
 
 
 def _hand_to(home: str, ghsa_id: str, wanted: Sequence[IssueRef]) -> None:
@@ -915,6 +1018,8 @@ def _move(  # noqa: PLR0913 - retarget's inputs, passed on unchanged
       never closes an advisory that still tracks open work no ``--drop``
       names; once the original's tracking lines are gone, *source* must be
       tied to this move (:func:`_source_tied_to_move`);
+    - the trust checks of :func:`retarget`: no untrusted body among the
+      org's ``security`` issues, the issues to unmark and the targets;
     - the copy to reuse (:func:`_reusable_copy`), and a severity the copy
       can take when there is none.
 
@@ -944,8 +1049,7 @@ def _move(  # noqa: PLR0913 - retarget's inputs, passed on unchanged
             summary, description, severity = _read_move_fields(home, ghsa_id)
         previous = parse_tracking(description)
         moved_to = parse_moved_to(description)
-        with _step(ghsa_id, "listing the security issues"):
-            listed = {issue.ref: issue for issue in security_issues(org)}
+        listed = {issue.ref: issue for issue in _write_listing(ghsa_id, org)}
         if moved_to and not previous:
             with _step(ghsa_id, f"reading {source.slug}"):
                 tied = _source_tied_to_move(source, ghsa_id, wanted)
@@ -957,7 +1061,9 @@ def _move(  # noqa: PLR0913 - retarget's inputs, passed on unchanged
         else:
             _check_source(ghsa_id, source, previous, wanted)
         unmarks = _checked_drops(ghsa_id, source, previous, wanted, drop, renamed, listed)
+        _check_bodies(ghsa_id, unmarks)
     with github.target_org(to_org):
+        _check_bodies(ghsa_id, wanted)
         to_home = advisory_home(to_org)
         with _step(ghsa_id, f"listing the advisories in {to_home}"):
             candidates = [a for a in list_advisories(to_home) if ghsa_id in a.moved_from]
@@ -1055,9 +1161,15 @@ def security_issues(org: str) -> list[SecurityIssue]:
 
     The same repo enumeration as :func:`epic_audit.open_issues` (non-archived
     repos with a ``vergil.toml``), read per repo through the REST label filter,
-    never through search, whose index can lag.
+    never through search, whose index can lag. The listing gives each issue's
+    number and state only; its body, whose advisory lines are ``ghsa_ids``, is
+    read through the trust layer, one issue at a time. An untrusted body is
+    listed with its ``skipped`` record and no ``ghsa_ids``, never with the
+    lines it carries; each caller decides what that means. A trust read
+    failure raises :class:`~vergil_tooling.lib.trust.TrustReadError`.
     """
     found: list[SecurityIssue] = []
+    authors: TrustedAuthors | None = None
     for bare in github.list_org_repos(org):
         repo = f"{org}/{bare}"
         if not epics.is_managed_repo(repo):
@@ -1067,17 +1179,33 @@ def security_issues(org: str) -> list[SecurityIssue]:
         )
         for row in rows:
             item: Any = row
+            number = int(item["number"])
+            if authors is None:
+                authors = load_trusted_authors()
+            content = trust.read_issue(repo, number, authors=authors)
+            skipped = None if content.body is not None else _body_skip(content, repo, number)
             is_open = str(item["state"]).lower() == "open"
             reason = item.get("state_reason")
             found.append(
                 SecurityIssue(
-                    ref=IssueRef(org, bare, int(item["number"])),
+                    ref=IssueRef(org, bare, number),
                     open=is_open,
-                    ghsa_ids=parse_advisory_refs(str(item.get("body") or "")),
+                    ghsa_ids=() if content.body is None else parse_advisory_refs(content.body),
                     state_reason=None if is_open or reason is None else str(reason).lower(),
+                    skipped=skipped,
                 )
             )
     return found
+
+
+def _body_skip(content: trust.IssueContent, repo: str, number: int) -> trust.Skipped:
+    """The trust layer's record of *content*'s untrusted body; it always makes one."""
+    for skip in content.skipped:
+        if skip.field == "body":
+            return skip
+    raise trust.TrustReadError(
+        f"security_issues {repo}#{number}", "an untrusted body has no skip record"
+    )
 
 
 def _tracking_problems(advisory: Advisory, by_ref: dict[IssueRef, SecurityIssue]) -> list[str]:
@@ -1129,20 +1257,31 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
 
     An issue :func:`retarget` unmarked has no ``security`` label, so it is not
     among *issues* and is never reported.
+
+    - A ``security`` issue whose body the trust layer does not trust
+      (``skipped``) has no lines that can be read, so it is never broken on
+      its own; its record is the caller's to report. An advisory (not moved)
+      that tracks one is **untrusted**: its pair cannot be checked, so it is
+      neither paired nor broken, and nothing acts on it.
     """
     by_id = {advisory.ghsa_id: advisory for advisory in advisories}
     by_ref = {issue.ref: issue for issue in issues}
     named = {ghsa_id for issue in issues for ghsa_id in issue.ghsa_ids}
+    unreadable = {issue.ref for issue in issues if issue.skipped is not None}
     paired: list[Advisory] = []
     external: list[Advisory] = []
     broken: list[str] = []
     moved: list[Advisory] = []
+    untrusted: list[Advisory] = []
     for advisory in sorted(advisories, key=lambda a: a.ghsa_id):
         if advisory.moved_to and not advisory.external:
             if len(advisory.moved_to) == 1:
                 moved.append(advisory)
             else:
                 broken.append(f"{advisory.ghsa_id}: more than one Moved to: line")
+            continue
+        if unreadable.intersection(advisory.tracking):
+            untrusted.append(advisory)
             continue
         if advisory.ghsa_id not in named:
             if advisory.external:
@@ -1156,8 +1295,11 @@ def classify(advisories: Sequence[Advisory], issues: Sequence[SecurityIssue]) ->
         else:
             paired.append(advisory)
     for issue in sorted(issues, key=lambda i: i.ref.slug):
-        broken += _issue_problems(issue, by_id)
-    return Classification(paired=paired, external=external, broken=broken, moved=moved)
+        if issue.skipped is None:
+            broken += _issue_problems(issue, by_id)
+    return Classification(
+        paired=paired, external=external, broken=broken, moved=moved, untrusted=untrusted
+    )
 
 
 def moved_problems(moved: Sequence[Advisory]) -> list[str]:
@@ -1344,9 +1486,16 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     fail the pass. An advisory whose guard read failed is reported on a
     ``- error:`` line and left unchanged, and the rest are still synced.
 
-    Exit 1 when the pass fails, or, with *apply*, when any pair is broken or
-    any guard read failed (after syncing the rest). The preview reports both
-    without failing.
+    Each issue's body is read through the trust layer (:func:`security_issues`).
+    An untrusted body is reported, never acted on: its record goes to stderr,
+    metadata only (:func:`trust.report_skipped`, counts by cause under GitHub
+    Actions), it is not reported broken, and each advisory tracking it is left
+    unchanged and named on a ``- untrusted:`` line by GHSA ID alone.
+
+    Exit 1 when the pass fails, when any issue body is untrusted (the preview
+    included: a human decides on it), or, with *apply*, when any pair is
+    broken or any guard read failed (after syncing the rest). The preview
+    reports broken pairs and guard errors without failing.
     """
     mode = "" if apply else " (preview)"
     try:
@@ -1365,9 +1514,10 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
         )
     except github.MissingGitHubTokenError:
         raise
-    except github.GitHubAPIError as exc:
+    except (github.GitHubAPIError, trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
         print(f"{prog}: security records pass failed: {exc}", file=sys.stderr)
         return 1
+    skipped = [issue.skipped for issue in issues if issue.skipped is not None]
     verb = "synced" if apply else "would sync"
     print(
         f"Security records{mode}: {_count(synced, 'advisory state', 'advisory states')} {verb}, "
@@ -1382,9 +1532,15 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
         print(
             f"- error: {ghsa_id} ({ref.slug}): reading its parent failed, left unchanged: {error}"
         )
+    for advisory in result.untrusted:
+        print(
+            f"- untrusted: {advisory.ghsa_id}: an issue it tracks has an untrusted body, "
+            "left unchanged"
+        )
     for advisory in result.external:
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
-    return 1 if apply and (broken or guard.errors) else 0
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return 1 if skipped or (apply and (broken or guard.errors)) else 0
 
 
 # --- close ------------------------------------------------------------------
@@ -1437,7 +1593,11 @@ def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
        ``closed`` (a human's decision, which ``sync`` leaves alone too), has
        no issue to carry the comment, or has any issue still open: ``sync``
        sets an advisory back to draft while any issue it tracks is open, so
-       the close would not hold.
+       the close would not hold. The advisory lines that pick the issues
+       naming it are read only from trusted bodies: any ``security`` issue in
+       the org whose body the trust layer does not trust is a stop
+       (:func:`_write_listing`), since the issues to comment on cannot then
+       be known.
     2. **Comment.** Post :func:`close_comment` on each issue, skipping one
        that already carries that exact comment from a trusted author
        (:func:`trusted_comments.bodies`): an outsider's copy of it is no
@@ -1461,12 +1621,8 @@ def close_record(home: str, ghsa_id: str, reason: str) -> CloseResult:
             f"advisory {ghsa_id} is {kind}; close only moves a draft security record "
             "to closed, and any other state is a human's decision"
         )
-    with _step(ghsa_id, "listing the security issues", CloseError):
-        naming = [
-            issue.ref
-            for issue in security_issues(home.split("/", 1)[0])
-            if ghsa_id in issue.ghsa_ids
-        ]
+    listed = _write_listing(ghsa_id, home.split("/", 1)[0], CloseError, CloseError)
+    naming = [issue.ref for issue in listed if ghsa_id in issue.ghsa_ids]
     refs = tuple(dict.fromkeys((*advisory.tracking, *naming)))
     if not refs:
         raise CloseError(

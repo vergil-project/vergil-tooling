@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epic_docs, github
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import epic_docs, github, trust
 from vergil_tooling.lib.epic_docs import (
     BEGIN,
     END,
@@ -508,24 +510,61 @@ def test_crlf_body_preserved() -> None:
 # --- GitHub reads and writes --------------------------------------------------
 
 
-def test_read_body() -> None:
-    with patch.object(epic_docs.github, "read_json", return_value={"body": "B"}) as mock_read:
-        assert epic_docs.read_body("o", ".github", 5) == "B"
-    mock_read.assert_called_once_with("api", "repos/o/.github/issues/5")
+def _layer(answer: dict[str, object]) -> Any:
+    """Patch the trust layer's GraphQL read to give *answer*, recording each call."""
+    return patch("vergil_tooling.lib.github.graphql", return_value=answer)
 
 
-def test_read_body_none_is_empty() -> None:
-    with patch.object(epic_docs.github, "read_json", return_value={"body": None}):
-        assert epic_docs.read_body("o", ".github", 5) == ""
+@pytest.mark.parametrize("author", [trust_stubs.HUMAN, trust_stubs.AGENT])
+def test_read_body_through_the_trust_layer(author: dict[str, str]) -> None:
+    with _layer(trust_stubs.item(body="B", author=author)) as graphql:
+        assert epic_docs.read_body("o", ".github", 5, authors=trust_stubs.AUTHORS) == "B"
+    variables = graphql.call_args.kwargs
+    assert (variables["owner"], variables["name"], variables["number"]) == ("o", ".github", 5)
 
 
-@pytest.mark.parametrize("payload", [[], {"body": 3}, {"title": "no body field"}])
-def test_read_body_rejects_unexpected_response(payload: object) -> None:
+def test_read_body_empty_is_empty() -> None:
+    with _layer(trust_stubs.item(body="")):
+        assert epic_docs.read_body("o", ".github", 5, authors=trust_stubs.AUTHORS) == ""
+
+
+def test_read_body_loads_the_authors_by_default() -> None:
     with (
-        patch.object(epic_docs.github, "read_json", return_value=payload),
-        pytest.raises(ValueError, match="unexpected"),
+        _layer(trust_stubs.item(body="B")),
+        patch(
+            "vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS
+        ) as loader,
     ):
-        epic_docs.read_body("o", ".github", 5)
+        assert epic_docs.read_body("o", ".github", 5) == "B"
+    loader.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by", "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user", "wrong-type"),
+        (trust_stubs.HUMAN, trust_stubs.OUTSIDER, "edit", "drive-by", "untrusted"),
+    ],
+)
+def test_read_body_untrusted_is_a_stop(
+    author: dict[str, str], editor: dict[str, str] | None, kind: str, login: str, cause: str
+) -> None:
+    answer = trust_stubs.item(body=trust_stubs.SPAM_TEXT, author=author, editor=editor)
+    with _layer(answer), pytest.raises(trust.UntrustedContentError) as raised:
+        epic_docs.read_body("o", ".github", 5, authors=trust_stubs.AUTHORS)
+    assert (raised.value.item.kind, raised.value.item.login) == (kind, login)
+    assert raised.value.item.cause == cause
+    # Metadata only: the body's text is never in the message.
+    assert trust_stubs.SPAM_TEXT not in str(raised.value)
+
+
+def test_read_body_unreadable_is_a_read_failure() -> None:
+    with (
+        _layer({"repository": None}),
+        pytest.raises(trust.TrustReadError, match=r"read_issue o/\.github#5"),
+    ):
+        epic_docs.read_body("o", ".github", 5, authors=trust_stubs.AUTHORS)
 
 
 def test_write_body() -> None:

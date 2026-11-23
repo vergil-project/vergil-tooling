@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import branch_names, epics, github, retry, trust
 from vergil_tooling.lib.cli import cli_main
@@ -32,6 +34,9 @@ from vergil_tooling.lib.git import (
 )
 from vergil_tooling.lib.pr_workflow import freeze
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _ALLOWED_SIMPLE: set[str] = {
     # Read-only inspection commands. These only read history, objects, or
@@ -108,13 +113,89 @@ _READONLY_WITH_DENIED_SUBS: dict[str, set[str]] = {
 # with `git symbolic-ref refs/remotes/origin/HEAD` (#3722).
 _SYMBOLIC_REF_READ_FLAGS: frozenset[str] = frozenset({"-q", "--quiet", "--short"})
 
+# remote, config and tag each mix read forms with forms that change the
+# repository. Only the read forms are allowed, each by an exact allowlist of
+# its shape and flags, so any other form fails closed (#5001).
+#
+# remote: `remote [-v|--verbose]` (the list), `remote get-url [--push] [--all]
+# <name>` and `remote show -n <name>...` (-n keeps show from querying the
+# remote). A `-v` before another sub-operation (`remote -v add ...`) is refused.
+_REMOTE_LIST_FLAGS: frozenset[str] = frozenset({"-v", "--verbose"})
+_REMOTE_GET_URL_FLAGS: frozenset[str] = frozenset({"--push", "--all"})
+_REMOTE_READ_USAGE = (
+    "remote is denied except its read forms: remote [-v|--verbose], "
+    "remote get-url [--push] [--all] <name>, remote show -n <name>..."
+)
+
+# config: exactly one read action, optional scope and output flags, and the
+# action's positionals. Every write (a bare `<name> <value>`, --add, --unset,
+# --replace-all, --rename-section, --remove-section, -e/--edit) is refused.
+# Each read action maps to its (min, max) count of positionals.
+_CONFIG_READ_ACTIONS: dict[str, tuple[int, int]] = {
+    "--get": (1, 2),
+    "--get-all": (1, 2),
+    "--get-regexp": (1, 2),
+    "--list": (0, 0),
+    "-l": (0, 0),
+}
+_CONFIG_READ_FLAGS: frozenset[str] = frozenset(
+    {
+        "--global",
+        "--system",
+        "--local",
+        "--worktree",
+        "--show-origin",
+        "--show-scope",
+        "--name-only",
+        "--null",
+        "-z",
+        "--includes",
+        "--no-includes",
+        "--bool",
+        "--int",
+        "--bool-or-int",
+        "--path",
+        "--expiry-date",
+    }
+)
+_CONFIG_READ_FLAG_PREFIXES: tuple[str, ...] = ("--type=",)
+_CONFIG_READ_USAGE = (
+    "config is denied except its read forms: config [<scope>] "
+    "--get|--get-all|--get-regexp <name> [<value-pattern>], or "
+    "config [<scope>] --list|-l"
+)
+
+# tag: the list forms only. With no positional `tag` lists; a positional needs
+# a list-mode flag, which makes it a pattern, never a tag to create. Any other
+# flag (-a, -s, -u, -m, -F, -f, -d, -v, -e) is refused.
+_TAG_LIST_MODE_FLAGS: frozenset[str] = frozenset(
+    {"-l", "--list", "--contains", "--no-contains", "--points-at", "--merged", "--no-merged"}
+)
+_TAG_LIST_FLAGS: frozenset[str] = _TAG_LIST_MODE_FLAGS | frozenset(
+    {"-i", "--ignore-case", "--column", "--no-column", "--omit-empty"}
+)
+_TAG_LIST_MODE_PREFIXES: tuple[str, ...] = (
+    "--contains=",
+    "--no-contains=",
+    "--points-at=",
+    "--merged=",
+    "--no-merged=",
+)
+_TAG_LIST_FLAG_PREFIXES: tuple[str, ...] = (
+    *_TAG_LIST_MODE_PREFIXES,
+    "--sort=",
+    "--format=",
+    "--column=",
+)
+# -n[<num>]: print that many lines of each tag's annotation; implies --list.
+_TAG_ANNOTATION_LINES_RE = re.compile(r"-n[0-9]*")
+_TAG_LIST_USAGE = (
+    "tag is denied except its list forms: tag with no tag name, or with "
+    "-l/--list, --contains, --no-contains, --points-at, --merged or --no-merged"
+)
+
 _DENIED: dict[str, str] = {
     "commit": "Use vrg-commit instead of git commit.",
-    # config has a broad mutating-flag surface (--add/--unset/--replace-all/
-    # --rename-section/--remove-section/-e/bare set); its read-only forms
-    # (--get/--list) need a careful flag allowlist and are deferred (#1602).
-    "config": "git config is denied by vrg-git.",
-    "remote": "git remote is denied by vrg-git.",
     "gc": "git gc is denied by vrg-git.",
     "prune": "git prune is denied by vrg-git.",
     "filter-branch": "git filter-branch is denied by vrg-git.",
@@ -210,10 +291,10 @@ def _run(argv: list[str]) -> int:
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
         return result.returncode
 
-    if subcmd == "symbolic-ref":
-        symref_err = _check_symbolic_ref_read(argv[1:])
-        if symref_err:
-            print(f"vrg-git: {symref_err}", file=sys.stderr)
+    if subcmd in _READ_FORM_CHECKS:
+        read_err = _READ_FORM_CHECKS[subcmd](argv[1:])
+        if read_err:
+            print(f"vrg-git: {read_err}", file=sys.stderr)
             return 1
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
         return result.returncode
@@ -248,7 +329,7 @@ def _run(argv: list[str]) -> int:
             _ALLOWED_SIMPLE
             | set(_ALLOWED_COMPOUND)
             | set(_READONLY_WITH_DENIED_SUBS)
-            | {"symbolic-ref"}
+            | set(_READ_FORM_CHECKS)
         )
         print(
             f"vrg-git: {subcmd} is not recognized. Allowed: {', '.join(sorted(allowed))}",
@@ -343,6 +424,77 @@ def _check_symbolic_ref_read(args: list[str]) -> str | None:
             "symbolic-ref [-q|--quiet] [--short] <name>."
         )
     return None
+
+
+def _check_remote_read(args: list[str]) -> str | None:
+    """Refuse every remote form except the list, ``get-url`` and ``show -n``."""
+    if all(a in _REMOTE_LIST_FLAGS for a in args):
+        return None
+    sub, rest = args[0], args[1:]
+    flags = [a for a in rest if a.startswith("-")]
+    positionals = [a for a in rest if not a.startswith("-")]
+    if sub == "get-url":
+        if all(f in _REMOTE_GET_URL_FLAGS for f in flags) and len(positionals) == 1:
+            return None
+    elif sub == "show" and flags and all(f == "-n" for f in flags):
+        return None
+    return _REMOTE_READ_USAGE
+
+
+def _check_config_read(args: list[str]) -> str | None:
+    """Refuse every config form except one read action with read-only flags."""
+    actions = [a for a in args if a in _CONFIG_READ_ACTIONS]
+    others = [a for a in args if a not in _CONFIG_READ_ACTIONS]
+    flags = [a for a in others if a.startswith("-")]
+    positionals = [a for a in others if not a.startswith("-")]
+    bad_flags = [
+        f
+        for f in flags
+        if f not in _CONFIG_READ_FLAGS and not f.startswith(_CONFIG_READ_FLAG_PREFIXES)
+    ]
+    if len(actions) != 1 or bad_flags:
+        return _CONFIG_READ_USAGE
+    low, high = _CONFIG_READ_ACTIONS[actions[0]]
+    if not low <= len(positionals) <= high:
+        return _CONFIG_READ_USAGE
+    return None
+
+
+def _check_tag_read(args: list[str]) -> str | None:
+    """Refuse every tag form except a list: no tag name, or a list-mode flag.
+
+    With no positional, or with a list-mode flag, git lists tags and treats
+    every positional as a pattern; anything else could create a tag.
+    """
+    flags = [a for a in args if a.startswith("-")]
+    positionals = [a for a in args if not a.startswith("-")]
+    bad_flags = [
+        f
+        for f in flags
+        if f not in _TAG_LIST_FLAGS
+        and not f.startswith(_TAG_LIST_FLAG_PREFIXES)
+        and not _TAG_ANNOTATION_LINES_RE.fullmatch(f)
+    ]
+    # -n<num> implies --list, as the list-mode flags do.
+    list_mode = any(
+        f in _TAG_LIST_MODE_FLAGS
+        or f.startswith(_TAG_LIST_MODE_PREFIXES)
+        or _TAG_ANNOTATION_LINES_RE.fullmatch(f)
+        for f in flags
+    )
+    if bad_flags or (positionals and not list_mode):
+        return _TAG_LIST_USAGE
+    return None
+
+
+# Subcommands allowed only in their read forms, each with the check that
+# returns the refusal for any other form (None for a read form).
+_READ_FORM_CHECKS: dict[str, Callable[[list[str]], str | None]] = {
+    "symbolic-ref": _check_symbolic_ref_read,
+    "remote": _check_remote_read,
+    "config": _check_config_read,
+    "tag": _check_tag_read,
+}
 
 
 def _org_from_clone_url(args: list[str]) -> str | None:
@@ -1371,9 +1523,13 @@ def _print_help() -> None:
         "    set of mutating ones (add, push, fetch, pull, clone, checkout,\n"
         "    switch, stash, merge, cherry-pick, rebase, reset, clean,\n"
         "    worktree add/list/remove).\n"
-        "  - Read-only forms only: reflog (expire/delete denied) and\n"
+        "  - Read-only forms only: reflog (expire/delete denied);\n"
         "    symbolic-ref [-q|--quiet] [--short] <name> (setting a ref,\n"
-        "    -d/--delete and -m are denied).\n"
+        "    -d/--delete and -m are denied); remote [-v], remote get-url\n"
+        "    [--push] [--all] <name> and remote show -n <name>...; config\n"
+        "    --get/--get-all/--get-regexp/--list (every write is denied);\n"
+        "    tag with no tag name or with a list flag (-l/--list, --contains,\n"
+        "    --no-contains, --points-at, --merged, --no-merged).\n"
         f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"
         "  - Flag deny-list: push -f/--force, branch -D/--force; rebase -i\n"
         "    only with --autosquash; --force-with-lease is blocked on protected\n"

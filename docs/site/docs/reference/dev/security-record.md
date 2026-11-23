@@ -114,7 +114,11 @@ message names the file or flag and never quotes its text.
 an existing issue instead of creating one. It adds the `security` label
 and the `Security advisory:` line to that issue, then writes the tracking
 line. The issue keeps its current parent. The past-issues audit uses this
-so that one problem never gets two issues.
+so that one problem never gets two issues. The issue's body is read
+through the trust layer before anything is written to it, and only a
+trusted body is written back: an untrusted one stops the mark, exit 1,
+with a metadata-only message and the resume command, which finishes the
+pair once the human has dealt with the body.
 
 **Resume** (`--resume`) skips the duplicate guard and the advisory, and
 completes whatever steps are missing:
@@ -252,12 +256,28 @@ the command that would succeed:
   vrg-security-record: advisory <GHSA-id>: this would stop tracking the open issue <ref>; to keep tracking every open issue, run: vrg-security-record retarget <GHSA-id> --from '<ref>' --to '<ref>' --to '<ref>'. Leaving an open issue untracked is the human's decision
   ```
 
+- **Trust check.** Every issue body `retarget` reads is read through the
+  trust layer, never from the REST listing, and each one that decides or
+  receives a write must be trusted (its author and every editor trusted).
+  It refuses, exit 1, before anything is written, when any
+  `security`-labelled issue in the org has an untrusted body (its lines
+  cannot be read, so which issues name this advisory cannot be known),
+  or when a target or an issue to unmark (`--from` included) has one. A
+  re-run's source tie by a body still naming the advisory counts only
+  from a trusted body; an untrusted one stops the run. The message names
+  metadata only, never the body:
+
+  ```text
+  vrg-security-record: advisory <GHSA-id>: stopped before any write: <reason>: <owner>/<repo>#<N> <kind> <login> at <time> on body (<cause>). The human decides next.
+  ```
+
 The steps then run in order, and each starts only once the one before it
 succeeded:
 
 1. **Mark** each target: ensure the `security` label in its repo, add it
    to the issue, and append the `Security advisory:` line (skipped when
-   already present).
+   already present). The body it appends to and writes back is the
+   trusted body; an untrusted one is never written back.
 2. **Rewrite** the advisory's description: every `Tracking issue:` line is
    replaced by one line per target. The rest of the description is kept.
    An unchanged description is not written.
@@ -424,16 +444,29 @@ issue's parent cannot be read, that advisory is left unchanged and
 listed as `- error: <GHSA-id> (<issue ref>): reading its parent failed,
 left unchanged: <error>`; the rest are still synced.
 
+**Untrusted bodies.** Each issue's `Security advisory:` lines are read
+only from a body the trust layer trusts (its author and every editor
+trusted). An untrusted body is reported, never acted on: it is named on
+stderr, metadata only (`skipped untrusted content: …`; under GitHub
+Actions only a count by cause), its lines are not read, it is not
+reported as a broken pair, and each advisory that tracks it is left
+unchanged and listed by GHSA ID alone:
+
+```text
+- untrusted: GHSA-xxxx-xxxx-xxxx: an issue it tracks has an untrusted body, left unchanged
+```
+
 Its summary line is `Security records: <n> advisory states synced, <m>
 broken pairs, <h> held, <e> errors.` Each noun agrees with its count, so a
 count of 1 reads `1 advisory state synced`, `1 broken pair` or `1 error`.
 It exits 1 when any pair is broken or any parent read failed (after
-syncing the rest), or when the pass fails. An org with no `security` issues and no `.github`
+syncing the rest), when any issue body is untrusted (with `--dry-run`
+too), or when the pass fails, a trust read failure included. An org with no `security` issues and no `.github`
 repo prints `Security records: none.`
 
 | Flag | Meaning |
 |---|---|
-| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs, <h> held, <e> errors.`, change nothing, and exit 0 even on a broken pair or a failed parent read. |
+| `--dry-run` | Preview: print the pass as `Security records (preview): <n> advisory states would sync, <m> broken pairs, <h> held, <e> errors.`, change nothing, and exit 0 even on a broken pair or a failed parent read (but 1 on an untrusted issue body). |
 
 **Permission.** `sync` needs **Repository security advisories: Read and
 write** on `<org>/.github` (`--dry-run` needs Read), so it runs as the
@@ -477,7 +510,11 @@ each starts only once the one before it succeeded:
    - any of its issues is still open. `sync` sets an advisory back to
      draft while any issue it tracks is open, so the close would not
      hold: close the issue first (as not planned, for dropped work), or
-     retarget the record.
+     retarget the record;
+   - any `security`-labelled issue in the org has a body the trust layer
+     does not trust: the lines that pick the issues naming the record are
+     read only from trusted bodies, so the issues to comment on cannot be
+     known. The message names metadata only, and the human decides.
 2. **Comment.** Post `Security record <GHSA-id> closed: <reason>` on each
    issue, skipping one that already carries that exact comment from a
    trusted author (its author and every editor trusted, judged by the trust
@@ -598,5 +635,5 @@ These commands read or move records as part of their own work:
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Refused (a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), a GitHub API failure, or an authentication failure |
+| 1 | Refused (a duplicate, bad refs, an unreadable file, `--details` under the sweep, a `retarget`, `close` or `note` the checks refuse, a `create` onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by `sync` (not `--dry-run`), an untrusted issue body found by `sync` (with `--dry-run` too), a trust-layer read failure, a GitHub API failure, or an authentication failure |
 | 2 | Invalid arguments |

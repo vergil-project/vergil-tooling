@@ -235,6 +235,14 @@ def test_hard_rules_refuse_queue_item(world: FakeGitHub) -> None:
     assert epics.queue_refusal_message("#10", "intake") in message
 
 
+def test_hard_rules_refuse_ops_issue(world: FakeGitHub) -> None:
+    ops_epic = IssueRef("acme", ".github", 3)
+    world.issues[ops_epic] = Issue(labels={"epic", "operations"}, native_parent=None)
+    world.issues[_ref(11)].native_parent = ops_epic
+    message = _refused(["#10", "#11"], "not queued")
+    assert epics.queue_refusal_message("#11", "operations") in message
+
+
 def test_hard_rules_refuse_untrusted_author(world: FakeGitHub) -> None:
     world.issues[_ref(11)].author = {"__typename": "User", "login": "mallory"}
     message = _refused(["#10", "#11"], "trusted author")

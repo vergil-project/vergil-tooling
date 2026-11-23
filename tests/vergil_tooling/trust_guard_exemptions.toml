@@ -31,7 +31,7 @@ argument = "_pr_query(chunk, closing=closing)"
 fields = ["headRefName", "body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
 reason = """The query is built per chunk of commit SHAs. It selects each commit's \
 associated PRs (_pr_fields: number, title, headRefName, mergedAt, baseRefName, \
-merged, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
+merged, author, createdAt, trust.SAME_REPO_FIELDS, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
 history, closingIssuesReferences and the connected events)."""
 
 # --- judged ----------------------------------------------------------------------
@@ -53,6 +53,16 @@ judge = ["lib/trust.py:read_reviews"]
 reason = """The REST listing gives each inline comment's place (path, line, review, \
 thread, URL). A comment is kept only when trust.read_reviews trusts it, and its \
 body is the layer's, never the listing's."""
+
+[[judged]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_closing_refs"
+fields = ["closingIssuesReferences"]
+judge = ["bin/vrg_pr_workflow.py:_check_body"]
+reason = """batch-check only compares GitHub's closing references with the Closes \
+lines of the PR body that _check_body read through trust.read_issue (an untrusted \
+body fails the check before this read). Any difference refuses; the references \
+never pass the check, pick an issue or set the commit order."""
 
 [[judged]]
 path = "bin/vrg_release_record.py"
@@ -127,6 +137,27 @@ among trust.prs_for_branch's same-repo PRs with a trusted author; vrg-pr-await a
 vrg-repo-status do not read it."""
 
 [[judged]]
+path = "lib/in_flight.py"
+function = "_open_prs"
+fields = ["body", "closingIssuesReferences", "headRefName", "timelineItems", "userContentEdits"]
+judge = ["lib/in_flight.py:_counted_pr_issues", "lib/pending_release.py:trusted_closing_refs"]
+reason = """Each open PR marks a task in flight only through _counted_pr_issues: a PR \
+counts only when trust.is_same_repo puts its head in the repo and trust.judge_identity \
+trusts its author. Its feature/<N>- head then marks issue N, and only the closing \
+references trusted_closing_refs counts (a closing line of a body trust.judge_body \
+trusts, or a hand link whose every linker holds a role) mark the rest."""
+
+[[judged]]
+path = "lib/intake_route.py"
+function = "_guard_open_closing_pr"
+fields = ["closedByPullRequestsReferences"]
+judge = ["lib/closing_refs.py:read_closing_refs", "lib/pending_release.py:trusted_closing_refs"]
+reason = """The PRs GitHub lists as closing the item are candidates, by URL only. A PR \
+holds the route only when closing_refs.read_closing_refs, reading it by number through \
+trust.read_pr_closing, finds it open and trusted_closing_refs counts its reference to \
+the item."""
+
+[[judged]]
 path = "lib/intake_route.py"
 function = "_planning_epic_states"
 fields = ["body"]
@@ -146,10 +177,14 @@ deleted, which the job does to its earlier runs' branches in every case."""
 [[judged]]
 path = "lib/pending_release.py"
 function = "_prs_by_sha"
-fields = ["body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
-judge = ["lib/pending_release.py:trusted_closing_refs"]
-reason = """CLOSING_FIELDS are read only for trusted_closing_refs (_closing_refs), \
-which judges the body through trust.judge_body and each hand link's actor through \
+fields = ["headRefName", "body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
+judge = ["lib/pending_release.py:_judge_pr", "lib/pending_release.py:trusted_closing_refs"]
+reason = """A merged PR's title, head branch and labels are read only once _judge_pr \
+accepts it: trust.is_same_repo puts its head in the repo itself and \
+trust.judge_identity gives its author a role. Any other PR is an untrusted row with \
+no branch, so it neither classifies the row nor reaches the issue list. \
+CLOSING_FIELDS are read only for trusted_closing_refs (_closing_refs), which judges \
+the body through trust.judge_body and each hand link's actor through \
 trust.judge_identity."""
 
 [[judged]]
@@ -214,7 +249,7 @@ function = "list_epics"
 fields = ["body"]
 reason = """The backfill listing's body feeds only the dry-run preview, which prints \
 each epic's proposed Documents section. Under --apply each epic's body is read again \
-(read_body) just before its write."""
+through the trust layer (read_body, require_body=True) just before its write."""
 
 [[exempt]]
 path = "lib/open_prs.py"
@@ -224,80 +259,3 @@ reason = """vrg-repo-status's open-PR view: the head branch is shown in its row 
 sets the row's displayed type. The view writes nothing and decides nothing."""
 
 # --- pending ---------------------------------------------------------------------
-
-[[pending]]
-path = "bin/vrg_finalize_pr.py"
-function = "_read_closing_refs"
-fields = ["closingIssuesReferences"]
-task = "vergil-project/vergil-tooling#4987"
-reason = "fixed by vergil-project/vergil-tooling#4987"
-
-[[pending]]
-path = "bin/vrg_pr_workflow.py"
-function = "_check_closing_refs"
-fields = ["closingIssuesReferences"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
-
-[[pending]]
-path = "bin/vrg_pr_workflow.py"
-function = "_check_pr_fields"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
-
-[[pending]]
-path = "lib/epic_docs.py"
-function = "read_body"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4989"
-reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/in_flight.py"
-function = "_open_pr_issues"
-fields = ["closingIssuesReferences", "headRefName"]
-task = "vergil-project/vergil-tooling#4988"
-reason = "fixed by vergil-project/vergil-tooling#4988"
-
-[[pending]]
-path = "lib/intake_route.py"
-function = "_guard_open_closing_pr"
-fields = ["closedByPullRequestsReferences"]
-task = "vergil-project/vergil-tooling#4987"
-reason = "fixed by vergil-project/vergil-tooling#4987"
-
-[[pending]]
-path = "lib/pending_release.py"
-function = "_prs_by_sha"
-fields = ["headRefName"]
-task = "vergil-project/vergil-tooling#4986"
-reason = "fixed by vergil-project/vergil-tooling#4986"
-
-[[pending]]
-path = "lib/queue_view.py"
-function = "planning_items"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4989"
-reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/release/rebuild.py"
-function = "_merged_pr"
-fields = ["--head"]
-task = "vergil-project/vergil-tooling#4986"
-reason = "fixed by vergil-project/vergil-tooling#4986"
-
-[[pending]]
-path = "lib/security_records.py"
-function = "_read_issue"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4990"
-reason = "fixed by vergil-project/vergil-tooling#4990"
-
-[[pending]]
-path = "lib/security_records.py"
-function = "security_issues"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4990"
-reason = "fixed by vergil-project/vergil-tooling#4990"

@@ -94,6 +94,13 @@ copy and `Moved to: <org>/.github <GHSA-id>` on the original (see
 [Moving a record to another org](#moving-a-record-to-another-org)):
 `create` and `note` refuse text holding either line.
 
+An issue's `Security advisory:` lines count only in a body the trust
+layer trusts: its author and every editor are trusted authors. A body
+anyone else wrote or edited is never acted on. `create --issue`,
+`retarget` and `close` stop before any write when a body they rely on is
+untrusted, and `sync` reports it, metadata only, leaves each advisory
+tracking it unchanged, and exits 1 for the human to decide.
+
 ### The labels
 
 | Label | Meaning |
@@ -506,6 +513,11 @@ of them until the plan exists.
     label**, with no advisory tracking the issue, is a broken pair. The
     queue reports it in the item's note (`broken pair: …`, saying to
     have the human check the pair) and does not hold the item.
+  - **`Security advisory:` lines count only from a trusted body**: one
+    whose author and every editor the trust layer trusts. `vrg-queue
+    planning` stops an item whose body it does not trust and leaves it
+    out of the listing, and the docs PR's close leaves such a planning
+    issue open for the human to check.
 
   `vrg-queue planning` never shows a held planning issue as
   `ready-to-close`. It shows it as `in-progress` with a note that names

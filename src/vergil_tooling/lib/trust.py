@@ -32,7 +32,10 @@ or reopen is trusted when its actor is (:func:`read_events`,
 :func:`close_judgement`, :func:`require_trusted_close`,
 :func:`require_trusted_reopen`). A PR found by its
 branch is same-repo and has a trusted author (:func:`prs_for_branch`); a fork
-PR never matches. A search or list result is trusted when its body is, and
+PR never matches. A PR read by number for its closing references
+(:func:`read_pr_closing`) is judged by
+:func:`~vergil_tooling.lib.pending_release.trusted_closing_refs`, through
+:mod:`~vergil_tooling.lib.closing_refs`. A search or list result is trusted when its body is, and
 everyone who renamed it holds a role (:func:`search_items`, :func:`list_items`);
 a search can judge each result's latest close in the same call, and
 :func:`search_window` splits a date window that would meet GitHub's search cap.
@@ -266,6 +269,7 @@ query($owner: String!, $name: String!, $branch: String!, $after: String) {{
       {_PAGE_INFO}
       nodes {{
         number url title headRefName headRefOid baseRefName state createdAt author {_ACTOR}
+        mergeCommit {{ oid }}
         {SAME_REPO_FIELDS}
       }}
     }}
@@ -440,7 +444,8 @@ class PRRef:
 
     *head* is the branch name, *head_oid* the head commit and *base* the
     branch the PR merges into; *state* is GraphQL's ``OPEN``, ``CLOSED`` or
-    ``MERGED``.
+    ``MERGED``. *merge_oid* is a merged PR's merge commit, ``None`` while
+    it has none.
     """
 
     number: int
@@ -451,6 +456,7 @@ class PRRef:
     base: str
     author_role: Role
     state: str
+    merge_oid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1291,7 +1297,16 @@ def _branch_pr(
         base=_text(pr, "baseRefName", call, what),
         author_role=judgement.role,
         state=_text(pr, "state", call, what),
+        merge_oid=_merge_oid(pr, call, what),
     )
+
+
+def _merge_oid(pr: Mapping[str, Any], call: str, what: str) -> str | None:
+    """The oid of *pr*'s ``mergeCommit``, or ``None`` when GraphQL gives it none."""
+    merge = _get(pr, "mergeCommit", call, what)
+    if merge is None:
+        return None
+    return _text(_obj(merge, call, f"the merge commit of {what}"), "oid", call, what)
 
 
 def prs_for_branch(
@@ -1335,6 +1350,105 @@ def prs_for_branch(
                 found.append(result)
         if cursor is None:
             return found, skipped
+
+
+# --- a PR's closing references ------------------------------------------------
+
+# An issue on either side of a ConnectedEvent; a PR on a side reads as ``{}``.
+_CONNECTED_ISSUE = "... on Issue { number repository { nameWithOwner } }"
+
+# A PR by number with what judging its closing references needs: the fields
+# pending_release.CLOSING_FIELDS names (the body with its edit history, GitHub's
+# closingIssuesReferences and the hand links), each reference's state, and the
+# PR's own state. Further pages of the body's edits come through
+# _BODY_EDITS_QUERY.
+_PR_CLOSING_QUERY = f"""
+query($owner: String!, $name: String!, $number: Int!) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $number) {{
+      number state mergedAt repository {{ nameWithOwner }}
+      {_BODY_FIELDS}
+      closingIssuesReferences(first: {_PAGE}, userLinkedOnly: false) {{
+        totalCount nodes {{ number state repository {{ nameWithOwner }} }}
+      }}
+      timelineItems(itemTypes: [CONNECTED_EVENT], first: {_PAGE}) {{
+        filteredCount
+        nodes {{
+          ... on ConnectedEvent {{
+            actor {_ACTOR} createdAt
+            subject {{ {_CONNECTED_ISSUE} }} source {{ {_CONNECTED_ISSUE} }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+_PR_STATE_NAMES = frozenset({"OPEN", "CLOSED", "MERGED"})
+
+
+@dataclass(frozen=True)
+class PRClosingNode:
+    """A PR read by :func:`read_pr_closing`: its state, and its node for judging.
+
+    *state* is GraphQL's ``OPEN``, ``CLOSED`` or ``MERGED``. *node* is the
+    PR's GraphQL node in the shape
+    :func:`~vergil_tooling.lib.pending_release.trusted_closing_refs` judges,
+    with the body's whole edit history. Its content is not judged here: a
+    caller acts only on that function's answer.
+    """
+
+    repo: str
+    number: int
+    state: str
+    merged_at: str | None
+    node: Mapping[str, Any]
+
+
+def read_pr_closing(repo: str, number: int) -> PRClosingNode:
+    """Read PR *repo*#*number* with the fields its closing references are judged on.
+
+    One GraphQL read through ``repository.pullRequest``, then every further
+    page of the body's edit history. The closing references and the hand
+    links are read in one page each, and the judge raises when either is
+    longer. A PR that reads as another repo's (a transferred or renamed
+    one), a state other than ``OPEN``, ``CLOSED`` or ``MERGED``, or a missing
+    field raises :class:`TrustReadError`.
+    """
+    owner, name = _split_repo(repo)
+    call = f"read_pr_closing {repo}#{number}"
+    where = {"owner": owner, "name": name, "number": number}
+    data = _graphql(call, _PR_CLOSING_QUERY, **where)
+    repository = _obj(data.get("repository"), call, "the repository")
+    pr = dict(_obj(repository.get("pullRequest"), call, "the pull request"))
+    if _get(pr, "number", call, "the pull request") != number:
+        raise TrustReadError(call, "the pull request read is not the one asked for")
+    home = _obj(_get(pr, "repository", call, "the pull request"), call, "its repository")
+    pr_repo = _text(home, "nameWithOwner", call, "its repository")
+    if pr_repo.lower() != repo.lower():
+        raise TrustReadError(call, f"the pull request reads as one of {pr_repo}")
+    state = _text(pr, "state", call, "the pull request")
+    if state not in _PR_STATE_NAMES:
+        raise TrustReadError(call, "the pull request has no usable state")
+    merged_at = _optional_text(pr, "mergedAt", call, "the pull request")
+    edits, cursor = _connection(
+        _get(pr, "userContentEdits", call, "the pr body"), call, "the edits of the body"
+    )
+    edits = list(edits)
+    while cursor is not None:
+        page = _item(_graphql(call, _BODY_EDITS_QUERY, **where, after=cursor), call)
+        nodes, cursor = _connection(
+            _get(page, "userContentEdits", call, "the body"), call, "the edits of the body"
+        )
+        edits += nodes
+    pr["userContentEdits"] = {
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": edits,
+    }
+    # Parse it once here, so a malformed body or edit is a read failure.
+    _content(pr, call, "the pr body")
+    return PRClosingNode(repo=pr_repo, number=number, state=state, merged_at=merged_at, node=pr)
 
 
 # --- reviews --------------------------------------------------------------------

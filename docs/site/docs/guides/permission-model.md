@@ -84,6 +84,9 @@ shell expansion, no pipes, no redirection.
 | `show-branch` | — | Read-only — compare branches |
 | `show-ref` | — | Read-only — list refs |
 | `symbolic-ref` | `<name> <ref>`, `-d`/`--delete`, `-m` | Read form only — one ref, optionally `-q`/`--quiet`/`--short` |
+| `remote` | `add`, `remove`, `rename`, `set-url`, `set-head`, `prune`, `update` and every other form | Read forms only — `remote [-v\|--verbose]`, `remote get-url [--push] [--all] <name>`, `remote show -n <name>...` |
+| `config` | every write (`<name> <value>`, `--add`, `--unset`, `--replace-all`, section edits, `-e`) | Read forms only — one of `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, with scope and output flags |
+| `tag` | `-a`, `-s`, `-u`, `-m`, `-F`, `-f`, `-d`, `-v`, `-e`, and a tag name without a list flag | List forms only — no tag name, or `-l`/`--list`, `--contains`, `--no-contains`, `--points-at`, `--merged`, `--no-merged`, `-n<num>` |
 | `var` | — | Read-only — logical git variables |
 | `verify-commit` | — | Read-only — signature verification |
 | `verify-tag` | — | Read-only — signature verification |
@@ -121,8 +124,7 @@ vrg-git sets for every rebase (`GIT_SEQUENCE_EDITOR=true`,
 Anything not on the allowlist is rejected. Notable denials:
 
 - **`commit`** — all commits flow through `vrg-commit`
-- **`config`** — modifying git configuration
-- **`remote`** — modifying remote configuration
+- **`gc`**, **`prune`** — repository maintenance
 - **`filter-branch`**, **`replace`** — history rewriting
 
 ### Escape Hatch
@@ -175,8 +177,11 @@ rejected as not recognized.
 | `repo list` | yes | yes | — | Read-only |
 | `release list` | yes | yes | — | Read-only release facts |
 | `release view` | yes | yes | — | Read-only release facts |
+| `release download` | yes | yes | — | Read-only on GitHub: fetches a release's assets to local files |
 | `label list` | yes | yes | — | Read-only |
 | `label create` | yes | yes | — | Used by `vrg-ensure-label` |
+| `variable list` | yes | yes | — | Read-only Actions variables |
+| `variable get` | yes | yes | — | Read-only Actions variables |
 | `search code` / `commits` / `issues` / `prs` / `repos` | yes | yes | — | Read-only, cross-org search |
 | `api` | full | — | GET only | See [`gh api`](#gh-api-by-identity) |
 
@@ -209,7 +214,8 @@ a bare "not recognized":
 | `api` (non-GET) | `audit` | Restricted to read-only GET calls |
 
 Other write actions of allowed top-level commands (`release
-create`, `workflow enable`/`disable`, `cache delete` and so on)
+create`, `workflow enable`/`disable`, `cache delete`, `variable
+set`/`delete` and so on)
 are rejected by the allowlist's deny-by-default.
 
 ### `gh api` by Identity

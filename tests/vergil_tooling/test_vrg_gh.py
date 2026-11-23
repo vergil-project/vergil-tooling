@@ -72,8 +72,11 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("repo", "list"),
     ("release", "list"),
     ("release", "view"),
+    ("release", "download"),
     ("label", "list"),
     ("label", "create"),
+    ("variable", "list"),
+    ("variable", "get"),
     ("search", "code"),
     ("search", "commits"),
     ("search", "issues"),
@@ -135,20 +138,70 @@ def test_search_has_no_write_subcommands() -> None:
 
 
 def test_release_is_read_only() -> None:
-    # Guard against widening `release` beyond the read-only actions. Only
-    # `list`/`view` may ever be permitted (issue #2539).
-    from vergil_tooling.bin.vrg_gh import _ALLOWED
+    # Guard against widening `release` beyond the actions that change nothing
+    # on GitHub: `list`/`view` (issue #2539) and `download` (issue #5002).
+    from vergil_tooling.bin.vrg_gh import _ALLOWED, _ALLOWED_AUDIT
 
-    assert _ALLOWED["release"] == {"list", "view"}
+    assert _ALLOWED["release"] == {"list", "view", "download"}
+    assert "release" not in _ALLOWED_AUDIT
 
 
-@pytest.mark.parametrize("sub", ["create", "edit", "delete", "upload", "download"])
+def test_release_download_passes_through_for_the_user_identity() -> None:
+    argv = [
+        "release",
+        "download",
+        "v1.2.3",
+        "--repo",
+        "vergil-project/fixture",
+        "--pattern",
+        "*.json",
+        "--dir",
+        "build/evidence",
+    ]
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.identity_mode.current_mode",
+            return_value=identity_mode.IdentityMode.USER,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        rc = main(argv)
+    assert rc == 0
+    assert mock_run.call_args[0][0] == ["gh", *argv]
+
+
+@pytest.mark.parametrize("sub", ["create", "edit", "delete", "upload"])
 def test_release_write_actions_rejected(sub: str, capsys: pytest.CaptureFixture[str]) -> None:
     # Write/mutating release actions are not on the allowlist and are rejected
     # by the action-level deny-by-default (issue #2539).
     assert main(["release", sub]) != 0
     err = capsys.readouterr().err
     assert sub in err
+
+
+# -- variable (read-only) ----------------------------------------------------
+
+
+def test_variable_is_read_only() -> None:
+    # Guard against widening `variable` beyond its read actions (issue #5001).
+    from vergil_tooling.bin.vrg_gh import _ALLOWED, _ALLOWED_AUDIT
+
+    assert _ALLOWED["variable"] == {"list", "get"}
+    assert "variable" not in _ALLOWED_AUDIT
+
+
+@pytest.mark.parametrize("sub", ["set", "delete"])
+def test_variable_write_actions_rejected(sub: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        rc = main(["variable", sub, "NAME", "--body", "x"])
+    assert rc != 0
+    mock_run.assert_not_called()
+    assert f"variable {sub} is not recognized" in capsys.readouterr().err
 
 
 # -- unrecognized subcommands ------------------------------------------------
@@ -523,6 +576,15 @@ class TestTargetOwnerInstallationSelection:
             ["search", "repos", "user:other-owner"],
             ["search", "issues", "(org:other-owner OR org:Other-Owner)"],
             ["search", "code", "secrets: inherit", "--owner", "other-owner"],
+            # release download: -R/--repo, with a value flag's value never a target
+            ["release", "download", "v1.0.0", "-R", "other-owner/repo", "-p", "*.json"],
+            ["release", "download", "--dir", "evidence/x", "--repo=other-owner/repo"],
+            # variable: -R/--repo, and the --org/-o an org's variables are read from
+            ["variable", "list", "--repo", "other-owner/repo"],
+            ["variable", "list", "--org", "other-owner"],
+            ["variable", "list", "-o", "other-owner", "--json", "name"],
+            ["variable", "get", "NAME", "--org=other-owner"],
+            ["variable", "get", "-e", "prod", "NAME", "-R", "other-owner/repo"],
             # api: an owner-scoped endpoint
             ["api", "repos/other-owner/repo/actions/runs"],
             ["api", "/orgs/other-owner/repos", "--paginate"],
@@ -555,6 +617,10 @@ class TestTargetOwnerInstallationSelection:
             ["repo", "view", "--branch", "other-owner/branch"],
             ["search", "prs", "--json", "repository", "--jq", "{org: .repository}"],
             ["search", "issues", "bug", "-repo:other-owner/r"],
+            ["variable", "list"],
+            ["variable", "get", "other-owner"],
+            # --org names an owner only for variable, not for other commands
+            ["repo", "list", "--org=other-owner"],
             ["api", "repos/{owner}/{repo}/pulls"],
             ["api", "user"],
             ["api", "https://api.github.com/rate_limit"],

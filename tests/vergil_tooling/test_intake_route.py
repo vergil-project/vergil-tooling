@@ -42,6 +42,7 @@ PLANNING = IssueRef("org", ".github", 8)
 ADHOC_DOTGITHUB = IssueRef("org", ".github", 9)
 DEFERRED = IssueRef("org", ".github", 10)
 TOOL_ADHOC = IssueRef("org", ".github", 11)
+OPERATIONS = IssueRef("org", ".github", 12)
 DEV_EPIC = IssueRef("org", ".github", 400)
 TODAY = date(2026, 10, 23)
 ORIG_URL = "https://github.com/org/.github/issues/352"
@@ -66,6 +67,7 @@ class Env:
             DEFERRED: "deferred",
             ADHOC_DOTGITHUB: "ad-hoc",
             TOOL_ADHOC: "ad-hoc",
+            OPERATIONS: "operations",
         }
         # The issues carrying the 'epic' label (epics.is_epic).
         self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
@@ -79,8 +81,12 @@ class Env:
         # Who wrote and last edited the item's body, as the trust layer reads it.
         self.body_author: Any = trust_stubs.HUMAN
         self.body_editor: Any = None
-        # Closing-PR URL -> state (OPEN, CLOSED, MERGED).
+        # Closing-PR URL -> state (OPEN, CLOSED, MERGED); each one's trusted
+        # body closes the item, unless *closing_pr_answers* holds its answer.
         self.closing_prs: dict[str, str] = {}
+        # Closing-PR URL -> the trust layer's read of it (trust_stubs.closing_pr).
+        self.closing_pr_answers: dict[str, dict[str, Any]] = {}
+        self.closing_pr_reads: list[str] = []
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
         # Sub-issue listings GitHub still shows although the child's parent
         # field says otherwise: epic -> stale children (#4004).
@@ -168,7 +174,12 @@ class Env:
         if kind is epics.ADHOC:
             return self.adhoc_epics.get(name)
         assert name == "org"
-        return {"intake": INTAKE, "planning": PLANNING, "deferred": DEFERRED}[kind.key]
+        return {
+            "intake": INTAKE,
+            "planning": PLANNING,
+            "deferred": DEFERRED,
+            "operations": OPERATIONS,
+        }[kind.key]
 
     def queue_kind(self, ref: IssueRef) -> str | None:
         kind = self.kinds.get(ref)
@@ -185,13 +196,28 @@ class Env:
         if fields == "closedByPullRequestsReferences":
             return {
                 "closedByPullRequestsReferences": [
-                    {"number": int(url.rsplit("/", 1)[1]), "url": url} for url in self.closing_prs
+                    {"number": int(url.rsplit("/", 1)[1]), "url": url}
+                    for url in {**self.closing_prs, **self.closing_pr_answers}
                 ]
             }
         return self.issue_view
 
     def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
-        """The trust layer's item read: the item's body and comments, any other issue's none."""
+        """The trust layer's item read: the item's body and comments, any other issue's none.
+
+        A closing PR's read answers from *closing_pr_answers*, or as a PR in
+        *closing_prs* whose trusted body closes the item.
+        """
+        if query == trust._PR_CLOSING_QUERY:
+            repo = f"{variables['owner']}/{variables['name']}"
+            url = f"https://github.com/{repo}/pull/{variables['number']}"
+            self.closing_pr_reads.append(url)
+            if url in self.closing_pr_answers:
+                return self.closing_pr_answers[url]
+            item = (f"{ITEM.owner}/{ITEM.repo}", ITEM.number, "OPEN")
+            return trust_stubs.closing_pr(
+                repo, int(variables["number"]), item, state=self.closing_prs[url]
+            )
         nodes = self.comment_nodes
         if nodes is None:
             nodes = trust_stubs.comments(*self.comments)
@@ -220,8 +246,6 @@ class Env:
             if isinstance(self.transfer, BaseException):
                 raise self.transfer
             return str(self.transfer)
-        if args[:2] == ("pr", "view"):
-            return self.closing_prs[args[2]]
         assert args[0] == "api"
         assert args[-1] == ".state"
         if args[1] in self.api_states:
@@ -254,6 +278,7 @@ def env() -> Iterator[Env]:
         # home in org/.github.
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=lambda owner, bare: "org/.github"),
         patch(f"{_MOD}.epics.queue_home", side_effect=lambda repo: ("org/.github", "org")),
+        patch(f"{_MOD}.epics.operations_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=state.find_standing_epic),
         patch(
             f"{_MOD}.epics.qualify_epic_ref",
@@ -264,6 +289,7 @@ def env() -> Iterator[Env]:
         ),
         patch("vergil_tooling.lib.github.graphql", state.graphql),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch(f"{_MOD}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         patch(f"{_MOD}.github.run", state.run),
         patch(f"{_MOD}.github.read_output", state.read_output),
         patch(f"{_MOD}.github.read_json", state.read_json),
@@ -982,10 +1008,10 @@ def test_route_drop_planning_without_marker_closes(env: Env) -> None:
 def test_route_defer_adhoc_refuses_open_closing_pr(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
     env.closing_prs = {
-        "https://github.com/org/tool/pull/41": "MERGED",
-        "https://github.com/org/tool/pull/42": "OPEN",
+        "https://github.com/org/.github/pull/41": "MERGED",
+        "https://github.com/org/.github/pull/42": "OPEN",
     }
-    with pytest.raises(RouteRefusedError, match=r"https://github\.com/org/tool/pull/42"):
+    with pytest.raises(RouteRefusedError, match=r"https://github\.com/org/\.github/pull/42"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.run.assert_not_called()
     env.reparent_child.assert_not_called()
@@ -996,8 +1022,8 @@ def test_route_defer_adhoc_ignores_closed_pr(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
     env.native_parent[ITEM] = ADHOC_DOTGITHUB
     env.closing_prs = {
-        "https://github.com/org/tool/pull/41": "MERGED",
-        "https://github.com/org/tool/pull/43": "CLOSED",
+        "https://github.com/org/.github/pull/41": "MERGED",
+        "https://github.com/org/.github/pull/43": "CLOSED",
     }
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
@@ -1085,13 +1111,13 @@ def test_route_planning_from_adhoc_refuses_open_closing_pr(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
     env.native_parent[ITEM] = ADHOC_DOTGITHUB
     env.closing_prs = {
-        "https://github.com/org/tool/pull/41": "MERGED",
-        "https://github.com/org/tool/pull/42": "OPEN",
+        "https://github.com/org/.github/pull/41": "MERGED",
+        "https://github.com/org/.github/pull/42": "OPEN",
     }
     with pytest.raises(RouteRefusedError) as excinfo:
         route(ITEM, ToPlanning(), today=TODAY)
     message = str(excinfo.value)
-    assert "https://github.com/org/tool/pull/42" in message
+    assert "https://github.com/org/.github/pull/42" in message
     assert "routing to planning it would strand that work" in message
     env.ensure_planning_epic.assert_not_called()
     env.reparent_child.assert_not_called()
@@ -1102,8 +1128,8 @@ def test_route_planning_from_adhoc_ignores_closed_pr(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
     env.native_parent[ITEM] = ADHOC_DOTGITHUB
     env.closing_prs = {
-        "https://github.com/org/tool/pull/41": "MERGED",
-        "https://github.com/org/tool/pull/43": "CLOSED",
+        "https://github.com/org/.github/pull/41": "MERGED",
+        "https://github.com/org/.github/pull/43": "CLOSED",
     }
     route(ITEM, ToPlanning(), today=TODAY)
     env.reparent_child.assert_called_once_with(PLANNING, ITEM)
@@ -1118,9 +1144,97 @@ def test_route_planning_from_intake_does_not_read_closing_prs(env: Env) -> None:
 
 def test_route_defer_adhoc_open_closing_pr_names_deferring(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
-    env.closing_prs = {"https://github.com/org/tool/pull/42": "OPEN"}
+    env.closing_prs = {"https://github.com/org/.github/pull/42": "OPEN"}
     with pytest.raises(RouteRefusedError, match="deferring it would strand that work"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+
+
+# An open PR closing the item, as the trust layer reads it.
+_OPEN_PR_URL = "https://github.com/org/.github/pull/42"
+_ITEM_REF = ("org/.github", ITEM.number, "OPEN")
+
+
+def _open_pr(env: Env, **kwargs: Any) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    env.closing_pr_answers[_OPEN_PR_URL] = trust_stubs.closing_pr(
+        "org/.github", 42, _ITEM_REF, state="OPEN", **kwargs
+    )
+
+
+def test_route_defer_adhoc_untrusted_closing_pr_does_not_hold_it(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An outsider's open PR naming the item never blocks routing (GHSA-g68j-q2mw-jqf9)."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _open_pr(env, author=trust_stubs.OUTSIDER)
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    err = capsys.readouterr().err
+    assert "skipped untrusted content: org/.github#42 pr drive-by" in err
+    assert "open PR org/.github#42 would close it by a reference the trust layer" in err
+    assert "Summary." not in err
+
+
+def test_route_planning_adhoc_untrusted_edit_of_closing_pr_does_not_hold_it(env: Env) -> None:
+    _open_pr(env, editor=trust_stubs.OUTSIDER)
+    route(ITEM, ToPlanning(), today=TODAY)
+    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+
+
+def test_route_defer_adhoc_untrusted_link_does_not_hold_it(env: Env) -> None:
+    _open_pr(env, body="No closing line.", links=((trust_stubs.OUTSIDER, "org/.github", 352),))
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+
+
+def test_route_defer_adhoc_trusted_link_holds_it(env: Env) -> None:
+    _open_pr(env, body="No closing line.", links=((trust_stubs.AGENT, "org/.github", 352),))
+    with pytest.raises(RouteRefusedError, match="deferring it would strand that work"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+
+
+def test_route_defer_adhoc_pr_of_another_repo_does_not_hold_it(env: Env) -> None:
+    """A reference from another repo's PR is not counted, so it never holds the route."""
+    env.parent = ADHOC_DOTGITHUB
+    env.native_parent[ITEM] = ADHOC_DOTGITHUB
+    url = "https://github.com/org/tool/pull/7"
+    env.closing_pr_answers[url] = trust_stubs.closing_pr("org/tool", 7, _ITEM_REF, state="OPEN")
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.closing_pr_reads == [url]
+
+
+def test_route_defer_adhoc_closing_pr_read_failure_moves_nothing(env: Env) -> None:
+    """A closing PR the layer cannot read in full is a read failure, never 'not open'."""
+    _open_pr(env)
+    answer = env.closing_pr_answers[_OPEN_PR_URL]["repository"]["pullRequest"]
+    answer["closingIssuesReferences"]["totalCount"] = 30
+    with pytest.raises(trust.TrustReadError, match="truncated"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    env.ensure_deferred_epic.assert_not_called()
+
+
+def test_route_defer_adhoc_closing_pr_without_a_pr_url_fails(env: Env) -> None:
+    env.parent = ADHOC_DOTGITHUB
+    env.closing_prs = {"https://github.com/org/.github/issues/42": "OPEN"}
+    with pytest.raises(RuntimeError, match="has no PR URL"):
+        route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    env.reparent_child.assert_not_called()
+    assert env.closing_pr_reads == []
+
+
+def test_route_defer_adhoc_closing_pr_reported_as_counts_under_actions(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _open_pr(env, author=trust_stubs.OUTSIDER)
+    route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
+    err = capsys.readouterr().err
+    assert "skipped 1 untrusted item(s) (untrusted: 1)" in err
+    assert "drive-by" not in err
 
 
 def test_route_one_off_from_deferred_same_repo_reparents(env: Env) -> None:
@@ -1971,6 +2085,60 @@ def test_one_off_refuses_hoshin_epic_ref(env: Env) -> None:
     assert _transfer_calls(env) == []
     env.add_child.assert_not_called()
     env.reparent_child.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        Defer(reason="r", revisit_when="w"),
+        ToPlanning(),
+        Drop(reason="r"),
+        OneOff(repo="org/tool"),
+        Split(into=(IssueRef("org", "tool", 10),), reason="r"),
+    ],
+    ids=["defer", "planning", "drop", "one-off", "split"],
+)
+def test_route_refuses_item_under_operations(env: Env, action: RouteAction) -> None:
+    # An ops issue stays under the operations epic until it is closed by hand.
+    env.parent = OPERATIONS
+    env.native_parent[ITEM] = OPERATIONS
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, action, today=TODAY)
+    message = str(excinfo.value)
+    assert message == (
+        "org/.github#352 is an ops issue under org/.github#12; it is closed by hand once "
+        "dealt with, never routed"
+    )
+    _assert_untouched(env)
+    env.resolve_epic_ref.assert_not_called()
+    env.add_child.assert_not_called()
+    env.remove_child.assert_not_called()
+    assert _transfer_calls(env) == []
+
+
+def test_route_one_off_into_operations_allowed(env: Env) -> None:
+    # A hand-captured operational problem reaches the operations queue through intake.
+    env.native_parent[ITEM] = INTAKE
+    env.resolve_epic_ref.return_value = OPERATIONS
+    result = route(ITEM, OneOff(repo="org/.github", epic="operations"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.resolve_epic_ref.assert_called_once_with("operations", repo="org/.github")
+    env.reparent_child.assert_called_once_with(OPERATIONS, ITEM)
+    assert env.native_parent[ITEM] == OPERATIONS
+
+
+def test_route_one_off_rerun_into_operations_clears_a_stale_queue_listing(env: Env) -> None:
+    # A re-run of a one-off into the operations epic finishes the move (#4291)
+    # rather than being refused as a route out of it.
+    moved = IssueRef("org", "tool", 900)
+    env.parent = OPERATIONS
+    env.native_parent[moved] = OPERATIONS
+    env.stale_listing[INTAKE] = {moved}
+    result = route(moved, OneOff(repo="org/tool", epic="operations"), today=TODAY)
+    assert result == RouteResult(final=moved, moved_by="none")
+    env.remove_child.assert_called_once_with(INTAKE, moved)
+    assert env.native_parent[moved] == OPERATIONS
+    env.resolve_epic_ref.assert_not_called()
 
 
 def test_route_one_off_refuses_queue_epic(env: Env) -> None:

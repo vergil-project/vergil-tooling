@@ -289,13 +289,13 @@ _REPORT_READY_ARGS = [
 def _queue_guard(
     return_value: str | None = None, side_effect: Exception | None = None
 ) -> Generator[MagicMock]:
-    """Pass the earlier guards and stub ``epics.queue_item_kind`` as given."""
+    """Pass the earlier guards and stub ``epics.unbuildable_parent_kind`` as given."""
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.non_task_ref_kind", return_value=None),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
         patch(
-            "vergil_tooling.bin.vrg_pr_workflow.epics.queue_item_kind",
+            "vergil_tooling.bin.vrg_pr_workflow.epics.unbuildable_parent_kind",
             return_value=return_value,
             side_effect=side_effect,
         ) as mock_queue,
@@ -350,7 +350,7 @@ def test_report_ready_defers_when_queue_check_cannot_run(
     assert rc == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {"ok": True, "status": "ready"}
-    assert "could not check whether --issue (#120) is in the intake or planning queue" in (
+    assert "could not check whether --issue (#120) is a queue item or an ops issue" in (
         captured.err
     )
     assert "vrg-submit-pr" in captured.err

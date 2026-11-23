@@ -490,7 +490,12 @@ warning naming the identity and what it did, never reads the state
 block, and rebuilds the release from what GitHub and git record about
 it instead:
 
-- **Its release PR,** `release/X.Y.Z` into `main`, must be merged. A
+- **Its release PR,** `release/X.Y.Z` into `main`, must be merged. It
+  and the back-merge PR are found through the trust layer: only a
+  same-repo PR whose author holds a role in `vrg-trusted-authors`
+  counts, so a fork PR or an outsider's PR on a branch of the same name
+  never stands in for either, and each one left out is reported on
+  stderr, metadata only. A read the layer cannot complete refuses. A
   release whose release PR never merged left nothing on `main`, so
   there is nothing to supersede: the run refuses and says to close the
   release PR and the tracking issue by hand, delete `release/X.Y.Z`
@@ -591,9 +596,12 @@ get the fix on the next normal action:
 | Consumer | When the patch lands |
 |---|---|
 | Developer host | The release's `install` stage installs the patch on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
-| Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once `promote` moves the rolling `vX.Y` tag to it: a `vX.Y` line pin in `vergil.toml` resolves to the release that tag names (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`, which the release's `install` stage runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch once `promote` moves the rolling `vX.Y` tag to it; an exact `vX.Y.Z` pin stays put |
+
+A Python repo has nothing of its own to bump: its `pyproject.toml` and
+`.venv` carry no vergil-tooling, and it picks up a release through the
+dev container image, like a repo in any other language.
 
 ## Minor release — opt-in for new features
 
@@ -603,16 +611,17 @@ A minor release adds backwards-compatible new features. Versions:
 ### Producer steps
 
 Same steps as patch, with one important addition: the rolling
-minor tag changes from `v1.3` to `v1.4`. Any per-repo dev-dep
-declarations **must be bumped manually** — the rolling-tag mechanism
-only handles patches within a minor.
+minor tag changes from `v1.3` to `v1.4`. Any line pin to `v1.3` (a
+repo's `vergil.toml`, an agent identity's version) **must be bumped
+manually** — the rolling-tag mechanism only handles patches within a
+minor.
 
 1. Run `vrg-release minor`. It bumps the version to the next minor
    (`1.4.0`) on the release branch instead of releasing the current
    `develop` version. Everything else matches a patch release.
-2. **Coordinate consumer bumps.** Each Python repo that has
-   `[tool.uv.sources]` pinning to `v1.3` needs its `pyproject.toml`
-   updated to `v1.4`. This is a per-repo decision — consumers who
+2. **Coordinate consumer bumps.** Each repo whose `vergil.toml` pins
+   `[dependencies].vergil` to `v1.3` needs it updated to `v1.4` (see
+   the consumer steps below). This is a per-repo decision — consumers who
    prefer to stay on `v1.3` can keep doing so until they're ready.
 3. Update anywhere the documentation pins a minor to the new tag.
    The host install by hand in `getting-started.md` names an exact
@@ -625,7 +634,6 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 | Consumer | What changes |
 |---|---|
 | Developer host | Nothing to change: the host keeps no pin. The release's `install` stage installs `v1.4.0` on the Mac that ran it, through the new line (`vrg-tooling-install v1.4`, `<MINOR>` expanded to the release's line); any other host runs [`vrg-tooling-install v1.4`](#deployment-targets) or `v1.4.0` |
-| Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the release the rolling `v1.4` tag names |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
 
@@ -1186,10 +1194,14 @@ Follow-ups move to their own issues.
 
 The issue list is the union of the closing references of every PR in
 `main..<cut>` whose head branch starts `feature/`, a batch PR included.
-Release back-merges, dependency updates, automation PRs and commits
-with no PR contribute none, and a closing reference to an issue in
-another repo is ignored. Each issue is listed once, by number, with
-every PR that closes it.
+A PR's head branch is read only when the trust layer accepts the PR: a
+same-repo PR whose author holds a role in `vrg-trusted-authors`. A fork
+PR, or one an outsider opened, is an `untrusted` row of the Contents
+table, by its commit subject, and is reported on stderr, metadata only.
+Release back-merges, dependency updates, automation PRs, untrusted PRs
+and commits with no PR contribute none, and a closing reference to an
+issue in another repo is ignored. Each issue is listed once, by number,
+with every PR that closes it.
 
 Only a trusted closing reference counts:
 

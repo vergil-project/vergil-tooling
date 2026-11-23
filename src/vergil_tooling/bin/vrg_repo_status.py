@@ -458,7 +458,8 @@ def _pending_rows(changes: Sequence[PendingChange], now: float) -> list[tuple[st
 
 def _pending_summary(changes: Sequence[PendingChange]) -> str:
     """The section's count of changes, every bucket listed; commits with no
-    PR are named only when there are some."""
+    PR, and PRs the trust layer does not accept, are named only when there
+    are some."""
     kinds = [c.kind for c in changes]
     line = (
         f"{_count(len(changes), 'change')} pending release: "
@@ -470,6 +471,9 @@ def _pending_summary(changes: Sequence[PendingChange]) -> str:
     problems = kinds.count(ChangeKind.NO_PR)
     if problems:
         line += f", {problems} PROBLEM: commits with no PR"
+    untrusted = kinds.count(ChangeKind.UNTRUSTED)
+    if untrusted:
+        line += f", {untrusted} PROBLEM: not a same-repo PR with a trusted author"
     return line + "."
 
 
@@ -497,6 +501,11 @@ def _print_pending(integration: str, now: float) -> bool:
         if change.kind is ChangeKind.NO_PR:
             sha7 = change.shas[0][:_SHORT_SHA]
             print(f"  PROBLEM: {sha7} reached {integration} without a PR")
+        elif change.kind is ChangeKind.UNTRUSTED:
+            print(
+                f"  PROBLEM: #{change.pr_number} is not a same-repo PR with a trusted "
+                "author; its title, branch and labels are not read"
+            )
     print(_pending_summary(pending.changes))
     return True
 

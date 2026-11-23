@@ -32,6 +32,7 @@ def _pr(number: int, *, author: Any = AGENT, fork: bool = False, state: str = "O
         "state": state,
         "createdAt": CREATED,
         "author": author,
+        "mergeCommit": None,
         "isCrossRepository": fork,
         "headRepositoryOwner": {"login": "mallory" if fork else "owner"},
         "headRepository": {"name": "repo"},

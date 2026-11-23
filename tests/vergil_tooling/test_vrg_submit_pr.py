@@ -2422,6 +2422,22 @@ def test_reject_if_queue_item_refuses_queue_item(kind: str, phrases: tuple[str, 
         assert phrase in message
 
 
+def test_submit_refuses_ops_issue() -> None:
+    # An ops issue is closed by hand, never by a PR (epic vergil-project/.github#1494).
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.native_parent_of", return_value=epics.IssueRef("org", ".github", 9)),
+        patch(f"{_MOD}.epics._labels", return_value={"epic", "operations"}),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        _reject_if_queue_item("#42")
+    assert str(excinfo.value) == (
+        "vrg-submit-pr: --issue (#42) is under the operations epic; it is an ops issue, "
+        "which no PR closes: file the fix as a follow-up task in its own repo, and close "
+        "the ops issue by hand once the problem is dealt with."
+    )
+
+
 def test_reject_if_queue_item_passes_for_routed_task() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),

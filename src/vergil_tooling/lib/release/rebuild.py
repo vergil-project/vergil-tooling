@@ -11,7 +11,8 @@ cannot finish such a release, and its state block is never trusted again
 block at all. :func:`rebuild_breached` reads instead what GitHub and git
 record about release ``X.Y.Z``:
 
-- its release PR, ``release/X.Y.Z`` into ``main``, which must be merged;
+- its release PR, ``release/X.Y.Z`` into ``main``, a same-repo PR with a
+  trusted author read through the trust layer, which must be merged;
   one that never merged left nothing on ``main``, so there is nothing to
   supersede;
 - whether ``vX.Y.Z`` is tagged on ``origin``. A tagged release's tag must be
@@ -59,7 +60,6 @@ _CD_WORKFLOW = "cd.yml"
 _TITLE_RE = re.compile(r"^release: (\d+\.\d+\.\d+)$")
 # Upper bounds on the lists read here; reaching one refuses, since the list
 # may then be truncated.
-_PR_LIMIT = 10
 _RUN_LIMIT = 50
 _ISSUE_LIMIT = 100
 _SHORT = 12
@@ -121,50 +121,32 @@ def _lookup_error(version: str, exc: subprocess.CalledProcessError, what: str) -
 
 
 def _merged_pr(repo: str, version: str, head: str, base: str) -> _MergedPR | None:
-    """The merged PR of *head* into *base*, or None; more than one, or a bad answer, refuses."""
-    cmd = (
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--head",
-        head,
-        "--base",
-        base,
-        "--state",
-        "merged",
-        "--limit",
-        str(_PR_LIMIT),
-        "--json",
-        "url,mergeCommit,headRefOid",
-    )
+    """The merged PR of *head* into *base*, or None; more than one, or a bad answer, refuses.
+
+    It is read through the trust layer (:func:`trust.prs_for_branch`): only a
+    same-repo PR with a trusted author counts, so a fork PR, or one an
+    outsider opened, on a branch of the same name never stands in for it.
+    Each PR left out is reported on stderr, metadata only; a read the layer
+    cannot complete refuses.
+    """
     what = f"the merged PR of {head} into {base}"
     try:
-        found = github.read_json(*cmd)
+        prs, skipped = trust.prs_for_branch(repo, head, state="merged")
     except subprocess.CalledProcessError as exc:
         raise _lookup_error(version, exc, what) from exc
-    if not isinstance(found, list):
-        raise _refuse(version, f"{what} is not a list: {found!r}.")
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        raise _refuse(version, f"{what} could not be read: {exc}") from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    found = [pr for pr in prs if pr.base == base]
     if not found:
         return None
     if len(found) > 1:
-        urls = ", ".join(str(cast("dict[str, object]", pr).get("url")) for pr in found)
+        urls = ", ".join(pr.url for pr in found)
         raise _refuse(version, f"{len(found)} PRs of {head} into {base} are merged ({urls}).")
     pr = found[0]
-    url = pr.get("url") if isinstance(pr, dict) else None
-    merge = pr.get("mergeCommit") if isinstance(pr, dict) else None
-    oid = merge.get("oid") if isinstance(merge, dict) else None
-    head_oid = pr.get("headRefOid") if isinstance(pr, dict) else None
-    if not (
-        isinstance(url, str)
-        and url
-        and isinstance(oid, str)
-        and oid
-        and isinstance(head_oid, str)
-        and head_oid
-    ):
-        raise _refuse(version, f"{what} has no URL, merge commit or head commit: {pr!r}.")
-    return _MergedPR(url=url, merge_commit=oid, head=head_oid)
+    if pr.merge_oid is None:
+        raise _refuse(version, f"{what} ({pr.url}) has no merge commit.")
+    return _MergedPR(url=pr.url, merge_commit=pr.merge_oid, head=pr.head_oid)
 
 
 def _git(version: str, *args: str) -> str:

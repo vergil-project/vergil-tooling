@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import trust
+from vergil_tooling.lib import epics, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -29,6 +29,7 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -281,6 +282,9 @@ def test_batch_show_exits_2_without_an_origin_remote(
 # --- report-ready with an ordered issue list ---------------------------------
 
 _EPICS = "vergil_tooling.bin.vrg_pr_workflow.epics"
+# Captured before any patching, to run the real parent test under a fixture
+# that stubs it.
+_REAL_UNBUILDABLE_PARENT_KIND = epics.unbuildable_parent_kind
 _SINGLE_KEYS = [
     "schema_version",
     "issue",
@@ -333,7 +337,7 @@ def per_issue() -> Iterator[dict[str, MagicMock]]:
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="acme/tools"),
         patch(f"{_EPICS}.non_task_ref_kind", return_value=None) as non_task,
         patch(f"{_EPICS}.is_operational_task", return_value=False) as operational,
-        patch(f"{_EPICS}.queue_item_kind", return_value=None) as queue,
+        patch(f"{_EPICS}.unbuildable_parent_kind", return_value=None) as queue,
         patch(f"{_WF}.planning_close.find", return_value=None) as planning,
     ):
         yield {
@@ -584,6 +588,33 @@ def test_report_ready_runs_existing_per_issue_refusals_on_every_issue(
     _assert_nothing_recorded(ready_clone, relay)
 
 
+def test_report_ready_refuses_ops_issue(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An ops issue (native parent: the operations epic) is never the task a
+    # PR closes (epic vergil-project/.github#1494). The parent test runs for
+    # real on the faked parent and its labels.
+    _branch(ready_clone, "feat: one thing")
+    ops_epic = IssueRef("acme", ".github", 3)
+    per_issue["queue"].side_effect = _REAL_UNBUILDABLE_PARENT_KIND
+    with (
+        patch(f"{_EPICS}.native_parent_of", return_value=ops_epic) as parent,
+        patch(f"{_EPICS}._labels", return_value={"epic", "operations"}) as labels,
+    ):
+        assert _report("10") == 1
+    parent.assert_called_once_with(IssueRef("acme", "tools", 10))
+    labels.assert_called_once_with(ops_epic)
+    err = capsys.readouterr().err
+    assert "--issue (#10) is under the operations epic; it is an ops issue, which no PR" in err
+    assert "close the ops issue by hand once the problem is dealt with." in err
+    rules.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
 def test_report_ready_rerun_refuses_a_different_issue_list(
     ready_clone: Path,
     rules: MagicMock,
@@ -758,22 +789,40 @@ def _push_pr_branch(origin: Path, *subjects: str) -> str:
 
 @pytest.fixture()
 def github_pr(origin: Path) -> Iterator[dict[str, MagicMock]]:
-    """GitHub's view of PR 50 (a batch of #10 and #11) and this clone's repo."""
+    """GitHub's view of PR 50 (a batch of #10 and #11) and this clone's repo.
+
+    The body comes only from the trust layer's read (``read_issue``).
+    """
     with (
+        patch(f"{_WF}.github.pr_repo_and_number", return_value=("acme/tools", 50)) as number,
         patch(f"{_WF}.github.read_json") as read_json,
+        patch(f"{_WF}.trust.read_issue") as read_issue,
         patch(f"{_WF}.github.pr_closing_references", return_value=_closing(10, 11)) as closing,
         patch(f"{_WF}._clone_repo", return_value="acme/tools"),
         patch(RULES) as rules,
     ):
-        yield {"read_json": read_json, "closing": closing, "rules": rules}
+        yield {
+            "number": number,
+            "read_json": read_json,
+            "read_issue": read_issue,
+            "closing": closing,
+            "rules": rules,
+        }
+
+
+def _body(text: str) -> trust.IssueContent:
+    return trust.IssueContent(
+        body=text,
+        body_role=trust.Role.AGENTS,
+        author_role=trust.Role.AGENTS,
+        comments=(),
+        skipped=(),
+    )
 
 
 def _pr_is(github_pr: dict[str, MagicMock], head: str, body: str = _BATCH_BODY) -> None:
-    github_pr["read_json"].return_value = {
-        "body": body,
-        "baseRefName": "develop",
-        "headRefOid": head,
-    }
+    github_pr["read_json"].return_value = {"baseRefName": "develop", "headRefOid": head}
+    github_pr["read_issue"].return_value = _body(body)
 
 
 def test_batch_check_passes_a_batch_pr_at_its_head(
@@ -784,8 +833,9 @@ def test_batch_check_passes_a_batch_pr_at_its_head(
     assert _run("batch-check", "--pr", _PR) == 0
     assert f"Batch check passed for PR {_PR} at {head}" in capsys.readouterr().out
     github_pr["read_json"].assert_called_once_with(
-        "pr", "view", _PR, "--json", "body,baseRefName,headRefOid"
+        "pr", "view", _PR, "--json", "baseRefName,headRefOid"
     )
+    github_pr["read_issue"].assert_called_once_with("acme/tools", 50, require_body=True)
     github_pr["rules"].assert_not_called()
     # The head was fetched by its SHA: the PR branch's tracking ref never moved.
     branch_ref = subprocess.run(
@@ -907,7 +957,7 @@ def test_batch_check_refuses_a_failed_pr_read(
 
 @pytest.mark.parametrize(
     "response",
-    [{}, {"body": "x", "baseRefName": "develop"}, {"body": "x", "headRefOid": "a" * 40}, []],
+    [{}, {"baseRefName": "develop"}, {"headRefOid": "a" * 40}, {"baseRefName": ""}, []],
 )
 def test_batch_check_refuses_a_malformed_pr_read(
     github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], response: object
@@ -915,6 +965,63 @@ def test_batch_check_refuses_a_malformed_pr_read(
     github_pr["read_json"].return_value = response
     assert _run("batch-check", "--pr", _PR) == 1
     assert f"batch-check: cannot read PR {_PR}" in capsys.readouterr().err
+
+
+_MALLORY = trust.Skipped(
+    "acme/tools", 50, "edit", "mallory", "2026-11-20T00:00:00Z", "body", "untrusted"
+)
+
+
+@pytest.mark.parametrize("body", [_BATCH_BODY, "Closes #10\n"])
+def test_batch_check_fails_on_an_untrusted_body(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], body: str
+) -> None:
+    """Batch or not: an untrusted body leaves nothing to check by, so the check fails."""
+    _pr_is(github_pr, "a" * 40, body=body)
+    github_pr["read_issue"].side_effect = trust.UntrustedContentError(
+        _MALLORY, "the pr body is untrusted"
+    )
+    assert _run("batch-check", "--pr", _PR) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err.strip()
+    assert err == (
+        f"error: batch-check: PR {_PR}: its body is untrusted, so its Closes lines cannot be "
+        "checked: acme/tools#50 edit mallory at 2026-11-20T00:00:00Z on body (untrusted). "
+        "The human decides next."
+    )
+    github_pr["closing"].assert_not_called()
+    github_pr["rules"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        trust.TrustReadError("read_issue acme/tools#50", "the GraphQL call failed: HTTP 502"),
+        TrustedAuthorsNotConfiguredError("no trusted authors configured"),
+    ],
+)
+def test_batch_check_refuses_a_body_it_cannot_judge(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], failure: Exception
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_issue"].side_effect = failure
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert f"error: batch-check: cannot read the body of PR {_PR}: {failure}" in err
+    assert len(err.strip().splitlines()) == 1
+    github_pr["closing"].assert_not_called()
+
+
+def test_batch_check_never_reads_a_missing_body_as_empty(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_issue"].return_value = trust.IssueContent(
+        body=None, body_role=None, author_role=None, comments=(), skipped=()
+    )
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert f"cannot read the body of PR {_PR}: no trusted body" in capsys.readouterr().err
 
 
 def test_batch_check_refuses_a_failed_closing_refs_read(
@@ -926,7 +1033,7 @@ def test_batch_check_refuses_a_failed_closing_refs_read(
     assert "cannot read the closing issue references" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("read", ["read_json", "closing"])
+@pytest.mark.parametrize("read", ["number", "read_json", "read_issue", "closing"])
 def test_batch_check_lets_a_missing_token_reach_the_cli(
     github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str], read: str
 ) -> None:
@@ -969,10 +1076,7 @@ def test_batch_check_refuses_an_option_as_head(
 def test_batch_check_refuses_a_base_it_cannot_fetch(
     origin: Path, github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    github_pr["read_json"].return_value = {
-        "body": _BATCH_BODY,
-        "baseRefName": "no-such-base",
-        "headRefOid": "a" * 40,
-    }
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_json"].return_value = {"baseRefName": "no-such-base", "headRefOid": "a" * 40}
     assert _run("batch-check", "--pr", _PR) == 1
     assert "cannot fetch PR" in capsys.readouterr().err
