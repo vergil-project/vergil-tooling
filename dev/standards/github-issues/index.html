@@ -19616,8 +19616,8 @@ ad-hoc epic ends up holding only its still-open children.</p>
   closed children to the archives; it stays the one perpetual umbrella per repo.</li>
 <li><strong>Only canonical per-repo ad-hoc epics are archived.</strong> Both the batch drain and
   the on-close event path key on the repo named in the <code>Epic (ad hoc): &lt;repo&gt;</code>
-  title, so a closed child always lands in <em>its own repo's</em> quarter archive — even
-  for a public repo whose ad-hoc epic is homed centrally in <code>.github</code>. A
+  title, so a closed child always lands in <em>its own repo's</em> quarter archive, even
+  though every ad-hoc epic is homed centrally in <code>.github</code>. A
   special-purpose <code>ad-hoc</code>-labelled epic whose title bare-name is a description
   rather than a real repo (e.g. a standing reliability collection) is <strong>left
   untouched</strong> — it is not treated as a drainable ad-hoc epic.</li>
@@ -20068,8 +20068,7 @@ worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare <code>vrg-queue</code> never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
 the repo roots: <code>--root DIR</code> (repeatable) names them, and the platform's roots
-are the default. With <code>--repo</code>, a public repo narrows the list to its own
-ad-hoc epic. The <a href="../../reference/cli-tools-overview/#vrg-queue">CLI reference</a>
+are the default. <code>--repo</code> narrows the list to that repo's own ad-hoc epic. The <a href="../../reference/cli-tools-overview/#vrg-queue">CLI reference</a>
 gives the line format, the marks and the dispositions.</p>
 <p><code>vrg-queue hoshin</code> lists the open tasks under the org's
 <a href="#standing-epics">hoshin epic</a>, the <code>Logbook:</code> tasks <code>/vergil:hoshin</code> files,
