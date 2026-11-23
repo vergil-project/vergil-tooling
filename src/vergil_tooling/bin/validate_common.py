@@ -2,8 +2,8 @@
 
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
-  2. markdownlint on docs/site/, README.md and epics/, in one pass against
-     the bundled config, which disables MD013 line-length (issue #4103);
+  2. markdownlint on docs/site/, docs/security/, README.md and epics/, in
+     one pass against the bundled config, which disables MD013 line-length (issue #4103);
      :func:`lint_markdown` lints given files the same way, for
      ``vrg-validate --markdown`` (issue #4589)
   3. docs-links: links to a mike-versioned Vergil docs site carry a version
@@ -217,8 +217,8 @@ def _check_docs_links(repo_root: Path, *, own_site: str | None = None) -> int:
     version number after the site name. A bare site root is allowed. A link to
     a site that is neither a versioned site nor the unversioned ``docs`` or
     ``packages`` site returns 404 whatever its path, so it is refused too. The
-    scope is markdownlint's (``docs/site/**/*.md``, ``README.md``,
-    ``epics/**/*.md``) less ``epics/archive/``, and independent of
+    scope is markdownlint's (``docs/site/**/*.md``, ``docs/security/**/*.md``,
+    ``README.md``, ``epics/**/*.md``) less ``epics/archive/``, and independent of
     ``[markdownlint].ignore``: a file left out of the lint still publishes its
     links. The sites are the fixed lists in :mod:`vergil_tooling.lib.doc_links`
     plus *own_site*, the repository's own site (:func:`_own_docs_site`), so no
@@ -233,7 +233,8 @@ def _check_docs_links(repo_root: Path, *, own_site: str | None = None) -> int:
     if not markdown_files:
         return 0
     print(
-        f"Running: docs-links ({len(markdown_files)} files in docs/site/, README.md, "
+        f"Running: docs-links ({len(markdown_files)} files in docs/site/, docs/security/, "
+        "README.md, "
         "epics/ less epics/archive/)"
     )
     failed = False
@@ -445,7 +446,7 @@ def _find_repo_sh_files(repo_root: Path) -> list[str]:
     return found
 
 
-_MARKDOWN_SCOPE = "docs/site/, README.md, epics/"
+_MARKDOWN_SCOPE = "docs/site/, docs/security/, README.md, epics/"
 
 
 def _run_markdownlint(markdown_files: Sequence[str], *, fix: bool = False) -> int:
@@ -506,16 +507,22 @@ def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
 
 def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
     """Discover the markdown markdownlint checks: ``docs/site/**/*.md``,
-    ``README.md`` and ``epics/**/*.md``.
+    ``docs/security/**/*.md``, ``README.md`` and ``epics/**/*.md``.
 
     All of it is linted in one pass against the bundled config (issue #4103).
-    The ``[markdownlint].ignore`` paths drop files under ``docs/site/`` and
-    ``epics/``; ``README.md`` is always linted.
+    ``docs/security/`` holds published security records such as the
+    Scorecard snapshots (issue #5012); the rest of ``docs/`` stays out. The
+    ``[markdownlint].ignore`` paths drop files under ``docs/site/``,
+    ``docs/security/`` and ``epics/``; ``README.md`` is always linted.
     """
     found: list[str] = []
     ignore_paths = [repo_root / p for p in (ignore or [])]
 
-    for tree in (repo_root / "docs" / "site", repo_root / "epics"):
+    for tree in (
+        repo_root / "docs" / "site",
+        repo_root / "docs" / "security",
+        repo_root / "epics",
+    ):
         if tree.is_dir():
             for path in tree.rglob("*.md"):
                 if any(path.is_relative_to(ip) for ip in ignore_paths):
