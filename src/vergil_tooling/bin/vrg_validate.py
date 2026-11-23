@@ -493,33 +493,19 @@ def _check_custom_validator(path: Path) -> None:
 _CONAN_AUDIT_TOKEN_ENV = "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER"  # noqa: S105
 
 
-def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
-    """Drop ``conan audit scan`` when no ConanCenter provider token is set.
+def _missing_conan_audit_token(cmd: list[str]) -> bool:
+    """Whether *cmd* is ``conan audit scan`` with no ConanCenter provider token set.
 
     ``conan audit scan`` authenticates against ConanCenter's advisory API and
-    hard-fails (``Missing authentication token``) without a provider token — an
-    empty token does not degrade it. ``ci-audit.yml`` passes the token from a
-    repo/org secret and documents that *vrg-validate* skips this gate with a
-    notice when the secret is unset, so a cpp repo without the token is not
-    wedged; this is where that promised skip actually lives. The rest of the
-    audit stage (e.g. ``conan graph info``) still runs, and a real token
-    restores the scan. Detection is by command shape, so only the cpp conan
-    audit is affected.
+    hard-fails (``Missing authentication token``) without a provider token; an
+    empty token does not degrade it. A missing token fails the scan loudly
+    (#4999), never skips it: a skipped CVE gate would pass silently. Detection
+    is by command shape, so only the cpp conan audit is affected.
     """
-    if os.environ.get(_CONAN_AUDIT_TOKEN_ENV, "").strip():
-        return cmds
-    kept: list[list[str]] = []
-    for cmd in cmds:
-        if cmd[:3] == ["conan", "audit", "scan"]:
-            print(
-                f"NOTICE: skipping `conan audit scan` — {_CONAN_AUDIT_TOKEN_ENV} "
-                "is unset, so there is no credential for ConanCenter's advisory "
-                "API. Set the secret to enable CVE scanning.",
-                file=sys.stderr,
-            )
-            continue
-        kept.append(cmd)
-    return kept
+    return (
+        cmd[:3] == ["conan", "audit", "scan"]
+        and not os.environ.get(_CONAN_AUDIT_TOKEN_ENV, "").strip()
+    )
 
 
 # Cargo's library target kinds: any of them makes ``cargo test --doc`` select a
@@ -648,8 +634,19 @@ def _run_audit_command(cmd: list[str]) -> int:
 
     ``pip-audit`` alone talks to a remote feed per package, so only it gets
     :func:`~vergil_tooling.lib.audit_retry.run_pip_audit`'s bounded retry on
-    a network or timeout error; every other command runs once.
+    a network or timeout error; every other command runs once. A
+    ``conan audit scan`` with no ConanCenter token is not run: it fails with
+    an error naming the token (#4999), and the rest of the stage still runs.
     """
+    if _missing_conan_audit_token(cmd):
+        print(
+            f"ERROR: `conan audit scan` needs {_CONAN_AUDIT_TOKEN_ENV}, which is unset, "
+            "so the C/C++ dependency audit cannot run. Set it as the CI secret, or "
+            "locally with conan_audit_token_path in ~/.config/vergil/identities.toml "
+            "(see the C++ overview's ConanCenter Audit Token section).",
+            file=sys.stderr,
+        )
+        return 1
     if cmd and cmd[0] == "pip-audit":
         return audit_retry.run_pip_audit(cmd)
     return progress.run(cmd, check=False)
@@ -1314,10 +1311,6 @@ def _build_stages(
                 ),
             )
             for kind in kinds
-        ]
-        kind_cmds = [
-            (kind, _skip_conan_audit_scan(cmds) if kind is CheckKind.AUDIT else cmds)
-            for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
         missing, sources = _bootstrap_state(language, repo_root)

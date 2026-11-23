@@ -43,7 +43,6 @@ from vergil_tooling.bin.vrg_validate import (
     _rust_toolchain_fingerprint,
     _semgrep_rulesets,
     _semgrep_stage,
-    _skip_conan_audit_scan,
     _skip_rust_doctests_without_lib,
     _sources_without_manifest_stage,
     _stage_trivy_target,
@@ -872,46 +871,63 @@ def test_venv_bin_not_prepended_when_already_on_path(
     assert count == 1
 
 
-# -- _skip_conan_audit_scan (issue #2895) -------------------------------------
+# -- conan audit scan without a token fails, never skips (issues #2895, #4999) --
 
-_AUDIT_CMDS = [
-    ["conan", "audit", "scan", "."],
-    ["conan", "graph", "info", ".", "--format=json"],
-]
+_CONAN_SCAN = ["conan", "audit", "scan", "."]
+_CONAN_GRAPH = ["conan", "graph", "info", ".", "--format=json"]
 
 
-def test_skip_conan_audit_scan_kept_when_token_present() -> None:
-    with patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "tok"}):
-        assert _skip_conan_audit_scan(_AUDIT_CMDS) == _AUDIT_CMDS
+def _without_conan_token() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
 
 
-def test_skip_conan_audit_scan_dropped_when_token_unset(
-    capsys: pytest.CaptureFixture[str],
+def test_conan_audit_scan_runs_when_the_token_is_set() -> None:
+    with (
+        patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "tok"}),
+        patch(_MOD + ".progress.run", return_value=0) as m_run,
+    ):
+        assert _run_audit_command(_CONAN_SCAN) == 0
+    m_run.assert_called_once_with(_CONAN_SCAN, check=False)
+
+
+@pytest.mark.parametrize("token", [None, "   "])
+def test_conan_audit_scan_fails_without_a_token(
+    capsys: pytest.CaptureFixture[str], token: str | None
 ) -> None:
-    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
-    with patch.dict(os.environ, env, clear=True):
-        result = _skip_conan_audit_scan(_AUDIT_CMDS)
-    assert result == [["conan", "graph", "info", ".", "--format=json"]]
-    assert "skipping `conan audit scan`" in capsys.readouterr().err
+    # A blank token is no token: the scan is not run, and fails loudly.
+    env = _without_conan_token() if token is None else {_CONAN_AUDIT_TOKEN_ENV: token}
+    with (
+        patch.dict(os.environ, env, clear=token is None),
+        patch(_MOD + ".progress.run") as m_run,
+    ):
+        assert _run_audit_command(_CONAN_SCAN) == 1
+    m_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert f"ERROR: `conan audit scan` needs {_CONAN_AUDIT_TOKEN_ENV}, which is unset" in err
+    assert "skipping" not in err
 
 
-def test_skip_conan_audit_scan_empty_token_treated_as_unset() -> None:
-    with patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "   "}):
-        result = _skip_conan_audit_scan(_AUDIT_CMDS)
-    assert result == [["conan", "graph", "info", ".", "--format=json"]]
+def test_other_conan_commands_run_without_a_token() -> None:
+    with (
+        patch.dict(os.environ, _without_conan_token(), clear=True),
+        patch(_MOD + ".progress.run", return_value=0) as m_run,
+    ):
+        assert _run_audit_command(_CONAN_GRAPH) == 0
+    m_run.assert_called_once_with(_CONAN_GRAPH, check=False)
 
 
-def test_skip_conan_audit_scan_noop_when_no_scan_command() -> None:
-    cmds = [["conan", "graph", "info", ".", "--format=json"]]
-    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
-    with patch.dict(os.environ, env, clear=True):
-        assert _skip_conan_audit_scan(cmds) == cmds
-
-
-def test_skip_conan_audit_scan_can_empty_the_list() -> None:
-    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
-    with patch.dict(os.environ, env, clear=True):
-        assert _skip_conan_audit_scan([["conan", "audit", "scan", "."]]) == []
+def test_audit_stage_without_a_token_fails_and_runs_the_rest() -> None:
+    # fail_defer: the failed scan fails the stage, and the graph info still runs.
+    stage = _command_stage(
+        "audit", [_CONAN_SCAN, _CONAN_GRAPH], mode="fail_defer", run_cmd=_run_audit_command
+    )
+    with (
+        patch.dict(os.environ, _without_conan_token(), clear=True),
+        patch(_MOD + ".progress.run", return_value=0) as m_run,
+        pytest.raises(ValidationError, match="1 of 2 audit command"),
+    ):
+        stage.fn(None)
+    m_run.assert_called_once_with(_CONAN_GRAPH, check=False)
 
 
 # -- _skip_rust_doctests_without_lib (issue #4378) ------------------------------
@@ -1411,9 +1427,11 @@ def test_rust_test_stage_failed_clean_skips_the_coverage_run(
     assert "error: `cargo llvm-cov clean` exited 2" in capsys.readouterr().out
 
 
-def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
-    # cpp audit degrades to just the scan in this mock; with no token the scan
-    # is dropped, the audit command list empties, and the stage is omitted.
+def test_build_stages_fails_the_audit_when_the_scan_has_no_token(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A missing token never drops the scan or the stage (#4999): the audit
+    # stage is kept, and running it fails on the scan without running conan.
     env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
     with (
         patch.dict(os.environ, env, clear=True),
@@ -1424,7 +1442,14 @@ def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
             [["conan", "audit", "scan", "."]] if kind is CheckKind.AUDIT else [["echo", kind.value]]
         )
         stages = _build_stages(None, "cpp", Path("/tmp/r"))  # noqa: S108
-    assert "audit" not in [s.name for s in stages]
+        [audit] = [s for s in stages if s.name == "audit"]
+        with (
+            patch(_MOD + ".progress.run") as m_run,
+            pytest.raises(ValidationError, match="1 of 1 audit command"),
+        ):
+            audit.fn(None)
+    m_run.assert_not_called()
+    assert f"ERROR: `conan audit scan` needs {_CONAN_AUDIT_TOKEN_ENV}" in capsys.readouterr().err
 
 
 def test_build_stages_keeps_audit_when_token_present() -> None:
