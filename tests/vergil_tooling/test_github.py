@@ -3521,41 +3521,13 @@ class TestGetInstallationToken:
         assert token == "new_token"  # noqa: S105
 
 
-# -- pr_for_branch / is_draft / head_ref (issue #1423) ------------------------
+# -- is_draft / head_ref (issue #1423) ----------------------------------------
 
 
-def test_pr_for_branch_returns_first_open_pr() -> None:
-    payload = [
-        {
-            "number": 1423,
-            "url": "https://github.com/o/r/pull/1423",
-            "title": "T",
-            "headRefOid": "abc123",
-        }
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
-        result = github.pr_for_branch("feature/1423-pr-interface")
-    assert result == {
-        "number": "1423",
-        "url": "https://github.com/o/r/pull/1423",
-        "title": "T",
-        "headRefOid": "abc123",
-    }
-    rj.assert_called_once_with(
-        "pr",
-        "list",
-        "--head",
-        "feature/1423-pr-interface",
-        "--state",
-        "open",
-        "--json",
-        "number,url,title,headRefOid",
-    )
-
-
-def test_pr_for_branch_none_when_no_open_pr() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.pr_for_branch("feature/1423-pr-interface") is None
+def test_github_has_no_login_free_branch_lookup() -> None:
+    """A PR is found by its branch only through the trust layer (GHSA-r4j2-cwcp-xg56)."""
+    for name in ("pr_for_branch", "closed_pr_for_branch", "_first_pr_for_branch"):
+        assert not hasattr(github, name)
 
 
 def test_is_draft_true() -> None:
@@ -3586,31 +3558,6 @@ def test_merge_commit_sha_reads_merge_commit_oid() -> None:
     assert "mergeCommit" in args
     # The jq default keeps an unmerged PR from yielding "null".
     assert any("mergeCommit.oid" in a for a in args)
-
-
-_GOOD_PR = {"number": 1, "url": "https://github.com/o/r/pull/1", "title": "T", "headRefOid": "a"}
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        None,
-        {"number": 1},
-        ["nope"],
-        [{**_GOOD_PR, "number": None}],
-        [{**_GOOD_PR, "number": True}],
-        [{**_GOOD_PR, "url": ""}],
-        [{**_GOOD_PR, "title": None}],
-        [{**_GOOD_PR, "headRefOid": ""}],
-    ],
-)
-def test_pr_for_branch_rejects_a_malformed_response(payload: object) -> None:
-    # Never "no PR" or blank fields for a response that is not a PR list (#4058).
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=payload),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.pr_for_branch("feature/1423-pr-interface")
 
 
 # -- pr_closing_references / close_issue (issue #4002) -------------------------
@@ -3716,51 +3663,6 @@ def test_close_issue_closes_as_completed_with_comment() -> None:
         "--comment",
         "Completed by PR o/r#123.",
     )
-
-
-# -- closed_pr_for_branch (issue #1445) ----------------------------------------
-
-
-def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
-    payload = [
-        {
-            "number": 1445,
-            "url": "https://github.com/o/r/pull/1445",
-            "title": "T",
-            "headRefOid": "deadbeef",
-        }
-    ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
-        result = github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
-    assert result == {
-        "number": "1445",
-        "url": "https://github.com/o/r/pull/1445",
-        "title": "T",
-        "headRefOid": "deadbeef",
-    }
-    rj.assert_called_once_with(
-        "pr",
-        "list",
-        "--head",
-        "feature/1445-finalize-cleanup-race",
-        "--state",
-        "closed",
-        "--json",
-        "number,url,title,headRefOid",
-    )
-
-
-def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
-        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
-
-
-def test_closed_pr_for_branch_rejects_a_payload_not_dict() -> None:
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=["nope"]),
-        pytest.raises(github.GitHubAPIError, match="unexpected response shape"),
-    ):
-        github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
 
 
 # -- repo_exists (issues #2709, #4907) ---------------------------------------

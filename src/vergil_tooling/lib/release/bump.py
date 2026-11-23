@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, pr_create, version
+from vergil_tooling.lib.release.branch_pr import branch_prs
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
 
@@ -37,9 +38,11 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     """
     branch = f"release/post-{ctx.version}"
 
-    existing = github.pr_for_branch(branch)
-    if existing is not None:
-        ctx.bump_pr_url = str(existing["url"])
+    # Only a same-repo PR with a trusted author is adopted (GHSA-r4j2-cwcp-xg56):
+    # a fork PR on the post branch's name is skipped and reported.
+    prs = branch_prs(ctx.repo, branch, phase=_PHASE)
+    if prs.open_pr is not None:
+        ctx.bump_pr_url = prs.open_pr.url
         if known_pr_state(ctx.bump_pr_url) == "MERGED":
             print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
         else:
@@ -50,18 +53,18 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
         return
 
     # Resume-safe against an already-merged back-merge PR (#3328), the bump
-    # counterpart of prepare's #2998. `pr_for_branch` returns open PRs only, so
-    # a failure after the back-merge merged (e.g. a confirm-develop failure)
-    # leaves the merged PR invisible to the check above, and `checkout -b`
+    # counterpart of prepare's #2998. A failure after the back-merge merged
+    # (e.g. a confirm-develop failure) leaves no open PR, and `checkout -b`
     # below fails on the existing branch. Adopt it instead. A merged PR's head
     # branch may already be deleted, so the bumped version is read from the
-    # PR's own pull ref, which GitHub keeps.
-    merged = github.closed_pr_for_branch(branch)
-    if merged is not None and known_pr_state(str(merged["url"])) == "MERGED":
-        ctx.bump_pr_url = str(merged["url"])
+    # PR's own pull ref, which GitHub keeps. A closed, unmerged PR is not
+    # adopted.
+    merged = prs.latest_closed
+    if merged is not None and merged.state == "MERGED":
+        ctx.bump_pr_url = merged.url
         print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
         ctx.bump_merge_sha = _merge_commit(ctx.bump_pr_url)
-        ctx.next_version = _merged_pr_version(ctx, str(merged["number"]))
+        ctx.next_version = _merged_pr_version(ctx, str(merged.number))
         return
 
     print("Fetching main...")
