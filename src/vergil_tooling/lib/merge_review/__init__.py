@@ -14,7 +14,9 @@ for every schema and rule here. The modules:
   its changed files (``vrg-change-class``);
 - :mod:`.state` checks the private directory every file of a run lives in;
 - :mod:`.request` holds the request builder's rules and builds the request
-  (``vrg-merge-review-request``).
+  (``vrg-merge-review-request``);
+- :mod:`.record` renders, parses and reads the closing comment's record
+  line (``vrg-merge-review-close``, epic vergil-project/.github#1384).
 """
 
 from __future__ import annotations

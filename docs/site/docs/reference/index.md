@@ -40,6 +40,7 @@ the dev-tree override venv.
 | [vrg-scope-change](dev/scope-change.md) | Post a scope change on a task issue, as the human (human-only) |
 | [vrg-merge-review-request](cli-tools-overview.md#vrg-merge-review-request) | Build a merge-review request from a clean, fully validated branch |
 | [vrg-merge-review-check](cli-tools-overview.md#vrg-merge-review-check) | Check a stored merge-review result against the request it answers |
+| [vrg-merge-review-close](cli-tools-overview.md#vrg-merge-review-close) | Post merge review's closing comment with its record line: the head, the change fingerprint and the outcome |
 | [vrg-change-class](cli-tools-overview.md#vrg-change-class) | Print a branch's merge-review change class: `docs-only` or `code` |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |

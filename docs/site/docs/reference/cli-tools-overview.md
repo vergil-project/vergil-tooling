@@ -1595,6 +1595,36 @@ record, and writes nothing.
 | Exit codes | 0 the result passed, 1 it failed or a file could not be read, 2 bad arguments |
 | Status | Active |
 
+### vrg-merge-review-close
+
+Posts merge review's closing comment on the task issue, as the agent, with
+its machine-readable record line (epic vergil-project/.github#1384):
+`Merge review record: head=<sha> fingerprint=<hex> outcome=<outcome>`.
+`--body-file` holds the closing comment as the merge-review skill writes
+it: the eligibility line for `--outcome` first, then, on a fix to an open
+PR, the `Branch as reviewed:` line, then the closing state of every item.
+Every line is kept, and the record line goes right below the eligibility
+line (or the branch line). The command computes the head and the
+[change fingerprint](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py)
+itself; it takes neither as an argument. For an issue of a batch before
+handoff (it has a batch marker), the change is that issue's own, from the
+previous issue's commit to `HEAD`, which must hold only the issue's first
+commit and its `fixup!` commits; folded, its fingerprint is the issue's
+commit's. Otherwise, a fix to an open PR included, it is the change since
+the merge base with `origin/develop`. Submit, the watch and the audit read
+the records back from the trust layer's comment stream, agent role only,
+skipping an edited comment. A re-run that finds the same comment already
+posted by the agent prints its ID and posts nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_merge_review_close` (library: `lib/merge_review/record.py`) |
+| Args | `--issue 'OWNER/REPO#N' --outcome OUTCOME --body-file FILE` |
+| Preconditions | The `user` identity mode, as `<human>-vergil-user`; a clean worktree whose clone's `origin` is the issue's repository; `--outcome` `eligible` or `not-eligible (<reason>)` (stopped, waiting, fatal and error are refused); a body whose first line is the eligibility line for that outcome and which has no record line of its own |
+| Failure mode | `vrg-merge-review-close: <reason>` on stderr and exit 1, posting nothing. A failed post is never retried: the issue is re-read, and the tool reports the landed comment, says it did not land, or says it cannot tell |
+| Exit codes | 0 posted or already posted (the comment ID on stdout), 1 refused or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-change-class
 
 The merge-review change classifier (epic vergil-project/.github#881): it

@@ -76,10 +76,18 @@ def _comment_id(raw: str, where: str) -> int:
     return int(raw)
 
 
-def read_stream(repo: str, issue: int, authors: TrustedAuthors | None = None) -> Stream:
+def read_stream(
+    repo: str,
+    issue: int,
+    authors: TrustedAuthors | None = None,
+    *,
+    roles: frozenset[trust.Role] = STREAM_ROLES,
+) -> Stream:
     """Every comment on ``repo#issue`` the layer trusts, oldest first, and every comment ID.
 
-    *authors* defaults to the loaded configuration. Each untrusted comment
+    *authors* defaults to the loaded configuration. *roles* narrows the
+    stream to the roles a reader accepts (the merge-review records take the
+    agents' only); it defaults to :data:`STREAM_ROLES`. Each untrusted comment
     is reported on stderr, metadata only, and its ID is still in
     ``all_ids``, so a request that exists but is untrusted is told apart
     from one that is gone. Raises
@@ -88,7 +96,7 @@ def read_stream(repo: str, issue: int, authors: TrustedAuthors | None = None) ->
     not a positive integer.
     """
     where = f"{repo}#{issue}"
-    read = trust.read_comment_stream(repo, issue, roles=STREAM_ROLES, authors=authors)
+    read = trust.read_comment_stream(repo, issue, roles=roles, authors=authors)
     trust.report_skipped(read.skipped, stream=sys.stderr)
     return Stream(
         comments=[

@@ -106,6 +106,24 @@ risk. The eligibility line is the only thing from merge review that goes
 into `report-ready`'s notes, and merge review never hands off with an item
 still open.
 
+`vrg-merge-review-close` posts the closing comment and adds its **record
+line**, right below the eligibility line (below the `Branch as reviewed:`
+line on a fix to an open PR):
+
+```text
+Merge review record: head=<sha> fingerprint=<hex> outcome=<eligible | not-eligible (<reason>)>
+```
+
+It names the head the run judged, the
+[change fingerprint](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py)
+of the change it covers and the outcome, all computed by the command, so a
+clean rebase keeps the record while any change to the branch's own lines
+needs a new review. For one issue of a batch before handoff the change is
+that issue's own, from the previous issue's commit; otherwise it is the
+branch's change since its merge base with `origin/develop`. The record is
+machine-readable: it counts only when the agent login posted it, unedited,
+and a run that stopped, is waiting, or ended fatal or in error has none.
+
 ## The protocol
 
 The request and the result follow the
@@ -133,6 +151,7 @@ schemas and the result check. In short:
 | [`vrg-validate`](../reference/cli-tools-overview.md#vrg-validate) | Every pipeline run writes its record, `.vergil/vrg-validate-last.json`, which the request builder reads. |
 | [`vrg-merge-review-request`](../reference/cli-tools-overview.md#vrg-merge-review-request) | Builds a review or check request and its diffs in the task's private directory; with `--ensure-dir`, only checks and prints that directory. |
 | [`vrg-merge-review-check`](../reference/cli-tools-overview.md#vrg-merge-review-check) | Checks a stored result against its request and prints a summary of counts, security count and fix statuses. |
+| [`vrg-merge-review-close`](../reference/cli-tools-overview.md#vrg-merge-review-close) | Posts the closing comment, adding the record line with the head and change fingerprint it computes from the worktree. |
 | [`vrg-change-class`](../reference/cli-tools-overview.md#vrg-change-class) | Prints a branch's change class, `docs-only` or `code`, for humans and debugging. |
 | [`vrg-ruling`](../reference/dev/ruling.md), [`vrg-ruling-reply`](../reference/dev/ruling-reply.md) | Carry every stop for the human (see [Human Replies](human-replies.md)). |
 
