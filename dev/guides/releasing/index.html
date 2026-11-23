@@ -19482,8 +19482,11 @@ run when it fails. A <em>deferred</em> stage records its failure and lets the
 later stages run, except those <a href="#the-hold-rule">the hold rule</a> holds
 back; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
-issue and ticks its box in the issue's stage checklist. A stage that
-succeeds also records itself done in the issue's state block, with the
+issue and ticks its box in the issue's stage checklist. The checklist
+lists every stage but <code>publish-status</code>, which runs after
+<code>close-tracking</code> has made the last write to the issue and reports only
+to the terminal, so a finished release's checklist has every box
+ticked. A stage that succeeds also records itself done in the issue's state block, with the
 facts later stages need; a <a href="#resuming-a-release">resume</a> runs only the
 stages not recorded done.</p>
 <table>
@@ -20163,7 +20166,8 @@ one that is behind when the release runs it. The pipeline:</p>
    already exists, its PR decides what happens; see
    <a href="../../reference/dev/update-deps/#an-existing-update-branch">An existing update branch</a>.
    On <code>--resume</code>, if the update for this version already merged, the
-   stage succeeds and its tracking-issue comment links the merged PR.</li>
+   stage deletes the branch it left, on origin and locally, then
+   succeeds, and its tracking-issue comment links the merged PR.</li>
 <li>Run each applicable updater, committing each one's changes
    separately. The built-in updaters and the per-repo hook are described
    in the <a href="../../reference/dependency-update-config/">dependency-update reference</a>.</li>
@@ -20171,8 +20175,13 @@ one that is behind when the release runs it. The pipeline:</p>
    The tracking-issue comment says "No dependency changes; no PR opened."</li>
 <li>Otherwise run <code>vrg-container-run -- vrg-validate</code> once, push the
    branch, and open a PR to <code>develop</code> labelled <code>dependency-update</code>.</li>
-<li>If validation passed, wait for the PR's checks, merge it, and
-   delete its branch on origin.</li>
+<li>If validation passed, wait for the PR's checks and merge it. Once
+   the PR is confirmed merged, remove the worktree and delete the
+   <code>deps/update-&lt;version&gt;</code> branch on origin and locally. If the PR did
+   not merge, the branch stays on origin, as the open PR's head, for a
+   resume. A failed deletion fails the stage, with the branch to delete
+   by hand: it is not recorded done, and <code>vrg-release --resume</code>, finding
+   the PR merged, tries the deletion again.</li>
 </ol>
 <p>The stage's comment on the tracking issue always carries a
 <strong>Held back by declared bounds</strong> table: the dependencies whose newest
@@ -20511,7 +20520,7 @@ contents lookup.</p>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>- Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
 <a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>- Closed by: #4840 (merge commit 1a2b3c4)
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>- Install: ran (`[publish].install`)
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>- Install: ran — installed v2.1.340 (commit fab2581)
 </code></pre></div>
 <ul>
 <li>The date is the day the GitHub Release was published, and each closing
@@ -20519,6 +20528,12 @@ contents lookup.</p>
 <li>The install line reads <code>ran</code> when the repo configures
   <code>[publish].install</code> and <code>none configured</code> when it does not; a record
   in a repo with no install attests the release and its publish only.
+  When the install's output reports what it installed, in a line
+  holding <code>installed vX.Y.Z (commit &lt;sha&gt;)</code> as <code>vrg-tooling-install</code>
+  prints, the <code>install</code> stage records that release and commit in the
+  state block (<code>install_version</code> and <code>install_commit</code>), and the line
+  names them: <code>ran — installed v2.1.340 (commit fab2581)</code>. An install
+  that reports neither keeps the plain <code>ran (</code>[publish].install<code>)</code>.
   The stage refuses while the state block does not record <code>install</code>
   done.</li>
 <li>Every issue in the list gets its record, whatever its state: closed as
