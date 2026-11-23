@@ -15,6 +15,18 @@ The proxy checks (epic vergil-project/.github#1417): :func:`epic_children` lists
 an epic's children with every proxy's beside them, :func:`proxy_link_problems`
 checks one epic's ``Primary:``/``Proxy:`` pair, and :func:`proxy_link_drift`
 checks every open proxy of a home.
+
+**Trusted content** (epic vergil-project/.github#1467, spec §5.2 and §5.3).
+The sweep acts only on trusted content: a merged PR's linkage lines count
+only from a body the trust layer trusts (:func:`task_drift`), a body-only
+``Parent:`` line only from a trusted body (:func:`body_only_parents`), a
+child's close only when its actor is trusted (:func:`epic_drift`), a child's
+reopen likewise (:func:`closed_epic_open_child`), and a proxy's ``Primary:``
+line and its primary's close the same way (:func:`proxy_closures`). Untrusted
+content a pass merely skips is reported on stderr, metadata only; an
+untrusted close or reopen a pass would act on, or a read the layer cannot
+complete, stops that item alone: it is added to the run's
+:class:`~vergil_tooling.lib.trust.BatchStops`, and the run carries on.
 """
 
 from __future__ import annotations
@@ -24,7 +36,7 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import (
     epic_docs,
@@ -32,6 +44,7 @@ from vergil_tooling.lib import (
     epics,
     github,
     linkage,
+    pending_release,
     proxies,
     release,
     roadmap,
@@ -40,6 +53,9 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.labels import RETIRED_LABELS
 from vergil_tooling.lib.trusted_authors import load_trusted_authors, trusted_comment_lines
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
 # with the tuple of its still-open children.
@@ -114,14 +130,18 @@ def _refs_to_check(body: str) -> list[str]:
     return [ref for keyword, ref in refs if keyword == "Closes"]
 
 
-def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
-    """The drift record for *ref*, linked by merged PR *entry*, or None if it is not drift."""
+def _task_of(ref: str, pr_repo: str) -> tuple[str, int]:
+    """The ``(owner/repo, number)`` of linkage *ref* in a body of a PR in *pr_repo*."""
     # ``ref`` is ``"#N"`` (same-repo) or ``"owner/repo#N"`` (cross-repo).
     # Resolve the repo the task actually lives in — honor a cross-repo ref
     # instead of assuming the PR's own repo (issue #2111).
     repo_part, _, num = ref.rpartition("#")
-    task = int(num)
-    task_repo = repo_part or pr_repo
+    return repo_part or pr_repo, int(num)
+
+
+def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
+    """The drift record for *ref*, linked by merged PR *entry*, or None if it is not drift."""
+    task_repo, task = _task_of(ref, pr_repo)
     try:
         issue: Any = github.read_json(
             "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
@@ -172,12 +192,28 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
     )
 
 
-def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskDrift]:
+def task_drift(
+    since: str,
+    *,
+    org: str,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    today: date | None = None,
+) -> list[TaskDrift]:
     """Merged PRs (since *since*) whose linked task is still open.
 
     Every task a PR links is checked, one per ``Closes`` line of a batch PR
     (see :func:`_refs_to_check`). *today* (default: the current UTC date)
     only sets where the week-long search slices end.
+
+    A linkage line counts only from a PR body the trust layer trusts, by the
+    closing-reference roles (:data:`pending_release.CLOSING_ROLES`): its author
+    and every editor, so an outsider's edit made after the merge makes it
+    untrusted too. The search's copy of the body only picks the candidates;
+    each PR with an open task is read again through the layer, and only the
+    tasks its trusted body links are drift. An untrusted body is reported on
+    stderr, metadata only, and yields no drift; a body the layer cannot read
+    in full is a stop on that PR alone, added to *stops*.
     """
     if today is None:
         today = datetime.now(UTC).date()
@@ -186,22 +222,113 @@ def task_drift(since: str, *, org: str, today: date | None = None) -> list[TaskD
         pr_repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
         if not pr_repo:
             continue
-        for ref in _refs_to_check(str(entry.get("body") or "")):
-            found = _open_task_drift(entry, pr_repo, ref)
-            if found is not None:
-                drift.append(found)
+        found = [
+            record
+            for ref in _refs_to_check(str(entry.get("body") or ""))
+            if (record := _open_task_drift(entry, pr_repo, ref)) is not None
+        ]
+        if found:
+            drift += _trusted_task_drift(found, pr_repo, stops=stops, authors=authors)
     return drift
 
 
-def epic_drift(org: str | None = None) -> list[roadmap.EpicSummary]:
+def _trusted_task_drift(
+    found: list[TaskDrift], pr_repo: str, *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[TaskDrift]:
+    """The records of *found*, one PR's, whose task the PR's trusted body links."""
+    number = found[0].pr_number
+    try:
+        content = trust.read_issue(
+            pr_repo, number, roles=pending_release.CLOSING_ROLES, authors=authors
+        )
+    except trust.TrustReadError as exc:
+        _read_failure(stops, pr_repo, number, "pr", exc)
+        return []
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == _BODY_FIELD], stream=sys.stderr
+    )
+    if content.body is None:
+        return []
+    linked = {
+        (repo.lower(), task)
+        for repo, task in (_task_of(ref, pr_repo) for ref in _refs_to_check(content.body))
+    }
+    return [record for record in found if (record.repo.lower(), record.task) in linked]
+
+
+#: The field of a stop or skip on an issue's or PR's body.
+_BODY_FIELD = "body"
+
+
+def _read_failure(  # noqa: PLR0913 - the Skipped record's fields
+    stops: trust.BatchStops,
+    repo: str,
+    number: int,
+    kind: str,
+    exc: trust.TrustReadError,
+    field: str = _BODY_FIELD,
+) -> None:
+    """Add a read failure on *repo*#*number*'s *field* to *stops*, *exc* as its detail."""
+    item = trust.Skipped(repo, number, kind, None, "", field, trust.READ_FAILURE)
+    stops.add(item, trust.READ_FAILURE, detail=str(exc))
+
+
+def _stop(stops: trust.BatchStops, exc: trust.UntrustedContentError) -> None:
+    """Add the untrusted item *exc* stopped on to *stops*, with its own cause."""
+    stops.add(exc.item, exc.item.cause)
+
+
+def _slug(ref: epics.IssueRef) -> str:
+    return f"{ref.owner}/{ref.repo}"
+
+
+def _closes_trusted(
+    children: list[epics.ChildState], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> bool:
+    """True iff the close of every closed child of an epic was made by a trusted actor.
+
+    A close by an untrusted actor is not a close (spec §5.2): it is a stop on
+    the epic, added to *stops* and naming the child's close, as is a close
+    that cannot be read. A child open again since the roadmap counted it
+    makes the epic no drift, with no stop.
+    """
+    for child in children:
+        if child.state != "CLOSED":
+            return False
+        try:
+            with github.target_org(child.ref.owner):
+                trust.require_trusted_close(_slug(child.ref), child.ref.number, authors=authors)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            return False
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(child.ref), child.ref.number, "event", exc, "close")
+            return False
+    return True
+
+
+def epic_drift(
+    org: str, *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[roadmap.EpicSummary]:
     """Open, non-perpetual epics whose children are all closed (should roll up).
 
     A proxy epic is excluded with the standing epics (``roadmap.gather``): it
     lives as long as its primary, so an all-closed proxy is not drift.
 
+    A child's close counts only when its actor is trusted (spec §5.2): an
+    epic with a child closed by an untrusted actor, or whose close cannot be
+    read, is a stop on that epic alone, added to *stops*, and is not drift.
+
     Scoped to the org's ``.github``, the home of every epic.
     """
-    return [epic for epic in roadmap.gather(org) if epic.total > 0 and epic.closed == epic.total]
+    drift: list[roadmap.EpicSummary] = []
+    for epic in roadmap.gather(org):
+        if epic.total == 0 or epic.closed != epic.total:
+            continue
+        ref = epics.IssueRef(org, ".github", epic.number)
+        if _closes_trusted(epics.child_states(ref), stops=stops, authors=authors):
+            drift.append(epic)
+    return drift
 
 
 @dataclass(frozen=True)
@@ -456,6 +583,8 @@ def stray_dotgithub_issue(org: str) -> list[str]:
 def closed_epic_open_child(
     org: str,
     *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
     home: str | None = None,
     listing: list[epic_docs.EpicRecord] | None = None,
 ) -> list[EpicOpenChildViolation]:
@@ -474,6 +603,12 @@ def closed_epic_open_child(
     *listing* is the home's :func:`list_home_epics`, shared with
     :func:`epic_documents` so the audit lists the epics once; it is read here
     when not given. Only its closed epics are checked.
+
+    A child is open for this check only when it was never reopened or its
+    latest reopen was made by a trusted actor (spec §5.2): a child reopened by
+    an untrusted actor, or one whose events cannot be read, is a stop on its
+    epic alone, added to *stops*, and the epic is not a violation, so it is
+    never reopened on that child's account.
     """
     if home is None:
         home = f"{org}/.github"
@@ -488,9 +623,26 @@ def closed_epic_open_child(
             continue  # standing epics never roll up; closed-with-open-child doesn't apply
         epic = epics.IssueRef(home_owner, home_repo, record["number"])
         open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
-        if open_kids:
+        if open_kids and _opens_trusted(open_kids, stops=stops, authors=authors):
             violations.append((epic, open_kids))
     return violations
+
+
+def _opens_trusted(
+    children: tuple[epics.IssueRef, ...], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> bool:
+    """True iff no child of *children* is open by an untrusted reopen; a stop otherwise."""
+    for child in children:
+        try:
+            with github.target_org(child.owner):
+                trust.require_trusted_reopen(_slug(child), child.number, authors=authors)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            return False
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(child), child.number, "event", exc, "reopen")
+            return False
+    return True
 
 
 def list_home_epics(home: str) -> list[epic_docs.EpicRecord]:
@@ -657,11 +809,21 @@ class OpenIssue:
 
     @property
     def body_parent(self) -> epics.IssueRef | None:
-        """The parent a body ``Parent:`` line declares, or None."""
-        match = epics._PARENT_RE.search(self.body)
-        if match is None:
-            return None
-        return epics.IssueRef(match.group(1), match.group(2), int(match.group(3)))
+        """The parent a body ``Parent:`` line declares, or None.
+
+        Read from the listing's copy of the body, which the trust layer has not
+        judged: it only picks the candidates :func:`body_only_parents` reads
+        again through the layer.
+        """
+        return _declared_parent(self.body)
+
+
+def _declared_parent(body: str) -> epics.IssueRef | None:
+    """The parent *body*'s first ``Parent:`` line declares, or None."""
+    match = epics._PARENT_RE.search(body)
+    if match is None:
+        return None
+    return epics.IssueRef(match.group(1), match.group(2), int(match.group(3)))
 
 
 def _repo_open_issues(owner: str, bare: str) -> list[OpenIssue]:
@@ -717,14 +879,21 @@ def open_issues(org: str) -> list[OpenIssue]:
     return issues
 
 
-def _epic_body_parent(issue: OpenIssue) -> epics.IssueRef | None:
-    """The epic a body-only ``Parent:`` line names (no native parent), else None."""
-    if issue.native_parent is not None:
-        return None
-    declared = issue.body_parent
-    if declared is not None and epics.is_epic(declared):
-        return declared
-    return None
+@dataclass(frozen=True)
+class BodyParents:
+    """The open issues' body-only ``Parent:`` links, as the trust layer judges them.
+
+    *pairs* are the ``(task, epic)`` links of a trusted body naming an epic,
+    which ``--close`` links natively; *held* are the issues whose body could
+    not be read in full (each a stop), which no pass nativizes or attaches.
+    """
+
+    pairs: tuple[tuple[epics.IssueRef, epics.IssueRef], ...] = ()
+    held: frozenset[epics.IssueRef] = frozenset()
+
+    def parented(self) -> frozenset[epics.IssueRef]:
+        """The issues the orphan attach leaves alone: linked by a trusted line, or held."""
+        return frozenset(task for task, _ in self.pairs) | self.held
 
 
 @dataclass(frozen=True)
@@ -740,25 +909,31 @@ class Orphan:
     name: str  # the <name> in "Epic (intake): <name>"
 
 
-def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orphan]:
+def orphan_drift(
+    org: str, *, parents: BodyParents, issues: list[OpenIssue] | None = None
+) -> list[Orphan]:
     """Open issues in managed repos that are neither legitimate top-level nor parented.
 
     Excludes legitimate top-level kinds (:func:`epics.is_legitimate_top_level`:
     epics, archives, release tracking issues — so a release in flight is never
-    attached), issues with a native parent, and issues whose body ``Parent:``
-    line names an epic (those count as parented; :func:`nativize_parents`
-    converts them). Each orphan targets the intake epic of its queue home
-    (:func:`epics.queue_home`), ``<org>/.github``.
+    attached), issues with a native parent, and the issues *parents* leaves
+    alone: those whose trusted body ``Parent:`` line names an epic (they count
+    as parented; :func:`nativize_parents` converts them) and those held by a
+    stop. *parents* is :func:`body_only_parents` of the same *issues*, so a
+    ``Parent:`` line in an untrusted body never counts as a parent. Each
+    orphan targets the intake epic of its queue home (:func:`epics.queue_home`),
+    ``<org>/.github``.
     """
     if issues is None:
         issues = open_issues(org)
+    parented = parents.parented()
     orphans: list[Orphan] = []
     for issue in issues:
         if epics.is_legitimate_top_level(issue.ref, set(issue.labels), issue.title, issue.body):
             continue
         if issue.native_parent is not None:
             continue
-        if issue.body_parent is not None and epics.is_epic(issue.body_parent):
+        if issue.ref in parented:
             continue
         home, name = epics.queue_home(f"{issue.ref.owner}/{issue.ref.repo}")
         orphans.append(Orphan(ref=issue.ref, home=home, name=name))
@@ -801,7 +976,9 @@ class _QueueCapacity:
         self._open[epic] += 1
 
 
-def attach_orphans(orphans: list[Orphan]) -> int:
+def attach_orphans(
+    orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> int:
     """Attach each orphan, in order, under its home's intake epic; return the count.
 
     The intake epic is resolved (created if absent) once per home. Before each
@@ -812,9 +989,12 @@ def attach_orphans(orphans: list[Orphan]) -> int:
     An orphan an outsider opened (its author holds no role, as the trust layer
     judges it) is never attached: it is reported on stderr, metadata only
     (counts under Actions), and left out of the count and the cap, with a
-    clean exit (spec §5.3 of epic vergil-project/.github#1467).
+    clean exit (spec §5.3 of epic vergil-project/.github#1467). An orphan the
+    layer cannot read in full is a stop on that orphan alone, added to
+    *stops*: it is not attached, and the rest are. Every orphan is judged
+    before the first attach.
     """
-    orphans = _trusted_orphans(orphans)
+    orphans = _trusted_orphans(orphans, stops=stops, authors=authors)
     targets: dict[tuple[str, str], epics.IssueRef] = {}
     capacity = _QueueCapacity()
     for index, orphan in enumerate(orphans):
@@ -828,13 +1008,20 @@ def attach_orphans(orphans: list[Orphan]) -> int:
     return len(orphans)
 
 
-def _trusted_orphans(orphans: list[Orphan]) -> list[Orphan]:
-    """*orphans* without the outsider-opened ones, each of those reported."""
+def _trusted_orphans(
+    orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
+) -> list[Orphan]:
+    """*orphans* less the outsider-opened (each reported) and the unreadable (each a stop)."""
     kept: list[Orphan] = []
     skipped: list[trust.Skipped] = []
     for orphan in orphans:
         ref = orphan.ref
-        opened = trust.outsider_opened(trust.read_issue(f"{ref.owner}/{ref.repo}", ref.number))
+        try:
+            content = trust.read_issue(_slug(ref), ref.number, authors=authors)
+            opened = trust.outsider_opened(content)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(ref), ref.number, "issue", exc)
+            continue
         if opened is None:
             kept.append(orphan)
         else:
@@ -882,17 +1069,47 @@ def strip_retired_labels(drift: list[RetiredLabels]) -> int:
 
 
 def body_only_parents(
-    org: str, *, issues: list[OpenIssue] | None = None
-) -> list[tuple[epics.IssueRef, epics.IssueRef]]:
-    """``(task, epic)`` pairs whose only link is a body ``Parent:`` line naming an epic."""
+    org: str,
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    issues: list[OpenIssue] | None = None,
+) -> BodyParents:
+    """The issues whose only link is a body ``Parent:`` line naming an epic, judged.
+
+    A ``Parent:`` line counts only from a body the trust layer trusts (spec
+    §5.2): each candidate (no native parent, and a listed body whose line
+    names an epic) is read again through the layer, and its pair is taken
+    from the trusted body. An untrusted body is reported on stderr, metadata
+    only, and gives no pair, so the issue is an orphan; a body the layer
+    cannot read in full is a stop on that issue alone, added to *stops*, and
+    the issue is held.
+    """
     if issues is None:
         issues = open_issues(org)
     pairs: list[tuple[epics.IssueRef, epics.IssueRef]] = []
+    held: set[epics.IssueRef] = set()
+    skipped: list[trust.Skipped] = []
     for issue in issues:
-        epic = _epic_body_parent(issue)
-        if epic is not None:
-            pairs.append((issue.ref, epic))
-    return pairs
+        if issue.native_parent is not None:
+            continue
+        declared = issue.body_parent
+        if declared is None or not epics.is_epic(declared):
+            continue
+        ref = issue.ref
+        try:
+            content = trust.read_issue(_slug(ref), ref.number, authors=authors)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(ref), ref.number, "issue", exc)
+            held.add(ref)
+            continue
+        skipped += [item for item in content.skipped if item.field == _BODY_FIELD]
+        parent = _declared_parent(content.body or "")
+        if parent is None or (parent != declared and not epics.is_epic(parent)):
+            continue
+        pairs.append((ref, parent))
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return BodyParents(pairs=tuple(pairs), held=frozenset(held))
 
 
 def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
@@ -1004,9 +1221,8 @@ def misplaced_adhoc(org: str, *, issues: list[OpenIssue] | None = None) -> list[
     comment on it carries ``Standalone-confirmed`` alone on its line: the
     human ruled it standalone. Nothing is refused, moved, closed or labelled.
 
-    It reads the trusted authors (only once a candidate is found), so the audit
-    runs it only without ``--close``: the daily sweep has no trusted-authors
-    configuration. *issues* is the shared :func:`open_issues` enumeration.
+    It reads the trusted authors only once a candidate is found. *issues* is
+    the shared :func:`open_issues` enumeration.
     """
     if issues is None:
         issues = open_issues(org)
@@ -1058,7 +1274,10 @@ def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
     Each proxy is read under its own org's token, and its ``Primary:`` line must
     name *epic*: a proxy whose link is broken or disagrees raises
     :class:`proxies.ProxyLinkError`, never a silently shorter list. A failed
-    read, or a failed trusted-author load, propagates.
+    read, or a failed trusted-author load, propagates, and so does a proxy
+    body the trust layer does not trust (its ``Primary:`` line counts for
+    nothing: :class:`~vergil_tooling.lib.trust.UntrustedContentError`) or
+    cannot read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`).
     """
     with github.target_org(epic.owner):
         children = list(epics.child_states(epic))
@@ -1137,19 +1356,23 @@ def proxy_link_problems(epic: epics.IssueRef) -> list[str]:
     *epic*. For a proxy: its ``Primary:`` line must resolve to an epic whose
     trusted comments name the proxy. A link that cannot be parsed or read is a
     problem, never a skipped item. A failed read of *epic* itself, or a failed
-    trusted-author load, propagates.
+    trusted-author load, propagates, as does a proxy body the trust layer does
+    not trust or cannot read in full (:func:`proxies.primary_of`).
     """
     with github.target_org(epic.owner):
         is_proxy = proxies.is_proxy_ref(epic)
     return _proxy_side_problems(epic) if is_proxy else _primary_side_problems(epic)
 
 
-def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = None) -> list[str]:
+def proxy_link_drift(
+    home: str, *, stops: trust.BatchStops, listing: list[epic_docs.EpicRecord] | None = None
+) -> list[str]:
     """The link problems of every open proxy in *home* (report only).
 
     *listing* is the home's :func:`list_home_epics`, shared with the other
-    per-epic checks; it is read here when not given. It reads trusted comments,
-    so the audit runs it only without ``--close``, never in the daily sweep.
+    per-epic checks; it is read here when not given. A proxy whose body the
+    trust layer does not trust (so its ``Primary:`` line counts for nothing),
+    or cannot read in full, is a stop on that proxy alone, added to *stops*.
     """
     home_owner, home_repo = home.split("/", 1)
     if listing is None:
@@ -1158,7 +1381,13 @@ def proxy_link_drift(home: str, *, listing: list[epic_docs.EpicRecord] | None = 
     for record in sorted(listing, key=lambda r: r["number"]):
         if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
             continue
-        problems += _proxy_side_problems(epics.IssueRef(home_owner, home_repo, record["number"]))
+        proxy = epics.IssueRef(home_owner, home_repo, record["number"])
+        try:
+            problems += _proxy_side_problems(proxy)
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(proxy), proxy.number, "issue", exc)
     return problems
 
 
@@ -1175,7 +1404,11 @@ class ProxyClosure:
 
 
 def proxy_closures(
-    home: str, *, listing: list[epic_docs.EpicRecord] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    listing: list[epic_docs.EpicRecord] | None = None,
 ) -> tuple[list[ProxyClosure], list[str]]:
     """Each open proxy in *home* whose primary is closed, and the proxies that could not be judged.
 
@@ -1185,8 +1418,14 @@ def proxy_closures(
     ``Primary:`` link fails (malformed, not an epic, or unreadable) is one line
     of *proxy_errors*, never raised, so one broken proxy cannot stop the
     sweep's other passes, as :func:`epics.drain_standing_org` treats a
-    corrupted home; the caller fails the run once every pass has run. It reads
-    no comment, so it needs no trusted-authors configuration.
+    corrupted home; the caller fails the run once every pass has run.
+
+    The ``Primary:`` line counts only from a body the trust layer trusts, and
+    the primary's close only when its actor holds a role in the primary's org
+    (spec §5.2): its own org's automation App is trusted there, read from any
+    org with the delivered configuration. A proxy whose body or primary's
+    close is untrusted, or cannot be read in full, is a stop on that proxy
+    alone, added to *stops*, and is never closed.
 
     *listing* is the home's :func:`list_home_epics`; it is read here when not
     given.
@@ -1205,8 +1444,9 @@ def proxy_closures(
                 primary = proxies.primary_of(proxy)
             with github.target_org(primary.owner):
                 primary_state = epics.issue_state(primary)
-            if primary_state != "CLOSED":
-                continue
+                if primary_state != "CLOSED":
+                    continue
+                trust.require_trusted_close(_slug(primary), primary.number, authors=authors)
             with github.target_org(proxy.owner):
                 open_tasks = sum(1 for c in epics.child_states(proxy) if c.state == "OPEN")
         except proxies.ProxyLinkError as exc:
@@ -1214,6 +1454,12 @@ def proxy_closures(
             continue
         except _LINK_READ_ERRORS as exc:
             errors.append(f"proxy {proxy.slug} could not be judged: {exc}")
+            continue
+        except trust.UntrustedContentError as exc:
+            _stop(stops, exc)
+            continue
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(proxy), proxy.number, "issue", exc, "primary")
             continue
         closures.append(ProxyClosure(proxy=proxy, primary=primary, open_tasks=open_tasks))
     return closures, errors
@@ -1649,13 +1895,17 @@ def render_closed(
     proxies_closed: list[str] | None = None,
     proxy_drift: list[str] | None = None,
     proxy_errors: list[str] | None = None,
+    proxy_link_drift: list[str] | None = None,
+    misplaced_adhoc: list[MisplacedTask] | None = None,
 ) -> str:
     """Summarize a ``--close`` run: what was closed and what was reopened.
 
     ``reopened`` is the closed-epic-with-open-child remediation (issue #2259):
     epics that were wrongly closed while a child was still open, now reopened.
     ``misplaced`` is report-only (never acted on), surfaced here too so the
-    scheduled sweep's log carries it.
+    scheduled sweep's log carries it, as are ``proxy_link_drift``
+    (:func:`proxy_link_drift`) and ``misplaced_adhoc`` (:func:`misplaced_adhoc`),
+    the trusted-comment checks.
 
     ``proxies_closed`` are the proxies :func:`close_proxies` closed;
     ``proxy_drift`` the ones it left open with an open task, and
@@ -1666,6 +1916,8 @@ def render_closed(
     proxy_errors = proxy_errors or []
     reopened = reopened or []
     misplaced = misplaced or []
+    proxy_link_drift = proxy_link_drift or []
+    misplaced_adhoc = misplaced_adhoc or []
     banner = f"_Closed drift on the **{org}** org (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
     if not any(
@@ -1676,6 +1928,8 @@ def render_closed(
             proxies_closed,
             proxy_drift,
             proxy_errors,
+            proxy_link_drift,
+            misplaced_adhoc,
         ]
     ):
         return "\n".join([*header, "_No drift — nothing to close._", ""])
@@ -1696,7 +1950,7 @@ def render_closed(
             *[f"- {slug}" for slug in proxies_closed],
             "",
         ]
-    if misplaced or proxy_drift or proxy_errors:
+    if misplaced or proxy_drift or proxy_errors or proxy_link_drift or misplaced_adhoc:
         lines += ["## Needs a human (report only)", ""]
         lines += _render_misplaced_archives(misplaced)
         if proxy_drift:
@@ -1705,5 +1959,14 @@ def render_closed(
         if proxy_errors:
             lines.append("**Proxy link errors** — the run fails; fix each link by hand:")
             lines += [f"- {error}" for error in proxy_errors]
+        if proxy_link_drift:
+            lines.append("**Proxy link drift** — fix each link by hand:")
+            lines += [f"- {problem}" for problem in proxy_link_drift]
+        if misplaced_adhoc:
+            lines.append(
+                "**Ad-hoc tasks that look misplaced** — move each one, or record"
+                f" `{STANDALONE_CONFIRMED}` on it:"
+            )
+            lines += [f"- {m.task.slug} — {m.reason}" for m in misplaced_adhoc]
         lines.append("")
     return "\n".join(lines)

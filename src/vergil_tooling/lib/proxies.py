@@ -25,7 +25,8 @@ org and a primary that is not an open development epic.
 Every reader fails loudly: a ``Primary:`` or ``Proxy:`` line that cannot be
 parsed or resolved raises :class:`ProxyLinkError`, a failed GitHub read
 propagates, and a failed trusted-author load propagates. None of them is ever a
-skipped item.
+skipped item. The ``Primary:`` line counts only from a body the trust layer
+trusts: an untrusted body is a stop, never a link.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import epic_size, epics, github
+from vergil_tooling.lib import epic_size, epics, github, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.trusted_authors import trusted_comment_lines
@@ -102,11 +103,16 @@ def _parse(line: str, pattern: re.Pattern[str], where: str) -> IssueRef:
 def primary_of(proxy: IssueRef) -> IssueRef:
     """The primary epic *proxy*'s body names on its one ``Primary:`` line.
 
-    Raises :class:`ProxyLinkError` when the body has no ``Primary:`` line, more
-    than one, a malformed one, or one naming an issue without the ``epic``
-    label.
+    The line counts only from a body the trust layer trusts (spec §5.2 of epic
+    vergil-project/.github#1467): an untrusted body is a stop
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only),
+    and a body that cannot be read in full raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`. Raises
+    :class:`ProxyLinkError` when the body has no ``Primary:`` line, more than
+    one, a malformed one, or one naming an issue without the ``epic`` label.
     """
-    primary = _primary_in_body(proxy, str(_view(proxy, "body").get("body") or ""))
+    content = trust.read_issue(f"{proxy.owner}/{proxy.repo}", proxy.number, require_body=True)
+    primary = _primary_in_body(proxy, content.body or "")
     if not epics.is_epic(primary):
         raise ProxyLinkError(
             f"proxy {proxy.slug} names {primary.slug} as its primary, which is not an epic"

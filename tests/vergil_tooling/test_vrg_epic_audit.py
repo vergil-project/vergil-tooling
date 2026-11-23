@@ -10,9 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import epic_audit, github, proxies, trust
+from vergil_tooling.lib import epic_audit, github, proxies, roadmap, trust
 from vergil_tooling.lib.epic_audit import (
+    BodyParents,
     EpicDocsFinding,
     MisplacedArchive,
     Orphan,
@@ -21,6 +23,11 @@ from vergil_tooling.lib.epic_audit import (
 )
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, SecurityIssue
+from vergil_tooling.lib.trusted_authors import (
+    OrgConfig,
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -31,6 +38,13 @@ _PX = "vergil_tooling.lib.proxies"
 # The real check, taken before the autouse fixture stubs it out.
 _PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
 _PROXY_CLOSURES = epic_audit.proxy_closures
+# The orgs the tests audit, each a Vergil org with a stanza of its own.
+_ORGS = ("org", "owner", "lab-org", "vergil-project", "logical-minds-foundry")
+AUTHORS = TrustedAuthors(
+    human=("human",),
+    agents=("vergil-user",),
+    orgs={org: OrgConfig(f"{org}-automation") for org in _ORGS},
+)
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +58,7 @@ def standing_drain() -> Iterator[MagicMock]:
     # security-records pass reads an org with no security issues or advisories.
     # The home's epic listing is empty and the Epic documents check clean.
     with (
+        patch(f"{_MOD}.load_trusted_authors", return_value=AUTHORS),
         patch(f"{_MOD}.epics.drain_standing_org", return_value=[]) as mock_drain,
         patch(f"{_MOD}.epic_audit.open_issues", return_value=[]),
         patch(f"{_MOD}.epic_audit.list_home_epics", return_value=[]),
@@ -127,7 +142,8 @@ def test_main_lists_home_epics_once_for_both_per_epic_checks(
     ):
         rc = main([])
     list_epics.assert_called_once_with("org/.github")
-    assert ceoc.call_args.kwargs == {"home": "org/.github", "listing": listing}
+    assert ceoc.call_args.kwargs["home"] == "org/.github"
+    assert ceoc.call_args.kwargs["listing"] is listing
     assert documents.call_args.kwargs == {"home": "org/.github", "listing": listing}
     out = capsys.readouterr().out
     assert "## Epic documents" in out
@@ -667,7 +683,7 @@ def _derivations() -> dict[str, MagicMock]:
     return {
         "orphan_drift": MagicMock(return_value=[_ORPHAN]),
         "retired_label_drift": MagicMock(return_value=[_RETIRED]),
-        "body_only_parents": MagicMock(return_value=[_BODY_ONLY]),
+        "body_only_parents": MagicMock(return_value=BodyParents(pairs=(_BODY_ONLY,))),
         "misplaced_archives": MagicMock(return_value=[_MISPLACED]),
     }
 
@@ -762,7 +778,9 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     assert order == ["enter", "nativize", "strip", "attach", "exit"]
     writers["nativize_parents"].assert_called_once_with([_BODY_ONLY])
     writers["strip_retired_labels"].assert_called_once_with([_RETIRED])
-    writers["attach_orphans"].assert_called_once_with([_ORPHAN])
+    writers["attach_orphans"].assert_called_once()
+    assert writers["attach_orphans"].call_args.args == ([_ORPHAN],)
+    assert writers["attach_orphans"].call_args.kwargs["authors"] is AUTHORS
     out = capsys.readouterr().out
     assert "Body-only Parent: links nativized: 1." in out
     assert "Retired kind labels stripped: 2 issue(s)." in out
@@ -1123,7 +1141,9 @@ def test_org_audit_reports_proxy_link_drift(capsys: pytest.CaptureFixture[str]) 
     ):
         rc = main([])
     assert rc == 0
-    drift.assert_called_once_with("logical-minds-foundry/.github", listing=listing)
+    drift.assert_called_once()
+    assert drift.call_args.args == ("logical-minds-foundry/.github",)
+    assert drift.call_args.kwargs["listing"] is listing
     out = capsys.readouterr().out
     assert "## Proxy link drift" in out
     assert (
@@ -1133,18 +1153,44 @@ def test_org_audit_reports_proxy_link_drift(capsys: pytest.CaptureFixture[str]) 
     ) in out
 
 
-def test_sweep_close_skips_proxy_link_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_runs_trusted_checks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The sweep reads the delivered configuration, so its trusted-comment
+    # checks run under --close too (spec §5.1a of epic .github#1467), their
+    # findings in the closed report's report-only section, and every trusted
+    # pass shares the run's one BatchStops and the one loaded configuration.
     monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
-    drift = MagicMock(return_value=[])
+    task = IssueRef("org", "tool", 3)
+    drift = MagicMock(return_value=["proxy org/.github#4 broke"])
+    misplaced = MagicMock(
+        return_value=[epic_audit.MisplacedTask(task, "titled `Logbook:`; it belongs elsewhere")]
+    )
+    passes = _close_patches(**_no_op_writers())
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=False),
         patch(f"{_MOD}.github.detect_org", return_value="org"),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
         patch(f"{_MOD}.epic_audit.proxy_link_drift", drift),
-        _patched(_close_patches(**_no_op_writers())),
+        patch(f"{_MOD}.epic_audit.misplaced_adhoc", misplaced),
+        patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])) as closures,
+        _patched(passes),
     ):
         assert main(["--close"]) == 0
-    drift.assert_not_called()
+    drift.assert_called_once()
+    misplaced.assert_called_once()
+    out = capsys.readouterr().out
+    assert "## Needs a human (report only)" in out
+    assert "- proxy org/.github#4 broke" in out
+    assert "- org/tool#3 — titled `Logbook:`; it belongs elsewhere" in out
+    stops = drift.call_args.kwargs["stops"]
+    assert closures.call_args.kwargs["stops"] is stops
+    assert closures.call_args.kwargs["authors"] is AUTHORS
+    trusted = ("task_drift", "epic_drift", "closed_epic_open_child", "body_only_parents")
+    for name in trusted:
+        mock = next(p.new for p in passes if p.attribute == name)
+        assert mock.call_args.kwargs["stops"] is stops, name
+        assert mock.call_args.kwargs["authors"] is AUTHORS, name
 
 
 def test_vrg_epic_audit_epic_proxy_link_error_while_listing_exits_1(
@@ -1202,6 +1248,8 @@ def test_proxy_unreadable_primary_reported_and_run_fails(
         patch(f"{_MOD}.epic_audit.epics.issue_state", return_value="CLOSED"),
         patch(f"{_MOD}.epic_audit.epics.child_states", return_value=[]),
         patch(f"{_MOD}.epic_audit.github.run", run),
+        # The primary was closed by the trusted human.
+        patch("vergil_tooling.lib.github.graphql", side_effect=trust_stubs.FakeItems()),
         _patched(_close_patches(**writers)),
     ):
         rc = main(["--close"])
@@ -1313,24 +1361,67 @@ def test_preview_with_a_proxy_link_error_exits_1(capsys: pytest.CaptureFixture[s
 # --- misplaced ad-hoc tasks (epic .github#1417) -----------------------------------
 
 
-def test_sweep_close_never_loads_trusted_authors(capsys: pytest.CaptureFixture[str]) -> None:
-    misplaced = MagicMock(return_value=[])
-    load = MagicMock(side_effect=AssertionError("the sweep must not load trusted authors"))
+@pytest.mark.parametrize("close", [False, True], ids=["report", "close"])
+def test_audit_without_configuration_exits_1_before_any_pass(
+    close: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Every pass reads through the trust layer, so a missing configuration
+    # stops the run before any read or write, with or without --close.
+    error = TrustedAuthorsNotConfiguredError("trusted authors are not configured: no file")
+    drift = MagicMock()
     with (
         patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
         patch(f"{_MOD}.identity_mode.is_human", return_value=False),
         patch(f"{_MOD}.github.detect_org", return_value="org"),
-        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
-        patch(f"{_MOD}.epic_audit.misplaced_adhoc", misplaced),
-        patch(f"{_MOD}.epic_audit.proxy_closures", wraps=_PROXY_CLOSURES),
-        patch("vergil_tooling.lib.epic_size.load_trusted_authors", load),
-        patch("vergil_tooling.lib.trusted_authors.load_trusted_authors", load),
-        _patched(_close_patches(**_no_op_writers())),
+        patch(f"{_MOD}.load_trusted_authors", side_effect=error),
+        patch(f"{_MOD}.epic_audit.task_drift", drift),
     ):
-        assert main(["--close"]) == 0
-    misplaced.assert_not_called()
-    load.assert_not_called()
-    assert "look misplaced" not in capsys.readouterr().out
+        rc = main(["--close"] if close else [])
+    assert rc == 1
+    drift.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.err == "vrg-epic-audit: trusted authors are not configured: no file\n"
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("close", [False, True], ids=["report", "close"])
+def test_audit_skips_and_reports_unlisted_org(
+    close: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An org with no [orgs.<org>] stanza is not a Vergil org: it is reported
+    # and never swept, with a clean exit (spec §5.1a of epic .github#1467).
+    repo_exists = MagicMock(return_value=True)
+    drift = MagicMock()
+    with (
+        patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="Stranger"),
+        patch(f"{_MOD}.epics.github.repo_exists", repo_exists),
+        patch(f"{_MOD}.epic_audit.task_drift", drift),
+    ):
+        rc = main(["--close"] if close else [])
+    assert rc == 0
+    drift.assert_not_called()
+    repo_exists.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "vrg-epic-audit: Stranger is not a Vergil org (the configuration has no"
+        " [orgs.Stranger] stanza); it is not swept\n"
+    )
+
+
+def test_audit_matches_a_listed_org_case_insensitively() -> None:
+    # GitHub org names ignore case, as the configuration's lookup does.
+    drift = MagicMock(return_value=[])
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.github.detect_org", return_value="ORG"),
+        patch(f"{_MOD}.epic_audit.task_drift", drift),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+    ):
+        main([])
+    drift.assert_called_once()
 
 
 def test_report_renders_misplaced_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1355,3 +1446,102 @@ def test_report_renders_misplaced_adhoc(capsys: pytest.CaptureFixture[str]) -> N
         "- org/tool#3 — titled `Logbook:`; it belongs under the hoshin epic"
         in capsys.readouterr().out
     )
+
+
+# --- per-item stops under --close (epic .github#1467, Task 8b) ---------------------
+
+
+def _summaries(*numbers: int) -> list[Any]:
+    return [
+        roadmap.EpicSummary(n, f"Epic {n}", "2026-06-01", None, (), 1, 1, f"u{n}") for n in numbers
+    ]
+
+
+def _run_close_with_an_outsider_close(
+    capsys: pytest.CaptureFixture[str],
+) -> tuple[int, str, str, MagicMock]:
+    """A sweep --close over two all-closed epics, #4's child closed by an outsider."""
+    run = MagicMock()
+    items = trust_stubs.FakeItems(closers={("org/tool", 40): trust_stubs.OUTSIDER})
+    with (
+        patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_summaries(4, 5)),
+        patch(
+            "vergil_tooling.lib.epics.child_states",
+            side_effect=lambda epic: [
+                ChildState(IssueRef("org", "tool", epic.number * 10), "CLOSED")
+            ],
+        ),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.github.run", run),
+        _patched([patch(f"{_MOD}.epic_audit.{n}", m) for n, m in _no_op_writers().items()]),
+    ):
+        rc = main(["--close"])
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err, run
+
+
+def test_close_stop_is_per_item_and_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An untrusted close stops its epic alone: the other epic is closed, every
+    # later pass still runs, the stop is named on stderr (metadata only), and
+    # the run exits 1 at the end (spec §5.3 of epic .github#1467).
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    rc, out, err, run = _run_close_with_an_outsider_close(capsys)
+    assert rc == 1
+    assert [c.args[:5] for c in run.call_args_list] == [
+        ("issue", "close", "5", "--repo", "org/.github")
+    ]
+    assert "- org/.github#5" in out
+    assert "org/.github#4" not in out
+    assert "Orphans attached to intake: 0." in out
+    assert err == (
+        f"stopped: org/tool#40 event drive-by at {trust_stubs.EDITED} on close (untrusted)\n"
+    )
+
+
+def test_close_stop_under_actions_is_counted_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    rc, _out, err, _run = _run_close_with_an_outsider_close(capsys)
+    assert rc == 1
+    assert err == "stopped 1 item(s) (untrusted: 1)\n"
+    assert "drive-by" not in err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.UntrustedContentError(
+            trust.Skipped(
+                "logical-minds-foundry/.github", 320, "issue", "drive-by", "t", "body", "untrusted"
+            ),
+            "the issue body is untrusted",
+        ),
+        trust.TrustReadError("read_issue logical-minds-foundry/.github#320", "truncated"),
+    ],
+    ids=["untrusted", "unreadable"],
+)
+def test_vrg_epic_audit_epic_untrusted_proxy_body_exits_1(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A proxy body the trust layer does not trust gives no link: the listing
+    # stops, metadata only, with no JSON.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_children", side_effect=error),
+    ):
+        rc = main(["--epic", _PROXY.slug])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-epic-audit: {error}\n"

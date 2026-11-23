@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from vergil_tooling.lib import epic_audit, epics, github, proxies
+from vergil_tooling.lib import epic_audit, epics, github, proxies, trust
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.result import ResultError, parse_result
 from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
@@ -172,6 +172,10 @@ def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskC
         TrustedAuthorsNotConfiguredError,
         github.GitHubAPIError,
         RuntimeError,  # a GraphQL error, or a broken proxy link (ProxyLinkError)
+        # A proxy body the trust layer does not trust gives no Primary: link,
+        # or one it cannot read in full (spec §5.2 of epic .github#1467).
+        trust.UntrustedContentError,
+        trust.TrustReadError,
     ) as exc:
         _unreadable(str(exc))
     return TaskContext(issue_body=body, epic_open_tasks=tasks)

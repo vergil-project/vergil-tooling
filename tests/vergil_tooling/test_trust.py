@@ -1149,12 +1149,61 @@ def test_require_trusted_close_no_close_raises(answer: Any) -> None:
     assert info.value.call == f"require_trusted_close {REPO}#7"
 
 
+@pytest.mark.parametrize(
+    "events",
+    [
+        [],
+        [_event("LabeledEvent", OUTSIDER)],
+        [_event("ReopenedEvent", OUTSIDER), _event("ClosedEvent", HUMAN)],
+    ],
+    ids=["never-closed", "no-state-change", "latest-is-a-close"],
+)
+def test_require_trusted_reopen_without_a_latest_reopen_is_none(
+    answer: Any, events: list[Any]
+) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline(events)]})
+    assert trust.require_trusted_reopen(REPO, 7, authors=AUTHORS) is None
+
+
+def test_require_trusted_reopen_gives_the_role(answer: Any) -> None:
+    events = [_event("ClosedEvent", OUTSIDER), _event("ReopenedEvent", AGENT)]
+    answer({trust._EVENTS_QUERY: [_timeline(events)]})
+    assert trust.require_trusted_reopen(REPO, 7, authors=AUTHORS) == Role.AGENTS
+
+
+@pytest.mark.parametrize(
+    ("actor", "login", "cause"),
+    [
+        (OUTSIDER, "drive-by", trust.UNTRUSTED),
+        (DELETED, None, trust.DELETED),
+        ({"__typename": "User", "login": "the-agent"}, "the-agent", trust.WRONG_TYPE),
+    ],
+)
+def test_require_trusted_reopen_untrusted_is_a_stop(
+    answer: Any, actor: Any, login: str | None, cause: str
+) -> None:
+    events = [_event("ClosedEvent", HUMAN), _event("ReopenedEvent", actor, at=EDITED)]
+    answer({trust._EVENTS_QUERY: [_timeline(events)]})
+    with pytest.raises(UntrustedContentError) as info:
+        trust.require_trusted_reopen(REPO, 7, authors=AUTHORS)
+    assert info.value.item == trust.Skipped(REPO, 7, "event", login, EDITED, "reopen", cause)
+    assert str(info.value).startswith("stopped before any write: the reopen is untrusted:")
+
+
 def test_close_judgement_loads_configured_authors(
     answer: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     answer({trust._EVENTS_QUERY: [_timeline([_event("ClosedEvent")])]})
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
     assert trust.close_judgement(REPO, 7).role is Role.HUMAN
+
+
+def test_require_trusted_reopen_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ReopenedEvent")])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert trust.require_trusted_reopen(REPO, 7) is Role.HUMAN
 
 
 # --- require_trusted_commit -------------------------------------------------------------

@@ -235,7 +235,10 @@ primary's ref first, so the title names the epic it stands in for. It is
 labelled `epic` + `proxy` and homes in the public `<owner>/.github`: proxies exist only between public
 repos. The link runs both ways, each side on a line alone on its line:
 
-- the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line;
+- the proxy's body carries exactly one `Primary: <owner>/<repo>#<N>` line,
+  which counts only from a body the trust layer trusts (its author and every
+  editor trusted): an untrusted body gives no link, and every tool that reads
+  it stops on that proxy;
 - the primary records each proxy in a comment, never its body, carrying
   `Proxy: <owner>/.github#<N>`. Only comments by a login that
   `vrg-trusted-authors` lists count (a leading `app/` stripped), so a forged
@@ -258,8 +261,10 @@ bookends, because the primary carries them.
 
 A proxy's own org closes it: the daily sweep of its home
 (`vrg-epic-audit --close`) closes a proxy whose primary is closed and which
-has no open task. One that still has an open task after its primary closed is
-reported and left open. The primary's rollup never closes its proxies, since
+has no open task. The primary's close counts only when its actor is trusted
+in the primary's org (that org's own automation App included); an untrusted
+close is a stop on that proxy alone, which is never closed. One that still
+has an open task after its primary closed is reported and left open. The primary's rollup never closes its proxies, since
 it runs in the primary's org.
 
 Another org's epic tasks belong under that org's proxy, and hoshin's logbook
@@ -636,11 +641,18 @@ with `VRG_EPIC_SWEEP=1`, or by a human — follows its drift closes and drains
 with an org-wide **orphan pass**, in order:
 
 1. **Nativize** body-only `Parent:` links into native sub-issue links, so every
-   consumer reads the same parent.
+   consumer reads the same parent. A `Parent:` line counts only from a body
+   the trust layer trusts: one in an untrusted body is reported on stderr,
+   metadata only, and never nativized, so its issue is an orphan.
 2. **Strip** the retired `triage` / `idea` / `research` labels from every open
    issue (its parent is left alone).
 3. **Attach** every orphan to its home's intake epic (creating it if absent).
-   Placement is intake review's job, not the sweep's.
+   Placement is intake review's job, not the sweep's. An orphan an outsider
+   opened is reported and never attached.
+
+An issue whose body the trust layer cannot read in full is a stop on that
+issue alone: it is neither nativized nor attached, the rest of the pass runs,
+and the run exits 1.
 
 The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's
