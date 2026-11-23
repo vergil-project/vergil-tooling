@@ -18,10 +18,10 @@ Any other push failure fails report-ready with nothing recorded and no relay ref
 written. Once the branch is pushed and the state recorded, a relay ref that
 cannot be written fails report-ready, naming the ref, with the local state kept
 for the re-run that writes it (#5035). A branch with no commits ahead of
-``--base`` is refused before anything is pushed or recorded, so it is never frozen (#3870). A re-run on a
-frozen branch whose HEAD has drifted past the reported commit is refused before
-anything is pushed. A re-run after a deliberate
-``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
+``--base`` is refused before anything is pushed or recorded, so it is never
+frozen (#3870). A re-run on a frozen branch whose HEAD has drifted past the
+reported commit is refused before anything is pushed. A re-run after a
+deliberate ``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
 replaces the reported commit but an unexpectedly moved origin is refused (#3783).
 ``unfreeze`` overwrites the relay ref with the reopened state before it
 reopens the local one, and fails with nothing changed if it cannot, so no
