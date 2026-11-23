@@ -387,11 +387,12 @@ _REFUSED_CONTENT_READS = [
     "vrg-gh api /repos/o/r/pulls/7/reviews",
     "vrg-gh api repos/o/r/issues/5/comments?per_page=100 --paginate",
     "vrg-gh api --paginate -H 'Accept: x' repos/o/r/issues/comments/123",
-    # searches and lists whose results a skill would act on
-    "vrg-gh issue list --repo o/r",
-    "vrg-gh issue ls --repo o/r --json number",
+    # searches and lists whose results a skill would act on (and every
+    # refused row of _QUERY_TABLE, in both forms)
     'vrg-gh issue list --repo o/r --state open --search "Fixture run in:title" --json number,title',
-    "vrg-gh pr list --repo o/r --state open --json number,title,url",
+    "vrg-gh issue ls --repo o/r -S release --json number",
+    "vrg-gh pr list --repo o/r --search=token --json number",
+    "vrg-gh issue list --repo o/r --comments",
     'vrg-gh search issues "\\"Awaiting a ruling\\"" --owner org --state open --json number,title',
     "vrg-gh search issues Fixture run --owner org",
     'vrg-gh search issues "label:epic in:title release" --owner org --json number',
@@ -405,7 +406,7 @@ _REFUSED_CONTENT_READS = [
     "vrg-gh issue view 5 \\\n  --comments",
     "vrg-gh issue view 5 --json bo\\dy",
     'bash -c "vrg-gh issue view 5 --comments"',
-    "sh -c 'vrg-gh pr list --repo o/r'",
+    "sh -c 'vrg-gh pr list --repo o/r --json body'",
 ]
 
 # Metadata reads, including every raw `vrg-gh` read that the
@@ -442,6 +443,10 @@ _ALLOWED_READS = [
     'vrg-gh search issues "(label:epic OR label:task) -label:archive is:open" \\\n'
     "  --owner org --json number",
     "vrg-gh search issues --owner org --comments '>5' --json number",
+    "vrg-gh issue list --repo o/r",
+    "vrg-gh issue ls --repo o/r --json number",
+    "vrg-gh pr list --repo o/r --state open --json number,title,url",
+    "vrg-gh issue list --repo o/r --label epic --search 'is:open -label:archive' --json number",
     "vrg-gh repo list org --limit 1000 --no-archived --json nameWithOwner",
     "vrg-gh repo view vergil-project/python-lib --json name",
     "vrg-gh release list --repo o/r --limit 3",
@@ -484,6 +489,65 @@ _ALLOWED_READS = [
 ]
 
 
+# One rule for lists and searches: (qualifier flags, query, --json fields,
+# refused). Each row is rendered as an issue and a PR list (the query in
+# --search) and as an issue and a PR search (the query positional).
+_QUERY_TABLE = [
+    ("--label epic", "", "number,title", False),
+    ("--state open", "", "number,title,url", False),
+    ("", "label:epic", "number", False),
+    ("", "is:open -label:archive", "number,labels", False),
+    ("", "(label:epic OR label:task) is:open", "number", False),
+    ("", "reason:completed closed:2026-10-01..2026-10-31", "number", False),
+    ("--author someone", "created:>2026-01-01", "number,author,createdAt", False),
+    ("--label epic", "", "number,body", True),
+    ("", "label:epic", "number,comments", True),
+    ("--state open", "", "reviews", True),
+    ("", "is:open", "latestReviews", True),
+    ("", "", "number,closingIssuesReferences", True),
+    ("", "Fixture run", "number", True),
+    ("--label epic", "release", "number", True),
+    ("", "label:epic in:title", "number", True),
+    ("", "in:body token", "number", True),
+    ("", '"Awaiting a ruling" is:open', "number", True),
+]
+
+
+def _query_forms(flags: str, query: str, fields: str) -> list[str]:
+    flag_part = f" {flags}" if flags else ""
+    forms = []
+    for top in ("issue", "pr"):
+        search = f" --search '{query}'" if query else ""
+        forms.append(f"vrg-gh {top} list --repo o/r{flag_part}{search} --json {fields}")
+    for kind in ("issues", "prs"):
+        positional = f" '{query}'" if query else ""
+        forms.append(f"vrg-gh search {kind}{positional} --repo o/r{flag_part} --json {fields}")
+    return forms
+
+
+_QUERY_CASES = [
+    pytest.param(command, refused, id=command)
+    for flags, query, fields, refused in _QUERY_TABLE
+    for command in _query_forms(flags, query, fields)
+]
+
+
+class TestListsAndSearchesOneRule:
+    @pytest.mark.parametrize(("command", "refused"), _QUERY_CASES)
+    def test_agent_list_and_search(self, command: str, refused: bool) -> None:
+        rc, out = _run(command, agent=True)
+        assert rc == 0
+        if refused:
+            assert "vrg-issue-read" in _reason(out)
+        else:
+            assert out == ""
+
+    @pytest.mark.parametrize(("command", "refused"), _QUERY_CASES)
+    def test_human_list_and_search_unchanged(self, command: str, refused: bool) -> None:
+        del refused
+        assert _run(command, agent=False) == (0, "")
+
+
 class TestAgentContentReads:
     def test_agent_issue_view_comments_refused(self) -> None:
         rc, out = _run("vrg-gh issue view 5 --repo o/r --comments", agent=True)
@@ -505,10 +569,14 @@ class TestAgentContentReads:
         assert rc == 0
         assert "`vrg-gh pr view` without `--json`" in _reason(out)
 
-    def test_agent_list_refused(self) -> None:
-        rc, out = _run("vrg-gh issue list --repo o/r --json number,title", agent=True)
+    def test_agent_text_list_refused(self) -> None:
+        rc, out = _run("vrg-gh issue list --repo o/r --search 'Fixture run'", agent=True)
         assert rc == 0
-        assert "`vrg-gh issue list`" in _reason(out)
+        assert "`vrg-gh issue list --search` with a query matching text" in _reason(out)
+
+    def test_agent_qualifier_list_allowed(self) -> None:
+        rc, out = _run("vrg-gh issue list --repo o/r --label epic --json number", agent=True)
+        assert (rc, out) == (0, "")
 
     def test_agent_text_search_refused(self) -> None:
         rc, out = _run('vrg-gh search issues "Fixture run" --owner org --json number', agent=True)

@@ -23,13 +23,15 @@ issue and PR content (epic vergil-project/.github#1467, spec §6.4), naming
 - an ``issue view`` or ``pr view`` with no ``--json``, whose default output
   prints the body;
 - an ``api`` path with a ``comments`` or ``reviews`` segment;
-- every ``issue list`` and ``pr list``;
-- a ``search issues`` or ``search prs`` whose query matches text (a
-  free-text term, an ``in:`` qualifier or ``--match``), so that content
-  picks the results. A query of qualifiers only (labels, states, dates,
-  authors) is a metadata filter and stays allowed, as do metadata reads
-  such as ``issue view --json labels,parent,state`` and run and release
-  listings.
+- an ``issue list``, ``pr list``, ``search issues`` or ``search prs`` whose
+  query matches text (a free-text term or an ``in:`` qualifier, in a list's
+  ``--search`` or a search's query, or a search's ``--match``), so that
+  content picks the results.
+
+Lists and searches follow one rule: one made only of qualifiers (labels,
+states, dates, authors, ``reason:``, ``is:``) that requests no content field
+is a metadata read and stays allowed, as do metadata reads such as
+``issue view --json labels,parent,state`` and run and release listings.
 
 It is a blocklist against accidents, not a security boundary: forms it cannot
 see (an invocation not at command position, a GraphQL query, a command built
@@ -102,7 +104,7 @@ _CONTENT_READ_REMEDY = (
     "for one issue or PR, or `vrg-issue-read (--repo OWNER/REPO | --owner ORG) "
     "[--search QUERY] [--pr] [--state STATE] [--json]` for a list or search. "
     "Metadata reads (`--json` with fields such as labels, parent or state, "
-    "and searches by qualifiers only) stay available through vrg-gh."
+    "and lists and searches by qualifiers only) stay available through vrg-gh."
 )
 
 # The ``--json`` fields that carry issue or PR content, or links read from it.
@@ -321,7 +323,10 @@ def _item_content_read(top: str, sub: str, rest: list[str]) -> str | None:
     if sub == "view" and not _has_flag(rest, "--json"):
         return f"`vrg-gh {top} view` without `--json` (its default output prints the body)"
     if sub in ("list", "ls"):
-        return f"`vrg-gh {top} {sub}`"
+        for query in _flag_values(rest, ("--search", "-S")):
+            term = _query_text_term(query)
+            if term is not None:
+                return f"`vrg-gh {top} {sub} --search` with a query matching text ({term})"
     return None
 
 
@@ -340,6 +345,19 @@ def _search_content_read(sub: str, rest: list[str]) -> str | None:
 
 def _has_flag(args: list[str], flag: str) -> bool:
     return any(a == flag or a.startswith(f"{flag}=") for a in args)
+
+
+def _flag_values(args: list[str], names: tuple[str, ...]) -> list[str]:
+    """Every value *args* give a flag named in *names* (``--f v`` or ``--f=v``)."""
+    values: list[str] = []
+    for i, arg in enumerate(args):
+        if arg in names and i + 1 < len(args):
+            values.append(args[i + 1])
+            continue
+        for name in names:
+            if arg.startswith(f"{name}="):
+                values.append(arg.removeprefix(f"{name}="))
+    return values
 
 
 def _content_field(args: list[str]) -> str | None:
@@ -377,15 +395,23 @@ def _positionals(args: list[str], bool_flags: frozenset[str]) -> list[str]:
 def _text_query_term(args: list[str]) -> str | None:
     """Name the first query term of a search that matches text, or ``None``."""
     for positional in _positionals(args, _SEARCH_BOOL_FLAGS):
-        for raw in _QUERY_TERM_RE.findall(positional):
-            term = raw.strip("()").removeprefix("-")
-            if not term or term in _QUERY_OPERATORS:
-                continue
-            qualifier = _QUALIFIER_RE.match(term)
-            if qualifier is None:
-                return "a free-text term"
-            if qualifier.group(1).lower() == "in":
-                return "an `in:` qualifier"
+        term = _query_text_term(positional)
+        if term is not None:
+            return term
+    return None
+
+
+def _query_text_term(query: str) -> str | None:
+    """Name the first term of a GitHub search *query* that matches text, or ``None``."""
+    for raw in _QUERY_TERM_RE.findall(query):
+        term = raw.strip("()").removeprefix("-")
+        if not term or term in _QUERY_OPERATORS:
+            continue
+        qualifier = _QUALIFIER_RE.match(term)
+        if qualifier is None:
+            return "a free-text term"
+        if qualifier.group(1).lower() == "in":
+            return "an `in:` qualifier"
     return None
 
 
