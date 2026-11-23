@@ -24,7 +24,7 @@ vrg-release-record check OWNER/REPO#N
 
 | Argument | Meaning |
 |---|---|
-| `OWNER/REPO#N` | The task issue whose record is checked. Type `OWNER/REPO` as GitHub spells it: a record's repo is matched exactly, case included, so a ref in another case finds no record and the verdict is `none` |
+| `OWNER/REPO#N` | The task issue whose record is checked. `OWNER/REPO` may be typed in any case: it is matched case-insensitively everywhere in the check, as GitHub matches it, and the output spells it as GitHub does |
 
 ## What it does
 
@@ -77,7 +77,7 @@ One JSON object on stdout:
 
 | Field | Meaning |
 |---|---|
-| `task` | The task checked |
+| `task` | The task checked, its `OWNER/REPO` spelled as GitHub spells it, whatever case it was typed in |
 | `verdict` | `pass`, `fail` or `none` |
 | `record` | The record used: its version, its tag and the tag's GitHub Release URL; `null` for `none` |
 | `ancestry` | `pass` or `fail`; `null` for `none` |

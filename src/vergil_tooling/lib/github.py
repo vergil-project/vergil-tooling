@@ -563,6 +563,20 @@ def _resolve_installations(jwt_token: str) -> dict[str, str]:
     return mapping
 
 
+def _installation_for(installations: dict[str, str], org: str) -> str | None:
+    """Return *org*'s installation ID from *installations*, ignoring case.
+
+    GitHub treats owner logins case-insensitively, so ``Vergil-Project``
+    names the same owner as ``vergil-project``; the map is keyed by each
+    installation's login as GitHub spells it (#5053).
+    """
+    wanted = org.casefold()
+    for login, installation_id in installations.items():
+        if login.casefold() == wanted:
+            return installation_id
+    return None
+
+
 # GitHub rejects an App JWT with 401 when its ``iat`` is in the future or its
 # ``exp`` is more than 10 minutes ahead, both judged by GitHub's clock. The
 # ``iat`` backdate covers a local clock running behind; the ``exp`` margin
@@ -620,7 +634,7 @@ def get_installation_token(
     """Return a GitHub App installation token, or ``None`` if not in App mode.
 
     Resolves the installation ID dynamically by calling
-    ``GET /app/installations`` and matching the org. If *org* is
+    ``GET /app/installations`` and matching the org in any case. If *org* is
     ``None``, detects it from the current repo's git remote.
     Tokens are cached per-org for 55 minutes.
 
@@ -672,7 +686,7 @@ def get_installation_token(
         jwt_token = _generate_jwt(app_id, key_path)
 
         installations = _resolve_installations(jwt_token)
-        installation_id = installations.get(org)
+        installation_id = _installation_for(installations, org)
         if not installation_id:
             if require_installation:
                 raise NoInstallationError(org, sorted(installations))
