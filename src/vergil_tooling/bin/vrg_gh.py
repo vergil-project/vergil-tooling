@@ -46,11 +46,13 @@ _ALLOWED: dict[str, set[str]] = {
     "workflow": {"list", "view"},
     "cache": {"list"},
     "repo": {"view", "list"},
-    # `release` is read-only here: only `list` and `view` are permitted so
-    # release facts can be queried directly. Write actions (create/edit/
-    # delete/upload/download) are denied by the action-level allowlist's
-    # deny-by-default. See issue #2539.
-    "release": {"list", "view"},
+    # `release` is read-only here: `list` and `view` query release facts
+    # directly (#2539), and `download` fetches a release's assets, such as its
+    # evidence bundle and manifest, so a validation run reads them through the
+    # wrapper rather than curl (#5002). It writes only local files. Write
+    # actions (create/edit/delete/upload) are denied by the action-level
+    # allowlist's deny-by-default.
+    "release": {"list", "view", "download"},
     "label": {"list", "create"},
     # `variable` is read-only here: `list` and `get` read a repo's or org's
     # Actions variables (not secrets). `set` and `delete` are denied by the
@@ -466,6 +468,9 @@ _VALUE_FLAGS: dict[tuple[str, str], frozenset[str]] = {
         "-t",
     ),
     ("pr", "update-branch"): _flags(),
+    ("release", "download"): _flags(
+        "--archive", "-A", "--dir", "-D", "--output", "-O", "--pattern", "-p"
+    ),
     ("variable", "list"): _flags(*_OUTPUT_FLAGS, "--env", "-e"),
     ("variable", "get"): _flags(*_OUTPUT_FLAGS, "--env", "-e"),
     ("repo", "view"): _flags(*_OUTPUT_FLAGS, "--branch", "-b"),
