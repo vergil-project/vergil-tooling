@@ -177,6 +177,7 @@ rejected as not recognized.
 | `repo list` | yes | yes | — | Read-only |
 | `release list` | yes | yes | — | Read-only release facts |
 | `release view` | yes | yes | — | Read-only release facts |
+| `release download` | yes | yes | — | Read-only on GitHub: fetches a release's assets to local files |
 | `label list` | yes | yes | — | Read-only |
 | `label create` | yes | yes | — | Used by `vrg-ensure-label` |
 | `variable list` | yes | yes | — | Read-only Actions variables |
