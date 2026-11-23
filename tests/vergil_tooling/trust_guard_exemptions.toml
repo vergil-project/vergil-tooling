@@ -1,0 +1,303 @@
+# The reads test_trust_guard.py lets through outside lib/trust.py (spec §6.3
+# of epic vergil-project/.github#1467). Adding to this file is a reviewed
+# change: each entry says why its read is safe.
+#
+# [[registered]]  A read the scanner cannot resolve, with the fields it
+#                 requests; content fields among them still need a
+#                 [[judged]] or [[exempt]] entry.
+# [[judged]]      A read whose content fields are acted on only through the
+#                 trust layer's answer; `judge` names the functions
+#                 (path:function) that give it, each of which calls into
+#                 lib/trust.py.
+# [[exempt]]      A display-only read: its content fields are shown to a
+#                 human and drive no decision.
+# [[pending]]     A read a tracked task moves onto the trust layer; `task`
+#                 names it (owner/repo#N), and the task removes its entry.
+
+# --- registered ------------------------------------------------------------------
+
+[[registered]]
+path = "lib/github.py"
+function = "download_api_binary"
+argument = "endpoint"
+fields = []
+reason = """A binary download (an Actions artifact archive). Its one caller, \
+ci_evidence's artifact harvest, passes an actions/artifacts/<id>/zip path."""
+
+[[registered]]
+path = "lib/pending_release.py"
+function = "_prs_by_sha"
+argument = "_pr_query(chunk, closing=closing)"
+fields = ["headRefName", "body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
+reason = """The query is built per chunk of commit SHAs. It selects each commit's \
+associated PRs (_pr_fields: number, title, headRefName, mergedAt, baseRefName, \
+merged, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
+history, closingIssuesReferences and the connected events)."""
+
+# --- judged ----------------------------------------------------------------------
+
+[[judged]]
+path = "bin/vrg_finalize_pr.py"
+function = "_merged_branches"
+fields = ["headRefName"]
+judge = ["bin/vrg_finalize_pr.py:_confirmed_merged_branch"]
+reason = """Each merged PR's head branch is a candidate. The cleanup names it for \
+deletion only when _confirmed_merged_branch finds the PR itself, by number, among \
+trust.prs_for_branch's merged same-repo PRs with a trusted author on that branch."""
+
+[[judged]]
+path = "bin/vrg_pr_review_comments.py"
+function = "fetch_review_comments"
+fields = ["comments"]
+judge = ["lib/trust.py:read_reviews"]
+reason = """The REST listing gives each inline comment's place (path, line, review, \
+thread, URL). A comment is kept only when trust.read_reviews trusts it, and its \
+body is the layer's, never the listing's."""
+
+[[judged]]
+path = "bin/vrg_release_record.py"
+function = "_closing_prs"
+fields = ["body", "closedByPullRequestsReferences", "closingIssuesReferences", "timelineItems", "userContentEdits"]
+judge = ["lib/pending_release.py:trusted_closing_refs"]
+reason = """The task's closing PRs are read with CLOSING_FIELDS, and a PR counts only \
+when trusted_closing_refs, which judges the body through trust.judge_body and each \
+hand link's actor through trust.judge_identity, counts its reference."""
+
+[[judged]]
+path = "lib/ci_evidence.py"
+function = "_merged_prs_from_commit_api"
+fields = ["body", "headRefName"]
+judge = ["lib/ci_evidence.py:_trusted_merged"]
+reason = """Only each merged PR's number and head branch are kept, as candidates. \
+resolve_release_pr takes a candidate only when trust.prs_for_branch finds it on that \
+branch as a merged same-repo PR with a trusted author. The body is never read."""
+
+[[judged]]
+path = "lib/ci_evidence.py"
+function = "_pr_from_subject"
+fields = ["body", "headRefName"]
+judge = ["lib/ci_evidence.py:_trusted_merged"]
+reason = """The PR the merge subject names is a candidate, by number and head \
+branch only, judged as for _merged_prs_from_commit_api. The body is never read."""
+
+[[judged]]
+path = "lib/epic_audit.py"
+function = "_merged_prs"
+fields = ["body"]
+judge = ["lib/epic_audit.py:_trusted_task_drift"]
+reason = """The search's copy of each merged PR's body only picks candidates. \
+task_drift reads each PR with an open task again through trust.read_issue, and only \
+the tasks its trusted body links are drift."""
+
+[[judged]]
+path = "lib/epic_audit.py"
+function = "_open_task_drift"
+fields = ["body"]
+judge = ["lib/release/__init__.py:is_release_tracking_issue"]
+reason = """The task's body is passed only to is_release_tracking_issue, which reads \
+it again through trust.read_issue and counts the release marker only in a trusted \
+body."""
+
+[[judged]]
+path = "lib/epic_audit.py"
+function = "_repo_open_issues"
+fields = ["body"]
+judge = ["lib/epic_audit.py:body_only_parents", "lib/release/__init__.py:is_release_tracking_issue"]
+reason = """The listing's body picks the candidates of a body Parent: line, which \
+body_only_parents reads again through trust.read_issue, and is passed to \
+is_legitimate_top_level, whose release check reads the body again through the layer. \
+Its third use, misplaced_adhoc, is the [[exempt]] entry of this function."""
+
+[[judged]]
+path = "lib/epics.py"
+function = "_reflink_child_states"
+fields = ["body"]
+judge = ["lib/epics.py:_trusted_body"]
+reason = """The search hit's body only picks candidates; a child counts only when its \
+body, read again through trust.read_issue, carries the Parent: line."""
+
+[[judged]]
+path = "lib/finalize_watch.py"
+function = "snapshot"
+fields = ["headRefName"]
+judge = ["lib/finalize_watch.py:confirmed_head"]
+reason = """The snapshot's head branch is a candidate. The watch's develop-PR check and \
+its report take the branch from confirmed_head, which finds the PR itself, by number, \
+among trust.prs_for_branch's same-repo PRs with a trusted author; vrg-pr-await and \
+vrg-repo-status do not read it."""
+
+[[judged]]
+path = "lib/intake_route.py"
+function = "_planning_epic_states"
+fields = ["body"]
+judge = ["lib/intake_route.py:_trusted_planning_body"]
+reason = """The search hit's body only picks candidates; an epic counts only when its \
+body, read again through trust.read_issue, carries the exact Planning: line."""
+
+[[judged]]
+path = "lib/mechanized_pr.py"
+function = "_open_prs_for"
+fields = ["--head"]
+judge = ["lib/trust.py:is_same_repo"]
+reason = """The open PRs on an automation job's own branch, kept only when \
+trust.is_same_repo puts the head in the repo itself. Each is closed and the branch \
+deleted, which the job does to its earlier runs' branches in every case."""
+
+[[judged]]
+path = "lib/pending_release.py"
+function = "_prs_by_sha"
+fields = ["body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
+judge = ["lib/pending_release.py:trusted_closing_refs"]
+reason = """CLOSING_FIELDS are read only for trusted_closing_refs (_closing_refs), \
+which judges the body through trust.judge_body and each hand link's actor through \
+trust.judge_identity."""
+
+[[judged]]
+path = "lib/pr_provenance.py"
+function = "_collect_actions"
+fields = ["reviews", "timelineItems"]
+judge = ["lib/trust.py:role_of"]
+reason = """Only each approving review's author and each timeline event's actor are \
+read, never review text, and each identity's role comes from the trust layer \
+(classify, trust.role_of)."""
+
+[[judged]]
+path = "lib/release/preflight.py"
+function = "pending_deps_prs"
+fields = ["headRefName"]
+judge = ["lib/release/preflight.py:_owns_its_branch", "lib/release/preflight.py:_trusted_fix_task"]
+reason = """The head branch is acted on (its deletion) only once _owns_its_branch \
+finds the PR among trust.prs_for_branch's same-repo PRs with a trusted author; the \
+fix task link is read from a body the layer trusts."""
+
+[[judged]]
+path = "lib/release/resume.py"
+function = "_open_release_issues"
+fields = ["body"]
+judge = ["lib/release/preflight.py:_trusted_release_issues", "lib/release/guard.py:check_tracking_issue"]
+reason = """The listing's body only finds the target. The one-release-at-a-time gate \
+counts an issue only when _trusted_release_issues reads its body again through the \
+layer; a resume checks the listed state block, refusing a bad one, and the release \
+reads the body again under the tracking issue's identity rule \
+(guard.check_tracking_issue) before any stage relies on it."""
+
+[[judged]]
+path = "lib/roadmap.py"
+function = "_open_epics"
+fields = ["body"]
+judge = ["lib/release/__init__.py:is_release_tracking_issue"]
+reason = """The body is passed only to is_release_tracking_issue, which reads it \
+again through trust.read_issue."""
+
+# --- exempt ----------------------------------------------------------------------
+
+[[exempt]]
+path = "bin/vrg_security_record.py"
+function = "_show"
+fields = ["body"]
+reason = """show <issue> prints records. The body's Security advisory: lines only \
+nominate; _tracking_only keeps only the advisories whose own Tracking issue: line \
+names the issue, so the body can narrow what is printed but never adds to it, and \
+nothing is written."""
+
+[[exempt]]
+path = "lib/epic_audit.py"
+function = "_repo_open_issues"
+fields = ["body"]
+reason = """misplaced_adhoc reads the listing's body for cross-org epic refs. It is \
+report-only: a candidate is named in the audit's output and nothing is refused, \
+moved, closed or labelled. The body's other uses are the [[judged]] entry."""
+
+[[exempt]]
+path = "lib/epic_docs.py"
+function = "list_epics"
+fields = ["body"]
+reason = """The backfill listing's body feeds only the dry-run preview, which prints \
+each epic's proposed Documents section. Under --apply each epic's body is read again \
+(read_body) just before its write."""
+
+[[exempt]]
+path = "lib/open_prs.py"
+function = "_gather"
+fields = ["headRefName"]
+reason = """vrg-repo-status's open-PR view: the head branch is shown in its row and \
+sets the row's displayed type. The view writes nothing and decides nothing."""
+
+# --- pending ---------------------------------------------------------------------
+
+[[pending]]
+path = "bin/vrg_finalize_pr.py"
+function = "_read_closing_refs"
+fields = ["closingIssuesReferences"]
+task = "vergil-project/vergil-tooling#4987"
+reason = "fixed by vergil-project/vergil-tooling#4987"
+
+[[pending]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_closing_refs"
+fields = ["closingIssuesReferences"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "bin/vrg_pr_workflow.py"
+function = "_check_pr_fields"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "lib/epic_docs.py"
+function = "read_body"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4989"
+reason = "fixed by vergil-project/vergil-tooling#4989"
+
+[[pending]]
+path = "lib/in_flight.py"
+function = "_open_pr_issues"
+fields = ["closingIssuesReferences", "headRefName"]
+task = "vergil-project/vergil-tooling#4988"
+reason = "fixed by vergil-project/vergil-tooling#4988"
+
+[[pending]]
+path = "lib/intake_route.py"
+function = "_guard_open_closing_pr"
+fields = ["closedByPullRequestsReferences"]
+task = "vergil-project/vergil-tooling#4987"
+reason = "fixed by vergil-project/vergil-tooling#4987"
+
+[[pending]]
+path = "lib/pending_release.py"
+function = "_prs_by_sha"
+fields = ["headRefName"]
+task = "vergil-project/vergil-tooling#4986"
+reason = "fixed by vergil-project/vergil-tooling#4986"
+
+[[pending]]
+path = "lib/queue_view.py"
+function = "planning_items"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4989"
+reason = "fixed by vergil-project/vergil-tooling#4989"
+
+[[pending]]
+path = "lib/release/rebuild.py"
+function = "_merged_pr"
+fields = ["--head"]
+task = "vergil-project/vergil-tooling#4986"
+reason = "fixed by vergil-project/vergil-tooling#4986"
+
+[[pending]]
+path = "lib/security_records.py"
+function = "_read_issue"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4990"
+reason = "fixed by vergil-project/vergil-tooling#4990"
+
+[[pending]]
+path = "lib/security_records.py"
+function = "security_issues"
+fields = ["body"]
+task = "vergil-project/vergil-tooling#4990"
+reason = "fixed by vergil-project/vergil-tooling#4990"

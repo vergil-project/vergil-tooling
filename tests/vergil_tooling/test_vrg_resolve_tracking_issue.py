@@ -12,13 +12,26 @@ from vergil_tooling.bin.vrg_resolve_tracking_issue import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import trust
 
 if TYPE_CHECKING:
     import pytest
 
 _MOD = "vergil_tooling.bin.vrg_resolve_tracking_issue"
 
-_PR_BODY_WITH_REF = {"body": "## Summary\n\nRef #100\n"}
+
+def _content(body: str) -> trust.IssueContent:
+    """What :func:`trust.read_issue` returns for a PR whose body it trusts."""
+    return trust.IssueContent(
+        body=body,
+        body_role=trust.Role.HUMAN,
+        author_role=trust.Role.HUMAN,
+        comments=(),
+        skipped=(),
+    )
+
+
+_PR_BODY_WITH_REF = _content("## Summary\n\nRef #100\n")
 
 
 # --- parse_args ---
@@ -74,7 +87,7 @@ def test_happy_path_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -88,7 +101,7 @@ def test_commit_arg_forwarded() -> None:
             return_value="Merge pull request #42 from org/release/1.0.0",
         ) as mock_git,
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value={"body": "Ref #100\n"}),
+        patch(f"{_MOD}.trust.read_issue", return_value=_content("Ref #100\n")),
     ):
         main(["--commit", "abc123"])
     mock_git.assert_called_once_with("log", "-1", "--format=%s", "abc123")
@@ -101,7 +114,7 @@ def test_happy_path_squash_merge(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.git.read_output", return_value="feat: add widget (#42)"),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -114,7 +127,7 @@ def test_happy_path_squash_merge(capsys: pytest.CaptureFixture[str]) -> None:
 def test_pr_flag_bypasses_commit_parsing(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF),
     ):
         result = main(["--pr", "42"])
     assert result == 0
@@ -130,7 +143,7 @@ def test_api_fallback_when_no_pattern_matches(capsys: pytest.CaptureFixture[str]
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -146,7 +159,7 @@ def test_api_fallback_prefers_merged_pr(capsys: pytest.CaptureFixture[str]) -> N
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -161,7 +174,7 @@ def test_resolve_tracking_issue_no_first_pr_fallback(capsys: pytest.CaptureFixtu
         patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.github.read_json_paginated", return_value=api_response),
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF) as mock_json,
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF) as mock_json,
     ):
         result = main([])
     assert result == 1
@@ -216,15 +229,19 @@ def test_api_fallback_reads_every_page(capsys: pytest.CaptureFixture[str]) -> No
         patch(
             f"{_MOD}.github.read_output", return_value=json.dumps(page1) + json.dumps(page2)
         ) as mock_gh,
-        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF) as mock_json,
+        patch(f"{_MOD}.trust.read_issue", return_value=_PR_BODY_WITH_REF) as mock_json,
     ):
         result = main([])
     assert result == 0
     assert capsys.readouterr().out.strip() == "100"
     mock_gh.assert_called_once_with(
-        "api", "--paginate", "repos/org/repo/commits/abc123sha/pulls?per_page=100"
+        "api",
+        "--paginate",
+        "repos/org/repo/commits/abc123sha/pulls?per_page=100",
+        "--jq",
+        "[.[] | {number, merged_at}]",
     )
-    mock_json.assert_called_once_with("api", "repos/org/repo/pulls/42")
+    mock_json.assert_called_once_with("org/repo", 42, require_body=True)
 
 
 def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None:
@@ -285,7 +302,7 @@ def test_empty_pr_body(capsys: pytest.CaptureFixture[str]) -> None:
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value={"body": ""}),
+        patch(f"{_MOD}.trust.read_issue", return_value=_content("")),
     ):
         result = main([])
     assert result == 1
@@ -299,7 +316,7 @@ def test_null_pr_body(capsys: pytest.CaptureFixture[str]) -> None:
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value={"body": None}),
+        patch(f"{_MOD}.trust.read_issue", return_value=_content("")),
     ):
         result = main([])
     assert result == 1
@@ -314,8 +331,8 @@ def test_no_ref_in_body(capsys: pytest.CaptureFixture[str]) -> None:
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(
-            f"{_MOD}.github.read_json",
-            return_value={"body": "No linkage here.\n"},
+            f"{_MOD}.trust.read_issue",
+            return_value=_content("No linkage here.\n"),
         ),
     ):
         result = main([])
@@ -331,8 +348,8 @@ def test_multiple_refs_in_body(capsys: pytest.CaptureFixture[str]) -> None:
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(
-            f"{_MOD}.github.read_json",
-            return_value={"body": "Ref #100\nRef #200\n"},
+            f"{_MOD}.trust.read_issue",
+            return_value=_content("Ref #100\nRef #200\n"),
         ),
     ):
         result = main([])
@@ -348,7 +365,7 @@ def test_gh_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", side_effect=err),
+        patch(f"{_MOD}.trust.read_issue", side_effect=err),
     ):
         result = main([])
     assert result == 2
@@ -369,25 +386,46 @@ def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) ->
             f"{_MOD}.github.current_repo",
             return_value="vergil-project/vergil-tooling",
         ),
-        patch(f"{_MOD}.github.read_json", return_value={"body": pr_body}),
+        patch(f"{_MOD}.trust.read_issue", return_value=_content(pr_body)),
     ):
         result = main([])
     assert result == 0
     assert capsys.readouterr().out.strip() == "830"
 
 
-def test_unexpected_api_response(capsys: pytest.CaptureFixture[str]) -> None:
+def test_untrusted_pr_body_is_a_stop(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A body an untrusted identity edited is never parsed: exit 1, metadata only."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    item = trust.Skipped(
+        "org/repo", 42, "edit", "outsider", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
+    )
+    stop = trust.UntrustedContentError(item, "the pr body is untrusted")
     with (
         patch(
             f"{_MOD}.git.read_output",
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", return_value=[]),
+        patch(f"{_MOD}.trust.read_issue", side_effect=stop),
     ):
         result = main([])
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "org/repo#42 edit outsider at 2026-11-01T00:00:00Z on body (untrusted)" in captured.err
+
+
+def test_trust_read_failure_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
+    failure = trust.TrustReadError("read_issue org/repo#42", "the GraphQL call failed: HTTP 502")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.trust.read_issue", side_effect=failure),
+    ):
+        result = main(["--pr", "42"])
     assert result == 2
-    assert "unexpected API response" in capsys.readouterr().err
+    assert "ERROR: failed to fetch PR #42: cannot read who wrote" in capsys.readouterr().err
 
 
 def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
@@ -405,7 +443,7 @@ def test_pr_flag_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
     err = subprocess.CalledProcessError(returncode=1, cmd=["gh", "api"], stderr="Not Found")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.github.read_json", side_effect=err),
+        patch(f"{_MOD}.trust.read_issue", side_effect=err),
     ):
         result = main(["--pr", "42"])
     assert result == 2

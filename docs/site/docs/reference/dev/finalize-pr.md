@@ -109,7 +109,10 @@ The watch reads each open PR once per poll and judges it in this order:
 
 1. **Develop PRs only.** A PR whose base is not `develop`, or whose head is
    a `release/*` branch, ends as *failed: not a develop PR* and is left
-   untouched. A release PR goes through `vrg-release`.
+   untouched. A release PR goes through `vrg-release`. The head branch is
+   read through the trust layer once, at the start: a PR that is not a
+   same-repo PR with a trusted author on its branch (a fork PR, for one)
+   ends the same way, and its branch is not named.
 2. **Merged.** The PR ends as *merged*. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.
 3. **Closed** without merging: *failed: closed*.
@@ -277,7 +280,10 @@ can take it.
    the CD report and for the report of a develop that did not validate.
 3. **Delete the merged PRs' branches.** Each merged PR's head branch and
    its `.worktrees/` worktree are deleted by name, since a squash merge
-   hides the branch from `git branch --merged`. The branch's PR-workflow
+   hides the branch from `git branch --merged`. A branch is named only
+   once the trust layer finds the PR itself merged, as a same-repo PR with
+   a trusted author, on that branch; otherwise its local branch and
+   worktree are kept, and the PR is named on the output. The branch's PR-workflow
    relay ref (`refs/vergil/pr-workflow/<branch>`, pushed by
    `report-ready`) is deleted with it, so a cloud-handoff ref never
    outlives its branch (issue #2369). A branch with no local copy is

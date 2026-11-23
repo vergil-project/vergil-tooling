@@ -966,6 +966,7 @@ def _pr(
         "title": title,
         "headRefName": branch,
         "headRefOid": f"{number:040x}",
+        "baseRefName": "develop",
         "state": state,
         "createdAt": CREATED,
         "author": author,
@@ -1425,6 +1426,7 @@ def test_prs_for_branch_returns_trusted_same_repo_pr(answer: Any) -> None:
             title="release 1.2.3",
             head="release/1.2.3",
             head_oid=f"{5:040x}",
+            base="develop",
             author_role=Role.AGENTS,
             state="OPEN",
         )
@@ -1528,6 +1530,7 @@ def test_prs_for_branch_loads_configured_authors(
             id="contradicting-head",
         ),
         pytest.param(_prs([{**_pr(5), "headRefOid": ""}]), "no usable headRefOid", id="no-oid"),
+        pytest.param(_prs([{**_pr(5), "baseRefName": ""}]), "no usable baseRefName", id="no-base"),
         pytest.param(_prs(["x"]), "not an object", id="not-object"),
     ],
 )

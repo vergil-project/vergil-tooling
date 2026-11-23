@@ -260,7 +260,7 @@ def find_open_fix_task(repo: str, version: str, kind: FailureKind) -> str | None
         "--limit",
         str(_FIX_TASK_SEARCH_LIMIT),
         "--json",
-        "number,url,title,body",
+        "number,url,title",
     )
     try:
         results = github.read_json(*cmd)

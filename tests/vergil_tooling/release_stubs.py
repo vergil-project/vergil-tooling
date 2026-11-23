@@ -31,6 +31,7 @@ def branch_pr(
         title="T",
         head=branch,
         head_oid=head,
+        base="develop",
         author_role=trust.Role.AGENTS,
         state=state,
     )

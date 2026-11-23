@@ -19,6 +19,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeError,
     _classify_failed_jobs,
     _clean_branch_images,
+    _confirmed_merged_branch,
     _declares_cd_workflow,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
@@ -41,7 +42,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import text_table, worktrees
+from vergil_tooling.lib import text_table, trust, worktrees
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -73,6 +74,25 @@ def _released_repo() -> Iterator[None]:
     The refusal tests override it — the innermost patch wins.
     """
     with patch(_MOD + ".gate.unreleased_refusal", return_value=None):
+        yield
+
+
+def _repo_and_number(pr: str, _purpose: str) -> tuple[str, int]:
+    """``github.pr_repo_and_number`` for a test PR: its URL's number, or the PR as a number."""
+    return "o/r", int(pr.rsplit("/", 1)[-1].lstrip("#"))
+
+
+@pytest.fixture(autouse=True)
+def _merged_prs_confirmed() -> Iterator[None]:
+    """Default: the trust layer confirms each merged PR's branch.
+
+    The tests of the confirmation itself re-patch these, or call
+    :func:`_confirmed_merged_branch` directly — the innermost patch wins.
+    """
+    with (
+        patch(_MOD + ".github.pr_repo_and_number", side_effect=_repo_and_number),
+        patch(_MOD + "._confirmed_merged_branch", return_value=True),
+    ):
         yield
 
 
@@ -276,6 +296,7 @@ def _pr_ref(number: int, title: str, *, state: str = "OPEN", head_oid: str = "f"
         title=title,
         head=f"feature/{number}-x",
         head_oid=head_oid,
+        base="develop",
         author_role=Role.HUMAN,
         state=state,
     )
@@ -3978,6 +3999,69 @@ def test_merged_branches_reads_each_merged_pr() -> None:
     ctx = _stage_ctx([f"{_PR_A},{_PR_B}"])
     with patch(_MOD + ".github.head_ref", side_effect=["feature/1-a\n", "feature/2-b"]):
         assert _merged_branches(ctx) == ["feature/1-a", "feature/2-b"]
+
+
+def test_merged_branches_skips_an_empty_head_branch() -> None:
+    ctx = _stage_ctx([_PR_A])
+    with (
+        patch(_MOD + ".github.head_ref", return_value="\n"),
+        patch(_MOD + "._confirmed_merged_branch") as confirm,
+    ):
+        assert _merged_branches(ctx) == []
+    confirm.assert_not_called()
+
+
+def test_merged_branches_keeps_an_unconfirmed_prs_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A PR the trust layer does not confirm names no branch to delete."""
+    ctx = _stage_ctx([f"{_PR_A},{_PR_B}"])
+    with (
+        patch(_MOD + ".github.head_ref", side_effect=["feature/1-a", "feature/2-b"]),
+        patch(_MOD + "._confirmed_merged_branch", side_effect=[False, True]) as confirm,
+    ):
+        assert _merged_branches(ctx) == ["feature/2-b"]
+    assert [c.args for c in confirm.call_args_list] == [
+        ("o/r", 1, "feature/1-a"),
+        ("o/r", 2, "feature/2-b"),
+    ]
+    out = capsys.readouterr().out
+    assert f"Merged PR {_PR_A} is not a same-repo PR with a trusted author" in out
+    assert "feature/1-a" not in out
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TrustReadError("prs_for_branch o/r feature/1-a", "the repository is missing"),
+        TrustedAuthorsNotConfiguredError("no trusted authors"),
+    ],
+)
+def test_merged_branches_trust_failure_fails_the_stage(exc: Exception) -> None:
+    ctx = _stage_ctx([_PR_A])
+    with (
+        patch(_MOD + ".github.head_ref", return_value="feature/1-a"),
+        patch(_MOD + "._confirmed_merged_branch", side_effect=exc),
+        pytest.raises(FinalizeError, match=rf"could not confirm merged PR {_PR_A} through"),
+    ):
+        _merged_branches(ctx)
+
+
+def _merged_ref(number: int, branch: str) -> PRRef:
+    return replace(_pr_ref(number, "t", state="MERGED"), head=branch)
+
+
+def test_confirmed_merged_branch_needs_the_prs_own_number() -> None:
+    """Only the PR itself confirms its branch: a fork is skipped, another PR does not count."""
+    fork = trust.Skipped(
+        "o/r", 1, "pr", "mallory", "2026-01-01T00:00:00Z", "head", trust.CROSS_REPOSITORY
+    )
+    with patch(
+        _MOD + ".trust.prs_for_branch", return_value=([_merged_ref(9, "feature/1-a")], [fork])
+    ) as lookup:
+        assert not _confirmed_merged_branch("o/r", 1, "feature/1-a")
+        assert _confirmed_merged_branch("o/r", 9, "feature/1-a")
+    lookup.assert_called_with("o/r", "feature/1-a", state="merged")
 
 
 # -- refuse a release cascade on a repo that is not released (issue #4175) --

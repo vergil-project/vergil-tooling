@@ -594,8 +594,10 @@ to `0.2.0` under `^0.1.3`).
 
 ### vrg-resolve-tracking-issue
 
-Print the tracking issue number of the PR that produced a commit, read
-from the PR body's `Ref #N` linkage. The PR is found from the commit
+Print the tracking issue number of the PR that produced a commit, from
+the PR body's `Ref #N` linkage. The body is read through the trust layer:
+a body an untrusted identity wrote or edited is a stop, reported by
+metadata only. The PR is found from the commit
 subject (the merge-commit `Merge pull request #N from …` pattern, then the
 squash-merge `… (#N)` pattern), then from the GitHub API's
 commit-to-pulls lookup, which takes only the commit's merged PR: with
@@ -607,9 +609,9 @@ vergil-actions.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_resolve_tracking_issue` (patterns: `lib/linkage.py`) |
 | Args | `--commit` (default: HEAD), `--pr N` |
-| Preconditions | Git repo; `gh` authenticated for the current repo |
-| Failure mode | `ERROR:` on stderr naming what was tried; a commit whose PRs include no merged one, or a PR with no body or no `Ref #N` linkage, is an error |
-| Exit codes | 0 success (issue number on stdout), 1 no merged PR found or no linkage, 2 git or GitHub API failure (a malformed response included) |
+| Preconditions | Git repo; `gh` authenticated for the current repo; the trusted-authors configuration |
+| Failure mode | `ERROR:` on stderr naming what was tried; a commit whose PRs include no merged one, or a PR with no body, an untrusted body or no `Ref #N` linkage, is an error |
+| Exit codes | 0 success (issue number on stdout), 1 no merged PR found, an untrusted body or no linkage, 2 git, GitHub API or trust-layer read failure (a malformed response included) |
 | Status | Active |
 
 ### vrg-update-deps
@@ -718,14 +720,15 @@ that PR's head. The safety net behind the delete-on-merge repo setting and
 the delete-on-close rule (issue #3332). Never deletes the default branch,
 `develop`, `main`, `gh-pages`, a protected branch (branch protection or any
 ruleset rule), a branch with no PR, or a branch whose name was reused
-(issue #1719). See [vrg-branch-sweep](dev/branch-sweep.md).
+(issue #1719). Only a same-repo PR with a trusted author counts, read through
+the trust layer; any other is reported on stderr by metadata only. See [vrg-branch-sweep](dev/branch-sweep.md).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_branch_sweep` |
 | Args | `--repo OWNER/NAME` (default: the current repo), `--apply` (default: dry run) |
-| Preconditions | `gh` authenticated with read access (delete access for `--apply`) to the target repo |
-| Failure mode | A per-branch `gh` error is reported on that branch's line, the rest are processed, then exit 1 |
+| Preconditions | `gh` authenticated with read access (delete access for `--apply`) to the target repo; the trusted-authors configuration |
+| Failure mode | A per-branch `gh` or trust-layer read error is reported on that branch's line, the rest are processed, then exit 1 |
 | Exit codes | 0 success, 1 any branch error, listing failure or auth failure, 2 bad arguments |
 | Status | Active |
 
@@ -1111,11 +1114,12 @@ Which routes an item allows depends on the container epic it is in:
 
 A planning item's development epics are those an `Epic:` marker in a
 **trusted comment** names (its author and every editor trusted, judged by the
-trust layer), plus every `epic` issue whose body carries a `Planning:` line
-for it. A comment that is not trusted names no epic: it is reported on
-stderr, metadata only (`skipped untrusted content: <owner>/<repo>#<N>
-<comment|edit> <login> at <time> on comment <id> (<cause>)`), and the route
-carries on.
+trust layer), plus every `epic` issue whose **trusted body** carries a
+`Planning:` line for it (each search hit is read again through the trust
+layer). A comment or epic body that is not trusted names no epic: it is
+reported on stderr, metadata only (`skipped untrusted content:
+<owner>/<repo>#<N> <comment|edit> <login> at <time> on comment <id>
+(<cause>)`, or the same line for the body), and the route carries on.
 
 | Attribute | Value |
 |---|---|

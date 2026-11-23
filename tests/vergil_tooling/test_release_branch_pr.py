@@ -28,6 +28,7 @@ def _pr(number: int, *, author: Any = AGENT, fork: bool = False, state: str = "O
         "title": SPAM_TEXT if fork or author is OUTSIDER else f"release {number}",
         "headRefName": _BRANCH,
         "headRefOid": f"{number:040x}",
+        "baseRefName": "main",
         "state": state,
         "createdAt": CREATED,
         "author": author,

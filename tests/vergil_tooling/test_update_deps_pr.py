@@ -149,13 +149,15 @@ def test_prepare_pr_pushes_ensures_label_and_labels_pr(monkeypatch) -> None:
 
 _DEPS_PR = "https://github.com/o/r/pull/9"
 _TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
-_OPEN_DEPS_PR = github.OpenPR(
+_OPEN_DEPS_PR = trust.PRRef(
+    number=9,
     url=_DEPS_PR,
     title="chore(deps): dependency update for 2.1.243",
-    head_ref="deps/update-2.1.243",
-    base_ref="develop",
+    head="deps/update-2.1.243",
     head_oid="h0",
-    cross_repo=False,
+    base="develop",
+    author_role=trust.Role.AGENTS,
+    state="OPEN",
 )
 
 
@@ -180,7 +182,9 @@ def _prepare_with_create(
     gh_runs: list[tuple[str, ...]] = []
     slept: list[float] = []
     monkeypatch.setattr(_MOD + ".github.create_pr", fake_create)
-    monkeypatch.setattr(_MOD + ".github.open_prs_for_head", lambda *_a, **_kw: next(lookups))
+    monkeypatch.setattr(
+        "vergil_tooling.lib.pr_create.open_trusted_prs", lambda *_a, **_kw: next(lookups)
+    )
     monkeypatch.setattr(_MOD + ".github.run", lambda *a: gh_runs.append(a))
     monkeypatch.setattr(pr_create.time, "sleep", slept.append)
     ctx = _ctx()
@@ -198,12 +202,12 @@ def test_prepare_pr_adopts_the_pr_a_failed_create_opened_and_labels_it(monkeypat
 
 
 def test_prepare_pr_refuses_an_open_pr_it_did_not_open(monkeypatch) -> None:
-    other = dataclasses.replace(_OPEN_DEPS_PR, cross_repo=True)
+    other = dataclasses.replace(_OPEN_DEPS_PR, head_oid="ffff")
     with pytest.raises(UpdateDepsError, match="was not adopted") as exc:
         _prepare_with_create(monkeypatch, [_TIMEOUT], [[other]])
     assert exc.value.phase == "prepare-pr"
     assert _DEPS_PR in str(exc.value)
-    assert "its head is in another repository" in str(exc.value)
+    assert "its head commit is 'ffff', not 'h0'" in str(exc.value)
 
 
 def test_prepare_pr_create_that_really_failed_is_retried(monkeypatch) -> None:
@@ -598,7 +602,7 @@ def test_find_open_fix_task_matches_title_and_failure_kind(monkeypatch) -> None:
     assert args[:4] == ("issue", "list", "--repo", "o/r")
     assert args[args.index("--search") + 1] == f'"{title}" in:title'
     assert args[args.index("--state") + 1] == "open"
-    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title", "body"}
+    assert set(args[args.index("--json") + 1].split(",")) == {"number", "url", "title"}
 
 
 _TITLE = "Fix failed dependency update for 2.1.243"

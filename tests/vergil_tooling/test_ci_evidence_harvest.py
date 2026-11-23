@@ -58,6 +58,7 @@ def _pr_ref(number: int, branch: str) -> PRRef:
         title="chore(release): 1.2.3",
         head=branch,
         head_oid="a" * 40,
+        base="develop",
         author_role=Role.AGENTS,
         state="MERGED",
     )

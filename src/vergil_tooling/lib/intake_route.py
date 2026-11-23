@@ -523,6 +523,20 @@ def _label_names(view: dict[str, Any]) -> set[str]:
     return {str(label.get("name", "")) for label in view.get("labels") or []}
 
 
+def _trusted_planning_body(epic: IssueRef) -> str | None:
+    """*epic*'s body when the trust layer trusts it; otherwise ``None``, reported.
+
+    The untrusted body is reported on stderr, metadata only; the comments'
+    skips are not this reader's concern. A read the layer cannot complete
+    raises :class:`~vergil_tooling.lib.trust.TrustReadError`.
+    """
+    content = trust.read_issue(_repo_of(epic), epic.number)
+    trust.report_skipped(
+        [item for item in content.skipped if item.field == "body"], stream=sys.stderr
+    )
+    return content.body
+
+
 def _planning_epic_states(ref: IssueRef) -> dict[IssueRef, str]:
     """Each development epic of the planning item *ref* and its state, OPEN or CLOSED.
 
@@ -531,7 +545,9 @@ def _planning_epic_states(ref: IssueRef) -> dict[IssueRef, str]:
     plus every ``epic`` issue in *ref*'s org whose body carries a
     ``Planning: <ref>`` line (``epic-create`` writes that line into each epic it
     creates, while the marker names only one). The search is full text, so each
-    hit's body is checked for the exact line. A search that reaches its limit, a
+    hit's body is checked for the exact line, and the line counts only in a body
+    the trust layer trusts: each hit that carries it is read again through the
+    layer (:func:`_trusted_planning_body`). A search that reaches its limit, a
     state that is neither OPEN nor CLOSED, or a failed read raises: nothing is
     assumed closed.
     """
@@ -562,9 +578,14 @@ def _planning_epic_states(ref: IssueRef) -> dict[IssueRef, str]:
             continue
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner") or "")
         if name_with_owner.count("/") != 1:
-            raise RuntimeError(f"search hit for {ref.slug} has no repository: {item!r}")
+            raise RuntimeError(
+                f"search hit {item.get('number')!r} for {ref.slug} has no repository"
+            )
         owner, repo = name_with_owner.split("/")
-        states.setdefault(IssueRef(owner, repo, int(item["number"])), str(item["state"]).upper())
+        epic = IssueRef(owner, repo, int(item["number"]))
+        if epic in states or not line.search(_trusted_planning_body(epic) or ""):
+            continue
+        states[epic] = str(item["state"]).upper()
     for epic, state in states.items():
         if state not in ("OPEN", "CLOSED"):
             raise RuntimeError(f"unexpected state {state!r} for {epic.slug}")

@@ -1392,8 +1392,27 @@ def _head_of(branch: str) -> str:
         raise FinalizeError(msg) from exc
 
 
+def _confirmed_merged_branch(repo: str, number: int, branch: str) -> bool:
+    """True when *repo*#*number* is a merged same-repo PR with a trusted author on *branch*.
+
+    The branch read from the PR is only a candidate: it is looked up through
+    :func:`trust.prs_for_branch`, and only a merged PR with *number* itself
+    counts, so a fork PR from a branch of the same name never names a local
+    branch to delete. The skipped PRs are reported on stderr, metadata only;
+    a read the layer cannot complete raises :class:`trust.TrustReadError`.
+    """
+    prs, skipped = trust.prs_for_branch(repo, branch, state="merged")
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return any(pr.number == number for pr in prs)
+
+
 def _merged_branches(ctx: FinalizeContext) -> list[str]:
-    """The head branch names of the PRs the watch saw merge; a failed read fails the stage."""
+    """The head branch names of the PRs the watch saw merge; a failed read fails the stage.
+
+    A branch is named only once the trust layer confirms its PR
+    (:func:`_confirmed_merged_branch`); a PR it does not confirm is reported
+    and its branch is left alone.
+    """
     if ctx.args.dry_run:
         if ctx.merged_prs:
             print("  [dry-run] delete each merged PR's local branch and worktree")
@@ -1401,11 +1420,26 @@ def _merged_branches(ctx: FinalizeContext) -> list[str]:
     branches: list[str] = []
     for pr in ctx.merged_prs:
         try:
-            branches.append(github.head_ref(pr).strip())
+            repo, number = github.pr_repo_and_number(pr, "the merged-branch cleanup")
+            branch = github.head_ref(pr).strip()
         except subprocess.CalledProcessError as exc:
             msg = f"could not read the head branch of merged PR {pr}: {error_text(exc)}"
             raise FinalizeError(msg) from exc
-    return [b for b in branches if b]
+        if not branch:
+            continue
+        try:
+            confirmed = _confirmed_merged_branch(repo, number, branch)
+        except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+            msg = f"could not confirm merged PR {pr} through the trust layer: {exc}"
+            raise FinalizeError(msg) from exc
+        if not confirmed:
+            print(
+                f"  Merged PR {pr} is not a same-repo PR with a trusted author on its "
+                "branch; its local branch and worktree are kept."
+            )
+            continue
+        branches.append(branch)
+    return branches
 
 
 def _stage_lock(ctx: FinalizeContext) -> None:

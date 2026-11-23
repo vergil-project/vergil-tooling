@@ -468,13 +468,15 @@ _BUMP_PR = "https://github.com/owner/repo/pull/101"
 _BUMP_BRANCH = "release/post-2.1.0"
 _BUMP_HEAD = "b0mp"
 _TIMEOUT = github.GitHubAPIError(1, ("gh", "pr", "create"), "", "HTTP 504: Gateway Timeout")
-_OPEN_BUMP_PR = github.OpenPR(
+_OPEN_BUMP_PR = trust.PRRef(
+    number=101,
     url=_BUMP_PR,
     title="chore(release): back-merge 2.1.0 and bump to 2.1.1",
-    head_ref=_BUMP_BRANCH,
-    base_ref="develop",
+    head=_BUMP_BRANCH,
     head_oid=_BUMP_HEAD,
-    cross_repo=False,
+    base="develop",
+    author_role=trust.Role.AGENTS,
+    state="OPEN",
 )
 
 
@@ -488,7 +490,7 @@ def _bump_with_create(
         patch(_MOD + "._checkout_post_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr", create),
-        patch(_MOD + ".github.open_prs_for_head", side_effect=open_prs) as lookup,
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", side_effect=open_prs) as lookup,
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".wait_and_merge") as wait,
     ):
@@ -508,7 +510,8 @@ def test_back_merge_adopts_the_pr_a_failed_create_opened() -> None:
     ctx, lookup, sleep, wait = _bump_with_create(create, [[_OPEN_BUMP_PR]])
     assert ctx.bump_pr_url == _BUMP_PR
     create.assert_called_once()
-    lookup.assert_called_once_with(_BUMP_BRANCH, base="develop")
+    [spec] = lookup.call_args.args
+    assert (spec.head, spec.base) == (_BUMP_BRANCH, "develop")
     sleep.assert_not_called()
     wait.assert_called_once_with(_BUMP_PR, phase="back-merge-bump")
 

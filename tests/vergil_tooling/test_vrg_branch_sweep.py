@@ -10,6 +10,7 @@ import pytest
 from vergil_tooling.bin.vrg_branch_sweep import main, parse_args
 from vergil_tooling.lib import branch_sweep, github
 from vergil_tooling.lib.branch_sweep import Action, Outcome, PullRequest
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -121,6 +122,22 @@ def test_listing_failure_exits_nonzero(
         f"cannot list branches of {REPO}: Command 'gh api' returned non-zero exit status 1. "
         "stderr: HTTP 404: Not Found"
     ) in err
+
+
+def test_unconfigured_trusted_authors_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], orgs: list[str | None]
+) -> None:
+    del orgs
+
+    def boom(repo: str, *, apply: bool) -> list[Outcome]:
+        del repo, apply
+        raise TrustedAuthorsNotConfiguredError("trusted authors are not configured")
+
+    monkeypatch.setattr(branch_sweep, "sweep", boom)
+    assert main(["--repo", REPO]) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        "vrg-branch-sweep: trusted authors are not configured"
+    ]
 
 
 def test_missing_token_uses_cli_boundary(

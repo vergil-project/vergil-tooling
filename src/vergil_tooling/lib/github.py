@@ -1314,52 +1314,6 @@ def _read_output_once(*args: str) -> str:
     return result.stdout.strip()
 
 
-@dataclass(frozen=True)
-class OpenPR:
-    """One open PR, as :func:`open_prs_for_head` reads it."""
-
-    url: str
-    title: str
-    head_ref: str
-    base_ref: str
-    head_oid: str
-    cross_repo: bool
-
-
-_OPEN_PR_TEXT_FIELDS = ("url", "title", "headRefName", "baseRefName", "headRefOid")
-
-
-def open_prs_for_head(head: str, *, base: str, repo: str | None = None) -> list[OpenPR]:
-    """Every open PR whose head branch is *head* and base is *base*.
-
-    *repo* (``OWNER/REPO``) is passed as ``--repo``, as :func:`create_pr` does;
-    ``None`` leaves ``gh`` to read the cwd's repo.
-
-    ``gh pr list --head`` matches the branch name only, so a fork's PR from a
-    same-named branch is listed too; ``cross_repo`` tells it apart. A response
-    that is not a list, or a row missing a field, raises :class:`GitHubAPIError`
-    rather than read as "no PR" (#4058).
-    """
-    fields = ",".join((*_OPEN_PR_TEXT_FIELDS, "isCrossRepository"))
-    cmd: tuple[str, ...] = ("pr", "list", "--head", head, "--base", base, "--state", "open")
-    if repo is not None:
-        cmd += ("--repo", repo)
-    cmd += ("--json", fields)
-    result = read_json(*cmd)
-    if not isinstance(result, list):
-        raise _shape_error(("gh", *cmd), f"the PR list is {type(result).__name__}")
-    prs: list[OpenPR] = []
-    for row in result:
-        pr = _as_obj(row)
-        texts = [pr.get(key) for key in _OPEN_PR_TEXT_FIELDS]
-        cross = pr.get("isCrossRepository")
-        if not isinstance(cross, bool) or not all(isinstance(t, str) and t for t in texts):
-            raise _shape_error(("gh", *cmd), f"a PR row is {row!r}")
-        url, title, head_ref, base_ref, head_oid = cast("list[str]", texts)
-        prs.append(OpenPR(url, title, head_ref, base_ref, head_oid, cross_repo=cross))
-    return prs
-
-
 def create_issue(
     *,
     repo: str,
