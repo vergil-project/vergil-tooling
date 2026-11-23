@@ -714,12 +714,17 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     ]
 
     if ctx.publish_docs:
+        # cd-docs reports its failures with the automation App's token, so
+        # every call passes the App secrets (epic vergil-project/.github#1494,
+        # spec §5.6; issue #4965).
         lines.extend(
             [
                 "  docs:\n",
                 _uses_line("cd-docs", ctx.vergil_version),
                 "    permissions:\n",
                 "      contents: write\n",
+                "    secrets:\n",
+                *(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in _CD_RELEASE_APP_SECRETS),
             ]
         )
 

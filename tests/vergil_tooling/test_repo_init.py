@@ -1213,8 +1213,12 @@ class TestRenderCdWorkflow:
             "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
             "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
         }
-        # The docs job is not a cd-release call and gets no secrets.
-        assert "secrets" not in yaml.safe_load(content)["jobs"]["docs"]
+        # cd-docs reports its failures with the App's token, so the docs job
+        # passes both App secrets too (issue #4965).
+        assert yaml.safe_load(content)["jobs"]["docs"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
 
     def test_release_rust_explicit_secrets(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")

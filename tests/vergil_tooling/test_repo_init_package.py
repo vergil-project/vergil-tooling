@@ -138,8 +138,14 @@ class TestPackagedCdWorkflow:
         content = render_cd_workflow(ctx)
         assert _INHERIT_LINE in content
         assert "CARGO_REGISTRY_TOKEN" not in content
-        assert "    secrets:\n" not in content
-        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == "inherit"
+        jobs = yaml.safe_load(content)["jobs"]
+        assert jobs["release"]["secrets"] == "inherit"
+        # The only explicit map is the docs job's App secrets (issue #4965).
+        assert content.count("    secrets:\n") == 1
+        assert jobs["docs"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
 
     def test_no_package_keeps_least_privilege_map(self) -> None:
         ctx = _packaged_python_ctx()
@@ -165,7 +171,13 @@ class TestPackagedCdWorkflow:
         ctx.publish_release = False
         content = render_cd_workflow(ctx)
         assert "cd-release" not in content
-        assert "secrets" not in content
+        assert "secrets: inherit" not in content
+        jobs = yaml.safe_load(content)["jobs"]
+        assert set(jobs) == {"docs"}
+        assert jobs["docs"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
 
     def test_matches_hand_written_cd(self) -> None:
         generated = yaml.safe_load(render_cd_workflow(_packaged_python_ctx()))
