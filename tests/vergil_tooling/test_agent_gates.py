@@ -158,9 +158,7 @@ def thread(items: trust_stubs.FakeItems) -> Thread:
 
 
 def _evaluate(repo: Path, refs: list[str] | None = None) -> agent_gates.GateResult:
-    return evaluate(
-        repo, base="develop", head="HEAD", issue_refs=refs or [REF], authors=AUTHORS
-    )
+    return evaluate(repo, base="develop", head="HEAD", issue_refs=refs or [REF], authors=AUTHORS)
 
 
 def _fp(repo: Path) -> str:
@@ -302,9 +300,7 @@ def test_lookup_failure_fails_closed(
 
 def test_unreadable_ref_fails_closed(repo: Path, thread: Thread) -> None:
     _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    result = evaluate(
-        repo, base="no-such-ref", head="HEAD", issue_refs=[REF], authors=AUTHORS
-    )
+    result = evaluate(repo, base="no-such-ref", head="HEAD", issue_refs=[REF], authors=AUTHORS)
     assert not result.ok
     assert [reason.split(":", 1)[0] for reason in result.reasons] == [
         "protected files",
@@ -326,12 +322,21 @@ def test_malformed_registry_fails_closed(repo: Path, thread: Thread) -> None:
 
 
 @pytest.mark.parametrize("refs", [[], ["not-a-ref"], ["o/r#7", "o/other#8"]])
-def test_unresolvable_task_issue_refuses(repo: Path, items: trust_stubs.FakeItems, refs: list[str]) -> None:
+def test_unresolvable_task_issue_refuses(
+    repo: Path, items: trust_stubs.FakeItems, refs: list[str]
+) -> None:
     _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
     result = evaluate(repo, base="develop", head="HEAD", issue_refs=refs, authors=AUTHORS)
     assert not result.ok
     assert result.reasons[0].startswith("task issue:")
     assert items.reads == []
+
+
+def test_a_repeated_task_issue_is_read_once(repo: Path, thread: Thread) -> None:
+    head = _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    thread.record(REF, head, _fp(repo))
+    assert _evaluate(repo, [REF, REF]).ok
+    assert thread.items.reads == [("o/r", 7)]
 
 
 # --- the protected-files rule ---------------------------------------------------------

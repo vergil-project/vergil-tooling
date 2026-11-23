@@ -272,7 +272,8 @@ class _Lookups:
     def covers(self, ref: str, fingerprint: str) -> bool:
         """Whether a record, an exemption or an override on *ref* covers *fingerprint*."""
         if ref not in self._records:
-            self._records[ref] = frozenset(r.fingerprint for r in records(ref, authors=self.authors))
+            found = records(ref, authors=self.authors)
+            self._records[ref] = frozenset(record.fingerprint for record in found)
         if fingerprint in self._records[ref]:
             return True
         exempted = {
