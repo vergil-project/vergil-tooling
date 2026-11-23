@@ -97,10 +97,38 @@ def test_all_skipped_reports_none(recorder: Recorder, capsys: pytest.CaptureFixt
     assert "every job skipped" in capsys.readouterr().out
 
 
-def test_unknown_result_exits_1(recorder: Recorder, capsys: pytest.CaptureFixture[str]) -> None:
-    assert vrg_ops_report.main([*ARGS, "--results", "success,neutral"]) == 1
+@pytest.mark.parametrize(
+    ("flag", "value", "message"),
+    [
+        ("--results", "success,neutral", "unknown job result"),
+        ("--job", 'x" in:body "y', "invalid job name"),
+        ("--run-url", "http://example.invalid/run", "one https:// URL"),
+        ("--step", "a\nb", "one non-empty line"),
+    ],
+)
+def test_invalid_value_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+    recorder: Recorder,
+    capsys: pytest.CaptureFixture[str],
+    flag: str,
+    value: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(identity_mode, "current_mode", _never_resolved)
+    argv = {"--repo": "acme/docs", "--job": "docs-refresh", "--results": "failure"}
+    argv["--run-url"] = RUN
+    argv[flag] = value
+    with pytest.raises(SystemExit) as exc:
+        vrg_ops_report.main([arg for pair in argv.items() for arg in pair])
+    assert exc.value.code == 2
     assert recorder.calls == []
-    assert "--results" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert flag in err
+    assert message in err
+
+
+def _never_resolved() -> IdentityMode:
+    raise AssertionError("a usage error must stop before the identity check")
 
 
 def test_missing_token_reaches_the_cli_boundary(

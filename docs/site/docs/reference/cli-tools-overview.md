@@ -762,7 +762,7 @@ job, step, date and issue numbers only, never log text.
 | Args | `--repo OWNER/NAME`, `--job NAME`, `--results R[,R…]` (each `success`, `failure`, `cancelled` or `skipped`), `--run-url URL`, `--step NAME` (optional) |
 | Preconditions | The automation identity: `VRG_AUTOMATION_APP` set and the token verified as that App's (every other identity is refused before any read); the trusted-authors configuration (`VRG_TRUSTED_AUTHORS` under Actions) |
 | Failure mode | A refused identity, a trust-layer read failure, a failed create, comment, label or link, or a created issue never listed exits 1 with the error on stderr, naming any issue it created |
-| Exit codes | 0 on every outcome (`created`, `commented`, `recovered`, `nothing`), 1 any read, write or identity error, 2 bad arguments |
+| Exit codes | 0 on every outcome (`created`, `commented`, `recovered`, `nothing`), 1 any read, write or identity error, 2 bad arguments (a missing flag, or an invalid `--repo`, `--job`, `--results`, `--run-url` or `--step` value), before any identity check or read |
 | Status | Active |
 
 ### vrg-issue-create

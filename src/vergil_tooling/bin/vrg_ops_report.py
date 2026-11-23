@@ -9,7 +9,9 @@ in :mod:`vergil_tooling.lib.ops_report`; nothing here closes an issue.
 
 Exit 0 on every outcome (``created``, ``commented``, ``recovered``,
 ``nothing``), printed on stdout; 1 on any read, write or identity error, named
-on stderr; 2 on bad arguments.
+on stderr; 2 on bad arguments (a missing flag, or an invalid ``--repo``,
+``--job``, ``--results``, ``--run-url`` or ``--step`` value), before any
+identity check or read.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import re
 import subprocess
 import sys
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, github, identity_mode, ops_report, trust
 from vergil_tooling.lib.automation_identity import AUTOMATION_ENV, AutomationIdentityError
@@ -26,6 +29,9 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _PROG = "vrg-ops-report"
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -43,10 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             f"refusing to report as identity mode {mode.value!r}: ops issues are written"
             f" only by the org's automation App (set ${AUTOMATION_ENV} and its token)"
         )
-    try:
-        result = ops_report.combine_results(args.results.split(","))
-    except ValueError as exc:
-        return _fail(f"--results: {exc}")
+    result: ops_report.Result | None = args.results
     owner = args.repo.split("/", 1)[0]
     try:
         with github.target_org(owner):
@@ -88,6 +91,22 @@ def _repo_arg(value: str) -> str:
     return value
 
 
+def _checked[T](check: Callable[[str], T]) -> Callable[[str], T]:
+    """An argparse ``type=`` for *check*: its :class:`ValueError` is a usage error (exit 2)."""
+
+    def parse(value: str) -> T:
+        try:
+            return check(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    return parse
+
+
+def _results(value: str) -> ops_report.Result | None:
+    return ops_report.combine_results(value.split(","))
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -102,17 +121,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--repo", required=True, type=_repo_arg, help="The repo the job ran in, as OWNER/NAME"
     )
     parser.add_argument(
-        "--job", required=True, help="The job's stable name (the report key, never the file)"
+        "--job",
+        required=True,
+        type=_checked(ops_report.check_job_name),
+        help="The job's stable name (the report key, never the file)",
     )
     parser.add_argument(
         "--results",
         required=True,
+        type=_checked(_results),
         help="Comma list of the GitHub job results that make up the job: success, "
         "failure, cancelled or skipped (any failure wins, then cancelled, then success; "
         "all skipped reports nothing)",
     )
-    parser.add_argument("--run-url", required=True, help="The https:// URL of the run")
-    parser.add_argument("--step", help="The failing step's name, if known")
+    parser.add_argument(
+        "--run-url",
+        required=True,
+        type=_checked(ops_report.check_run_url),
+        help="The https:// URL of the run",
+    )
+    parser.add_argument(
+        "--step", type=_checked(ops_report.check_step), help="The failing step's name, if known"
+    )
     return parser.parse_args(argv)
 
 

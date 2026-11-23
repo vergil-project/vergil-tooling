@@ -115,16 +115,21 @@ def combine_results(results: Sequence[str]) -> Result | None:
     return None
 
 
-def report_title(repo: str, job: str) -> str:
-    """The ops issue title of *job* in *repo* (the bare repo name)."""
-    if not _REPO_NAME_RE.fullmatch(repo):
-        raise ValueError(f"invalid repo name {repo!r}: a bare repo name, without its owner")
+def check_job_name(job: str) -> str:
+    """*job*, refused unless it is a valid stable job name."""
     if not _JOB_NAME_RE.fullmatch(job):
         raise ValueError(
             f"invalid job name {job!r}: use letters, digits, '.', '_' and '-',"
             " starting with a letter or digit"
         )
-    return f"ops: {repo} / {job} failing"
+    return job
+
+
+def report_title(repo: str, job: str) -> str:
+    """The ops issue title of *job* in *repo* (the bare repo name)."""
+    if not _REPO_NAME_RE.fullmatch(repo):
+        raise ValueError(f"invalid repo name {repo!r}: a bare repo name, without its owner")
+    return f"ops: {repo} / {check_job_name(job)} failing"
 
 
 def _split(repo: str) -> tuple[str, str]:
@@ -195,14 +200,14 @@ def latest_state(content: trust.IssueContent) -> State:
     return state
 
 
-def _check_run_url(run_url: str) -> str:
+def check_run_url(run_url: str) -> str:
     """*run_url*, refused unless it is one ``https://`` URL with no whitespace."""
     if not run_url.startswith("https://") or any(c.isspace() for c in run_url):
         raise ValueError(f"the run URL must be one https:// URL, got {run_url!r}")
     return run_url
 
 
-def _check_step(step: str) -> str:
+def check_step(step: str) -> str:
     """*step*, refused unless it is one non-empty line."""
     if not step.strip() or "\n" in step or "\r" in step:
         raise ValueError(f"the step name must be one non-empty line, got {step!r}")
@@ -331,9 +336,9 @@ def report(
         raise ValueError(f"unknown result {result!r}")
     _, name = _split(repo)
     title = report_title(name, job)
-    run_url = _check_run_url(run_url)
+    run_url = check_run_url(run_url)
     if step is not None:
-        step = _check_step(step)
+        step = check_step(step)
     authors = load_trusted_authors()
     found = find_open_reports(repo, job, authors=authors)
     if not found:
