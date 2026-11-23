@@ -181,10 +181,12 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
     ):
         return None
     # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
-    # (the queue epic), not a kind label, marks it (epic .github#176).
+    # (the queue epic), not a kind label, marks it (epic .github#176). Nor is an
+    # ops issue under the operations epic: it is closed by hand once the problem
+    # is dealt with, never by a PR that mentions it (epic .github#1494).
     task_owner, task_bare = task_repo.split("/", 1)
     parent = epics.parent_of(epics.IssueRef(task_owner, task_bare, task))
-    if parent is not None and epics.queue_kind(parent) is not None:
+    if parent is not None and epics.unbuildable_kind(parent) is not None:
         return None
     return TaskDrift(
         repo=task_repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])

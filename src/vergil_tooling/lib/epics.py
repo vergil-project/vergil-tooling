@@ -717,7 +717,8 @@ HOSHIN = StandingKind(
 # The operations epic: the ops issues of an org's unattended jobs, one epic per
 # org, always in <org>/.github (ensure_operations_epic), whatever repo the job
 # ran in (epic vergil-project/.github#1494). It is not a queue kind: an ops
-# issue is closed by hand once the problem is dealt with, never routed out.
+# issue is closed by hand once the problem is dealt with, never routed out, and
+# no PR closes one (unbuildable_parent_kind).
 OPERATIONS = StandingKind(
     key="operations",
     sentinel="operations",
@@ -741,7 +742,7 @@ STANDING_KINDS: tuple[StandingKind, ...] = (
     OPERATIONS,
 )
 # The queue kinds: one intake, one planning and one deferred epic per queue home
-# (queue_home). Their items are not PR-workable (queue_item_kind).
+# (queue_home). Their items are not PR-workable (unbuildable_parent_kind).
 QUEUE_KINDS: tuple[StandingKind, ...] = (INTAKE, PLANNING, DEFERRED)
 QUEUE_KIND_BY_KEY: dict[str, StandingKind] = {kind.key: kind for kind in QUEUE_KINDS}
 # The standing kinds the sweep's backstop drain (drain_standing_org) covers:
@@ -1282,15 +1283,32 @@ def container_kind(epic: IssueRef) -> str | None:
     return kind.key if kind is not None else None
 
 
-def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
-    """The queue kind (:func:`queue_kind`) of *ref*'s parent queue epic, else None.
+def unbuildable_kind(epic: IssueRef) -> str | None:
+    """The kind of *epic* when no PR may close its children, else None.
 
-    The PR refusal's test (#2485): an item under the intake, planning or
-    deferred epic is not buildable until it is routed out, so ``vrg-pr-workflow report-ready``
-    and ``vrg-submit-pr`` refuse it. Keys off the **native** parent only
-    (:func:`native_parent_of`), the same link intake review lists and the
-    orphan migration writes. Self-scoping: an unparseable ref is never queued
-    and returns None. A failed lookup raises — it is never read as "not queued".
+    ``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic
+    (:func:`queue_kind`'s rule), and ``"operations"`` for the live operations
+    epic, whose ops issues are closed by hand (epic
+    vergil-project/.github#1494). None for any other epic or a non-epic. One
+    label read; a failed read raises.
+    """
+    kind = standing_kind_of(_labels(epic))
+    if kind in QUEUE_KINDS or kind is OPERATIONS:
+        return kind.key
+    return None
+
+
+def unbuildable_parent_kind(ref: str, *, default_repo: str) -> str | None:
+    """The :func:`unbuildable_kind` of *ref*'s native parent, else None.
+
+    The PR refusal's test: ``vrg-pr-workflow report-ready``, ``vrg-submit-pr``
+    and the batch rules refuse an item under a queue epic, which is not
+    buildable until it is routed out (#2485), and an ops issue under the
+    operations epic, which records that something broke and is closed by hand
+    (a fix for it is a follow-up task of its own). Keys off the **native**
+    parent only (:func:`native_parent_of`), the same link intake review lists
+    and the orphan migration writes. Self-scoping: an unparseable ref returns
+    None. A failed lookup raises — it is never read as "buildable".
     """
     try:
         issue = parse_issue_ref(ref, default_repo=default_repo)
@@ -1299,7 +1317,7 @@ def queue_item_kind(ref: str, *, default_repo: str) -> str | None:
     parent = native_parent_of(issue)
     if parent is None:
         return None
-    return queue_kind(parent)
+    return unbuildable_kind(parent)
 
 
 _QUEUE_REFUSAL_TAILS = {
@@ -1310,6 +1328,10 @@ _QUEUE_REFUSAL_TAILS = {
     DEFERRED.key: (
         "it is deferred until its revival conditions are met. "
         "Revive it with epic-review deferred first."
+    ),
+    OPERATIONS.key: (
+        "it is an ops issue, which no PR closes: file the fix as a follow-up task in its "
+        "own repo, and close the ops issue by hand once the problem is dealt with."
     ),
 }
 
@@ -1324,15 +1346,17 @@ DEFERRED_ROUTE_ONLY = (
 
 
 def queue_refusal_message(ref: str, kind: str) -> str:
-    """The one refusal text for a queue item, shared by every PR-path guard.
+    """The one refusal text for an unbuildable item, shared by every PR-path guard.
 
-    *kind* is a :func:`queue_item_kind` result (a :data:`QUEUE_KINDS` key);
-    anything else is a caller bug and raises ``ValueError``.
+    *kind* is an :func:`unbuildable_parent_kind` result (a :data:`QUEUE_KINDS`
+    key, or ``"operations"`` for an ops issue); anything else is a caller bug
+    and raises ``ValueError``.
     """
     tail = _QUEUE_REFUSAL_TAILS.get(kind)
     if tail is None:
         raise ValueError(f"not a queue kind: {kind!r}")
-    return f"--issue ({ref}) is in the {kind} queue; {tail}"
+    where = "under the operations epic" if kind == OPERATIONS.key else f"in the {kind} queue"
+    return f"--issue ({ref}) is {where}; {tail}"
 
 
 def is_legitimate_top_level(ref: IssueRef, labels: set[str], title: str, body: str) -> bool:

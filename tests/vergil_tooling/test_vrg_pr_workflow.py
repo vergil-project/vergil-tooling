@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import trust
+from vergil_tooling.lib import epics, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -281,6 +281,9 @@ def test_batch_show_exits_2_without_an_origin_remote(
 # --- report-ready with an ordered issue list ---------------------------------
 
 _EPICS = "vergil_tooling.bin.vrg_pr_workflow.epics"
+# Captured before any patching, to run the real parent test under a fixture
+# that stubs it.
+_REAL_UNBUILDABLE_PARENT_KIND = epics.unbuildable_parent_kind
 _SINGLE_KEYS = [
     "schema_version",
     "issue",
@@ -333,7 +336,7 @@ def per_issue() -> Iterator[dict[str, MagicMock]]:
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="acme/tools"),
         patch(f"{_EPICS}.non_task_ref_kind", return_value=None) as non_task,
         patch(f"{_EPICS}.is_operational_task", return_value=False) as operational,
-        patch(f"{_EPICS}.queue_item_kind", return_value=None) as queue,
+        patch(f"{_EPICS}.unbuildable_parent_kind", return_value=None) as queue,
         patch(f"{_WF}.planning_close.find", return_value=None) as planning,
     ):
         yield {
@@ -580,6 +583,33 @@ def test_report_ready_runs_existing_per_issue_refusals_on_every_issue(
         per_issue["queue"].side_effect = lambda ref, **_: "intake" if ref == "#11" else None
     assert _report("10", second) == 1
     assert "11" in capsys.readouterr().err
+    rules.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
+def test_report_ready_refuses_ops_issue(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An ops issue (native parent: the operations epic) is never the task a
+    # PR closes (epic vergil-project/.github#1494). The parent test runs for
+    # real on the faked parent and its labels.
+    _branch(ready_clone, "feat: one thing")
+    ops_epic = IssueRef("acme", ".github", 3)
+    per_issue["queue"].side_effect = _REAL_UNBUILDABLE_PARENT_KIND
+    with (
+        patch(f"{_EPICS}.native_parent_of", return_value=ops_epic) as parent,
+        patch(f"{_EPICS}._labels", return_value={"epic", "operations"}) as labels,
+    ):
+        assert _report("10") == 1
+    parent.assert_called_once_with(IssueRef("acme", "tools", 10))
+    labels.assert_called_once_with(ops_epic)
+    err = capsys.readouterr().err
+    assert "--issue (#10) is under the operations epic; it is an ops issue, which no PR" in err
+    assert "close the ops issue by hand once the problem is dealt with." in err
     rules.assert_not_called()
     _assert_nothing_recorded(ready_clone, relay)
 

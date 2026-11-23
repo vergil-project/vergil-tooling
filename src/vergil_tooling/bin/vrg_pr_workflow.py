@@ -344,21 +344,23 @@ def _planning_close_preview(issue_ref: str) -> dict[str, str] | None:
 
 
 def _reject_queue_issue(issue_ref: str) -> None:
-    """Refuse a queue (intake/planning/deferred) item at report time — not buildable.
+    """Refuse a queue item or an ops issue at report time — not buildable.
 
     Mirrors vrg-submit-pr's ``_reject_if_queue_item`` so the error surfaces where
     the value is entered (#2485). The test is the issue's native parent: a child
-    of a queue epic must be routed out before it can take a PR.
+    of a queue epic (intake, planning or deferred) must be routed out before it
+    can take a PR, and a child of the operations epic (an ops issue) never takes
+    one.
     Best-effort like :func:`_reject_operational_issue`: if the parent cannot be
     read (no remote, no gh auth), defer to vrg-submit-pr's authoritative check —
     but say so on stderr rather than passing silently.
     """
     try:
-        kind = epics.queue_item_kind(issue_ref, default_repo=github.current_repo())
+        kind = epics.unbuildable_parent_kind(issue_ref, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError) as exc:
         print(
-            f"warning: could not check whether --issue ({issue_ref}) is in the intake or "
-            f"planning queue ({error_text(exc)}); vrg-submit-pr will check it at submit time.",
+            f"warning: could not check whether --issue ({issue_ref}) is a queue item or an "
+            f"ops issue ({error_text(exc)}); vrg-submit-pr will check it at submit time.",
             file=sys.stderr,
         )
         return

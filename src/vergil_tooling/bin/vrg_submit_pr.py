@@ -852,17 +852,19 @@ def _reject_if_operational_task(issue_ref: str) -> None:
 
 
 def _reject_if_queue_item(issue_ref: str) -> None:
-    """Abort if the linkage is a queue item — it is not buildable.
+    """Abort if the linkage is a queue item or an ops issue — it is not buildable.
 
     An item whose native parent is a queue epic (intake, planning or deferred)
     has not been routed (intake), expanded into an epic (planning) or revived
     (deferred), so it must not take a PR and close as though it were groomed work (#2485, closing
-    vergil-project/.github#175). The authoritative check: unlike report-ready's
+    vergil-project/.github#175). An ops issue, under the operations epic, is
+    closed by hand and never by a PR; its fix is a follow-up task of its own
+    (epic vergil-project/.github#1494). The authoritative check: unlike report-ready's
     best-effort mirror, a failed parent lookup propagates and aborts submission
     rather than reading as "buildable". Self-scoping: an unparseable ref is
     never a queue item, so it passes.
     """
-    kind = epics.queue_item_kind(issue_ref, default_repo=github.current_repo())
+    kind = epics.unbuildable_parent_kind(issue_ref, default_repo=github.current_repo())
     if kind is not None:
         raise SystemExit(f"vrg-submit-pr: {epics.queue_refusal_message(issue_ref, kind)}")
 
