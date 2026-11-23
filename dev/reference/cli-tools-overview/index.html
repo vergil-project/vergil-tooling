@@ -20584,8 +20584,12 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 </ul>
 <p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
-about to push). It reads the PR's body and base. A PR whose body has one
-<code>Closes</code> line or none is not a batch PR and passes. A batch PR's <code>Closes</code> refs
+about to push). It reads the PR's base and head, and its body only through the
+trust layer: a body whose author or any editor is not a trusted author fails
+the check, batch PR or not, with a one-line error naming that identity by
+metadata only, since the body's <code>Closes</code> lines are what the check goes by. A
+PR whose trusted body has one <code>Closes</code> line or none is not a batch PR and
+passes. A batch PR's <code>Closes</code> refs
 must be exactly the issues GitHub lists as its closing references, and its
 branch must hold one commit per issue, in the body's order, from the base as
 fetched now to <code>--head</code> (default: the PR's head, fetched by its SHA so the
@@ -22099,7 +22103,10 @@ when any in-flight mark holds (it outranks blocked), else <strong>blocked</stron
 <code>Blocked-by:</code> dependency is open, else <strong>ready</strong>; only the open blockers are
 listed.</p>
 <p>A task's <strong>marks</strong>, in this order, are: <code>open-pr</code> (an open PR closes it, or has
-a <code>feature/&lt;N&gt;-</code> head branch); <code>report-ready</code> (a relay ref
+a <code>feature/&lt;N&gt;-</code> head branch; only a same-repo PR with a trusted author counts,
+and it closes the task only by a closing line of a trusted body or a hand link
+by trusted actors, so a fork's or an outsider's PR marks nothing and is
+reported on stderr as skipped untrusted content, metadata only); <code>report-ready</code> (a relay ref
 <code>refs/vergil/pr-workflow/&lt;branch&gt;</code> whose payload has status <code>ready</code> and names
 it; a batch's payload names every member); <code>branch</code> (a <code>feature/&lt;N&gt;-</code> branch on
 the remote); <code>worktree</code> (a <code>feature/&lt;N&gt;-</code> branch or worktree in the repo's main
