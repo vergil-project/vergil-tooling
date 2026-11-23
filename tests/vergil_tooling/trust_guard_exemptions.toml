@@ -273,17 +273,3 @@ function = "planning_items"
 fields = ["body"]
 task = "vergil-project/vergil-tooling#4989"
 reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/security_records.py"
-function = "_read_issue"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4990"
-reason = "fixed by vergil-project/vergil-tooling#4990"
-
-[[pending]]
-path = "lib/security_records.py"
-function = "security_issues"
-fields = ["body"]
-task = "vergil-project/vergil-tooling#4990"
-reason = "fixed by vergil-project/vergil-tooling#4990"

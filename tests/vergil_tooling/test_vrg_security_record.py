@@ -12,7 +12,7 @@ import pytest
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
-from vergil_tooling.lib import github, security_records
+from vergil_tooling.lib import github, security_records, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
@@ -22,6 +22,7 @@ from vergil_tooling.lib.security_records import (
 )
 from vergil_tooling.lib.security_records import pair as real_pair
 from vergil_tooling.lib.security_records import pair_check as real_pair_check
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1398,3 +1399,64 @@ def test_note_cli_undetectable_org_is_refused(
         assert main(["note", GHSA, "--file", note_file]) == 1
     assert "could not determine the GitHub org" in capsys.readouterr().err
     note.assert_not_called()
+
+
+# --- trusted issue bodies only (epic vergil-project/.github#1467) -------------------
+
+_SKIP = trust.Skipped("org/tool", 55, "issue", "drive-by", "t", "body", "untrusted")
+
+
+def test_create_attach_to_an_untrusted_issue_stops_with_one_line(
+    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    env.mark_issue.side_effect = trust.UntrustedContentError(_SKIP, "the issue body is untrusted")
+    assert main(_create_argv(files, "--issue", EXISTING.slug)) == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert (
+        f"advisory {GHSA} exists but marking {EXISTING.slug} failed: stopped before any write"
+        in err
+    )
+    assert "org/tool#55 issue drive-by" in err
+    assert "--resume" in err
+    assert SECRET not in err
+    env.pair.assert_not_called()
+
+
+def test_sync_reports_an_untrusted_issue_and_exits_1(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    write = MagicMock()
+    untrusted = SecurityIssue(EXISTING, False, (), "completed", skipped=_SKIP)
+    advisory = Advisory(GHSA, "draft", "tool", (EXISTING,), external=False)
+    rc = _sync(env, ["sync"], issues=[untrusted], advisories=[advisory], write=write)
+    assert rc == 1
+    write.assert_not_called()
+    captured = capsys.readouterr()
+    assert "Security records: 0 advisory states synced, 0 broken pairs, 0 held, 0 errors." in (
+        captured.out
+    )
+    assert f"- untrusted: {GHSA}: an issue it tracks has an untrusted body, left unchanged" in (
+        captured.out
+    )
+    assert captured.err == (
+        "skipped untrusted content: org/tool#55 issue drive-by at t on body (untrusted)\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.TrustReadError("read_issue org/tool#55", "the GraphQL call failed: HTTP 502"),
+        trust.UntrustedContentError(_SKIP, "the issue body is untrusted"),
+        TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+    ],
+)
+def test_main_reports_a_trust_error_as_one_line(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], error: Exception
+) -> None:
+    env.list_advisories.side_effect = error
+    assert main(["list"]) == 1
+    err = capsys.readouterr().err
+    assert err == f"vrg-security-record: {error}\n"

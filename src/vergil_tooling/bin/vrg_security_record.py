@@ -66,6 +66,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels_or_report
 from vergil_tooling.lib.process_errors import failure_message
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -100,6 +101,16 @@ def main(argv: list[str] | None = None) -> int:
         return _retarget(args)
     except _RefusedError as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
+        return 1
+    except (
+        trust.TrustReadError,
+        trust.UntrustedContentError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
+        # An issue body read through the trust layer that cannot be read in
+        # full, or is untrusted where a write relies on it, outside a step
+        # that already names it; the message is metadata only.
+        print(f"{_PROG}: {_reason(exc)}", file=sys.stderr)
         return 1
     except github.NoInstallationError as exc:
         print(f"{_PROG}: {github.no_installation_message(exc)}", file=sys.stderr)

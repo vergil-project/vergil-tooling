@@ -1164,7 +1164,7 @@ the original closed with `Moved to:`), `sync` sets each paired advisory's state 
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
 advisory whose issues are all closed, posting the GHSA ID and a required
 `--reason` on each of them first, and `note` appends a dated private note
-from a file to an advisory's description (append-only). Advisory text is printed only by `show` and `list --details`. See
+from a file to an advisory's description (append-only). Advisory text is printed only by `show` and `list --details`. An issue's `Security advisory:` lines are read only from a body the trust layer trusts: an untrusted body stops a mark, retarget or close before any write, and `sync` reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 
