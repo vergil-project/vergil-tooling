@@ -18467,7 +18467,11 @@ the agent's draft. <code>--response-text</code> posts the human's own text inste
    (no draft is a refusal);</li>
 <li>refuses a reply that is not plain text (printable ASCII, U+0020 to
    U+007E, plus newline, with no <code>&lt;!-- vrg-ruling</code> marker prefix) or that is
-   blank;</li>
+   blank, and, when the request is a protected-change or merge-review
+   exemption request, a reply that does not carry exactly one decision line,
+   <code>Decision: approve</code> or <code>Decision: refuse</code>, spelt exactly so (any other
+   line starting with <code>Decision:</code> in any case counts as a second, or as a
+   wrong one);</li>
 <li>prints the reply exactly as it will be posted, between delimiter lines,
    with its byte length and SHA-256, and asks <code>Post this reply as &lt;login&gt;?</code>;</li>
 <li>on yes, reads the issue again and refuses, posting nothing, if its trusted
