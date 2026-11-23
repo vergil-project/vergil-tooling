@@ -18571,7 +18571,12 @@ link returns 404 whatever its path. Each such hit is named by path and
 line with the site name. The site name is compared exactly, and a
 trailing dot that ends a sentence right after the site name is not part
 of it. A repository that starts publishing versioned docs is added to
-the list; until then the check flags links to its site.</p>
+the list; until then the check flags links to its site from other
+repositories. The repository being checked is the exception: when its
+<code>vergil.toml</code> sets <code>[publish].docs = true</code> (the default) and its
+<code>origin</code> is a <code>vergil-project</code> repository on GitHub, its own site is
+treated as a published, versioned site, so a new repository's README
+link to its own docs passes from its first pull request.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

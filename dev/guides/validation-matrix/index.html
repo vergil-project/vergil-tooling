@@ -19089,7 +19089,8 @@ dev images come from
    name the org does not publish (anything but the versioned sites and
    the unversioned <code>docs</code> and <code>packages</code>) fails too. The check reads the
    same markdown as markdownlint, less <code>epics/archive/</code>, against the
-   fixed lists of sites in vergil-tooling (no network), and names each
+   fixed lists of sites in vergil-tooling (no network) plus the checked
+   repository's own site when it publishes docs, and names each
    hit by path and line, with its <code>/latest/</code> form or its site name. See
    <a href="../../reference/lint/markdown-standards/#links-to-other-vergil-docs-sites">Links to other Vergil docs sites</a>.</li>
 <li>shellcheck on shell scripts under <code>scripts/</code> and on every <code>*.sh</code>
