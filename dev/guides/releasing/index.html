@@ -20385,13 +20385,16 @@ every PR that closes it.</p>
 <li>one a closing line in the PR body names (<code>Closes</code>, <code>Close</code> or
   <code>Closed</code>, the keywords the fleet's linkage rules sanction), while
   every identity in the body's history (its author, its last editor
-  and every earlier editor) is a trusted author (<code>human</code> or <code>agents</code>
-  of <code>vrg-trusted-authors</code>); or</li>
-<li>one linked to the PR by hand, when every identity that linked it is
-  a trusted author.</li>
+  and every earlier editor) holds the <code>human</code> or <code>agents</code> role, as the
+  trust layer judges it (a login of <code>vrg-trusted-authors</code> with the
+  account type of its role; an org's automation App does not count); or</li>
+<li>one linked to the PR by hand, when every identity that linked it
+  holds one of those roles.</li>
 </ul>
-<p>Any other closing reference contributes no issue, and <code>preflight</code>
-names it, with its PR and the reason, in a <code>WARNING:</code> line. A release
+<p>A PR body with any other identity in its history is never parsed. Any
+other closing reference contributes no issue, and <code>preflight</code> names it,
+with its PR and the reason (the untrusted identities by login and
+cause), in a <code>WARNING:</code> line. A release
 whose PRs close no issues has an empty list, which is valid. The
 trusted authors failing to load, or any of the reads failing or coming
 back truncated, refuses the release like any other incomplete
@@ -20419,10 +20422,12 @@ contents lookup.</p>
 <li>A release that supersedes another adds a <code>- Supersedes: vX.Y.Z</code> line
   to the record on each issue it absorbed from it (see
   <a href="#superseding-a-release">Superseding a release</a>).</li>
-<li>A record counts only when its comment's author and last editor are
-  both <code>human</code> logins of <code>vrg-trusted-authors</code>. A record marker in a
-  comment by any other identity, or last edited by one, never counts:
-  the stage names it in a <code>warning:</code> line and ignores it.</li>
+<li>A record counts only when its comment's author and last editor both
+  hold the <code>human</code> role: a <code>human</code> login of <code>vrg-trusted-authors</code> whose
+  account is a GitHub user, as the trust layer judges it. Any other
+  comment, an agent's included, is never read for a record: the stage
+  reports it on stderr, by issue, login, time and comment only (counts
+  by cause under GitHub Actions), and ignores it.</li>
 <li>Before posting on an issue, the stage reads all its comments, every
   page, for a counting record, and records the issue as posted in the
   state block once it has found or posted one. A run interrupted partway
@@ -20442,28 +20447,32 @@ contents lookup.</p>
 <p>The state block is trusted only while the tracking issue is the human's.
 Every time <code>vrg-release</code> reads the state block, and again in the read
 before each write of it, it first locks the issue if it is not locked
-(an issue inherited from an older run included), then reads, in one
-paginated GraphQL query, every identity on the issue, and checks them
-against the <code>human</code> logins of
-<a href="../../reference/cli-tools-overview/#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>:</p>
+(an issue inherited from an older run included), then reads every
+identity on the issue through the trust layer, every page, and accepts
+only the <code>human</code> role: a <code>human</code> login of
+<a href="../../reference/cli-tools-overview/#vrg-trusted-authors"><code>vrg-trusted-authors</code></a>
+whose account is a GitHub user.</p>
 <ul>
 <li><strong>The identities that can change the state:</strong> the issue's author,
   the body's last editor and every editor in its edit history, and
-  every actor that closed or reopened the issue. Each must be a <code>human</code>
-  login. Any other identity, an agent or a deleted account (<code>ghost</code>)
-  included, stops the run before it writes anything, with an error
-  starting <code>suspected security breach on tracking issue #&lt;N&gt;:</code> that
-  names the identity and what it did. The failure is not commented on
+  every actor that closed or reopened the issue. Each must hold the
+  <code>human</code> role. Any other identity, an agent, a deleted account (<code>ghost</code>)
+  or an account of the wrong type (an App named like the human) included,
+  stops the run before it writes anything, with an error starting
+  <code>suspected security breach on tracking issue #&lt;N&gt;:</code> that names the
+  identity, what it did and why it holds no role (<code>untrusted</code>,
+  <code>not-accepted</code>, <code>deleted</code> or <code>wrong-type</code>). The failure is not commented on
   the issue. Inspect the issue's edit history and events, but do not
   try to clean it up: GitHub keeps the editor of a body edit even once
   its revision is deleted, and keeps the issue's close and reopen
   events, so the issue can never pass the check again and the release
   can never be resumed. Replace the release instead, as
   <a href="#a-breached-tracking-issue">A breached tracking issue</a> says.</li>
-<li><strong>Other traces</strong> cannot change the state: a comment, a
-  cross-reference, a mention, a subscription, or a label added or
-  removed by another identity. Each is printed as a warning, once per
-  run, and the run carries on.</li>
+<li><strong>Other traces</strong> cannot change the state: a comment or an edit of
+  one, a cross-reference, a mention, a subscription, or a label added or
+  removed by another identity. Each is printed as a warning naming the
+  identity and what it did, never its text, once per run, and the run
+  carries on.</li>
 </ul>
 <p>A failed read of the trusted authors or of the issue's identities, or
 a response that cannot be read in full, stops the run with the call

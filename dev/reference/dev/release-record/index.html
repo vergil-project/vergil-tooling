@@ -18353,12 +18353,16 @@ access, and the task's repo, through a temporary bare fetch.</p>
 </table>
 <h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Reads every comment on the task, page by page.</li>
+<li>Reads every comment on the task, page by page, through the trust
+   layer.</li>
 <li>Finds the records of the task's repo. A record counts only when its
-   comment's author and, if it was edited, its last editor are <code>human</code>
-   logins of <code>vrg-trusted-authors</code>. A record marker on a comment by any
-   other identity, or last edited by one, never counts and is named in a
-   warning. A record marker of another repo is ignored with a warning.</li>
+   comment's author and, if it was edited, its last editor hold the
+   <code>human</code> role: a <code>human</code> login of <code>vrg-trusted-authors</code> whose account
+   is a GitHub user. Any other comment, an agent's included, is never
+   read for a record: it is reported on stderr by login, time and
+   comment only (counts by cause under GitHub Actions), and is not in
+   <code>warnings</code>. A record marker of another repo is ignored with a
+   warning.</li>
 <li>Uses the newest counting record, by version (<code>v2.1.10</code> is newer than
    <code>v2.1.9</code>). Each other counting record is named in a warning. With no
    counting record, the verdict is <code>none</code>.</li>
@@ -18417,7 +18421,7 @@ or no counting closing PR to check at all.</p>
 </tr>
 <tr>
 <td><code>warnings</code></td>
-<td>Every record that does not count, every other counting record, every closing PR that does not count, and why the ancestry check failed</td>
+<td>Every record marker of another repo, every other counting record, every closing PR that does not count, and why the ancestry check failed</td>
 </tr>
 </tbody>
 </table>
