@@ -23039,13 +23039,24 @@ rebase-merged as several commits is one row).</p>
 <li><strong>A commit with no PR</strong> shows <code>PROBLEM</code> in the PR column and <code>-</code> for
   BRANCH and TYPE, with its commit date and subject, and a
   <code>PROBLEM: &lt;sha&gt; reached develop without a PR</code> note after the table.</li>
+<li><strong>A PR the trust layer does not accept</strong> (a fork's, or one whose
+  author holds no role in <code>vrg-trusted-authors</code>) never classifies its
+  row: its title, head branch and labels are not read. It shows its
+  number, <code>-</code> for BRANCH, <code>untrusted</code> for TYPE, its merge time and its
+  commit's subject, and a <code>PROBLEM: #&lt;n&gt; is not a same-repo PR with a
+  trusted author; its title, branch and labels are not read</code> note after
+  the table. The skipped PR is reported on stderr, metadata only (counts
+  by cause under GitHub Actions).</li>
 <li><strong>Nothing pending</strong> prints <code>Nothing pending release: develop and main
   are level.</code> in place of the table.</li>
 <li><strong>The summary line</strong> counts the changes: dependency updates, release
   back-merges, automation PRs and other PRs, every bucket listed, plus
-  <code>&lt;n&gt; PROBLEM: commits with no PR</code> only when there are some.</li>
+  <code>&lt;n&gt; PROBLEM: commits with no PR</code> and <code>&lt;n&gt; PROBLEM: not a same-repo
+  PR with a trusted author</code>, each only when there are some.</li>
 <li><strong>A lookup that fails or is incomplete</strong> (an API error, a missing
-  branch, a truncated answer) is an error, never a partial list: the
+  branch, a truncated answer, the trusted authors failing to load, or a
+  PR whose author or head repository cannot be read) is an error, never
+  a partial list: the
   section prints its heading, with no release line, and
   <code>ERROR: pending release: &lt;reason&gt;</code>
   alone. The rest of the output still prints, then the command exits 1.

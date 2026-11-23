@@ -19772,7 +19772,12 @@ warning naming the identity and what it did, never reads the state
 block, and rebuilds the release from what GitHub and git record about
 it instead:</p>
 <ul>
-<li><strong>Its release PR,</strong> <code>release/X.Y.Z</code> into <code>main</code>, must be merged. A
+<li><strong>Its release PR,</strong> <code>release/X.Y.Z</code> into <code>main</code>, must be merged. It
+  and the back-merge PR are found through the trust layer: only a
+  same-repo PR whose author holds a role in <code>vrg-trusted-authors</code>
+  counts, so a fork PR or an outsider's PR on a branch of the same name
+  never stands in for either, and each one left out is reported on
+  stderr, metadata only. A read the layer cannot complete refuses. A
   release whose release PR never merged left nothing on <code>main</code>, so
   there is nothing to supersede: the run refuses and says to close the
   release PR and the tracking issue by hand, delete <code>release/X.Y.Z</code>
@@ -20415,10 +20420,14 @@ Follow-ups move to their own issues.</p>
 <h3 id="the-issue-list">The issue list<a class="headerlink" href="#the-issue-list" title="Permanent link">&para;</a></h3>
 <p>The issue list is the union of the closing references of every PR in
 <code>main..&lt;cut&gt;</code> whose head branch starts <code>feature/</code>, a batch PR included.
-Release back-merges, dependency updates, automation PRs and commits
-with no PR contribute none, and a closing reference to an issue in
-another repo is ignored. Each issue is listed once, by number, with
-every PR that closes it.</p>
+A PR's head branch is read only when the trust layer accepts the PR: a
+same-repo PR whose author holds a role in <code>vrg-trusted-authors</code>. A fork
+PR, or one an outsider opened, is an <code>untrusted</code> row of the Contents
+table, by its commit subject, and is reported on stderr, metadata only.
+Release back-merges, dependency updates, automation PRs, untrusted PRs
+and commits with no PR contribute none, and a closing reference to an
+issue in another repo is ignored. Each issue is listed once, by number,
+with every PR that closes it.</p>
 <p>Only a trusted closing reference counts:</p>
 <ul>
 <li>one a closing line in the PR body names (<code>Closes</code>, <code>Close</code> or
