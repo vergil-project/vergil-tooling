@@ -197,6 +197,13 @@ def test_gather_one_day_over_the_cap_fails_loudly(monkeypatch: pytest.MonkeyPatc
         activity_log.gather("2026-06-01", org="vergil-project")
 
 
+def test_gather_never_guesses_a_missing_close_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    hit = trust.TrustedHit(TOOLING, 1, "issue", "t", "u1", "CLOSED", (), "", trust.Role.HUMAN)
+    monkeypatch.setattr(trust, "search_window", lambda *a, **k: ([hit], []))
+    with pytest.raises(trust.TrustReadError, match="u1 has no close time"):
+        activity_log.gather("2026-06-01", org="vergil-project")
+
+
 def test_gather_read_failure_raises(search: Any) -> None:
     broken = _closed(1)
     broken["closes"] = {"nodes": []}
