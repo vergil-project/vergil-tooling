@@ -31,6 +31,8 @@ _CREATED_RE = re.compile(r"Created (https://github\.com/\S+/issues/\d+),")
 # Upper bound on the open issues the fix-task search lists. Reaching it is a
 # refusal: a matching task beyond it would be filed again (#4038).
 _FIX_TASK_SEARCH_LIMIT = 100
+# GitHub's answer, with a 422, to a DELETE of a ref that does not exist.
+_NO_REFERENCE = "Reference does not exist"
 
 
 def fix_task_title(version: str) -> str:
@@ -122,43 +124,97 @@ def _require_pr_url(ctx: UpdateDepsContext, phase: str) -> str:
 
 
 def merge_pr(ctx: UpdateDepsContext) -> None:
-    """Wait for checks and merge; a merge abort is recorded, not raised (spec §5.2)."""
+    """Wait for checks and merge; a merge abort is recorded, not raised (spec §5.2).
+
+    A merged PR is marked on *ctx*: the finalize stage deletes its branch once
+    the worktree holding it is gone (:func:`delete_merged_branch`).
+    """
     pr_url = _require_pr_url(ctx, "merge")
     try:
         pr_merge.wait_and_merge(pr_url, strategy="merge")
     except pr_merge.MergeAbortError as exc:
         record_merge_failure(ctx, str(exc))
         return
-    delete_merged_branch(ctx)
+    ctx.merged = True
 
 
 def delete_merged_branch(ctx: UpdateDepsContext) -> None:
-    """Delete the merged PR's head branch on origin (#3330).
+    """Delete a merged dependency-update PR's branch on origin and locally (#3330, #4952).
 
-    GitHub's delete-on-merge setting usually has already, but it can skip its
-    after-merge processing; a leftover branch would make the next run at this
-    version report "already merged". Deliberately not ``gh pr merge
+    Called only once the PR is confirmed merged: by this run's merge, or by
+    preflight finding the PR already merged on a re-run. A branch whose PR did
+    not merge is never deleted here, so a resume can pick it up.
+
+    GitHub's delete-on-merge setting usually has deleted it on origin already,
+    but it can skip its after-merge processing. Deliberately not ``gh pr merge
     --delete-branch``: ``github.merge`` is shared with other callers, and gh
     also deletes the *local* branch, switching off it first — from this linked
     worktree (``develop`` is held by the root checkout) that can fail and make
     gh exit non-zero after a successful merge, which would read as a merge
     failure. The same split as the release gate's close-then-delete (#3332).
-    A failure is loud but does not fail the run: the update has landed.
+
+    A failed deletion raises :class:`UpdateDepsError`: the run fails, so
+    ``vrg-release`` leaves its ``update-deps`` stage not done and a
+    ``--resume``, finding the PR merged, tries the deletion again.
     """
+    if ctx.branch is None:
+        raise UpdateDepsError(
+            phase="finalize",
+            command="delete_merged_branch",
+            message="No branch on context — preflight did not run.",
+        )
+    pr_url = ctx.pr_url or ctx.landed_pr_url
     endpoint = f"repos/{ctx.repo}/git/refs/heads/{ctx.branch}"
     try:
         deleted = github.delete_if_exists(endpoint)
     except subprocess.CalledProcessError as exc:
-        print(
-            f"WARNING: merged {ctx.pr_url}, but could not delete its branch "
-            f"{ctx.branch}: {error_text(exc)}\n"
-            f"Delete it by hand: git push origin --delete {ctx.branch}"
-        )
-        return
+        if not _reference_absent(exc):
+            raise _branch_delete_failed(ctx, pr_url, endpoint, exc) from exc
+        # GitHub answers a DELETE of a ref already gone (delete-on-merge got
+        # there first) with 422 "Reference does not exist", not only 404.
+        deleted = False
     if deleted:
         print(f"Deleted merged branch {ctx.branch} on origin.")
     else:
         print(f"Branch {ctx.branch} already deleted on origin.")
+    if not git.ref_exists(f"refs/heads/{ctx.branch}"):
+        return
+    try:
+        git.run("branch", "-D", ctx.branch)
+    except subprocess.CalledProcessError as exc:
+        raise UpdateDepsError(
+            phase="finalize",
+            command=f"git branch -D {ctx.branch}",
+            message=(
+                f"The dependency-update PR {pr_url} merged, but deleting its local "
+                f"branch {ctx.branch} failed: {error_text(exc)}. Delete it by hand "
+                f"(git branch -D {ctx.branch}) or re-run."
+            ),
+            detail=error_text(exc),
+        ) from exc
+    print(f"Deleted merged branch {ctx.branch} locally.")
+
+
+def _reference_absent(exc: subprocess.CalledProcessError) -> bool:
+    """Whether a failed ref DELETE says the ref does not exist (422 "Reference does not exist")."""
+    # ``gh api -i`` puts the status line and body on stdout, its error on stderr.
+    detail = f"{exc.stderr or ''}{exc.stdout or ''}{error_text(exc)}"
+    return "422" in detail and _NO_REFERENCE in detail
+
+
+def _branch_delete_failed(
+    ctx: UpdateDepsContext, pr_url: str | None, endpoint: str, exc: subprocess.CalledProcessError
+) -> UpdateDepsError:
+    return UpdateDepsError(
+        phase="finalize",
+        command=f"gh api -X DELETE {endpoint}",
+        message=(
+            f"The dependency-update PR {pr_url} merged, but deleting its branch "
+            f"{ctx.branch} on origin failed: {error_text(exc)}. Delete it by hand "
+            f"(git push origin --delete {ctx.branch}) or re-run."
+        ),
+        detail=error_text(exc),
+    )
 
 
 def record_merge_failure(ctx: UpdateDepsContext, message: str) -> None:

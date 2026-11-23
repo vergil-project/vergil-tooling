@@ -224,20 +224,20 @@ def test_prepare_pr_raises_without_branch() -> None:
         pr.prepare_pr(ctx)
 
 
-def test_merge_pr_calls_wait_and_merge(monkeypatch) -> None:
+def test_merge_pr_calls_wait_and_merge_and_marks_merged(monkeypatch) -> None:
     seen: dict[str, str] = {}
     monkeypatch.setattr(
         _MOD + ".pr_merge.wait_and_merge",
         lambda url, *, strategy, wait_checks=None: seen.update(pr=url, strategy=strategy),
     )
-    deleted: list[str] = []
-    monkeypatch.setattr(_MOD + ".delete_merged_branch", lambda ctx: deleted.append(ctx.branch))
+    # The branch is deleted by finalize, once the worktree holding it is gone (#4952).
+    monkeypatch.setattr(_MOD + ".delete_merged_branch", lambda ctx: pytest.fail("deleted"))  # noqa: ARG005
     ctx = _ctx()
     ctx.pr_url = "https://x/pr/1"
     pr.merge_pr(ctx)
     assert seen == {"pr": "https://x/pr/1", "strategy": "merge"}
     assert ctx.failure is None
-    assert deleted == ["deps/update-2.1.243"]
+    assert ctx.merged is True
 
 
 @pytest.mark.parametrize(
@@ -253,23 +253,95 @@ def test_delete_merged_branch_deletes_on_origin(monkeypatch, capsys, existed, me
     monkeypatch.setattr(
         _MOD + ".github.delete_if_exists", lambda ep: endpoints.append(ep) or existed
     )
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: False)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: pytest.fail(f"git ran: {a}"))
     pr.delete_merged_branch(_ctx())
     assert endpoints == ["repos/o/r/git/refs/heads/deps/update-2.1.243"]
     assert message in capsys.readouterr().out
 
 
-def test_delete_merged_branch_failure_warns_without_failing(monkeypatch, capsys) -> None:
+def test_delete_merged_branch_counts_a_422_missing_reference_as_deleted(
+    monkeypatch, capsys
+) -> None:
+    """delete-on-merge got there first: GitHub answers 422 "Reference does not exist"."""
+
+    def _gone(ep: str) -> bool:
+        raise github.GitHubAPIError(
+            1,
+            ("gh", "api", ep, "-X", "DELETE", "-i"),
+            output='HTTP/2.0 422 Unprocessable Entity\n\n{"message":"Reference does not exist"}',
+            stderr="gh: Reference does not exist (HTTP 422)",
+        )
+
+    monkeypatch.setattr(_MOD + ".github.delete_if_exists", _gone)
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: False)  # noqa: ARG005
+    pr.delete_merged_branch(_ctx())
+    assert "Branch deps/update-2.1.243 already deleted on origin." in capsys.readouterr().out
+
+
+def test_delete_merged_branch_other_422_raises(monkeypatch) -> None:
+    def _refused(ep: str) -> bool:
+        raise github.GitHubAPIError(1, ("gh", "api", ep), stderr="gh: Validation Failed (HTTP 422)")
+
+    monkeypatch.setattr(_MOD + ".github.delete_if_exists", _refused)
+    with pytest.raises(UpdateDepsError, match="on origin failed"):
+        pr.delete_merged_branch(_ctx())
+
+
+def test_delete_merged_branch_deletes_a_local_copy(monkeypatch, capsys) -> None:
+    """A local branch left by an earlier run is deleted too (#4952)."""
+    monkeypatch.setattr(_MOD + ".github.delete_if_exists", lambda ep: True)  # noqa: ARG005
+    refs: list[str] = []
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: refs.append(ref) or True)
+    runs: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
+    pr.delete_merged_branch(_ctx())
+    assert refs == ["refs/heads/deps/update-2.1.243"]
+    assert runs == [("branch", "-D", "deps/update-2.1.243")]
+    assert "Deleted merged branch deps/update-2.1.243 locally." in capsys.readouterr().out
+
+
+def test_delete_merged_branch_origin_failure_raises(monkeypatch) -> None:
+    """A failed deletion on origin is loud and fails the run (#4952)."""
+
     def _fail(ep: str) -> bool:
-        raise subprocess.CalledProcessError(1, ["gh", "api", ep])
+        raise subprocess.CalledProcessError(1, ["gh", "api", ep], stderr="HTTP 403")
 
     monkeypatch.setattr(_MOD + ".github.delete_if_exists", _fail)
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: pytest.fail(f"git ran: {a}"))
     ctx = _ctx()
     ctx.pr_url = "https://x/pr/1"
-    pr.delete_merged_branch(ctx)
-    out = capsys.readouterr().out
-    assert "WARNING: merged https://x/pr/1, but could not delete" in out
-    assert "git push origin --delete deps/update-2.1.243" in out
-    assert ctx.failure is None
+    with pytest.raises(UpdateDepsError) as excinfo:
+        pr.delete_merged_branch(ctx)
+    message = str(excinfo.value)
+    assert "https://x/pr/1 merged, but deleting its branch deps/update-2.1.243 on origin" in message
+    assert "HTTP 403" in message
+    assert "git push origin --delete deps/update-2.1.243" in message
+
+
+def test_delete_merged_branch_local_failure_raises(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".github.delete_if_exists", lambda ep: False)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".git.ref_exists", lambda ref: True)  # noqa: ARG005
+
+    def _fail(*args: str) -> None:
+        raise subprocess.CalledProcessError(1, ["git", *args], stderr="checked out at /wt")
+
+    monkeypatch.setattr(_MOD + ".git.run", _fail)
+    ctx = _ctx()
+    ctx.landed_pr_url = "https://x/pr/7"
+    with pytest.raises(UpdateDepsError) as excinfo:
+        pr.delete_merged_branch(ctx)
+    message = str(excinfo.value)
+    assert "https://x/pr/7 merged, but deleting its local branch deps/update-2.1.243" in message
+    assert "checked out at /wt" in message
+    assert excinfo.value.command == "git branch -D deps/update-2.1.243"
+
+
+def test_delete_merged_branch_raises_without_branch() -> None:
+    ctx = _ctx()
+    ctx.branch = None
+    with pytest.raises(UpdateDepsError, match="No branch"):
+        pr.delete_merged_branch(ctx)
 
 
 def test_merge_pr_raises_without_pr_url() -> None:
@@ -291,6 +363,8 @@ def test_merge_pr_records_abort_instead_of_raising(monkeypatch) -> None:
     ctx.pr_url = "https://x/pr/1"
     pr.merge_pr(ctx)
     assert recorded == ["nope"]
+    # A PR that did not merge keeps its branch for a resume (#4952).
+    assert ctx.merged is False
 
 
 def test_record_merge_failure_lists_failed_checks(monkeypatch) -> None:
