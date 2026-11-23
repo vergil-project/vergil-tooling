@@ -322,9 +322,11 @@ def _changed_paths(repo: Path, base: str, head: str) -> set[str]:
         f"{base}...{head}",
         "--",
     )
-    fields = [field.decode("utf-8", "surrogateescape") for field in output.split(b"\0")]
-    if fields and fields[-1] == "":
-        fields.pop()
+    *records, tail = output.split(b"\0")
+    if tail:
+        msg = f"git diff --name-status {base}...{head}: output not NUL-terminated"
+        raise ProtectedPathsError(msg)
+    fields = [field.decode("utf-8", "surrogateescape") for field in records]
     paths: set[str] = set()
     index = 0
     while index < len(fields):

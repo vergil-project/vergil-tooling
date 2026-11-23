@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from vergil_tooling.lib import protected_paths
 from vergil_tooling.lib.protected_paths import (
     FLEET_DEFAULT,
     REGISTRY_FILE,
@@ -201,6 +202,7 @@ def test_absent_registry_is_empty(repo: Path) -> None:
         'paths = ["a/"]',
         'paths = ["a\\\\b"]',
         'paths = ["a**b"]',
+        'paths = ["a]b"]',
         'paths = ["a/[b/c]"]',
         "other = 1",
         'paths = ["a"]\nextra = 1',
@@ -304,3 +306,80 @@ def test_parse_registry_accepts_globs() -> None:
 )
 def test_matches(pattern: str, path: str, expected: bool) -> None:
     assert matches(pattern, path) is expected
+
+
+def test_matches_refuses_a_malformed_glob() -> None:
+    with pytest.raises(ProtectedPathsError, match="unclosed"):
+        matches("a/[b", "a/b")
+
+
+# -- git failures fail closed ------------------------------------------------------
+
+
+def test_git_that_cannot_run_refuses(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_git(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(protected_paths.subprocess, "run", no_git)
+    with pytest.raises(ProtectedPathsError, match="could not run"):
+        load_registry(repo, "develop")
+
+
+def _fake_git(monkeypatch: pytest.MonkeyPatch, replies: dict[str, bytes | Exception]) -> None:
+    """Answer ``_git`` by subcommand from *replies*; anything else runs for real."""
+    real = protected_paths._git
+
+    def fake(repo: Path, *args: str) -> bytes:
+        reply = replies.get(args[0])
+        if reply is None:
+            return real(repo, *args)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(protected_paths, "_git", fake)
+
+
+def test_ls_tree_entry_for_another_path_is_absent(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_git(monkeypatch, {"ls-tree": b"100644 blob abc\tother.toml\0"})
+    assert load_registry(repo, "develop") == ()
+
+
+def test_ls_tree_entry_of_unexpected_shape_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_git(monkeypatch, {"ls-tree": f"100644 abc\t{REGISTRY_FILE}\0".encode()})
+    with pytest.raises(ProtectedPathsError, match="unexpected entry"):
+        load_registry(repo, "develop")
+
+
+def test_registry_blob_that_cannot_be_read_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_git(monkeypatch, {"cat-file": ProtectedPathsError("cat-file failed")})
+    with pytest.raises(ProtectedPathsError, match=f"cannot read {REGISTRY_FILE} at develop"):
+        load_registry(repo, "develop")
+
+
+@pytest.mark.parametrize(
+    ("output", "problem"),
+    [
+        (b"C100\0a\0b\0", "unexpected status"),
+        (b"X\0a\0", "unexpected status"),
+        (b"R100\0a\0", "truncated"),
+        (b"M\0", "truncated"),
+        (b"M\0a", "not NUL-terminated"),
+    ],
+)
+def test_diff_of_unexpected_shape_refuses(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, output: bytes, problem: str
+) -> None:
+    _fake_git(monkeypatch, {"diff": output})
+    with pytest.raises(ProtectedPathsError, match=problem):
+        changed_protected(repo, "develop", "feature", "develop")
+
+
+def test_empty_change_has_nothing_protected(repo: Path) -> None:
+    assert changed_protected(repo, "develop", "feature", "develop") == []
