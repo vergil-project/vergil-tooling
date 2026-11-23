@@ -587,6 +587,20 @@ class TestPublishedPR:
         with patch(_MOD + ".worktrees.branch_prs", return_value=prs):
             assert _real_published_pr("feature/x", "h0") is None
 
+    def test_closed_pr_at_the_reported_head_is_published(self) -> None:
+        """A PR closed without merging at the reported head is cleanup (#5038)."""
+        prs = [
+            _open_pr(number=3, state="CLOSED", head_oid="old"),
+            _open_pr(number=4, state="CLOSED"),
+        ]
+        with patch(_MOD + ".worktrees.branch_prs", return_value=prs):
+            assert _real_published_pr("feature/x", "h0") == prs[1]
+
+    def test_closed_pr_at_another_head_is_a_reused_name(self) -> None:
+        prs = [_open_pr(state="CLOSED", head_oid="old")]
+        with patch(_MOD + ".worktrees.branch_prs", return_value=prs):
+            assert _real_published_pr("feature/x", "h0") is None
+
     def test_no_pr_is_none(self) -> None:
         with patch(_MOD + ".worktrees.branch_prs", return_value=[]):
             assert _real_published_pr("feature/x", "h0") is None
@@ -807,6 +821,29 @@ class TestTemplateMode:
             "head (https://x/pull/314); nothing was submitted.\n"
             "  This worktree is cleanup, not a submit: run "
             "`vrg-finalize-pr --cleanup-only` to remove it."
+        )
+
+    def test_in_worktree_with_a_closed_pr_is_refused_naming_it(self, tmp_path: Path) -> None:
+        """A PR closed without merging at the reported head is never reopened
+        as a new one: the run names it and the two ways on (#5038)."""
+        _write_workflow_state(tmp_path)
+        pr = _open_pr(number=315, url="https://x/pull/315", state="CLOSED")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._published_pr", return_value=pr),
+            patch(_MOD + ".git.run") as run,
+            patch(_MOD + ".github.create_pr") as create_pr,
+            pytest.raises(SystemExit) as exc,
+        ):
+            main([])
+        run.assert_not_called()
+        create_pr.assert_not_called()
+        assert str(exc.value) == (
+            "vrg-submit-pr: this worktree's PR #315 was closed without merging at "
+            "the reported head (https://x/pull/315); nothing was submitted.\n"
+            "  To go on: reopen PR #315 on GitHub to go on with it, or run "
+            "`vrg-finalize-pr --cleanup-only` to remove the worktree."
         )
 
     def test_template_dry_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1170,6 +1207,36 @@ class TestRootLaunch:
         # The picker asked GitHub; the chosen worktree is not asked again (#5037).
         pub.assert_called_once_with("feature/7-foo", "h7")
 
+    def test_root_picker_holds_back_a_closed_pr_and_names_it(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The root picker skips a worktree whose PR was closed without
+        merging at the reported head, naming it on stderr (#5038)."""
+        ready = self._wt("issue-7-foo", "feature/7-foo")
+        closed = self._wt("issue-8-bar", "feature/8-bar")
+        fields = {"issue": "7", "issues": "7", "title": "T", "summary": "S", "head_sha": "h7"}
+        prs = {
+            "feature/7-foo": None,
+            "feature/8-bar": _open_pr(number=81, url="https://x/pull/81", state="CLOSED"),
+        }
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[ready, closed]),
+            patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+            patch(_MOD + ".os.chdir") as chdir,
+            patch(_MOD + ".git.current_branch", return_value="feature/7-foo"),
+            patch(_MOD + "._published_pr", side_effect=lambda branch, _head: prs[branch]),
+        ):
+            assert main(["--dry-run"]) == 0
+        chdir.assert_called_once_with(ready.path)
+        assert (
+            "vrg-submit-pr: skipping issue-8-bar: PR #81 was closed without merging "
+            "(https://x/pull/81); reopen PR #81 on GitHub to go on with it, or run "
+            "`vrg-finalize-pr --cleanup-only` to remove the worktree.\n"
+        ) in capsys.readouterr().err
+
     def test_root_no_ready_worktrees_errors_with_reasons(self) -> None:
         wt = self._wt("issue-7-foo", "feature/7-foo")
         with (
@@ -1330,6 +1397,47 @@ class TestRootLaunch:
         )
         # The refusal names it; no separate skip line repeats it.
         assert capsys.readouterr().err == ""
+
+    def test_all_skips_a_ready_worktree_whose_pr_was_closed_unmerged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--all holds back a PR closed without merging at the reported head (#5038)."""
+        ready = self._wt("issue-1319-a", "feature/1319-a")
+        closed = self._wt("issue-1350-d", "feature/1350-d")
+        prs = {
+            "feature/1319-a": None,
+            "feature/1350-d": _open_pr(number=1351, url="https://x/pull/1351", state="CLOSED"),
+        }
+        with (
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[ready, closed]),
+            patch(_MOD + ".submission.read_pr_fields", return_value={"head_sha": "h0"}),
+            patch(_MOD + "._published_pr", side_effect=lambda branch, _head: prs[branch]),
+        ):
+            selected = _select_batch_worktrees(Path("/repo"), parse_args(["--all"]))
+        assert selected == [ready]
+        assert (
+            "vrg-submit-pr: skipping issue-1350-d: PR #1351 was closed without merging "
+            "(https://x/pull/1351); reopen PR #1351 on GitHub to go on with it, or run "
+            "`vrg-finalize-pr --cleanup-only` to remove the worktree.\n"
+        ) in capsys.readouterr().err
+
+    def test_select_refuses_a_worktree_whose_pr_was_closed_unmerged(self) -> None:
+        """--select never submits a worktree whose PR was closed at its head (#5038)."""
+        closed = self._wt("issue-1350-d", "feature/1350-d")
+        pr = _open_pr(number=1351, url="https://x/pull/1351", state="CLOSED")
+        with (
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[closed]),
+            patch(_MOD + ".submission.read_pr_fields", return_value={"head_sha": "h0"}),
+            patch(_MOD + "._published_pr", return_value=pr),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _select_batch_worktrees(Path("/repo"), parse_args(["--select", "1350"]))
+        assert str(exc.value) == (
+            "vrg-submit-pr: no submittable worktrees found.\n\n"
+            "  Closed without merging (reopen the PR on GitHub, or run "
+            "`vrg-finalize-pr --cleanup-only`):\n"
+            "    issue-1350-d: PR #1351 (https://x/pull/1351)"
+        )
 
 
 _UNRELEASED_TOML = """\

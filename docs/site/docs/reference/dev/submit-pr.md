@@ -190,11 +190,15 @@ says so and points at `vrg-finalize-pr`. Submit also asks GitHub whether
 a ready worktree's branch already has a PR, since one opened by hand
 leaves the worktree's state ready: an open PR holds it back as in flight,
 and a PR merged at the reported head holds it back as cleanup
-(`vrg-finalize-pr --cleanup-only`). From the repo root each one held back
+(`vrg-finalize-pr --cleanup-only`). A PR closed without merging at the
+reported head is cleanup too, as `vrg-repo-status` and the finalize sweep
+count it: submit never opens a new PR at that head, and names the closed
+PR with two ways on, reopening it on GitHub or running
+`vrg-finalize-pr --cleanup-only`. From the repo root each one held back
 is named on stderr when others go ahead. Run from inside the worktree, an
-open PR is reported with nothing to do, and a merged one refuses the run.
-A merged PR at another head is a reused branch name, and the worktree is
-still submitted.
+open PR is reported with nothing to do, and a merged or closed one refuses
+the run. A merged or closed PR at another head is a reused branch name,
+and the worktree is still submitted.
 
 A push refused because origin deleted the branch after its PR merged says
 so, and names the merged PR, instead of reporting that the remote moved.
