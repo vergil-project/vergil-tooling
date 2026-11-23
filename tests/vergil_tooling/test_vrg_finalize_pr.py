@@ -4001,6 +4001,16 @@ def test_merged_branches_reads_each_merged_pr() -> None:
         assert _merged_branches(ctx) == ["feature/1-a", "feature/2-b"]
 
 
+def test_merged_branches_skips_an_empty_head_branch() -> None:
+    ctx = _stage_ctx([_PR_A])
+    with (
+        patch(_MOD + ".github.head_ref", return_value="\n"),
+        patch(_MOD + "._confirmed_merged_branch") as confirm,
+    ):
+        assert _merged_branches(ctx) == []
+    confirm.assert_not_called()
+
+
 def test_merged_branches_keeps_an_unconfirmed_prs_branch(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
