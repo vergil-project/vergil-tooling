@@ -415,7 +415,7 @@ upgrade that leaves it below the minimum is an ERROR.
 
 | Dependency | Minimum | Why |
 | --- | --- | --- |
-| `gh` | 2.97.0 | `vrg-gh run job-log` passes `gh api --allow-escape-sequences`, which gh [v2.97.0](https://github.com/cli/cli/releases/tag/v2.97.0) added ([GHSA-3m3g-3wcr-px46](https://github.com/cli/cli/security/advisories/GHSA-3m3g-3wcr-px46)). `vrg-gh` itself refuses an older gh. |
+| `gh` | 2.97.0 | `vrg-gh run job-log` passes `gh api --allow-escape-sequences`, which gh [v2.97.0](https://github.com/cli/cli/releases/tag/v2.97.0) added ([GHSA-3m3g-3wcr-px46](https://github.com/cli/cli/security/advisories/GHSA-3m3g-3wcr-px46)). `vrg-gh`, and every other `vrg-*` tool that runs gh, refuses an older gh. |
 
 ## Pinning host dependencies
 

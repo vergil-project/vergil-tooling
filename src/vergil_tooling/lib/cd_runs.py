@@ -97,6 +97,7 @@ def _list_cd_runs(target_branch: str, *, repo: str | None = None) -> list[dict[s
         "--json",
         "conclusion,databaseId,headSha,status,createdAt,url",
     ]
+    github.require_gh()
     result = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
@@ -123,7 +124,12 @@ def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, obj
 
 
 def _view_cd_run(run_id: object) -> dict[str, object] | None:
-    """Fetch a CD run's current status/conclusion/url, or ``None`` on error."""
+    """Fetch a CD run's current status/conclusion/url, or ``None`` on a gh error.
+
+    An unusable gh (:func:`github.require_gh`) is raised, never read as a gh
+    error.
+    """
+    github.require_gh()
     result = subprocess.run(  # noqa: S603
         [  # noqa: S607
             "gh",

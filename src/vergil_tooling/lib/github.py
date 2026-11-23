@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from vergil_tooling.lib import retry
+from vergil_tooling.lib import gh_version, retry
 from vergil_tooling.lib.process_errors import error_text, failure_detail, failure_message
 from vergil_tooling.lib.ref_refusal import ruleset_hint
 
@@ -801,8 +801,29 @@ def no_installation_message(exc: NoInstallationError) -> str:
     )
 
 
+def require_gh() -> None:
+    """Refuse unless the gh on PATH is at least :data:`gh_version.MIN_GH_VERSION`.
+
+    The one check every direct ``gh`` call in vergil-tooling passes through
+    (issue #5046): :func:`_gh_env`, which builds the environment of every
+    ``gh`` call made through this module, calls it first, and the few callers
+    that run ``gh`` outside this module call it themselves. The version is
+    cached per gh binary (:mod:`~vergil_tooling.lib.gh_version`), so the
+    check adds no ``gh`` call.
+
+    Raises:
+        gh_version.GhVersionError: gh is missing, its version cannot be read,
+            or it is older than the minimum.
+    """
+    gh_version.require_minimum()
+
+
 def _gh_env() -> dict[str, str] | None:
     """Return env dict with App installation token, or ``None`` for ambient auth.
+
+    gh is checked first (:func:`require_gh`), before any token is minted, so
+    an old gh is refused with the version it needs rather than failing with
+    its own unknown-flag error (#5046).
 
     When a :func:`target_org` context is active, the token is minted for that
     owner and a missing installation raises :class:`NoInstallationError`;
@@ -813,7 +834,11 @@ def _gh_env() -> dict[str, str] | None:
     A registered token source (:func:`set_token_source`) comes first: its
     current token is the call's ``GH_TOKEN``, and the App mode is not
     consulted (#4496).
+
+    Raises:
+        gh_version.GhVersionError: see :func:`require_gh`.
     """
+    require_gh()
     source_token = registered_token()
     if source_token is not None:
         return {**os.environ, "GH_TOKEN": source_token}

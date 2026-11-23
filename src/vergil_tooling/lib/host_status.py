@@ -170,8 +170,8 @@ def below_minimum(dep: HostDependency, installed: str) -> bool:
     """Return whether *installed* is older than *dep*'s manifest ``minimum``.
 
     A dependency with no ``minimum`` is never below it. The minimum is a
-    floor Vergil's own tools need (``gh`` for ``vrg-gh``, issue #4613), so
-    it holds whatever the latest or a pin says.
+    floor Vergil's own tools need (``gh`` for every tool that runs it,
+    issues #4613 and #5046), so it holds whatever the latest or a pin says.
 
     Raises:
         host_versions.IncomparableVersionError: the two versions cannot be ordered.

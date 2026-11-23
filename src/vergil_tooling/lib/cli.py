@@ -9,7 +9,8 @@ mutates interpreter-global state.
 
 It does the same for the trust layer's failures (an untrusted-content stop,
 a trust read failure, a missing trusted-authors configuration), whose
-messages are metadata only.
+messages are metadata only, and for a gh the tools cannot use (missing,
+unreadable, or older than the minimum, #5046).
 
 A command that already catches one of these errors inside ``main`` (to add
 command-specific context) keeps its own message and exit code; the decorator
@@ -79,6 +80,13 @@ def _auth_error_message(prog: str, exc: Exception) -> str | None:
     from vergil_tooling.lib import epics
 
     if isinstance(exc, (epics.EpicHomeError, epics.StandingEpicNotVisibleError)):
+        return f"{prog}: {exc}"
+    # A gh that is missing, unreadable or older than the minimum is refused
+    # before any gh call (github.require_gh, #5046); its message names the
+    # version required, as vrg-gh's own refusal does.
+    from vergil_tooling.lib import gh_version
+
+    if isinstance(exc, gh_version.GhVersionError):
         return f"{prog}: {exc}"
     return _trust_error_message(prog, exc)
 

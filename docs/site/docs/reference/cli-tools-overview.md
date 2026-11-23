@@ -127,6 +127,8 @@ binary and cached in `$XDG_CACHE_HOME/vergil/gh-version.json` (default
 `~/.cache`), keyed on the binary's path, size and modification time, so an
 upgrade of gh is seen at once. `vrg-host status` reports a gh below the
 minimum as an ERROR (see [Minimum versions](dev/host.md#minimum-versions)).
+Every other `vrg-*` tool that runs gh makes the same check before its first
+gh call, so an old gh is refused the same way there too.
 
 | Attribute | Value |
 |---|---|
