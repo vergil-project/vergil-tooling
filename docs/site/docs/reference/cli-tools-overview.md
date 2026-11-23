@@ -1760,8 +1760,8 @@ An **Ad-hoc tasks that look misplaced** section lists each open task under a
 live ad-hoc epic whose title starts `Logbook:` (it belongs under the hoshin
 epic), or whose body names an `epic`-labelled issue in another org (it belongs
 under that org's proxy), each with its reason. A cross-org issue the body
-names that cannot be read (private, deleted, or in an org the App cannot
-reach) is listed as a reason of its own. A task drops out of the report once
+names that cannot be read (deleted, or in an org the App cannot reach) is
+listed as a reason of its own. A task drops out of the report once
 a comment the trust layer trusts carries the line `Standalone-confirmed`, alone
 on its line, recording the human's ruling that it is standalone. The report
 never refuses, moves, closes or labels anything, does not change the exit

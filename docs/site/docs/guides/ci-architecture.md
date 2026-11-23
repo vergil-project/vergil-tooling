@@ -237,7 +237,6 @@ security:
   permissions:
     contents: read
     security-events: write
-    actions: read
   with:
     language: python
     run-security: ${{ inputs.run-security != 'false' }}

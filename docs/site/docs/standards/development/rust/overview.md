@@ -155,7 +155,7 @@ rules):
 - `audit / evidence`: `cargo deny` against the fleet policy
 - `security / trivy` and `security / semgrep`
 - `security / codeql`, and GitHub's own `CodeQL`, `Trivy` and `Semgrep OSS`
-  checks, when GitHub Advanced Security is available (CodeQL analyzes Rust)
+  checks (CodeQL analyzes Rust)
 - `version / version-bump`, `docs / docs` and
   `test / integration / <version>`, when `vergil.toml` turns them on
 

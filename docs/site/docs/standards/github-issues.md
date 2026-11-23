@@ -344,8 +344,8 @@ ad-hoc epic ends up holding only its still-open children.
   closed children to the archives; it stays the one perpetual umbrella per repo.
 - **Only canonical per-repo ad-hoc epics are archived.** Both the batch drain and
   the on-close event path key on the repo named in the `Epic (ad hoc): <repo>`
-  title, so a closed child always lands in *its own repo's* quarter archive — even
-  for a public repo whose ad-hoc epic is homed centrally in `.github`. A
+  title, so a closed child always lands in *its own repo's* quarter archive, even
+  though every ad-hoc epic is homed centrally in `.github`. A
   special-purpose `ad-hoc`-labelled epic whose title bare-name is a description
   rather than a real repo (e.g. a standing reliability collection) is **left
   untouched** — it is not treated as a drainable ad-hoc epic.
@@ -769,8 +769,7 @@ worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare `vrg-queue` never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
 the repo roots: `--root DIR` (repeatable) names them, and the platform's roots
-are the default. With `--repo`, a public repo narrows the list to its own
-ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
+are the default. `--repo` narrows the list to that repo's own ad-hoc epic. The [CLI reference](../reference/cli-tools-overview.md#vrg-queue)
 gives the line format, the marks and the dispositions.
 
 `vrg-queue hoshin` lists the open tasks under the org's
