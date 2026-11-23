@@ -16,7 +16,8 @@ the tools share:
 - :mod:`.items` loads the items files and renders the request, the drafted
   reply and the response;
 - :mod:`.approvals` renders the protected-change and merge-review exemption
-  requests and reads the one decision line a reply to either carries;
+  requests, reads the one decision line a reply to either carries, and
+  verifies an approval already given;
 - :mod:`.post` posts a comment exactly once and finds out whether a failed
   post landed;
 - :mod:`.draft_ref` relays the reply (or scope change) the agent drafts to
