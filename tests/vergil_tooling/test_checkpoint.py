@@ -306,3 +306,121 @@ def test_remove_crlf() -> None:
     body = "a\r\n"
     added = checkpoint.upsert(body, checkpoint.render(EC), EC)
     assert checkpoint.remove(added, EC) == body
+
+
+# --- reconcile ------------------------------------------------------------------
+
+
+def _recorded(*items: tuple[str, bool]) -> str:
+    """A block for *items*, as an older stage list would have written it."""
+    lines = [f"- [{'x' if done else ' '}] {name}" for name, done in items]
+    return "\n".join([checkpoint.begin(EC), *lines, checkpoint.end(EC)])
+
+
+def _without(stage: str, ticked: int) -> tuple[tuple[str, bool], ...]:
+    """The current list minus *stage*, its first *ticked* stages ticked."""
+    return tuple((s, i < ticked) for i, s in enumerate(s for s in STAGES if s != stage))
+
+
+def test_reconcile_keeps_matching_ticks() -> None:
+    body = _recorded(*_without("alignment", 3))
+    out, changes = checkpoint.reconcile(body, EC, [])
+    assert checkpoint.parse(out, EC) == [(s, s in STAGES[:3]) for s in STAGES]
+    assert changes == [
+        "kept ticked: bootstrap",
+        "kept ticked: brainstorm",
+        "kept ticked: spec-pushback",
+        "new, unticked: alignment",
+    ]
+
+
+def test_reconcile_drops_removed_stage() -> None:
+    body = _recorded(("bootstrap", True), ("old-stage", True), *((s, False) for s in STAGES[1:]))
+    out, changes = checkpoint.reconcile(body, EC, [])
+    assert checkpoint.parse(out, EC) == [(s, s == "bootstrap") for s in STAGES]
+    assert changes == ["kept ticked: bootstrap", "dropped: old-stage (was ticked)"]
+
+
+def test_reconcile_new_stage_unticked_by_default() -> None:
+    body = _recorded(*_without("brainstorm", 4))
+    out, changes = checkpoint.reconcile(body, EC, [])
+    pairs = checkpoint.parse(out, EC)
+    assert dict(pairs)["brainstorm"] is False
+    assert checkpoint.next_stage(pairs) == "brainstorm"  # before the cursor: run it, or tick it
+    assert "new, unticked: brainstorm" in changes
+
+
+def test_reconcile_new_stage_ticked_when_named() -> None:
+    body = _recorded(*_without("brainstorm", 4))
+    out, changes = checkpoint.reconcile(body, EC, ["brainstorm"])
+    pairs = checkpoint.parse(out, EC)
+    assert dict(pairs)["brainstorm"] is True
+    assert checkpoint.next_stage(pairs) == "plan-pushback"
+    assert "new, ticked: brainstorm" in changes
+
+
+@pytest.mark.parametrize("stage", ["bootstrap", "old-stage", "nope"])
+def test_reconcile_tick_of_existing_stage_refused(stage: str) -> None:
+    body = _recorded(("old-stage", False), *_without("alignment", 1))
+    with pytest.raises(ValueError, match=r"new stages: alignment"):
+        checkpoint.reconcile(body, EC, [stage])
+
+
+def test_reconcile_tick_with_no_new_stage_refused() -> None:
+    body = _recorded(("old-stage", False), *((s, False) for s in STAGES))
+    with pytest.raises(ValueError, match=r"new stages: \(none\)"):
+        checkpoint.reconcile(body, EC, ["bootstrap"])
+
+
+def test_reconcile_reports_reorder() -> None:
+    body = _recorded(("brainstorm", True), ("bootstrap", True), *((s, False) for s in STAGES[2:]))
+    out, changes = checkpoint.reconcile(body, EC, [])
+    assert checkpoint.parse(out, EC) == [(s, s in STAGES[:2]) for s in STAGES]
+    assert changes == [
+        "kept ticked: bootstrap",
+        "kept ticked: brainstorm",
+        "reordered: the stages now follow the current list",
+    ]
+
+
+def test_reconcile_duplicate_stage_ticked_only_in_every_copy() -> None:
+    items = [(s, s == "bootstrap") for s in STAGES]
+    body = _recorded(*items, ("bootstrap", False))
+    out, changes = checkpoint.reconcile(body, EC, [])
+    assert checkpoint.parse(out, EC) == [(s, False) for s in STAGES]
+    assert changes == [
+        "unticked: bootstrap (recorded 2 times, not ticked in every one)",
+        "reordered: the stages now follow the current list",
+    ]
+
+
+def test_reconcile_without_skew_raises() -> None:
+    with pytest.raises(ValueError, match="matches"):
+        checkpoint.reconcile(checkpoint.render(EC, ["bootstrap"]), EC, [])
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ("text\n", checkpoint.Missing),
+        (checkpoint.render(EC).replace("- [ ] plan\n", "- [ ] plan\nnote\n"), checkpoint.Malformed),
+    ],
+)
+def test_reconcile_missing_or_malformed_raises(body: str, error: type[Exception]) -> None:
+    with pytest.raises(error):
+        checkpoint.reconcile(body, EC, [])
+
+
+def test_reconcile_preserves_rest_of_body() -> None:
+    pre = "Planning: x/y#1\n\nSecurity advisory: GHSA-aaaa\n\n## Documents\n\n- spec\n\n"
+    post = "\n\nhuman text\n"
+    body = pre + _recorded(*_without("alignment", 2)) + post
+    out, _ = checkpoint.reconcile(body, EC, [])
+    assert out == pre + checkpoint.render(EC, STAGES[:2]) + post
+
+
+def test_reconcile_crlf() -> None:
+    body = ("a\n\n" + _recorded(*_without("alignment", 1)) + "\n\nb\n").replace("\n", "\r\n")
+    out, _ = checkpoint.reconcile(body, EC, [])
+    expected = "a\n\n" + checkpoint.render(EC, ["bootstrap"]) + "\n\nb\n"
+    assert out == expected.replace("\n", "\r\n")

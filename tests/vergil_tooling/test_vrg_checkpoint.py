@@ -10,7 +10,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_checkpoint import main, parse_args
-from vergil_tooling.lib import checkpoint, github, trust
+from vergil_tooling.lib import checkpoint, github, issue_body, trust
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -29,8 +29,10 @@ class _Fake:
     def __init__(self, body: str) -> None:
         self.body = body
         self.orgs: list[tuple[str, str | None]] = []
+        self.comments: list[str] = []
         self.read_body = MagicMock(side_effect=self._read)
         self.write_body = MagicMock(side_effect=self._write)
+        self.post_comment = MagicMock(side_effect=self._comment)
 
     def _read(self, owner: str, repo: str, number: int) -> str:
         assert (owner, repo, number) == ("o", ".github", 7)
@@ -42,6 +44,11 @@ class _Fake:
         self.orgs.append(("write", github._target_org.get()))
         self.body = body
 
+    def _comment(self, owner: str, repo: str, number: int, body: str) -> None:
+        assert (owner, repo, number) == ("o", ".github", 7)
+        self.orgs.append(("comment", github._target_org.get()))
+        self.comments.append(body)
+
 
 @pytest.fixture
 def fake() -> Generator[_Fake]:
@@ -49,6 +56,7 @@ def fake() -> Generator[_Fake]:
     with (
         patch(f"{_MOD}.issue_body.read_body", state.read_body),
         patch(f"{_MOD}.issue_body.write_body", state.write_body),
+        patch(f"{_MOD}.issue_body.post_comment", state.post_comment),
     ):
         yield state
 
@@ -307,6 +315,116 @@ def test_init_then_reset_round_trips(fake: _Fake) -> None:
     assert fake.body == PRE
 
 
+# --- reconcile ----------------------------------------------------------------
+
+# A block written before `alignment` joined the list, the first two stages done.
+_SKEWED = _with_block(("bootstrap", "brainstorm")).replace("- [ ] alignment\n", "")
+_RECONCILED = _with_block(("bootstrap", "brainstorm"))
+_CHANGES = "- kept ticked: bootstrap\n- kept ticked: brainstorm\n- new, unticked: alignment"
+_COMMENT = "vrg-checkpoint: reconciled epic-create\n\n" + _CHANGES + "\n"
+
+
+def test_reconcile_writes_then_comments(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.body = _SKEWED
+    assert main(["reconcile", REF, "--workflow", EC]) == 0
+    assert fake.body == _RECONCILED
+    # The comment records a write that was made: it is posted after it, never before.
+    assert fake.orgs == [("read", "o"), ("write", "o"), ("comment", "o")]
+    assert fake.comments == [_COMMENT]
+    assert capsys.readouterr().out == (
+        f"o/.github#7: reconciled the epic-create block:\n{_CHANGES}\nnext: spec-pushback\n"
+    )
+
+
+def test_reconcile_ticks_a_named_new_stage(fake: _Fake) -> None:
+    fake.body = _with_block(STAGES[:6]).replace("- [ ] alignment\n", "")
+    assert main(["reconcile", REF, "--workflow", EC, "--tick", "alignment"]) == 0
+    assert fake.body == _with_block(STAGES[:7])
+    assert "- new, ticked: alignment" in fake.comments[0]
+
+
+def test_reconcile_then_status_is_ok(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.body = _SKEWED
+    assert main(["status", REF, "--workflow", EC]) == 5
+    assert main(["reconcile", REF, "--workflow", EC]) == 0
+    capsys.readouterr()
+    assert main(["status", REF, "--workflow", EC, "--json"]) == 0
+    assert _status_json(capsys)["next"] == "spec-pushback"
+
+
+def test_reconcile_comment_failure_exits_1_with_text(
+    fake: _Fake, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.body = _SKEWED
+    fake.post_comment.side_effect = github.GitHubAPIError(
+        1, ["gh", "api"], output="", stderr="HTTP 502"
+    )
+    assert main(["reconcile", REF, "--workflow", EC]) == 1
+    assert fake.body == _RECONCILED
+    captured = capsys.readouterr()
+    assert _CHANGES in captured.out
+    assert "the block was written" in captured.err
+    assert "post this comment by hand" in captured.err
+    assert captured.err.endswith(_COMMENT)
+    assert "nothing was written" not in captured.err
+
+
+def test_reconcile_write_failure_gives_the_comment_text(
+    fake: _Fake, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.body = _SKEWED
+    fake.write_body.side_effect = github.GitHubAPIError(
+        1, ["gh", "api"], output="", stderr="HTTP 502"
+    )
+    assert main(["reconcile", REF, "--workflow", EC]) == 1
+    fake.post_comment.assert_not_called()
+    err = capsys.readouterr().err
+    assert "the edit may not have been applied" in err
+    assert err.endswith(_COMMENT)
+
+
+def test_reconcile_without_skew_exits_1(fake: _Fake, capsys: pytest.CaptureFixture[str]) -> None:
+    fake.body = _with_block(("bootstrap",))
+    assert main(["reconcile", REF, "--workflow", EC]) == 1
+    fake.write_body.assert_not_called()
+    fake.post_comment.assert_not_called()
+    assert "nothing to reconcile" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stage", ["bootstrap", "nope"])
+def test_reconcile_tick_not_new_exits_1(fake: _Fake, stage: str) -> None:
+    fake.body = _SKEWED
+    assert main(["reconcile", REF, "--workflow", EC, "--tick", stage]) == 1
+    fake.write_body.assert_not_called()
+    fake.post_comment.assert_not_called()
+
+
+def test_reconcile_untrusted_body_exits_3(fake: _Fake) -> None:
+    fake.read_body.side_effect = trust.UntrustedContentError(
+        _UNTRUSTED, "the issue body is untrusted"
+    )
+    assert main(["reconcile", REF, "--workflow", EC]) == 3
+    fake.write_body.assert_not_called()
+    fake.post_comment.assert_not_called()
+
+
+@pytest.mark.parametrize(("body", "code"), [(_MALFORMED, 6), (_UNCLOSED, 6), (PRE, 4)])
+def test_reconcile_malformed_exits_6(fake: _Fake, body: str, code: int) -> None:
+    fake.body = body
+    assert main(["reconcile", REF, "--workflow", EC]) == code
+    fake.write_body.assert_not_called()
+    fake.post_comment.assert_not_called()
+
+
+def test_post_comment_posts_exactly_once() -> None:
+    # A comment is a create: a retry after a failure that hid a landed POST
+    # would post it twice, so it is never retried.
+    post = MagicMock(return_value={"id": 1})
+    with patch("vergil_tooling.lib.github.post_json_once", post):
+        issue_body.post_comment("o", ".github", 7, "text")
+    post.assert_called_once_with("repos/o/.github/issues/7/comments", {"body": "text"})
+
+
 # --- trust, errors and arguments ----------------------------------------------
 
 _SUBCOMMANDS = [
@@ -315,6 +433,7 @@ _SUBCOMMANDS = [
     ["status", REF, "--workflow", EC, "--json"],
     ["tick", REF, "--workflow", EC, "bootstrap"],
     ["reset", REF, "--workflow", EC],
+    ["reconcile", REF, "--workflow", EC],
 ]
 
 _UNTRUSTED = trust.Skipped(
@@ -356,18 +475,22 @@ def test_reads_the_body_through_the_trust_layer(
 ) -> None:
     # The real read, on the trust layer's GraphQL answer: an untrusted body
     # (a box ticked by an outsider included) is never parsed or written back.
-    body = _with_block() if argv[0] in {"status", "tick", "reset"} else PRE
+    bodies = {"init": PRE, "reconcile": _SKEWED}
+    body = bodies.get(argv[0], _with_block())
     answer = trust_stubs.item(body=body, author=author, editor=editor)
     write = MagicMock()
+    comment = MagicMock()
     with (
         patch("vergil_tooling.lib.github.graphql", return_value=answer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         patch(f"{_MOD}.issue_body.write_body", write),
+        patch(f"{_MOD}.issue_body.post_comment", comment),
     ):
         rc = main(argv)
     assert rc == code
     expect_write = code == 0 and argv[0] != "status"
     assert write.call_count == (1 if expect_write else 0)
+    assert comment.call_count == (1 if expect_write and argv[0] == "reconcile" else 0)
 
 
 @pytest.mark.parametrize(
@@ -437,7 +560,8 @@ def test_unknown_workflow_exits_2(fake: _Fake) -> None:
         ["status", "#7", "--workflow", EC],
         ["status", "o/.github", "--workflow", EC],
         ["tick", REF, "--workflow", EC],
-        ["reconcile", REF, "--workflow", EC],
+        ["reconcile", REF],
+        ["reconcile", REF, "--workflow", EC, "--tick"],
     ],
 )
 def test_bad_arguments_exit_2(argv: list[str]) -> None:

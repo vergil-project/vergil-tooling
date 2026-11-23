@@ -1048,7 +1048,7 @@ issue is a fully qualified `OWNER/REPO#N`.
 - `status REF --workflow NAME [--json]` prints the stages, their ticks and the
   **next stage**, the first unticked one. On skew it prints how the block
   differs from the current list (added and removed stages, and whether the
-  common stages are reordered).
+  common stages are reordered); `reconcile` resolves it.
 - `tick REF --workflow NAME STAGE` ticks one stage. It refuses a stage that is
   not in the block, a stage with an earlier one unticked (stages are linear),
   and a block with skew. A stage already ticked succeeds and writes nothing,
@@ -1059,6 +1059,33 @@ issue is a fully qualified `OWNER/REPO#N`.
   it was. With no block it succeeds and writes nothing. A begin marker with no
   end marker (or an end marker with no begin) is refused with exit 6, since
   where that block starts or ends is unknown.
+- `reconcile REF --workflow NAME [--tick STAGE]…` rewrites a block with
+  **skew** (one a tooling release changed the stage list under) to the
+  workflow's current stage list. A stage whose name matches keeps its tick
+  (a stage recorded more than once counts as ticked only when every copy
+  is); a removed stage is dropped; a new stage is unticked unless `--tick`
+  names it, because the human says it is done. `--tick` takes new stages
+  only. It refuses a block with no skew (exit 1), and exits 4 or 6 for a
+  missing or malformed block, with nothing written.
+
+`reconcile` prints one line per change, then the next stage:
+
+```text
+OWNER/REPO#N: reconciled the epic-create block:
+- kept ticked: bootstrap
+- new, unticked: alignment
+- dropped: old-stage (was ticked)
+- reordered: the stages now follow the current list
+next: brainstorm
+```
+
+A matching unticked stage is no change and gets no line. After the write it
+posts the same lines in a comment on the issue, whose first line is
+`vrg-checkpoint: reconciled <workflow>`, so the issue's log records every
+change made to the cursor. The comment is posted once and never retried. If
+it fails, the block stays written and the command exits 1, printing the
+comment's text to post by hand. If the write itself fails, it prints the
+same text, to post once `status` shows the block reconciled.
 
 A write rewrites only the block: every other byte of the body is kept, and
 the block takes the line ending the body already uses (GitHub's web editor
@@ -1097,10 +1124,10 @@ the current list's order, `removed` in the block's.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_checkpoint` (stage lists, format and parser: `lib/checkpoint.py`) |
-| Args | `init`, `status`, `tick`, `reset`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE` |
+| Args | `init`, `status`, `tick`, `reset`, `reconcile`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE`; `reconcile`: `--tick STAGE` (repeatable, new stages only) |
 | Preconditions | GitHub App credentials for the issue's org; trusted authors configured |
-| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status` |
-| Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
+| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status`; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
+| Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick, a `reconcile` with no skew or a `--tick` of a stage that is not new, a failed `reconcile` comment); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
 | Status | Active |
 
 ### vrg-epic-link
