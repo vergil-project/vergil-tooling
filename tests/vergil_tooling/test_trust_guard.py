@@ -1232,15 +1232,21 @@ def write_only(repo: str, number: int) -> None:
 
 
 def raw_graphql_body(number: int) -> object:
-    return github.read_json("api", "graphql", "-f", f"query={_BODY_QUERY}", "-F", f"number={number}")
+    return github.read_json(
+        "api", "graphql", "-f", f"query={_BODY_QUERY}", "-F", f"number={number}"
+    )
 
 
 def raw_graphql_labels(number: int) -> object:
-    return github.read_json("api", "graphql", "-f", f"query={_LABELS_QUERY}", "-F", f"number={number}")
+    return github.read_json(
+        "api", "graphql", "-f", f"query={_LABELS_QUERY}", "-F", f"number={number}"
+    )
 
 
 def raw_graphql_write() -> None:
-    github.run("api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { clientMutationId } }")
+    github.run(
+        "api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { clientMutationId } }"
+    )
 
 
 def jq_whole_issue(repo: str, number: int) -> object:
@@ -1248,7 +1254,9 @@ def jq_whole_issue(repo: str, number: int) -> object:
 
 
 def jq_selected_issues(repo: str) -> object:
-    return github.read_json("api", f"repos/{repo}/issues", "--jq", '.[] | select(.state == "open")')
+    return github.read_json(
+        "api", f"repos/{repo}/issues", "--jq", '.[] | select(.state == "open")'
+    )
 
 
 def jq_each_comment(repo: str, number: int) -> object:
@@ -1286,7 +1294,13 @@ def test_guard_catches_planted_reads(tmp_path: Path) -> None:
         assert reads[function].unresolved == (), function
     assert reads["unresolved"].unresolved == ("query",)
     assert reads["unresolved"].fields == frozenset()
-    clean_reads = ("traced_labels", "clean_labels", "clean_state", "raw_graphql_labels", "jq_numbers")
+    clean_reads = (
+        "traced_labels",
+        "clean_labels",
+        "clean_state",
+        "raw_graphql_labels",
+        "jq_numbers",
+    )
     for clean in clean_reads:
         assert reads[clean].fields == frozenset(), clean
         assert reads[clean].unresolved == (), clean
