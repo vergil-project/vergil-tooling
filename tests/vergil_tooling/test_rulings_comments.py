@@ -173,6 +173,17 @@ def test_read_stream_of_an_issue_with_none(items: FakeItems) -> None:
     assert read_stream("o/r", 7, AUTHORS) == Stream(comments=[], all_ids=frozenset())
 
 
+def test_read_stream_narrowed_to_the_agents_leaves_the_human_out(items: FakeItems) -> None:
+    _issue(
+        items,
+        trust_stubs.comment(1, "the human"),
+        trust_stubs.comment(2, "the agent", trust_stubs.AGENT),
+    )
+    stream = read_stream("o/r", 7, AUTHORS, roles=frozenset({trust.Role.AGENTS}))
+    assert [c.id for c in stream.comments] == [2]
+    assert stream.all_ids == frozenset({1, 2})
+
+
 def test_read_stream_loads_the_configured_authors(
     items: FakeItems, monkeypatch: pytest.MonkeyPatch
 ) -> None:
