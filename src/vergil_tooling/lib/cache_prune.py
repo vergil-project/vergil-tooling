@@ -17,6 +17,13 @@ yet deleted, or a stale local branch all keep the image; the cost of a wrong
 keep is disk, the cost of a wrong removal is a cold rebuild of live work.
 Protected branches and images any container references are never removed.
 
+A protected-branch image whose repository is none of the repo set's (no repo
+found under the scanned roots has that directory name) is *unplaced*: its repo
+may be gone, or may live outside the roots, and the tag cannot tell which. It
+is kept, since a wrong removal costs a live repo its warm cache, but its
+verdict says it is unplaced, so ``vrg-container-cache prune`` names it for the
+human to remove by hand rather than keeping it silently (#5000).
+
 An image in the format before #4162, which names no repository, is removed
 whatever its branch unless a container references it: no current lookup
 returns one, so it can only ever take up disk (#4162).
@@ -64,11 +71,16 @@ class CacheImage:
 
 @dataclass(frozen=True)
 class PruneVerdict:
-    """Whether to remove *image*, and why."""
+    """Whether to remove *image*, and why.
+
+    *unplaced* is true for a kept protected-branch image whose repository is
+    not in the repo set, which the caller reports for the human (#5000).
+    """
 
     image: CacheImage
     remove: bool
     reason: str
+    unplaced: bool = False
 
 
 def _runtime_lines(runtime: str, *args: str) -> list[str]:
@@ -139,6 +151,22 @@ def _repo_label(repo: Path) -> str:
     return f"{repo.parent.name}/{repo.name}"
 
 
+def _placed_repos(repos: Iterable[Path]) -> set[str]:
+    """The repository names, as a cached image's tag holds them, of *repos*.
+
+    Each is a clone's directory name, sanitized as :func:`cache_repo_name` and
+    :func:`sanitize_repo` make the tag. A name that sanitizes to nothing can
+    name no cached image, so it places none.
+    """
+    placed: set[str] = set()
+    for repo in repos:
+        try:
+            placed.add(sanitize_repo(repo.name))
+        except ValueError:
+            continue
+    return placed
+
+
 def plan_prune(
     images: Iterable[CacheImage],
     live: Mapping[Path, frozenset[str]],
@@ -150,9 +178,11 @@ def plan_prune(
     unless a container references it. Any other image is checked in order: a
     protected branch keeps; a container referencing the image keeps; a
     sanitized match against any repo's live branch keeps. Only an image that
-    passes none of these is removed.
+    passes none of these is removed. A protected-branch image whose repository
+    is not in *live* is kept as unplaced (#5000), unless a container uses it.
     """
     used = list(in_use)
+    placed = _placed_repos(live)
     live_in: dict[str, list[str]] = {}
     for repo, branches in live.items():
         for branch in branches:
@@ -166,8 +196,17 @@ def plan_prune(
             else:
                 reason = "old format with no repository; no current lookup uses it"
                 verdicts.append(PruneVerdict(image, True, reason))
-        elif image.branch in PROTECTED_BRANCHES:
+        elif image.branch in PROTECTED_BRANCHES and image.repo in placed:
             verdicts.append(PruneVerdict(image, False, f"protected branch '{image.branch}'"))
+        elif image.branch in PROTECTED_BRANCHES:
+            if _is_in_use(image, used):
+                verdicts.append(PruneVerdict(image, False, "in use by a container"))
+            else:
+                reason = (
+                    f"protected branch '{image.branch}' of repository '{image.repo}', "
+                    "which is not in the repo set; unplaced"
+                )
+                verdicts.append(PruneVerdict(image, False, reason, unplaced=True))
         elif _is_in_use(image, used):
             verdicts.append(PruneVerdict(image, False, "in use by a container"))
         elif image.branch in live_in:

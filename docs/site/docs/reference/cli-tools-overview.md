@@ -2461,7 +2461,17 @@ toward keeping. An image is kept when:
   branch is live when it is a local branch (which covers every worktree)
   or exists on the repo's `origin`.
 
-Only an image that matches none of these is removed. Origin is read with
+Only an image that matches none of these is removed. A protected-branch
+image whose repository is the directory name of no repo in the repo set is
+**unplaced**: its repository may be gone, or may live outside the roots,
+and the tag cannot tell which. Prune always keeps it and, unless a
+container uses it, lists it after the verdicts with the
+`<runtime> rmi <ref>` command to remove it by hand once you know its
+repository is gone (issue #5000). To place a repository that lives
+elsewhere, re-run with its directory **added** to the current roots, as
+the list's hint spells out: `--root` replaces the roots, so naming that
+directory alone would shrink the repo set and let `--apply` remove other
+repos' live images. Origin is read with
 `git ls-remote`, so a branch deleted on GitHub counts as gone. When a
 repo's origin cannot be read (a network error, or an origin repo that no
 longer exists), that repo's local `refs/remotes/origin/*` stand in, with a
