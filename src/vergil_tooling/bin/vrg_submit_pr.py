@@ -390,6 +390,18 @@ def _push_branch(branch: str) -> None:
     try:
         git.run("push", "--force-with-lease", "-u", "origin", branch)
     except subprocess.CalledProcessError as exc:
+        merged = _merged_pr_of_gone_branch(branch)
+        if merged is not None:
+            # The lease is refused as stale when origin deleted the branch
+            # after its PR merged: say that, not "the remote moved" (#4993).
+            msg = (
+                f"vrg-submit-pr: pushing '{branch}' to origin failed: the branch "
+                f"is gone from origin and its PR #{merged.number} has merged "
+                f"({merged.url}).\n"
+                "  This worktree is cleanup, not a submit: run "
+                "`vrg-finalize-pr --cleanup-only` to remove it."
+            )
+            raise SystemExit(msg) from exc
         msg = (
             f"vrg-submit-pr: pushing '{branch}' to origin failed.\n"
             "  --force-with-lease was refused, which means the remote branch "
@@ -398,6 +410,62 @@ def _push_branch(branch: str) -> None:
             "retrying, so you don't overwrite someone else's work."
         )
         raise SystemExit(msg) from exc
+
+
+# A failed read of a branch's PRs: gh itself, the trust layer's read, or no
+# trusted-authors configuration.
+_PR_LOOKUP_ERRORS = (
+    subprocess.CalledProcessError,
+    trust.TrustReadError,
+    TrustedAuthorsNotConfiguredError,
+)
+
+
+def _merged_pr_of_gone_branch(branch: str) -> trust.PRRef | None:
+    """The merged PR of *branch* when origin no longer has the branch, else ``None``.
+
+    Called only to explain a failed push. A failed read is raised as the
+    push's failure, naming what could not be read, never hidden.
+    """
+    try:
+        if _origin_has_branch(branch):
+            return None
+        prs = worktrees.branch_prs(branch, state="all")
+    except _PR_LOOKUP_ERRORS as exc:
+        msg = (
+            f"vrg-submit-pr: pushing '{branch}' to origin failed, and checking "
+            f"whether its PR has merged failed too: {error_text(exc)}"
+        )
+        raise SystemExit(msg) from exc
+    merged = [pr for pr in prs if pr.state == "MERGED"]
+    return max(merged, key=lambda pr: pr.number, default=None)
+
+
+def _published_pr(branch: str, head_sha: str) -> trust.PRRef | None:
+    """The PR that already publishes a ready worktree's branch, or ``None``.
+
+    The local ``submitted`` stamp is set only by ``vrg-submit-pr``, so a PR
+    opened by hand leaves the worktree looking ready (issue #4993). GitHub
+    is asked instead: an open PR on *branch* means the work is in flight,
+    and a merged PR whose head is the reported *head_sha* means it has
+    landed and the worktree is cleanup. A merged PR at another head is a
+    reused branch name (issue #1719), whose new tip is still to submit.
+    Only same-repo PRs with a trusted author count
+    (:func:`worktrees.branch_prs`). A failed read refuses the selection.
+    """
+    try:
+        prs = worktrees.branch_prs(branch, state="all")
+    except _PR_LOOKUP_ERRORS as exc:
+        msg = (
+            f"vrg-submit-pr: reading the PRs on '{branch}' failed: {error_text(exc)}; "
+            "nothing was submitted."
+        )
+        raise SystemExit(msg) from exc
+    opened = [pr for pr in prs if pr.state == "OPEN"]
+    if opened:
+        return max(opened, key=lambda pr: pr.number)
+    merged = [pr for pr in prs if pr.state == "MERGED" and pr.head_oid == head_sha]
+    return max(merged, key=lambda pr: pr.number, default=None)
 
 
 def _create_pr(*, target_branch: str, title: str, pr_body: str, head: str | None = None) -> str:
@@ -1045,13 +1113,20 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
 def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str]]]:
     """Return submittable ``(worktree, fields)`` pairs, or SystemExit if none.
 
-    Same classification (ready / in-flight / not-ready) and same
+    Same classification (ready / in-flight / merged / not-ready) and same
     no-submittable-worktrees error as the single-select path; shared by the
-    single picker and the batch selector (issue #1673).
+    single picker and the batch selector (issue #1673). A worktree whose
+    state is ready is still held back when GitHub already has a PR for it
+    (:func:`_published_pr`, issue #4993): an open one is in flight, and a
+    merged one is cleanup. When other worktrees go ahead, each one held
+    back that way is named on stderr, since its state file says ready.
     """
     ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     in_flight: list[str] = []
+    merged: list[str] = []
     not_ready: list[str] = []
+    # Ready by their state file but held back by GitHub: named when others go on.
+    held_back: list[str] = []
     for wt in worktrees.list_worktrees(root):
         try:
             fields = submission.read_pr_fields(wt.path)
@@ -1065,19 +1140,37 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
         except WorkflowError as exc:
             not_ready.append(f"{wt.path.name}: {exc}")
             continue
-        ready.append((wt, fields))
+        pr = _published_pr(wt.branch, fields["head_sha"])
+        if pr is None:
+            ready.append((wt, fields))
+        elif pr.state == "OPEN":
+            in_flight.append(f"{wt.path.name}: PR #{pr.number} ({pr.url})")
+            held_back.append(f"{wt.path.name}: PR #{pr.number} is already open ({pr.url})")
+        else:
+            merged.append(f"{wt.path.name}: PR #{pr.number} ({pr.url})")
+            held_back.append(
+                f"{wt.path.name}: PR #{pr.number} has merged ({pr.url}); "
+                "the worktree is cleanup, not a submit"
+            )
 
-    if not ready:
+    if ready:
+        for entry in held_back:
+            print(f"vrg-submit-pr: skipping {entry}.", file=sys.stderr)
+    else:
         lines = ["vrg-submit-pr: no submittable worktrees found."]
         if in_flight:
             lines.append("")
             lines.append("  In flight (open PR — nothing to do):")
             lines.extend(f"    {entry}" for entry in in_flight)
+        if merged:
+            lines.append("")
+            lines.append("  Merged (cleanup — run `vrg-finalize-pr --cleanup-only`):")
+            lines.extend(f"    {entry}" for entry in merged)
         if not_ready:
             lines.append("")
             lines.append("  Not ready (no submission metadata yet):")
             lines.extend(f"    {entry}" for entry in not_ready)
-        if not in_flight and not not_ready:
+        if not in_flight and not merged and not not_ready:
             lines.append("  (no .worktrees/ entries exist)")
         raise SystemExit("\n".join(lines))
     return ready
