@@ -363,6 +363,56 @@ def test_every_comment_edit_is_judged(fake: FakeGitHub) -> None:
     assert item.url.endswith("#issuecomment-73")
 
 
+def test_every_review_and_review_comment_edit_is_judged(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A trusted review whose last edit is trusted, with two untrusted edits
+    # behind it (one in the window), and a trusted inline comment an impostor edited.
+    review = {"id": "PRR_5", "fullDatabaseId": "5", **_content(HUMAN, "lgtm", OLD, HUMAN, NEWEST)}
+    review["userContentEdits"] = _page(
+        [
+            {"editedAt": NEWEST, "editor": HUMAN},
+            {"editedAt": NEWER, "editor": OUTSIDER},
+            {"editedAt": OLD, "editor": OUTSIDER},
+        ]
+    )
+    inline = comment(7, AGENT, OLD, "a nit", editor=IMPOSTOR, edited_at=NEW)
+    # An outsider's own review, edited by the outsider: listed once, as a review.
+    spam = {"id": "PRR_8", "fullDatabaseId": "8", **_content(OUTSIDER, SPAM, NEW, OUTSIDER)}
+    _hold(fake, Item(REPO, 75, typename="PullRequest", reviews=[(review, [inline]), (spam, [])]))
+    items = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert [(i.kind, i.login, i.at, i.cause, i.tamper, i.url) for i in items] == [
+        (
+            "edit",
+            "drive-by",
+            NEWER,
+            trust.UNTRUSTED,
+            True,
+            f"https://github.com/{REPO}/pull/75#pullrequestreview-5",
+        ),
+        (
+            "edit",
+            "the-agent",
+            NEW,
+            trust.WRONG_TYPE,
+            True,
+            f"https://github.com/{REPO}/pull/75#discussion_r7",
+        ),
+        (
+            "review",
+            "drive-by",
+            NEW,
+            trust.UNTRUSTED,
+            False,
+            f"https://github.com/{REPO}/pull/75#pullrequestreview-8",
+        ),
+    ]
+    assert vrg_epic_audit.main(["--untrusted", "--since", SINCE, "--org", ORG]) == 0
+    out = capsys.readouterr().out
+    assert "3 item(s), 2 possible tampering" in out
+    assert "SPAM-MARKER-TEXT" not in out
+
+
 def test_outsider_renaming_own_issue_is_not_tamper(fake: FakeGitHub) -> None:
     _hold(fake, Item(REPO, 74, author=OUTSIDER, created=NEW, renames=[(OUTSIDER, NEWER)]))
     items = outsider_activity(ORG, since=SINCE, authors=AUTHORS)

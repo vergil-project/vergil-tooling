@@ -6,8 +6,9 @@ untrusted thing done since a time, newest first:
 
 - issues and PRs opened by an untrusted account;
 - untrusted comments, reviews and inline review comments;
-- untrusted edits to trusted content (a body or a comment) and untrusted
-  renames of a trusted item, possible tampering;
+- untrusted edits to trusted content (a body, a comment, a review or an
+  inline review comment) and untrusted renames of a trusted item, possible
+  tampering;
 - untrusted closes (possible tampering) and reopens.
 
 Every trust decision is the trust layer's (:mod:`vergil_tooling.lib.trust`).
@@ -15,7 +16,7 @@ The items come from a GitHub search of the org's issues and PRs updated since
 the time (:func:`trust.search_items`, which refuses a window GitHub's search
 would cut short), then each item's body, comments, reviews, every edit, and
 every close, reopen and rename are read in full through the layer
-(:func:`trust.read_issue_edits`, :func:`trust.read_reviews`,
+(:func:`trust.read_issue_edits`, :func:`trust.read_review_edits`,
 :func:`trust.read_events`), so no untrusted act hides behind another. Each
 item is metadata and a link only, never the untrusted text. Nothing here writes to GitHub.
 """
@@ -205,7 +206,8 @@ def outsider_activity(
             content, edits = trust.read_issue_edits(repo, number, authors=authors)
             skips = [*content.skipped, *edits]
             if kind == "pr":
-                skips += trust.read_reviews(repo, number, authors=authors).skipped
+                reviews, review_edits = trust.read_review_edits(repo, number, authors=authors)
+                skips += [*reviews.skipped, *review_edits]
             found.update(_from_skip(org, skip, url) for skip in skips)
             trusted_item = content.author_role is not None
             found.update(_event_items(org, repo, number, url, authors, trusted_item=trusted_item))

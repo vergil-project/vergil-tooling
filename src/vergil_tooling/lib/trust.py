@@ -24,7 +24,8 @@ items and a :class:`Skipped` record for each untrusted one; where the content
 is load-bearing they raise :class:`UntrustedContentError` instead; for a
 report, :func:`read_issue_edits` also lists every untrusted edit of trusted
 content, and ``read_events(renames=True)`` every rename. Reviews and
-inline review comments follow the same rule (:func:`read_reviews`). A close
+inline review comments follow the same rule (:func:`read_reviews`), and
+:func:`read_review_edits` lists every untrusted edit of trusted ones. A close
 or reopen is trusted when its actor is (:func:`read_events`,
 :func:`close_judgement`, :func:`require_trusted_close`,
 :func:`require_trusted_reopen`). A PR found by its
@@ -859,9 +860,26 @@ def read_issue_edits(
     content = _issue_content(
         repo, number, kind, body, comments, roles=roles, editors="every", authors=authors
     )
+    pieces = [(body, "body")] + [(c.content, f"comment {c.database_id}") for c in comments]
+    return content, _untrusted_edits(repo, number, pieces, roles=roles, authors=authors)
+
+
+def _untrusted_edits(
+    repo: str,
+    number: int,
+    pieces: Sequence[tuple[_Content, str]],
+    *,
+    roles: frozenset[Role],
+    authors: TrustedAuthors,
+) -> tuple[Skipped, ...]:
+    """Each untrusted edit (kind ``edit``) of a piece whose author holds a role in *roles*.
+
+    *pieces* are each piece of content and the field that names it. Every
+    edit in a piece's history is judged, the last one included; a piece an
+    untrusted account wrote is passed over, as it is untrusted already.
+    """
     org = _split_repo(repo)[0]
     edits: dict[Skipped, None] = {}
-    pieces = [(body, "body")] + [(c.content, f"comment {c.database_id}") for c in comments]
     for piece, field in pieces:
         if _accepted(piece.author, org=org, roles=roles, authors=authors).role is None:
             continue
@@ -870,7 +888,7 @@ def read_issue_edits(
             cause = _accepted(identity, org=org, roles=roles, authors=authors).cause
             if cause is not None:
                 edits[Skipped(repo, number, "edit", _bare(identity), at, field, cause)] = None
-    return content, tuple(edits)
+    return tuple(edits)
 
 
 def _read_item(repo: str, number: int) -> tuple[str, _Content, list[_Comment]]:
@@ -1283,6 +1301,41 @@ def read_reviews(
     """
     if authors is None:
         authors = load_trusted_authors()
+    reviews, inline = _read_review_items(repo, pr)
+    return _review_content(repo, pr, reviews, inline, roles=roles, editors=editors, authors=authors)
+
+
+def read_review_edits(
+    repo: str,
+    pr: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> tuple[PRReviewContent, tuple[Skipped, ...]]:
+    """:func:`read_reviews`, and every untrusted edit of the PR's trusted reviews.
+
+    The one read :func:`read_reviews` makes (author and every editor). Where
+    that judges a review or inline review comment by its first untrusted
+    editor only, this also lists each untrusted edit (kind ``edit``, field
+    ``review <id>`` or ``review comment <id>``) of a review or inline review
+    comment whose author holds a role in *roles*, newest and oldest alike,
+    for a report of possible tampering. Edits of content an untrusted
+    account wrote are not listed: that content is untrusted already.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    reviews, inline = _read_review_items(repo, pr)
+    content = _review_content(
+        repo, pr, reviews, inline, roles=roles, editors="every", authors=authors
+    )
+    pieces = [(r.content, f"review {r.database_id}") for r in reviews] + [
+        (c.content, f"review comment {c.database_id}") for c in inline
+    ]
+    return content, _untrusted_edits(repo, pr, pieces, roles=roles, authors=authors)
+
+
+def _read_review_items(repo: str, pr: int) -> tuple[list[_Comment], list[_Comment]]:
+    """A PR's reviews and inline review comments, every page of each, edits included."""
     owner, name = _split_repo(repo)
     call = f"read_reviews {repo}#{pr}"
     reviews: list[_Comment] = []
@@ -1306,7 +1359,19 @@ def read_reviews(
         _read_all_edits(review, call, _REVIEW_EDITS_QUERY, "review")
     for comment in inline:
         _read_all_edits(comment, call, _REVIEW_COMMENT_EDITS_QUERY, "review comment")
+    return reviews, inline
 
+
+def _review_content(
+    repo: str,
+    pr: int,
+    reviews: Sequence[_Comment],
+    inline: Sequence[_Comment],
+    *,
+    roles: frozenset[Role],
+    editors: EditorRule,
+    authors: TrustedAuthors,
+) -> PRReviewContent:
     trusted_reviews, skipped = _judge_parsed(
         reviews,
         repo=repo,
