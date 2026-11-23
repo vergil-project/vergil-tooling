@@ -596,9 +596,12 @@ get the fix on the next normal action:
 | Consumer | When the patch lands |
 |---|---|
 | Developer host | The release's `install` stage installs the patch on the Mac that ran it; any other host runs [`vrg-tooling-install vX.Y.Z`](#deployment-targets) with the new version (`vrg-host` reports the installed version but never upgrades it) |
-| Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | The base images carry no vergil-tooling. The next `vrg-container-run` rebuilds the branch's cached image with the patch once `promote` moves the rolling `vX.Y` tag to it: a `vX.Y` line pin in `vergil.toml` resolves to the release that tag names (see [How the cache tracks vergil-tooling releases](../reference/cli-tools-overview.md#how-the-cache-tracks-vergil-tooling-releases)). An exact `vX.Y.Z` pin stays put |
 | Agent VM (Lima/cloud) | `vrg-vm update`, which the release's `install` stage runs on every VM (`vrg-vm update --all`): a `vX.Y` line pin resolves to the patch once `promote` moves the rolling `vX.Y` tag to it; an exact `vX.Y.Z` pin stays put |
+
+A Python repo has nothing of its own to bump: its `pyproject.toml` and
+`.venv` carry no vergil-tooling, and it picks up a release through the
+dev container image, like a repo in any other language.
 
 ## Minor release — opt-in for new features
 
@@ -608,16 +611,17 @@ A minor release adds backwards-compatible new features. Versions:
 ### Producer steps
 
 Same steps as patch, with one important addition: the rolling
-minor tag changes from `v1.3` to `v1.4`. Any per-repo dev-dep
-declarations **must be bumped manually** — the rolling-tag mechanism
-only handles patches within a minor.
+minor tag changes from `v1.3` to `v1.4`. Any line pin to `v1.3` (a
+repo's `vergil.toml`, an agent identity's version) **must be bumped
+manually** — the rolling-tag mechanism only handles patches within a
+minor.
 
 1. Run `vrg-release minor`. It bumps the version to the next minor
    (`1.4.0`) on the release branch instead of releasing the current
    `develop` version. Everything else matches a patch release.
-2. **Coordinate consumer bumps.** Each Python repo that has
-   `[tool.uv.sources]` pinning to `v1.3` needs its `pyproject.toml`
-   updated to `v1.4`. This is a per-repo decision — consumers who
+2. **Coordinate consumer bumps.** Each repo whose `vergil.toml` pins
+   `[dependencies].vergil` to `v1.3` needs it updated to `v1.4` (see
+   the consumer steps below). This is a per-repo decision — consumers who
    prefer to stay on `v1.3` can keep doing so until they're ready.
 3. Update anywhere the documentation pins a minor to the new tag.
    The host install by hand in `getting-started.md` names an exact
@@ -630,7 +634,6 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 | Consumer | What changes |
 |---|---|
 | Developer host | Nothing to change: the host keeps no pin. The release's `install` stage installs `v1.4.0` on the Mac that ran it, through the new line (`vrg-tooling-install v1.4`, `<MINOR>` expanded to the release's line); any other host runs [`vrg-tooling-install v1.4`](#deployment-targets) or `v1.4.0` |
-| Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
 | Dev container image | Set `[dependencies].vergil` in `vergil.toml` to `v1.4`; `vergil.toml` is part of the cache key, so the next `vrg-container-run` rebuilds the branch's cached image with the release the rolling `v1.4` tag names |
 | Agent VM (Lima/cloud) | Set the identity's `vergil` version (in `identities.toml`) to `v1.4`, then `vrg-vm rebuild`, which installs and records the new line. A plain `vrg-vm update` keeps upgrading within the line recorded at install time, and `vrg-vm update --tag v1.4` is a one-off override that is not remembered (see [VM spec](../reference/vm-spec.md#vergil-tooling-inside-the-vm)) |
 
