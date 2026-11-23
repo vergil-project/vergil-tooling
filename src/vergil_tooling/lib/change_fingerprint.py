@@ -129,9 +129,7 @@ def _raw_entries(repo: Path, left: str, right: str) -> list[tuple[bytes, str]]:
     out = _git(
         repo, "diff", "--raw", "-z", "--no-abbrev", *_DIFF_OPTIONS, left, right, attr_source=right
     )
-    fields = out.split(b"\0")
-    if fields and not fields[-1]:
-        fields.pop()
+    fields = out.removesuffix(b"\0").split(b"\0") if out else []
     entries: list[tuple[bytes, str]] = []
     index = 0
     while index < len(fields):
@@ -153,9 +151,7 @@ def _raw_entries(repo: Path, left: str, right: str) -> list[tuple[bytes, str]]:
 
 def _sections(patch: bytes) -> list[list[bytes]]:
     """Split a patch into one list of lines per file, each starting at ``diff --git``."""
-    lines = patch.split(b"\n")
-    if lines and not lines[-1]:
-        lines.pop()
+    lines = patch.removesuffix(b"\n").split(b"\n") if patch else []
     sections: list[list[bytes]] = []
     for line in lines:
         if line.startswith(_SECTION):

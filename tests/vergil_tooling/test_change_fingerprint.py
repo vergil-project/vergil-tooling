@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from vergil_tooling.lib import change_fingerprint as fingerprint_module
 from vergil_tooling.lib.change_fingerprint import (
     FingerprintError,
     change_fingerprint,
@@ -251,3 +252,68 @@ def test_file_marked_binary_at_head_counts_by_blob(repo: Path) -> None:
     _replace_line(repo, "a.txt", 10, "branch line X\n")
     _git(repo, "commit", "-q", "--amend", "-a", "--no-edit")
     assert change_fingerprint(repo, "develop", "feature") != first
+
+
+# -- failures that git itself does not produce -----------------------------------
+
+
+def _fake_diff_output(
+    monkeypatch: pytest.MonkeyPatch, *, patch: bytes | None = None, raw: bytes | None = None
+) -> None:
+    """Replace the patch or raw ``git diff`` output; every other git call runs."""
+    real = fingerprint_module._git
+
+    def fake(repo: Path, *args: str, attr_source: str | None = None) -> bytes:
+        if args[0] == "diff" and "--raw" in args and raw is not None:
+            return raw
+        if args[0] == "diff" and "--raw" not in args and patch is not None:
+            return patch
+        return real(repo, *args, attr_source=attr_source)
+
+    monkeypatch.setattr(fingerprint_module, "_git", fake)
+
+
+@pytest.fixture
+def changed(repo: Path) -> Path:
+    """The ``repo`` fixture with one committed change on ``feature``."""
+    _replace_line(repo, "a.txt", 10, "branch line 10\n")
+    _commit(repo, "branch")
+    return repo
+
+
+def test_git_that_cannot_run_raises(changed: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_git(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(fingerprint_module.subprocess, "run", no_git)
+    with pytest.raises(FingerprintError, match="could not run"):
+        change_fingerprint(changed, "develop", "feature")
+
+
+def test_malformed_raw_record_raises(changed: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_diff_output(monkeypatch, raw=b"not a record\0a.txt\0")
+    with pytest.raises(FingerprintError, match="unexpected git diff --raw record"):
+        change_fingerprint(changed, "develop", "feature")
+
+
+def test_truncated_raw_record_raises(changed: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    blob = "1" * 40
+    _fake_diff_output(monkeypatch, raw=f":100644 100644 {blob} {blob} R090\0a.txt\0".encode())
+    with pytest.raises(FingerprintError, match="truncated git diff --raw record"):
+        change_fingerprint(changed, "develop", "feature")
+
+
+def test_patch_line_before_any_file_header_raises(
+    changed: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_diff_output(monkeypatch, patch=b"+stray\ndiff --git a/a.txt b/a.txt\n")
+    with pytest.raises(FingerprintError, match="before the first file header"):
+        change_fingerprint(changed, "develop", "feature")
+
+
+def test_patch_and_raw_listing_disagree_raises(
+    changed: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_diff_output(monkeypatch, raw=b"")
+    with pytest.raises(FingerprintError, match="1 file\\(s\\) in its patch but 0"):
+        change_fingerprint(changed, "develop", "feature")
