@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from io import StringIO
@@ -26,7 +27,9 @@ def _make_hook_input(command: str, cwd: str = "/repo") -> str:
     )
 
 
-def _run(command: str, *, cwd: str = "/repo", managed: bool = True) -> tuple[int, str]:
+def _run(
+    command: str, *, cwd: str = "/repo", managed: bool = True, agent: bool = False
+) -> tuple[int, str]:
     hook_input = _make_hook_input(command, cwd=cwd)
     toml_path = Path(cwd) / "vergil.toml"
     with (
@@ -35,6 +38,10 @@ def _run(command: str, *, cwd: str = "/repo", managed: bool = True) -> tuple[int
         patch(
             "vergil_tooling.bin.vrg_hook_guard._find_vergil_toml",
             return_value=toml_path if managed else None,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_hook_guard.identity_mode.any_agent_signal",
+            return_value=agent,
         ),
     ):
         buf = StringIO()
@@ -352,6 +359,290 @@ class TestNonGitCommands:
         assert out == ""
 
 
+# -- raw content reads by agents (epic vergil-project/.github#1467, §6.4) ------
+
+
+def _reason(out: str) -> str:
+    result = json.loads(out)["hookSpecificOutput"]
+    assert result["permissionDecision"] == "deny"
+    return str(result["permissionDecisionReason"])
+
+
+_REFUSED_CONTENT_READS = [
+    # single-item body, comment and review reads
+    "vrg-gh issue view 5 --comments",
+    "vrg-gh pr view 7 --repo o/r --comments",
+    "vrg-gh issue view 5 --comments=true",
+    "vrg-gh issue view 5 --json body",
+    "vrg-gh issue view 5 --json title,body --jq .body",
+    "vrg-gh issue view 5 --json=comments",
+    'vrg-gh issue view 5 --json "labels,comments"',
+    "vrg-gh pr view 7 --json reviews,comments",
+    "vrg-gh pr view 7 --json latestReviews",
+    "vrg-gh pr view 7 --json number,closingIssuesReferences",
+    "vrg-gh issue view 5",
+    "vrg-gh issue view 5 --repo o/r",
+    "vrg-gh pr view 7",
+    "vrg-gh api repos/o/r/issues/5/comments",
+    "vrg-gh api /repos/o/r/pulls/7/reviews",
+    "vrg-gh api repos/o/r/issues/5/comments?per_page=100 --paginate",
+    "vrg-gh api --paginate -H 'Accept: x' repos/o/r/issues/comments/123",
+    # searches and lists whose results a skill would act on (and every
+    # refused row of _QUERY_TABLE, in both forms)
+    'vrg-gh issue list --repo o/r --state open --search "Fixture run in:title" --json number,title',
+    "vrg-gh issue ls --repo o/r -S release --json number",
+    "vrg-gh pr list --repo o/r --search=token --json number",
+    "vrg-gh issue list --repo o/r --comments",
+    'vrg-gh search issues "\\"Awaiting a ruling\\"" --owner org --state open --json number,title',
+    "vrg-gh search issues Fixture run --owner org",
+    'vrg-gh search issues "label:epic in:title release" --owner org --json number',
+    'vrg-gh search issues "label:epic" --match title --owner org --json number',
+    "vrg-gh search prs --owner org --json number,body",
+    'vrg-gh search prs -- "some text"',
+    # the guard's command-position rule, on shell words
+    "cd /x && vrg-gh issue view 5 --json body",
+    "x=$(vrg-gh issue view 5 --json body)",
+    "{ vrg-gh issue view 5; }",
+    "vrg-gh issue view 5 \\\n  --comments",
+    "vrg-gh issue view 5 --json bo\\dy",
+    'bash -c "vrg-gh issue view 5 --comments"',
+    "sh -c 'vrg-gh pr list --repo o/r --json body'",
+]
+
+# Metadata reads, including every raw `vrg-gh` read that the
+# vergil-claude-plugin v2.1.86 skills still make (placeholders filled in).
+_ALLOWED_READS = [
+    "vrg-gh issue view 5 --repo o/r --json labels",
+    "vrg-gh issue view 5 --repo o/r --json parent",
+    "vrg-gh issue view 5 --repo o/r --json labels,title",
+    "vrg-gh issue view 5 --repo o/r --json labels,state",
+    "vrg-gh issue view 5 --repo o/r --json state,stateReason",
+    "vrg-gh issue view 5 --repo o/r --json state,closedAt",
+    "vrg-gh issue view 5 --repo o/r --json createdAt,closedAt",
+    "vrg-gh issue view 5 --repo o/r --json number --jq .number",
+    "vrg-gh pr view 7 --json state,mergedAt",
+    "vrg-gh pr view https://github.com/o/r/pull/7 --json state,title,baseRefName,"
+    "headRefName,headRefOid,autoMergeRequest",
+    "vrg-gh pr view 7 --repo o/r \\\n"
+    "  --json mergeable,mergeStateStatus,statusCheckRollup,autoMergeRequest",
+    'vrg-gh search issues --owner org --label epic --closed "2026-10-01..2026-10-31" \\\n'
+    "  --limit 1000 --json repository,number,title,closedAt,url",
+    'vrg-gh search prs --owner org --merged-at "2026-10-01..2026-10-31" --limit 1000 \\\n'
+    "  --json repository,number,author,closedAt",
+    'vrg-gh search issues "reason:completed" --owner org \\\n'
+    '  --closed "2026-10-01..2026-10-07" --limit 1000 --json repository,number,labels',
+    'vrg-gh search prs --owner org --merged-at "2026-10-01..2026-10-07" \\\n'
+    "  --limit 1000 --json repository,number,author",
+    "vrg-gh search prs --owner org \\\n"
+    '  --merged-at "2026-11-22T09:00:00-05:00..2026-11-23T09:00:00-05:00" \\\n'
+    "  --limit 1000 --json repository,number,title,author,closedAt,url \\\n"
+    "  --jq '.[] | select(.author.type == \"Bot\")'",
+    "vrg-gh search prs --owner org --state open --limit 1000 \\\n"
+    "  --json repository,number,title,author,createdAt,updatedAt,url \\\n"
+    "  --jq '.[] | select(.author.type == \"Bot\")'",
+    'vrg-gh search issues "(label:epic OR label:task) -label:archive is:open" \\\n'
+    "  --owner org --json number",
+    "vrg-gh search issues --owner org --comments '>5' --json number",
+    "vrg-gh issue list --repo o/r",
+    "vrg-gh issue ls --repo o/r --json number",
+    "vrg-gh pr list --repo o/r --state open --json number,title,url",
+    "vrg-gh issue list --repo o/r --label epic --search 'is:open -label:archive' --json number",
+    "vrg-gh repo list org --limit 1000 --no-archived --json nameWithOwner",
+    "vrg-gh repo view vergil-project/python-lib --json name",
+    "vrg-gh release list --repo o/r --limit 3",
+    "vrg-gh release view v1.2.3 --repo o/r",
+    "vrg-gh release list --repo o/r --limit 1000 \\\n"
+    "  --json tagName,name,publishedAt,isDraft,isPrerelease \\\n"
+    "  --jq '.[] | select(.isDraft | not)'",
+    "vrg-gh run list --repo o/r --limit 10",
+    "vrg-gh run list --repo o/r --workflow ops.yml \\\n"
+    '  --created "2026-11-22..2026-11-23" --limit 20 \\\n'
+    "  --json databaseId,conclusion,createdAt,url",
+    "vrg-gh run view 123 --repo o/r --json jobs \\\n"
+    "  --jq '.jobs[] | {name, conclusion, steps: [.steps[] |\n"
+    '  select(.conclusion == "failure") | .name]}\'',
+    # degenerate forms
+    "vrg-gh",
+    "vrg-gh issue",
+    "vrg-gh api --paginate",
+    "{ echo hi; }",
+    "vrg-gh run view 123 --repo o/r --log-failed",
+    "vrg-gh run download 123 --repo org/.github --name trusted-authors-values --dir /tmp/x",
+    "vrg-gh run rerun 123 --failed",
+    "vrg-gh issue comment 5 --repo o/r --body-file /tmp/c.md",
+    "vrg-gh issue edit 5 --repo o/r --body-file /tmp/b.md",
+    'vrg-gh issue close 5 --repo o/r --reason completed --comment "done"',
+    'vrg-gh issue create --repo o/r --title "x" --body-file /tmp/b.md',
+    "vrg-gh pr checks 7",
+    "vrg-gh pr diff 7",
+    "vrg-gh issue view --help",
+    "vrg-gh api graphql -f query=@/tmp/q.graphql",
+    "vrg-issue-read 'o/r#5' --pr --json",
+    "vrg-issue-read --repo o/r --search 'Fixture run in:title' --json",
+    # quoted text never counts as a command
+    'vrg-commit --message "stop using vrg-gh issue view 5 --comments"',
+    "echo 'vrg-gh issue view 5'",
+    "grep -n 'vrg-gh pr list' skills/x.md",
+    'vrg-pr-workflow report-ready --notes "; vrg-gh issue view 5 --json body"',
+    # an unbalanced quote is a shell syntax error that runs nothing
+    'echo "vrg-gh issue view 5',
+]
+
+
+# One rule for lists and searches: (qualifier flags, query, --json fields,
+# refused). Each row is rendered as an issue and a PR list (the query in
+# --search) and as an issue and a PR search (the query positional).
+_QUERY_TABLE = [
+    ("--label epic", "", "number,title", False),
+    ("--state open", "", "number,title,url", False),
+    ("", "label:epic", "number", False),
+    ("", "is:open -label:archive", "number,labels", False),
+    ("", "(label:epic OR label:task) is:open", "number", False),
+    ("", "reason:completed closed:2026-10-01..2026-10-31", "number", False),
+    ("--author someone", "created:>2026-01-01", "number,author,createdAt", False),
+    ("--label epic", "", "number,body", True),
+    ("", "label:epic", "number,comments", True),
+    ("--state open", "", "reviews", True),
+    ("", "is:open", "latestReviews", True),
+    ("", "", "number,closingIssuesReferences", True),
+    ("", "Fixture run", "number", True),
+    ("--label epic", "release", "number", True),
+    ("", "label:epic in:title", "number", True),
+    ("", "in:body token", "number", True),
+    ("", '"Awaiting a ruling" is:open', "number", True),
+]
+
+
+def _query_forms(flags: str, query: str, fields: str) -> list[str]:
+    flag_part = f" {flags}" if flags else ""
+    forms = []
+    for top in ("issue", "pr"):
+        search = f" --search '{query}'" if query else ""
+        forms.append(f"vrg-gh {top} list --repo o/r{flag_part}{search} --json {fields}")
+    for kind in ("issues", "prs"):
+        positional = f" '{query}'" if query else ""
+        forms.append(f"vrg-gh search {kind}{positional} --repo o/r{flag_part} --json {fields}")
+    return forms
+
+
+_QUERY_CASES = [
+    pytest.param(command, refused, id=command)
+    for flags, query, fields, refused in _QUERY_TABLE
+    for command in _query_forms(flags, query, fields)
+]
+
+
+class TestListsAndSearchesOneRule:
+    @pytest.mark.parametrize(("command", "refused"), _QUERY_CASES)
+    def test_agent_list_and_search(self, command: str, refused: bool) -> None:
+        rc, out = _run(command, agent=True)
+        assert rc == 0
+        if refused:
+            assert "vrg-issue-read" in _reason(out)
+        else:
+            assert out == ""
+
+    @pytest.mark.parametrize(("command", "refused"), _QUERY_CASES)
+    def test_human_list_and_search_unchanged(self, command: str, refused: bool) -> None:
+        del refused
+        assert _run(command, agent=False) == (0, "")
+
+
+class TestAgentContentReads:
+    def test_agent_issue_view_comments_refused(self) -> None:
+        rc, out = _run("vrg-gh issue view 5 --repo o/r --comments", agent=True)
+        assert rc == 0
+        assert "`vrg-gh issue view --comments`" in _reason(out)
+
+    def test_agent_json_body_refused(self) -> None:
+        rc, out = _run("vrg-gh issue view 5 --json number,body", agent=True)
+        assert rc == 0
+        assert "`vrg-gh issue view --json body`" in _reason(out)
+
+    def test_agent_api_comments_path_refused(self) -> None:
+        rc, out = _run("vrg-gh api repos/o/r/issues/5/comments", agent=True)
+        assert rc == 0
+        assert "`vrg-gh api` on a `comments` path" in _reason(out)
+
+    def test_agent_bare_view_refused(self) -> None:
+        rc, out = _run("vrg-gh pr view 7 --repo o/r", agent=True)
+        assert rc == 0
+        assert "`vrg-gh pr view` without `--json`" in _reason(out)
+
+    def test_agent_text_list_refused(self) -> None:
+        rc, out = _run("vrg-gh issue list --repo o/r --search 'Fixture run'", agent=True)
+        assert rc == 0
+        assert "`vrg-gh issue list --search` with a query matching text" in _reason(out)
+
+    def test_agent_qualifier_list_allowed(self) -> None:
+        rc, out = _run("vrg-gh issue list --repo o/r --label epic --json number", agent=True)
+        assert (rc, out) == (0, "")
+
+    def test_agent_text_search_refused(self) -> None:
+        rc, out = _run('vrg-gh search issues "Fixture run" --owner org --json number', agent=True)
+        assert rc == 0
+        assert "a free-text term" in _reason(out)
+
+    def test_agent_in_qualifier_search_refused(self) -> None:
+        rc, out = _run('vrg-gh search prs "in:body token" --owner org --json number', agent=True)
+        assert rc == 0
+        assert "an `in:` qualifier" in _reason(out)
+
+    @pytest.mark.parametrize("command", _REFUSED_CONTENT_READS)
+    def test_agent_content_read_refused(self, command: str) -> None:
+        rc, out = _run(command, agent=True)
+        assert rc == 0
+        _reason(out)
+
+    def test_agent_display_read_allowed(self) -> None:
+        rc, out = _run("vrg-gh issue view 5 --repo o/r --json labels,parent,state", agent=True)
+        assert (rc, out) == (0, "")
+
+    @pytest.mark.parametrize("command", _ALLOWED_READS)
+    def test_agent_metadata_read_allowed(self, command: str) -> None:
+        rc, out = _run(command, agent=True)
+        assert (rc, out) == (0, "")
+
+    @pytest.mark.parametrize("command", _REFUSED_CONTENT_READS)
+    def test_human_mode_unchanged(self, command: str) -> None:
+        rc, out = _run(command, agent=False)
+        assert (rc, out) == (0, "")
+
+    @pytest.mark.parametrize("command", _REFUSED_CONTENT_READS)
+    def test_refusal_names_vrg_issue_read(self, command: str) -> None:
+        _, out = _run(command, agent=True)
+        reason = _reason(out)
+        assert "reads raw issue or PR content" in reason
+        assert "vrg-issue-read OWNER/REPO#N" in reason
+        assert "vrg-issue-read (--repo OWNER/REPO | --owner ORG)" in reason
+
+    def test_raw_gh_refusal_still_comes_first(self) -> None:
+        _, out = _run("gh issue view 5 --comments", agent=True)
+        assert "Use vrg-gh instead" in _reason(out)
+
+    def test_no_identity_lookup_for_other_commands(self) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_hook_guard.identity_mode.any_agent_signal",
+            side_effect=AssertionError("looked up"),
+        ):
+            rc, out, err, _ = _run_raw(_make_hook_input("vrg-gh issue view 5 --json labels"))
+        assert (rc, out, err) == (0, "", "")
+
+    @pytest.mark.parametrize(
+        "error", [OSError("denied"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")]
+    )
+    def test_unreadable_identity_signal_refuses(self, error: Exception) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_hook_guard.identity_mode.any_agent_signal",
+            side_effect=error,
+        ):
+            rc, out, err, _ = _run_raw(_make_hook_input("vrg-gh issue view 5 --comments"))
+        assert (rc, err) == (0, "")
+        reason = _reason(out)
+        assert "cannot read the identity signals" in reason
+        assert "vrg-issue-read OWNER/REPO#N" in reason
+
+
 # -- edge cases and error handling --------------------------------------------
 
 
@@ -542,11 +833,14 @@ class TestWellFormedInputUnchanged:
 _ENTRY = "import sys; from vergil_tooling.bin.vrg_hook_guard import main; sys.exit(main())"
 
 
-def _spawn(raw: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def _spawn(
+    raw: str, cwd: Path, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - fixed interpreter and argv
         [sys.executable, "-c", _ENTRY],
         input=raw,
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -588,6 +882,27 @@ class TestEndToEnd:
     def test_wrapper_allowed(self, managed: Path) -> None:
         proc = _spawn(_make_hook_input("vrg-git status", cwd=str(managed)), managed)
         assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
+
+    @pytest.mark.parametrize(
+        ("env", "denies"),
+        [({"VRG_IDENTITY_MODE": "user"}, True), ({"VRG_IDENTITY_MODE": "human"}, False)],
+        ids=["agent", "human"],
+    )
+    def test_content_read_by_identity(
+        self, managed: Path, tmp_path: Path, env: dict[str, str], denies: bool
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        drop = ("VRG_IDENTITY_MODE", "VRG_APP_ID")
+        clean = {k: v for k, v in os.environ.items() if k not in drop}
+        clean |= {"HOME": str(home), **env}
+        raw = _make_hook_input("vrg-gh issue view 5 --comments", cwd=str(managed))
+        proc = _spawn(raw, managed, env=clean)
+        assert (proc.returncode, proc.stderr) == (0, "")
+        if denies:
+            assert "vrg-issue-read" in _reason(proc.stdout)
+        else:
+            assert proc.stdout == ""
 
     def test_raw_git_allowed_outside_managed_repo(self, unmanaged: Path) -> None:
         assert _find_vergil_toml(unmanaged) is None, "tmp_path sits under a vergil.toml"
