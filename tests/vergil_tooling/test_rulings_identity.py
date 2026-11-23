@@ -6,7 +6,7 @@ import pytest
 
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.rulings import RulingError
-from vergil_tooling.lib.rulings.identity import agent_login, human_login
+from vergil_tooling.lib.rulings.identity import agent_login, expected_agent_login, human_login
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 
@@ -42,3 +42,28 @@ def test_agent_login_refuses_when_human_is_ambiguous() -> None:
     a = TrustedAuthors(human=("a", "b"), agents=("a-vergil-user",))
     with pytest.raises(RulingError, match="exactly one"):
         agent_login(a, IdentityMode.USER)
+
+
+# --- the mode-free reader's login ------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", list(IdentityMode))
+def test_expected_agent_login_is_mode_free(mode: IdentityMode) -> None:
+    a = TrustedAuthors(human=("h",), agents=("h-vergil-audit", "h-vergil-user"))
+    assert expected_agent_login(a) == "h-vergil-user"
+    if mode is IdentityMode.USER:
+        assert agent_login(a, mode) == expected_agent_login(a)
+    else:
+        with pytest.raises(RulingError, match="only in the 'user' identity mode"):
+            agent_login(a, mode)
+
+
+def test_expected_agent_login_must_be_listed() -> None:
+    a = TrustedAuthors(human=("h",), agents=("h-vergil-audit",))
+    with pytest.raises(RulingError, match="h-vergil-user is not on"):
+        expected_agent_login(a)
+
+
+def test_expected_agent_login_refuses_when_human_is_ambiguous() -> None:
+    with pytest.raises(RulingError, match="exactly one"):
+        expected_agent_login(TrustedAuthors(human=("a", "b"), agents=("a-vergil-user",)))
