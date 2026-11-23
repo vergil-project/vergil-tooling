@@ -17,6 +17,7 @@ import traceback
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from importlib import metadata
 from typing import IO, TYPE_CHECKING, Any, Literal
 
 from rich.console import Console, Group
@@ -132,20 +133,33 @@ def detect_format() -> str:
     return "plain"
 
 
+def tooling_version_line(command: str) -> str:
+    """``<command>: vergil-tooling <version>``, naming the installed release.
+
+    Printed at the top of a run and written as the first line of its run
+    log, so a validation can tie a host run to the release it validates
+    (issue #4994).
+    """
+    return f"{command}: vergil-tooling {metadata.version('vergil-tooling')}"
+
+
 class RunLog:
     """Full verbose log for one run of a progress-aware command.
 
     Lives at ``.vergil/<command>-YYYYMMDD-HHMMSS.log``. On creation, prunes
     older logs for the same command so at most ``LOG_RETAIN`` remain.
+    *header*, when given, is written as the log's first line.
     """
 
-    def __init__(self, command: str, repo_root: Path) -> None:
+    def __init__(self, command: str, repo_root: Path, *, header: str | None = None) -> None:
         log_dir = repo_root / ".vergil"
         log_dir.mkdir(exist_ok=True)
         _prune_logs(log_dir, command)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # noqa: DTZ005
         self.path = log_dir / f"{command}-{stamp}.log"
         self._fh = self.path.open("a", encoding="utf-8")
+        if header is not None:
+            self.write(header)
 
     def write(self, line: str) -> None:
         """Append one line, with ANSI escapes stripped, and flush."""

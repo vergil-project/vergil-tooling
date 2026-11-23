@@ -230,7 +230,10 @@ depends on where the output goes:
   ```
 
 The run log, `.vergil/vrg-finalize-pr-<stamp>.log`, is shared by the
-watch and the settle phase. It keeps every table in which some PR's
+watch and the settle phase. Its first line names the installed
+vergil-tooling version (`vrg-finalize-pr: vergil-tooling <version>`),
+as does the run's first line of output, so a run can be tied to the
+release that made it. It keeps every table in which some PR's
 state changed, each under a timestamped `status changed:` line, so the
 full history survives the terminal's redraw. When no PR merged, the run
 ends by naming the log. The per-PR outcome lines (`<url>: merged`) go to

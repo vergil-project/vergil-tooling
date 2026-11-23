@@ -229,7 +229,7 @@ def _run_log_in_tmp(tmp_path: Path) -> Iterator[Path]:
     """
     with patch(
         "vergil_tooling.lib.progress.RunLog",
-        side_effect=lambda command, _root: _REAL_RUN_LOG(command, tmp_path),
+        side_effect=lambda command, _root, **kw: _REAL_RUN_LOG(command, tmp_path, **kw),
     ):
         yield tmp_path
 
@@ -804,6 +804,17 @@ class TestTemplateMode:
             assert main([flag]) == 1
         run.assert_not_called()
         assert "--yes was removed" in capsys.readouterr().err
+
+    def test_version_line_heads_every_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The installed vergil-tooling version is the run's first line, ahead of
+        even a refusal, so a run's output ties it to a release (issue #4994)."""
+        with (
+            patch(_MOD + ".progress.metadata.version", return_value="2.1.400"),
+            patch(_MOD + "._run_template_mode") as run,
+        ):
+            assert main(["--yes"]) == 1
+        run.assert_not_called()
+        assert capsys.readouterr().out.splitlines()[0] == "vrg-submit-pr: vergil-tooling 2.1.400"
 
     def test_template_rejects_forbidden_linkage(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1982,6 +1993,8 @@ class TestSubmitRollup:
         [log_path] = (_run_log_in_tmp / ".vergil").glob("vrg-submit-pr-*.log")
         assert f"   full log → {log_path}" in out
         log = _submit_log(_run_log_in_tmp)
+        # The log's first line names the tooling version that wrote it (#4994).
+        assert log.splitlines()[0] == progress.tooling_version_line("vrg-submit-pr")
         assert "=== feature/1-a: started ===" in log
         assert "PR created: https://x/pull/11" in log
         assert "https://x/pull/12: merged directly (squash); it could already merge." in log
