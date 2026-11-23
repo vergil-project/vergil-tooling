@@ -512,6 +512,55 @@ def _jq_fields(value: Atom) -> set[str] | None:
     return names
 
 
+def _jq_last_stage(text: str) -> str:
+    """The last stage of a ``jq`` pipeline, splitting only on a ``|`` outside brackets."""
+    depth = 0
+    quoted = False
+    start = 0
+    for index, char in enumerate(text):
+        if quoted:
+            quoted = char != '"' or text[index - 1] == "\\"
+        elif char == '"':
+            quoted = True
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "|" and depth == 0:
+            start = index + 1
+    return text[start:].strip()
+
+
+# A stage that ends in a field access (``.state``, ``.[0].number``,
+# ``.labels[].name``), or a builtin that yields no object.
+_JQ_PROJECTION = re.compile(
+    r"(?:(?:\.[A-Za-z_][A-Za-z0-9_]*|\.?\[[0-9]*\])\??)*\.[A-Za-z_][A-Za-z0-9_]*\??"
+    r"|length|keys|type"
+)
+
+
+def _jq_projects(text: str) -> bool:
+    """Whether a ``--jq`` filter narrows its input to named fields.
+
+    A filter that builds an object names what it keeps, and one whose last
+    stage ends in a field access keeps only that field. Any other filter
+    (``.``, ``.[]``, ``select(...)``, ``first``) passes whole objects on,
+    content included.
+    """
+    if "{" in text:
+        return True
+    stage = _jq_last_stage(text)
+    while True:
+        if stage.startswith("[") and stage.endswith("]"):
+            stage = _jq_last_stage(stage[1:-1])
+        elif stage.startswith("map(") and stage.endswith(")"):
+            stage = _jq_last_stage(stage[4:-1])
+        else:
+            break
+    stage = stage.split(" // ", 1)[0].strip()  # a default adds no field
+    return _JQ_PROJECTION.fullmatch(stage) is not None
+
+
 def _path_is_content(path: str) -> bool:
     bare = path.replace(HOLE, "N")
     return any(pattern.search(bare) for pattern in _CONTENT_PATHS)
@@ -575,11 +624,29 @@ def _classify_listing(rest: Sequence[Atom]) -> _Verdict:
     return _Verdict(frozenset(fields), tuple(unresolved))
 
 
+def _classify_graphql_fields(fields: Sequence[tuple[str, Atom]]) -> _Verdict | None:
+    """The verdict on ``gh api graphql``, judged by the query its fields send."""
+    for flag, value in fields:
+        if flag == "--input" or isinstance(value, _Unknown) or value.startswith(HOLE):
+            # A request body from a file, or a field whose name is not known,
+            # could be the query.
+            return _Verdict(frozenset(), (_source(value),))
+        if value.startswith("query="):
+            query = value.removeprefix("query=")
+            if flag in ("-F", "--field") and query.startswith("@"):
+                return _Verdict(frozenset(), (UNRESOLVED,))  # read from a file
+            return classify_graphql(query)
+    # No query among fields whose names are all known: nothing is asked, so
+    # nothing is read (an error's record of the command, say).
+    return None
+
+
 def _classify_api(rest: Sequence[Atom]) -> _Verdict | None:
     path: Atom | None = None
     jq: Atom | None = None
     method: str | None = None
     has_fields = False
+    fields: list[tuple[str, Atom]] = []
     index = 0
     while index < len(rest):
         atom = rest[index]
@@ -593,6 +660,7 @@ def _classify_api(rest: Sequence[Atom]) -> _Verdict | None:
                 jq = value
             elif atom in _FIELD_FLAGS:
                 has_fields = True
+                fields.append((atom, value))
             index += 2
             continue
         if isinstance(atom, str) and atom.startswith("-"):
@@ -601,6 +669,9 @@ def _classify_api(rest: Sequence[Atom]) -> _Verdict | None:
         if path is None:
             path = atom
         index += 1
+    if path == "graphql":
+        # gh api graphql always POSTs; its query says whether it reads.
+        return _classify_graphql_fields(fields)
     if method is not None and method.upper() in _WRITE_METHODS:
         return None
     if has_fields and (method is None or method == UNRESOLVED):
@@ -609,19 +680,16 @@ def _classify_api(rest: Sequence[Atom]) -> _Verdict | None:
         return None
     if path is None:
         return _Verdict(frozenset(), (UNRESOLVED,))
-    if path == "graphql":
-        return None  # GraphQL goes through graphql(), checked there
     if isinstance(path, _Unknown) or path.startswith(HOLE):
         return _Verdict(frozenset(), (_source(path),))
     if not _path_is_content(path):
         return _Verdict(frozenset())
     if jq is not None:
         names = _jq_fields(jq)
-        if names is None:
+        if names is None or isinstance(jq, _Unknown):
             return _Verdict(frozenset(), (_source(jq),))
-        return _Verdict(
-            frozenset(_REST_CONTENT_FIELDS[n] for n in names if n in _REST_CONTENT_FIELDS)
-        )
+        named = frozenset(_REST_CONTENT_FIELDS[n] for n in names if n in _REST_CONTENT_FIELDS)
+        return _Verdict(named if _jq_projects(jq) else named | _rest_fields(path))
     return _Verdict(_rest_fields(path))
 
 
@@ -1161,6 +1229,34 @@ def clean_state(repo: str, number: int) -> str:
 
 def write_only(repo: str, number: int) -> None:
     github.run("issue", "edit", str(number), "--repo", repo, "--add-label", "x")
+
+
+def raw_graphql_body(number: int) -> object:
+    return github.read_json("api", "graphql", "-f", f"query={_BODY_QUERY}", "-F", f"number={number}")
+
+
+def raw_graphql_labels(number: int) -> object:
+    return github.read_json("api", "graphql", "-f", f"query={_LABELS_QUERY}", "-F", f"number={number}")
+
+
+def raw_graphql_write() -> None:
+    github.run("api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { clientMutationId } }")
+
+
+def jq_whole_issue(repo: str, number: int) -> object:
+    return github.read_json("api", f"repos/{repo}/issues/{number}", "--jq", ".")
+
+
+def jq_selected_issues(repo: str) -> object:
+    return github.read_json("api", f"repos/{repo}/issues", "--jq", '.[] | select(.state == "open")')
+
+
+def jq_each_comment(repo: str, number: int) -> object:
+    return github.read_json("api", f"repos/{repo}/issues/{number}/comments", "--jq", "[.[]]")
+
+
+def jq_numbers(repo: str) -> object:
+    return github.read_json("api", f"repos/{repo}/issues", "--jq", "[.[] | .number]")
 '''
 
 
@@ -1179,6 +1275,10 @@ def test_guard_catches_planted_reads(tmp_path: Path) -> None:
         "branch_of": {"headRefName"},
         "aliased_pr_list": {"--head"},
         "traced_body": {"body"},
+        "raw_graphql_body": {"body"},
+        "jq_whole_issue": {"body"},
+        "jq_selected_issues": {"body"},
+        "jq_each_comment": {"comments"},
     }
     for function, fields in expected.items():
         assert function in reads, function
@@ -1186,10 +1286,12 @@ def test_guard_catches_planted_reads(tmp_path: Path) -> None:
         assert reads[function].unresolved == (), function
     assert reads["unresolved"].unresolved == ("query",)
     assert reads["unresolved"].fields == frozenset()
-    for clean in ("traced_labels", "clean_labels", "clean_state"):
+    clean_reads = ("traced_labels", "clean_labels", "clean_state", "raw_graphql_labels", "jq_numbers")
+    for clean in clean_reads:
         assert reads[clean].fields == frozenset(), clean
         assert reads[clean].unresolved == (), clean
     assert "write_only" not in reads
+    assert "raw_graphql_write" not in reads
     assert "_view" not in reads  # judged at each call instead
 
     findings = check(list(reads.values()), Exemptions((), (), ()))
