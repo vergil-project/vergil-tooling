@@ -112,19 +112,14 @@ def test_write_then_read_round_trips(clone: Path, commits: _Commits) -> None:
     assert commits.reads == [(_REPO, relay_commit)]
 
 
-def test_read_accepts_agent_authored_relay(clone: Path, commits: _Commits) -> None:
-    commits.user = trust_stubs.AGENT
-    transport = GitHubTransport(_BRANCH)
-    transport.write(_state())
-    assert transport.read() == _state()
-
-
 @pytest.mark.parametrize(
     ("user", "who", "cause"),
     [
         (trust_stubs.OUTSIDER, "drive-by", "untrusted"),
+        # An agent login comes back typed User, as GitHub types the field.
         (trust_stubs.IMPOSTOR, "vergil-user", "wrong-type"),
-        (None, "an author with no GitHub account", "deleted"),
+        # A bot or App email links to no user account.
+        (None, "an author with no GitHub user account", "deleted"),
     ],
 )
 def test_relay_payload_untrusted_commit_author_raises(

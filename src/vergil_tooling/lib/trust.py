@@ -338,7 +338,7 @@ class Skipped:
     def describe(self) -> str:
         """The one-line metadata description every report and error uses."""
         if self.kind == "commit":
-            who = self.login if self.login is not None else "an author with no GitHub account"
+            who = self.login if self.login is not None else "an author with no GitHub user account"
             return f"{self.repo} commit {who} at {self.at} on {self.field}"
         who = self.login if self.login is not None else "a deleted account"
         return f"{self.repo}#{self.number} {self.kind} {who} at {self.at} on {self.field}"
@@ -1061,17 +1061,21 @@ def require_trusted_commit(
     oid: str,
     *,
     field: str,
-    roles: frozenset[Role] = ALL_ROLES,
     authors: TrustedAuthors | None = None,
 ) -> Role:
     """The role of the author of commit *oid* in *repo*; an untrusted author is a stop.
 
     A GraphQL read of the commit's author as GitHub links it to an account
-    (``author.user``, with ``__typename``). An author no account carries is
-    untrusted, as a deleted account is. Where the author holds no role in
-    *roles*, this raises :class:`UntrustedContentError` (kind ``commit``,
+    (``author.user``, with ``__typename``). GitHub types that field ``User``:
+    it is the user account whose email the commit carries, or ``null``. A bot
+    or App email (``<id>+<slug>[bot]@users.noreply.github.com``) links to no
+    user, so an agent or automation identity never comes back and only the
+    trusted human can pass: the role returned is always :data:`Role.HUMAN`.
+    An author no user account carries is untrusted, as a deleted account is;
+    any other author raises :class:`UntrustedContentError` (kind ``commit``,
     *field* naming what the commit carries), metadata only. A failed call, a
-    missing commit or a malformed answer raises :class:`TrustReadError`.
+    missing commit or a malformed answer (an author not typed ``User``
+    included) raises :class:`TrustReadError`.
     """
     if authors is None:
         authors = load_trusted_authors()
@@ -1085,7 +1089,9 @@ def require_trusted_commit(
     at = _text(commit, "authoredDate", call, "the commit")
     author = _obj(_get(commit, "author", call, "the commit"), call, "the commit's author")
     identity = _actor(author, "user", call, "the commit's author")
-    judgement = _accepted(identity, org=owner, roles=roles, authors=authors)
+    if identity.login is not None and identity.typename != "User":
+        raise TrustReadError(call, "the commit's author is not typed User")
+    judgement = _accepted(identity, org=owner, roles=frozenset({Role.HUMAN}), authors=authors)
     if judgement.role is None:
         item = Skipped(repo, 0, "commit", _bare(identity), at, field, str(judgement.cause))
         raise UntrustedContentError(item, "the commit's author is untrusted")

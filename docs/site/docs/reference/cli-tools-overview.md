@@ -133,7 +133,7 @@ branch mode** (positional `<branch> [<branch> …]`) opens PRs
 cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
 `refs/vergil/pr-workflow/<branch>`, used only when the author GitHub links
-to its commit is a trusted identity; origin's tip is checked against the
+to its commit is the trusted human; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
 Every mode driven by a ready-state opens the PR only at the `head_sha` the
 latest `report-ready` recorded and refuses rather than pick another head

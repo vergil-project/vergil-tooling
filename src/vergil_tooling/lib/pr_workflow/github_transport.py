@@ -16,8 +16,8 @@ tree, so the push is a pure ref write. That freeze-neutrality is load-bearing:
 would advance the feature branch out from under it (design
 2026-06-24-cloud-pr-handoff, Deliverable B).
 
-``read`` acts on the payload only when its commit's author is a trusted
-identity (epic vergil-project/.github#1467): the trust layer judges the author
+``read`` acts on the payload only when its commit's author is the trusted
+human (epic vergil-project/.github#1467): the trust layer judges the author
 GitHub links to the fetched commit (:func:`trust.require_trusted_commit`), and
 an untrusted one is a stop, never a ready-state.
 """

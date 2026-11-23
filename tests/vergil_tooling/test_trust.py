@@ -1176,10 +1176,9 @@ def _require_commit(**kwargs: Any) -> Role:
     return trust.require_trusted_commit(REPO, _OID, field="the relay ref", **kwargs)
 
 
-@pytest.mark.parametrize(("user", "role"), [(HUMAN, Role.HUMAN), (AGENT, Role.AGENTS)])
-def test_require_trusted_commit_trusted_author(answer: Any, user: Any, role: Role) -> None:
-    fake = answer({trust._COMMIT_QUERY: [_commit(user)]})
-    assert _require_commit(authors=AUTHORS) is role
+def test_require_trusted_commit_trusted_author(answer: Any) -> None:
+    fake = answer({trust._COMMIT_QUERY: [_commit(HUMAN)]})
+    assert _require_commit(authors=AUTHORS) is Role.HUMAN
     assert fake.calls == [(trust._COMMIT_QUERY, {"owner": ORG, "name": "widgets", "oid": _OID})]
 
 
@@ -1187,9 +1186,10 @@ def test_require_trusted_commit_trusted_author(answer: Any, user: Any, role: Rol
     ("user", "login", "cause"),
     [
         ({"__typename": "User", "login": SPAM_LOGIN}, SPAM_LOGIN, trust.UNTRUSTED),
+        # An agent login comes back typed User, as the field's type says: never trusted.
         ({"__typename": "User", "login": "the-agent"}, "the-agent", trust.WRONG_TYPE),
+        # A deleted account, and a bot or App email, which links to no user.
         (DELETED, None, trust.DELETED),
-        ({"__typename": "Bot", "login": "other-automation"}, "other-automation", trust.UNTRUSTED),
     ],
 )
 def test_require_trusted_commit_untrusted_is_a_stop(
@@ -1201,18 +1201,18 @@ def test_require_trusted_commit_untrusted_is_a_stop(
     assert info.value.item == trust.Skipped(
         REPO, 0, "commit", login, CREATED, "the relay ref", cause
     )
-    who = login if login is not None else "an author with no GitHub account"
+    who = login if login is not None else "an author with no GitHub user account"
     assert str(info.value) == (
         f"stopped before any write: the commit's author is untrusted: {REPO} commit {who} "
         f"at {CREATED} on the relay ref ({cause}). The human decides next."
     )
 
 
-def test_require_trusted_commit_roles_parameter_narrows(answer: Any) -> None:
+def test_require_trusted_commit_author_not_typed_user_is_malformed(answer: Any) -> None:
+    # GitHub types ``author.user`` User; any other type is an answer it cannot give.
     answer({trust._COMMIT_QUERY: [_commit(AGENT)]})
-    with pytest.raises(UntrustedContentError) as info:
-        _require_commit(roles=frozenset({Role.HUMAN}), authors=AUTHORS)
-    assert info.value.item.cause == trust.NOT_ACCEPTED
+    with pytest.raises(TrustReadError, match="the commit's author is not typed User"):
+        _require_commit(authors=AUTHORS)
 
 
 @pytest.mark.parametrize(

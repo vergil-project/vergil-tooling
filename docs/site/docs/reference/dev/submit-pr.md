@@ -213,9 +213,9 @@ For each branch, the tool:
 
 1. resolves the ready-state from a local worktree's `pr-workflow.json`
    when one exists, else fetches it from the relay ref. The relay payload
-   is used only when the author GitHub links to its commit is a trusted
-   identity; any other author stops the run with nothing opened, naming
-   the login only;
+   is used only when the author GitHub links to its commit is the trusted
+   human; any other author (an agent or bot email included) stops the
+   run with nothing opened, naming the login only;
 2. verifies the tip of `origin/<branch>` matches the recorded `head_sha`
    (a mismatch fails loudly: the metadata is for a different commit);
 3. opens the PR with `--head <branch>` and **does not push**, since the
