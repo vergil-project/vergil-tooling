@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
@@ -42,7 +43,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import text_table, trust, worktrees
+from vergil_tooling.lib import closing_refs, text_table, trust, worktrees
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -51,8 +52,9 @@ from vergil_tooling.lib.cd_runs import (
     cd_timeout_secs,
 )
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
+from vergil_tooling.lib.closing_refs import ClosingRefs
 from vergil_tooling.lib.finalize_watch import FinalizeWatchError, Outcome, PRResult
-from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError, PRClosingReferences
+from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
@@ -199,10 +201,19 @@ def _no_closing_refs() -> Iterator[None]:
     Tests that assert close-refs behavior re-patch it directly — the innermost
     patch wins.
     """
-    refs = PRClosingReferences(
-        repo="o/r", number=42, state="MERGED", merged_at="2026-11-08T00:00:00Z", issues=()
+    refs = ClosingRefs(
+        repo="o/r",
+        number=42,
+        state="MERGED",
+        merged_at="2026-11-08T00:00:00Z",
+        counted=(),
+        uncounted=(),
+        skipped=(),
     )
-    with patch(_MOD + ".github.pr_closing_references", return_value=refs):
+    with (
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=refs),
+        patch(_MOD + ".load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         yield
 
 
@@ -1809,7 +1820,7 @@ def test_close_refs_handles_every_merged_pr_then_fails_naming_each() -> None:
     err = GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
     open_refs = _refs(_issue(7, "OPEN"))
     with (
-        patch(_MOD + ".github.pr_closing_references", side_effect=[err, open_refs, open_refs]),
+        patch(_MOD + ".closing_refs.read_closing_refs", side_effect=[err, open_refs, open_refs]),
         patch(_MOD + ".github.close_issue") as close,
         patch(_MOD + ".time.sleep"),
         pytest.raises(FinalizeError, match="PR 123") as raised,
@@ -1822,13 +1833,17 @@ def test_close_refs_handles_every_merged_pr_then_fails_naming_each() -> None:
 # -- close-refs: close what GitHub failed to auto-close (issue #4002) ----------
 
 
-def _refs(*issues: ClosingIssue, state: str = "MERGED") -> PRClosingReferences:
-    return PRClosingReferences(
+def _refs(
+    *issues: ClosingIssue, state: str = "MERGED", uncounted: tuple[ClosingIssue, ...] = ()
+) -> ClosingRefs:
+    return ClosingRefs(
         repo="o/r",
         number=123,
         state=state,
         merged_at="2026-11-08T12:00:00Z",
-        issues=issues,
+        counted=issues,
+        uncounted=uncounted,
+        skipped=(),
     )
 
 
@@ -1838,9 +1853,9 @@ def _issue(number: int, state: str, repo: str = "o/r") -> ClosingIssue:
 
 def test_close_refs_closes_issue_github_left_open(capsys: pytest.CaptureFixture[str]) -> None:
     ctx = _stage_ctx(["123"])
-    open_refs = _refs(_issue(7, "OPEN"), _issue(8, "CLOSED", repo="o/other"))
+    open_refs = _refs(_issue(7, "OPEN"), uncounted=(_issue(8, "CLOSED", repo="o/other"),))
     with (
-        patch(_MOD + ".github.pr_closing_references", return_value=open_refs) as read,
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=open_refs) as read,
         patch(_MOD + ".github.close_issue") as close,
         patch(_MOD + ".time.sleep") as sleep,
     ):
@@ -1864,7 +1879,7 @@ def test_close_refs_leaves_issue_auto_closed_during_grace() -> None:
     ctx = _stage_ctx(["123"])
     with (
         patch(
-            _MOD + ".github.pr_closing_references",
+            _MOD + ".closing_refs.read_closing_refs",
             side_effect=[_refs(_issue(7, "OPEN")), _refs(_issue(7, "CLOSED"))],
         ),
         patch(_MOD + ".github.close_issue") as close,
@@ -1877,7 +1892,7 @@ def test_close_refs_leaves_issue_auto_closed_during_grace() -> None:
 def test_close_refs_all_closed_does_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     ctx = _stage_ctx(["123"])
     with (
-        patch(_MOD + ".github.pr_closing_references", return_value=_refs(_issue(7, "CLOSED"))),
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=_refs(_issue(7, "CLOSED"))),
         patch(_MOD + ".github.close_issue") as close,
         patch(_MOD + ".time.sleep") as sleep,
     ):
@@ -1890,7 +1905,7 @@ def test_close_refs_all_closed_does_nothing(capsys: pytest.CaptureFixture[str]) 
 def test_close_refs_none_listed(capsys: pytest.CaptureFixture[str]) -> None:
     ctx = _stage_ctx(["123"])
     with (
-        patch(_MOD + ".github.pr_closing_references", return_value=_refs()),
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=_refs()),
         patch(_MOD + ".github.close_issue") as close,
     ):
         _stage_close_refs(ctx)
@@ -1902,7 +1917,7 @@ def test_close_refs_read_failure_is_loud() -> None:
     ctx = _stage_ctx(["123"])
     err = GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
     with (
-        patch(_MOD + ".github.pr_closing_references", side_effect=err),
+        patch(_MOD + ".closing_refs.read_closing_refs", side_effect=err),
         patch(_MOD + ".github.close_issue") as close,
         pytest.raises(
             FinalizeError,
@@ -1917,7 +1932,7 @@ def test_close_refs_not_merged_refuses() -> None:
     ctx = _stage_ctx(["123"])
     with (
         patch(
-            _MOD + ".github.pr_closing_references",
+            _MOD + ".closing_refs.read_closing_refs",
             return_value=_refs(_issue(7, "OPEN"), state="OPEN"),
         ),
         patch(_MOD + ".github.close_issue") as close,
@@ -1934,7 +1949,7 @@ def test_close_refs_close_failure_tries_every_issue_then_fails(
     refs = _refs(_issue(7, "OPEN"), _issue(9, "OPEN"))
     err = GitHubAPIError(1, ("gh", "issue", "close"), stderr="HTTP 403")
     with (
-        patch(_MOD + ".github.pr_closing_references", return_value=refs),
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=refs),
         patch(_MOD + ".github.close_issue", side_effect=[err, None]) as close,
         patch(_MOD + ".time.sleep"),
         pytest.raises(FinalizeError, match=r"could not close o/r#7, left open"),
@@ -1950,11 +1965,121 @@ def test_close_refs_close_failure_tries_every_issue_then_fails(
 def test_close_refs_dry_run_reads_and_closes_nothing() -> None:
     ctx = _stage_ctx(["123", "--dry-run"])
     with (
-        patch(_MOD + ".github.pr_closing_references") as read,
+        patch(_MOD + ".closing_refs.read_closing_refs") as read,
         patch(_MOD + ".github.close_issue") as close,
     ):
         _stage_close_refs(ctx)
     read.assert_not_called()
+    close.assert_not_called()
+
+
+# -- close-refs through the trust layer (GHSA-g68j-q2mw-jqf9) -------------------
+
+_REAL_READ_CLOSING_REFS = closing_refs.read_closing_refs
+
+
+@contextmanager
+def _layer(*answers: dict[str, object]) -> Generator[MagicMock]:
+    """The real closing-references read, its GraphQL answered by *answers* in turn."""
+    graphql = MagicMock(side_effect=list(answers))
+    with (
+        patch(_MOD + ".closing_refs.read_closing_refs", _REAL_READ_CLOSING_REFS),
+        patch(_MOD + ".github.pr_repo_and_number", return_value=("o/r", 123)),
+        patch("vergil_tooling.lib.github.graphql", graphql),
+        patch(_MOD + ".time.sleep"),
+    ):
+        yield graphql
+
+
+def test_close_refs_closes_only_trusted_references(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A reference an outsider linked by hand is reported and left open."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    answer = trust_stubs.closing_pr(
+        "o/r",
+        123,
+        ("o/r", 7, "OPEN"),
+        ("o/r", 8, "OPEN"),
+        body="Closes #7",
+        links=((trust_stubs.OUTSIDER, "o/r", 8),),
+    )
+    ctx = _stage_ctx(["123"])
+    with _layer(answer, answer), patch(_MOD + ".github.close_issue") as close:
+        _stage_close_refs(ctx)
+    close.assert_called_once()
+    assert close.call_args.args == ("o/r", 7)
+    captured = capsys.readouterr()
+    assert "o/r#8: left open: not a closing reference of PR o/r#123" in captured.out
+    assert "skipped untrusted content: o/r#123 event drive-by" in captured.err
+
+
+def test_close_refs_untrusted_body_closes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An outsider's edit of the body leaves every reference it names open."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    answer = trust_stubs.closing_pr("o/r", 123, ("o/r", 7, "OPEN"), editor=trust_stubs.OUTSIDER)
+    ctx = _stage_ctx(["123"])
+    with _layer(answer) as graphql, patch(_MOD + ".github.close_issue") as close:
+        _stage_close_refs(ctx)
+    close.assert_not_called()
+    # Nothing to close, so no grace re-read.
+    assert graphql.call_count == 1
+    captured = capsys.readouterr()
+    assert "o/r#7: left open" in captured.out
+    assert "skipped untrusted content: o/r#123 edit drive-by" in captured.err
+    assert "Closes" not in captured.err
+
+
+def test_close_refs_reports_counts_under_actions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    answer = trust_stubs.closing_pr("o/r", 123, ("o/r", 7, "OPEN"), author=trust_stubs.OUTSIDER)
+    with _layer(answer), patch(_MOD + ".github.close_issue") as close:
+        _stage_close_refs(_stage_ctx(["123"]))
+    close.assert_not_called()
+    err = capsys.readouterr().err
+    assert "skipped 1 untrusted item(s) (untrusted: 1)" in err
+    assert "drive-by" not in err
+
+
+def test_close_refs_other_repo_reference_left_open(capsys: pytest.CaptureFixture[str]) -> None:
+    answer = trust_stubs.closing_pr("o/r", 123, ("o/other", 7, "OPEN"))
+    with _layer(answer), patch(_MOD + ".github.close_issue") as close:
+        _stage_close_refs(_stage_ctx(["123"]))
+    close.assert_not_called()
+    assert "o/other#7: left open" in capsys.readouterr().out
+
+
+def test_close_refs_trust_read_failure_is_one_line() -> None:
+    """A closing list the layer cannot read in full fails the PR, one line, nothing closed."""
+    answer = trust_stubs.closing_pr("o/r", 123, ("o/r", 7, "OPEN"))
+    refs = answer["repository"]["pullRequest"]["closingIssuesReferences"]
+    refs["totalCount"] = 200
+    with (
+        _layer(answer),
+        patch(_MOD + ".github.close_issue") as close,
+        pytest.raises(FinalizeError) as raised,
+    ):
+        _stage_close_refs(_stage_ctx(["123"]))
+    close.assert_not_called()
+    message = str(raised.value)
+    assert "\n" not in message
+    assert message.startswith("could not read the closing issue references of PR 123:")
+    assert "truncated" in message
+
+
+def test_close_refs_trusted_authors_unconfigured_is_one_line() -> None:
+    err = TrustedAuthorsNotConfiguredError("no trusted authors configured")
+    with (
+        patch(_MOD + ".load_trusted_authors", side_effect=err),
+        patch(_MOD + ".closing_refs.read_closing_refs", _REAL_READ_CLOSING_REFS),
+        patch(_MOD + ".github.close_issue") as close,
+        pytest.raises(FinalizeError, match="PR 123: no trusted authors configured$"),
+    ):
+        _stage_close_refs(_stage_ctx(["123"]))
     close.assert_not_called()
 
 
@@ -1963,7 +2088,7 @@ def test_close_refs_failure_still_cleans_up_and_exits_one(tmp_path: Path) -> Non
     err = GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
     with (
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
-        patch(f"{_MOD}.github.pr_closing_references", side_effect=err),
+        patch(f"{_MOD}.closing_refs.read_closing_refs", side_effect=err),
         patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop") as branch,
         patch(f"{_MOD}.git.merged_branches", return_value=[]),

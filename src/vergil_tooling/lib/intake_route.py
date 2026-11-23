@@ -103,8 +103,10 @@ the parent. A planning item refuses drop, defer and
 one-off while any of its development epics is open (one an ``Epic:`` marker in a
 trusted comment names, as the trust layer judges it, or
 one whose body carries a ``Planning:`` line for it; #4001, #4170). An
-ad-hoc item refuses defer and planning while an open PR would close it. The whole route runs
-under the item owner's App token (:func:`github.target_org`).
+ad-hoc item refuses defer and planning while an open PR would close it by a
+reference the trust layer counts (:mod:`~vergil_tooling.lib.closing_refs`); an
+untrusted body or hand link never holds the route. The whole route runs under
+the item owner's App token (:func:`github.target_org`).
 
 An item opened by an outsider (its author holds no role, as the trust layer
 judges it) is never routed or sized: every route on it is a stop before
@@ -125,7 +127,14 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from vergil_tooling.lib import epics, github, security_records, trust, trusted_comments
+from vergil_tooling.lib import (
+    closing_refs,
+    epics,
+    github,
+    security_records,
+    trust,
+    trusted_comments,
+)
 from vergil_tooling.lib.epic_size import (
     LABEL_PREFIX,
     Sizing,
@@ -147,9 +156,12 @@ from vergil_tooling.lib.queue_view import (
     parse_epic_markers,
 )
 from vergil_tooling.lib.shell_ref import quoted_slug
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 DROP_COMMENT = "Dropped in {queue} review: {reason}"
 DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
@@ -613,18 +625,52 @@ def _guard_open_closing_pr(ref: IssueRef, doing: str) -> None:
 
     *doing* is the route: deferring or routing to planning. Either takes the
     item out of the ad-hoc epic, and the PR tooling refuses a queued item.
+    The PRs GitHub lists as closing the item are only candidates: one
+    refuses the route only while it is open and the trust layer counts its
+    reference to the item (:func:`_open_pr_closes`), so an untrusted PR body
+    or hand link never blocks routing. Each one passed over is reported on
+    stderr, metadata only.
     """
     view = _view(ref, "closedByPullRequestsReferences")
+    authors = load_trusted_authors()
     for pr in view.get("closedByPullRequestsReferences") or []:
         url = str(pr.get("url") or "")
         if not url:
             raise RuntimeError(f"closing PR of {ref.slug} has no URL: {pr!r}")
-        state = github.read_output("pr", "view", url, "--json", "state", "--jq", ".state")
-        if state.strip().upper() == "OPEN":
+        if _open_pr_closes(ref, url, authors):
             raise RouteRefusedError(
                 f"{ref.slug} has an open PR that would close it ({url}); {doing} it would "
                 "strand that work — finish or close the PR first"
             )
+
+
+_PR_URL_RE = re.compile(r"https://github\.com/(?P<repo>[^/\s]+/[^/\s]+)/pull/(?P<number>[1-9]\d*)")
+
+
+def _open_pr_closes(ref: IssueRef, url: str, authors: TrustedAuthors) -> bool:
+    """True when the PR at *url* is open and the trust layer counts its reference to *ref*.
+
+    The PR is read by number through :func:`closing_refs.read_closing_refs`;
+    a read the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`. An open PR whose
+    reference is not counted is reported on stderr and does not count.
+    """
+    match = _PR_URL_RE.fullmatch(url)
+    if match is None:
+        raise RuntimeError(f"closing PR of {ref.slug} has no PR URL: {url!r}")
+    refs = closing_refs.read_closing_refs(match["repo"], int(match["number"]), authors=authors)
+    if refs.state != "OPEN":
+        return False
+    trust.report_skipped(refs.skipped, stream=sys.stderr)
+    item = _repo_of(ref).lower()
+    if any(issue.repo.lower() == item and issue.number == ref.number for issue in refs.counted):
+        return True
+    print(
+        f"{ref.slug}: open PR {refs.ref} would close it by a reference the trust layer "
+        "does not count; it does not hold the route",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day: date) -> None:

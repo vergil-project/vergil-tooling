@@ -836,7 +836,10 @@ parent. A planning item is refused while any of its development epics is open:
 one an `Epic:` marker in its comments names, or one whose body carries a
 `Planning:` line for it. Once every such epic is closed, nothing is left to
 orphan and the item can be deferred. An ad-hoc item is refused while an open
-PR would close it.
+PR would close it by a reference the trust layer counts: a closing line in a
+trusted body, or a hand link by a trusted account, in the item's own repo. A
+reference an untrusted body or link made is reported and does not hold the
+route.
 
 **Every deferral records why, and what to check.** `--reason` and
 `--revisit-when` are both required:

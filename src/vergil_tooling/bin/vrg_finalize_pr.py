@@ -13,11 +13,12 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    on an open PR with a violation, which ends ``failed: provenance``.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
-   before the lock is taken, since it touches only GitHub. Then, under the
-   checkout lock (``lib/checkout_lock.py``, spec §6.4), it syncs the main
-   worktree to ``origin/develop``, cleans up merged branches and worktrees,
-   provisions the dev image, and runs one ``vrg-container-run --
-   vrg-validate`` on the synced head. The lock is let go before the CD
+   by a closing reference the trust layer counts, before the lock is taken,
+   since it touches only GitHub. Then, under the checkout lock
+   (``lib/checkout_lock.py``, spec §6.4), it syncs the main worktree to
+   ``origin/develop``, cleans up merged branches and worktrees, provisions
+   the dev image, and runs one ``vrg-container-run -- vrg-validate`` on the
+   synced head. The lock is let go before the CD
    report, so it never covers a wait on GitHub.
 3. **Reports** the synced head's CD run as ``CD: <state> <url>``, without
    waiting on it (spec §6.5). ``--wait-cd`` blocks on that run instead,
@@ -103,6 +104,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from vergil_tooling.lib import (
+    closing_refs,
     config,
     finalize_watch,
     git,
@@ -140,7 +142,10 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.repo_init import prompt_choice
-from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 from vergil_tooling.lib.versions import VersionsError
 
 if TYPE_CHECKING:
@@ -1316,10 +1321,23 @@ def _report_cd_run(
 _AUTO_CLOSE_GRACE_SECS = 10
 
 
-def _read_closing_refs(pr: str) -> github.PRClosingReferences:
+def _read_closing_refs(pr: str) -> closing_refs.ClosingRefs:
+    """*pr*'s closing references, judged by the trust layer; a failed read fails the stage.
+
+    The PR's repo and number come from the PR itself; its references are
+    read and judged through :func:`closing_refs.read_closing_refs`. Every
+    failure, a trust-layer one included, is one line naming the PR.
+    """
     try:
-        return github.pr_closing_references(pr)
-    except (subprocess.CalledProcessError, RuntimeError, ValueError) as exc:
+        repo, number = github.pr_repo_and_number(pr, "its closing issue references")
+        return closing_refs.read_closing_refs(repo, number, authors=load_trusted_authors())
+    except (
+        subprocess.CalledProcessError,
+        RuntimeError,
+        ValueError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+    ) as exc:
         msg = f"could not read the closing issue references of PR {pr}: {error_text(exc)}"
         raise FinalizeError(msg) from exc
 
@@ -1329,8 +1347,11 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
 
     GitHub sometimes skips the closing-keyword auto-close, leaving a merged
     task open, which blocks epic rollup. Only the issues GitHub itself lists
-    as a PR's closing references are touched, never ones it merely mentions.
-    Each issue closed is reported. Every merged PR is handled, then any
+    as a PR's closing references are touched, never ones it merely mentions,
+    and of those only the ones the trust layer counts
+    (:mod:`~vergil_tooling.lib.closing_refs`): a reference an untrusted
+    body or hand link made, or one in another repo, is reported and left
+    alone. Each issue closed is reported. Every merged PR is handled, then any
     failed read or close fails the stage, naming each PR it failed on. It
     runs before the checkout lock is taken: it touches only GitHub.
     """
@@ -1354,16 +1375,23 @@ def _close_refs_of(pr: str, *, dry_run: bool) -> None:
     if refs.state != "MERGED":
         msg = f"PR {refs.ref} is {refs.state}, not MERGED; its closing references were not checked"
         raise FinalizeError(msg)
-    if not refs.issues:
+    if not refs.counted and not refs.uncounted:
         print(f"PR {refs.ref} has no closing issue references.")
         return
-    if any(issue.state == "OPEN" for issue in refs.issues):
+    if any(issue.state == "OPEN" for issue in refs.counted):
         time.sleep(_AUTO_CLOSE_GRACE_SECS)
         refs = _read_closing_refs(pr)
-    still_open = [issue for issue in refs.issues if issue.state == "OPEN"]
-    for issue in refs.issues:
+    trust.report_skipped(refs.skipped, stream=sys.stderr)
+    still_open = [issue for issue in refs.counted if issue.state == "OPEN"]
+    for issue in (*refs.counted, *refs.uncounted):
         if issue.state != "OPEN":
             print(f"  {issue.ref}: closed")
+    for issue in refs.uncounted:
+        if issue.state == "OPEN":
+            print(
+                f"  {issue.ref}: left open: not a closing reference of PR {refs.ref} "
+                "the trust layer counts"
+            )
     merged = f" (merged {refs.merged_at})" if refs.merged_at else ""
     comment = f"Completed by PR {refs.ref}{merged}; GitHub did not auto-close it."
     failures: list[str] = []
