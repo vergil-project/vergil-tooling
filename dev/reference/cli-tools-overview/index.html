@@ -22697,6 +22697,27 @@ every listed org:</p>
 <li><code>render</code> prints the values the configuration implies, in that same shape,
   with no GitHub call, for comparison with the audit's values.</li>
 </ul>
+<p><code>app-secrets</code> checks that the automation App's Actions secrets,
+<code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code>, reach each repo that runs an
+unattended job of epic vergil-project/.github#1494. With <code>--org ORG</code>, or
+without it for every listed org, it checks each repo of the org that is not
+archived and has a <code>.github/workflows/</code> file named <code>cd.yml</code>,
+<code>epic-rollup.yml</code>, <code>epic-sweep.yml</code> or <code>ops.yml</code>. Each <code>--repo OWNER/NAME</code>
+(repeatable, not with <code>--org</code>) is checked whatever its workflows.</p>
+<p>The App secrets live only in each repo's <code>automation</code> environment, never as
+repository or organization secrets (epic vergil-project/.github#1384; see
+<a href="../config-audit/#github-checks-the-automation-environment">GitHub checks — the automation environment</a>).
+So the check reads the <code>automation</code> environment's secrets and prints
+<code>&lt;owner&gt;/&lt;repo&gt;: APP_CLIENT_ID=&lt;source&gt; APP_PRIVATE_KEY=&lt;source&gt;</code> per repo,
+the source being <code>environment</code> or <code>MISSING</code>, with <code>(no automation
+environment)</code> after it when the repo has none, which misses both. Then it
+prints a <code>FINDING:</code> line for each missing secret, and one for each
+repository or organization secret named <code>APP_CLIENT_ID</code> or
+<code>APP_PRIVATE_KEY</code> that the repo can see, since the layout forbids those
+copies. A copy never counts as the secret being present. It reads secret
+names only, never a value: the secrets APIs return none, and each read
+keeps only the <code>name</code> field. Like <code>check</code>, it runs as the org's automation
+App or the human, and refuses the agent modes.</p>
 <table>
 <thead>
 <tr>
@@ -22707,23 +22728,23 @@ every listed org:</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_trusted_authors</code> (config: <code>lib/trusted_authors.py</code>; Actions copies: <code>lib/trust_publish.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_trusted_authors</code> (config: <code>lib/trusted_authors.py</code>; Actions copies: <code>lib/trust_publish.py</code>; App secrets: <code>lib/app_secrets.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--json</code> (prints <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;": {"automation_app": "&lt;slug&gt;"}}}</code>); <code>publish [--org ORG]</code>; <code>check [--org ORG] [--values-out PATH]</code>; <code>render [--org ORG]</code></td>
+<td><code>--json</code> (prints <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;": {"automation_app": "&lt;slug&gt;"}}}</code>); <code>publish [--org ORG]</code>; <code>check [--org ORG] [--values-out PATH]</code>; <code>render [--org ORG]</code>; <code>app-secrets [--org ORG \| --repo OWNER/NAME ...]</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>The VM file or the host stanzas exist, or, under GitHub Actions only, <code>$VRG_TRUSTED_AUTHORS</code> is set (not needed by <code>check --org</code>). <code>publish</code>: an org admin's <code>gh</code> credential. <code>check</code>: read-only Variables permission at organization and repository level</td>
+<td>The VM file or the host stanzas exist, or, under GitHub Actions only, <code>$VRG_TRUSTED_AUTHORS</code> is set (not needed by <code>check --org</code>, <code>app-secrets --org</code> or <code>app-secrets --repo</code>). <code>publish</code>: an org admin's <code>gh</code> credential. <code>check</code>: read-only Variables permission at organization and repository level. <code>app-secrets</code>: read-only Secrets, Environments and Actions permission on each repo, and Metadata to list the org's repos</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops <code>publish</code> and <code>check</code> with the failing call named</td>
+<td>Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops <code>publish</code>, <code>check</code> and <code>app-secrets</code> with the failing call named; <code>app-secrets</code> never reports a failed read as present or missing. Its one read of absence is an HTTP 404 on the <code>automation</code> environment's secrets, read only after the repo's own secrets list has succeeded: the repo has no <code>automation</code> environment</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success; 1 not configured or invalid, <code>publish</code> refused or failed, or <code>check</code> findings; 2 bad arguments, or <code>check</code> could not run (refused identity, API error, no configuration)</td>
+<td>0 success; 1 not configured or invalid, <code>publish</code> refused or failed, <code>check</code> findings, or <code>app-secrets</code> findings (a secret missing from the <code>automation</code> environment, or a forbidden repository or organization copy); 2 bad arguments, or <code>check</code> or <code>app-secrets</code> could not run (refused identity, API error, no configuration)</td>
 </tr>
 <tr>
 <td>Status</td>
