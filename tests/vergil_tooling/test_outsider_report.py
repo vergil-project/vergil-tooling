@@ -310,6 +310,25 @@ def test_reopen_by_outsider_is_listed_not_tamper(fake: FakeGitHub) -> None:
     assert (item.kind, item.tamper) == ("reopen", False)
 
 
+def test_other_events_are_not_listed(fake: FakeGitHub) -> None:
+    # A label or a mention by an outsider changes no trusted state.
+    _hold(fake, Item(REPO, 19, events=[("LabeledEvent", OUTSIDER, NEW)]))
+    assert outsider_activity(ORG, since=SINCE) == []
+
+
+def test_missing_token_is_left_to_cli_main(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def no_token(*_: Any, **__: Any) -> Any:
+        raise github.MissingGitHubTokenError(1, ["gh"], stderr="no token")
+
+    monkeypatch.setattr(github, "graphql", no_token)
+    with pytest.raises(SystemExit) as info:
+        vrg_epic_audit.main(["--untrusted", "--since", SINCE])
+    assert info.value.code == 1
+    assert capsys.readouterr().out == ""
+
+
 def test_deleted_account(fake: FakeGitHub) -> None:
     _hold(fake, Item(REPO, 16, comments=[comment(160, None)]))
     [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
