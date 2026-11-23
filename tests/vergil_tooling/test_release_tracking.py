@@ -21,6 +21,7 @@ from vergil_tooling.lib.release import checklist, guard, state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
+    _human_logins,
     _truncate_for_comment,
     _write_issue_body,
     close_tracking_issue,
@@ -440,6 +441,10 @@ def test_read_state_warns_once_per_run(
         read_state(ctx)
         read_state(ctx)
     assert capsys.readouterr().err == "warning: tracking issue #42: agent commented\n"
+
+
+def test_human_logins_are_the_configured_humans() -> None:
+    assert _human_logins() == ("human",)
 
 
 @pytest.mark.parametrize(

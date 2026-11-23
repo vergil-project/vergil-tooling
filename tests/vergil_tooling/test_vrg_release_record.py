@@ -94,7 +94,9 @@ def origin(tmp_path: Path) -> _Origin:
     return _Origin(tmp_path)
 
 
-def _comment(body: str, author: str = _HUMAN, editor: str | None = None) -> dict[str, Any]:
+def _comment(
+    body: str, author: str | dict[str, str] = _HUMAN, editor: str | None = None
+) -> dict[str, Any]:
     """A comment as a test writes it; :class:`_FakeGitHub` gives it the layer's node shape."""
     return {"author": author, "editor": editor, "body": body}
 
