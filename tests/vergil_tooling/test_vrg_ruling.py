@@ -12,7 +12,14 @@ import pytest
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_ruling
 from vergil_tooling.lib import github, identity_mode, trust
+from vergil_tooling.lib.change_fingerprint import change_fingerprint
 from vergil_tooling.lib.identity_mode import IdentityMode
+from vergil_tooling.lib.protected_paths import ProtectedChange
+from vergil_tooling.lib.rulings import RulingError
+from vergil_tooling.lib.rulings.approvals import (
+    render_exemption_request,
+    render_protected_change_request,
+)
 from vergil_tooling.lib.rulings.comments import IssueComment
 from vergil_tooling.lib.rulings.items import SECURITY_REQUEST_TEXT
 from vergil_tooling.lib.rulings.marker import Marker, render_marker
@@ -1002,3 +1009,245 @@ def test_respond_deletes_by_the_issue_repo_whatever_origin(
     issue.comments = [request_comment(41), reply_comment(42), response_comment(43, 41, 42)]
     assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
     assert issue.deleted == ["repos/o/r/git/refs/vergil/ruling-draft/7/41"]
+
+
+# --- request --kind (epic .github#1384, Task 6a) -----------------------------------
+
+
+class CodeRepo:
+    """A clone of ``o/r`` with ``origin/develop`` and a feature branch checked out."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def git(self, *args: str) -> str:
+        result = subprocess.run(  # noqa: S603
+            ("git", "-c", "commit.gpgsign=false", *args),  # noqa: S607
+            cwd=self.path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    def write(self, path: str, text: str) -> None:
+        target = self.path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+    def commit(self, message: str) -> str:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+
+@pytest.fixture
+def code_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CodeRepo:
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    repo = CodeRepo(tmp_path / "clone")
+    repo.path.mkdir()
+    repo.git("init", "-q", "-b", "develop")
+    repo.git("remote", "add", "origin", "https://github.com/o/code.git")
+    repo.write("vergil.toml", "[project]\n")
+    repo.write(".github/workflows/ci.yml", "on: push\n")
+    repo.write("src/x.py", "x = 1\n")
+    base = repo.commit("base")
+    repo.git("update-ref", "refs/remotes/origin/develop", base)
+    repo.git("checkout", "-q", "-b", "feature")
+    monkeypatch.chdir(repo.path)
+    return repo
+
+
+def kind_argv(kind: str, *rest: str) -> tuple[str, ...]:
+    return ("request", "--issue", "o/r#7", "--kind", kind, *rest)
+
+
+def test_request_cli_computes_changes_and_fingerprint(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    """Each kind takes its inputs from HEAD and its merge base, never from an argument."""
+    base = code_repo.git("rev-parse", "origin/develop")
+    code_repo.write(".github/workflows/ci.yml", "on: pull_request\n")
+    code_repo.git("rm", "-q", "vergil.toml")
+    code_repo.write("src/x.py", "x = 2\n")
+    head = code_repo.commit("change")
+    blob = code_repo.git("rev-parse", "HEAD:.github/workflows/ci.yml")
+
+    assert cli(*kind_argv("protected-change")) == 0
+    assert cli.stdout == "100\n"
+    assert issue.posted[-1] == render_protected_change_request(
+        [
+            ProtectedChange(".github/workflows/ci.yml", blob),
+            ProtectedChange("vergil.toml", "deleted"),
+        ],
+        f"https://github.com/o/code/compare/{base}...{head}",
+    )
+    assert issue.posted[-1].endswith("<!-- vrg-ruling kind=request type=protected-change -->")
+    assert (
+        "vrg-ruling-reply --issue 'o/r#7' --request 100 --response-text 'Decision: approve'"
+        in cli.stderr
+    )
+    assert (
+        "vrg-ruling-reply --issue 'o/r#7' --request 100 --response-text 'Decision: refuse'"
+        in cli.stderr
+    )
+
+    issue.comments = []
+    assert cli(*kind_argv("merge-review-exemption", "--reason", "a typo fix")) == 0
+    fingerprint = change_fingerprint(code_repo.path, "origin/develop", "HEAD")
+    assert issue.posted[-1] == render_exemption_request("a typo fix", fingerprint)
+    assert "--request 100 --response-text 'Decision: approve'" in cli.stderr
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("request", "--issue", "o/r#7", "--kind", "protected-change", "--blob", "a" * 40),
+        (
+            "request",
+            "--issue",
+            "o/r#7",
+            "--kind",
+            "merge-review-exemption",
+            "--reason",
+            "x",
+            "--fingerprint",
+            "c" * 64,
+        ),
+        ("request", "--issue", "o/r#7", "--kind", "merge-review-exemption"),
+        ("request", "--issue", "o/r#7", "--kind", "protected-change", "--reason", "x"),
+        ("request", "--issue", "o/r#7", "--items", "i.json", "--reason", "x"),
+        ("request", "--issue", "o/r#7", "--kind", "protected-change", "--items", "i.json"),
+        ("request", "--issue", "o/r#7", "--kind", "bogus"),
+    ],
+)
+def test_request_kind_usage_errors(cli: Cli, issue: FakeIssue, argv: tuple[str, ...]) -> None:
+    """No kind takes a blob or a fingerprint argument, and each needs exactly its own flags."""
+    assert cli(*argv) == 2
+    assert issue.reads == 0
+    assert issue.posted == []
+
+
+def test_protected_change_with_no_protected_file_posts_nothing(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    code_repo.write("src/x.py", "x = 2\n")
+    code_repo.commit("ordinary")
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "nothing to approve" in cli.stderr
+    assert issue.posted == []
+
+
+def test_exemption_with_an_empty_change_posts_nothing(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    del code_repo
+    assert cli(*kind_argv("merge-review-exemption", "--reason", "x")) == 1
+    assert "cannot compute the change fingerprint" in cli.stderr
+    assert issue.posted == []
+
+
+def test_typed_request_needs_origin_develop(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    code_repo.git("update-ref", "-d", "refs/remotes/origin/develop")
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "merge base with origin/develop" in cli.stderr
+    assert issue.posted == []
+
+
+def test_protected_change_refuses_a_malformed_registry(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    code_repo.git("checkout", "-q", "develop")
+    code_repo.write("protected-paths.toml", "paths = 3\n")
+    code_repo.git("update-ref", "refs/remotes/origin/develop", code_repo.commit("bad registry"))
+    code_repo.git("checkout", "-q", "feature")
+    code_repo.git("rebase", "-q", "develop")
+    code_repo.write("vergil.toml", "[x]\n")
+    code_repo.commit("change")
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "cannot list the protected files" in cli.stderr
+    assert issue.posted == []
+
+
+def test_protected_change_needs_a_github_origin(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code_repo.write("vergil.toml", "[x]\n")
+    code_repo.commit("change")
+    code_repo.git("remote", "set-url", "origin", "https://example.com/o/code.git")
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "not a GitHub repo" in cli.stderr
+
+    def no_origin(_remote: str, _repo: Path) -> str:
+        raise subprocess.CalledProcessError(2, ("git", "remote", "get-url", "origin"))
+
+    monkeypatch.setattr(vrg_ruling.git, "remote_url", no_origin)
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "cannot read this clone's origin" in cli.stderr
+    assert issue.posted == []
+
+
+def test_typed_request_refuses_open_exchange(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo
+) -> None:
+    code_repo.write("vergil.toml", "[x]\n")
+    code_repo.commit("change")
+    issue.comments = [request_comment(41)]
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "open request 41" in cli.stderr
+    assert issue.posted == []
+
+
+def test_second_request_accepted_after_response(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo, tmp_path: Path
+) -> None:
+    """An approval exchange closed by respond leaves the issue open for a later ruling."""
+    code_repo.write("vergil.toml", "[x]\n")
+    code_repo.commit("change")
+    assert cli(*kind_argv("protected-change")) == 0
+    request_id = int(cli.stdout)
+    issue.next_id = 300
+    issue.comments.append(reply_comment(200, "Decision: approve"))
+    items = write_items(tmp_path, [{"id": "A1", "security": False, "text": "approved"}])
+    assert (
+        cli(
+            "request", "--issue", "o/r#7", "--items", write_items(tmp_path, REQUEST_ITEMS, "r.json")
+        )
+        == 1
+    )
+    assert f"open request {request_id}" in cli.stderr
+    respond = ("respond", "--issue", "o/r#7", "--request", str(request_id), "--reply", "200")
+    assert cli(*respond, "--items", items) == 0
+    issue.next_id = 400
+    assert cli("request", "--issue", "o/r#7", "--items", write_items(tmp_path, REQUEST_ITEMS)) == 0
+    assert cli(*kind_argv("merge-review-exemption", "--reason", "x")) == 1
+    assert "open request" in cli.stderr
+
+
+def test_typed_request_refuses_a_body_that_does_not_read_back(
+    cli: Cli, issue: FakeIssue, code_repo: CodeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code_repo.write("vergil.toml", "[x]\n")
+    code_repo.commit("change")
+    monkeypatch.setattr(
+        vrg_ruling,
+        "render_protected_change_request",
+        lambda _changes, _url: f"x\n\n{REQUEST_MARKER}",
+    )
+    assert cli(*kind_argv("protected-change")) == 1
+    assert "nothing was posted" in cli.stderr
+    assert issue.posted == []
+
+
+def test_typed_request_without_reason_posts_nothing(issue: FakeIssue) -> None:
+    ctx = vrg_ruling._Context(AUTHORS, AGENT, "o/r", 7)
+    with pytest.raises(RulingError, match="needs --reason"):
+        vrg_ruling._typed_request(ctx, "merge-review-exemption", None)
+    assert issue.posted == []

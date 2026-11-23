@@ -48,7 +48,11 @@ In order, it:
    (no draft is a refusal);
 7. refuses a reply that is not plain text (printable ASCII, U+0020 to
    U+007E, plus newline, with no `<!-- vrg-ruling` marker prefix) or that is
-   blank;
+   blank, and, when the request is a protected-change or merge-review
+   exemption request, a reply that does not carry exactly one decision line,
+   `Decision: approve` or `Decision: refuse`, spelt exactly so (any other
+   line starting with `Decision:` in any case counts as a second, or as a
+   wrong one);
 8. prints the reply exactly as it will be posted, between delimiter lines,
    with its byte length and SHA-256, and asks `Post this reply as <login>?`;
 9. on yes, reads the issue again and refuses, posting nothing, if its trusted
