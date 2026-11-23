@@ -17,6 +17,7 @@ is ``none configured``, with no warning, and recorded done.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,11 @@ PHASE = "install"
 # The stage install needs done first: it moves vX.Y onto the release.
 _PROMOTE = "promote"
 _SHORT = 12
+# The line an install command prints for what it installed, as
+# vrg-tooling-install does: ``installed vX.Y.Z (commit <sha>)``.
+_REPORTED_RE = re.compile(
+    r"\binstalled v(?P<version>\d+\.\d+\.\d+) \(commit (?P<commit>[0-9a-f]{7,40})\)"
+)
 
 
 def minor(version: str) -> str:
@@ -53,11 +59,14 @@ def install(ctx: ReleaseContext) -> None:
     output. ``vrg-release`` re-prints it below the summary.
 
     On success the commands' output is not shown, so the stage is the one
-    ``✓ install`` line. On failure the full output is shown and the stage
-    fails with the exit status. Either way the run log holds the commands,
+    ``✓ install`` line, and what they reported installing, if anything, is
+    stored on ``ctx.install_reported`` (:func:`reported_install`). On
+    failure the full output is shown and the stage fails with the exit
+    status. Either way the run log holds the commands,
     their full output and their exit status (issue #4812).
     """
     template = config.read_config(ctx.repo_root).publish.install
+    ctx.install_reported = None
     if template is None:
         ctx.install_commands = None
         ctx.install_message = None
@@ -73,6 +82,7 @@ def install(ctx: ReleaseContext) -> None:
     returncode, output = run_install(commands, cwd=ctx.repo_root)
     if returncode == 0:
         ctx.install_message = None
+        ctx.install_reported = reported_install(output)
         return
 
     ctx.install_message = (
@@ -91,6 +101,20 @@ def install(ctx: ReleaseContext) -> None:
             f"is fixed, `vrg-release --resume {ctx.version}` runs the install again."
         ),
     )
+
+
+def reported_install(output: str) -> tuple[str, str] | None:
+    """The ``(X.Y.Z, commit)`` an install's *output* reports installing, or ``None``.
+
+    The report is a line holding ``installed vX.Y.Z (commit <sha>)``, as
+    ``vrg-tooling-install`` prints. When several lines report one, the last
+    wins, since it is what the commands left installed. Output with no such
+    line reports nothing, the normal case for any other install command.
+    """
+    found = None
+    for match in _REPORTED_RE.finditer(output):
+        found = (match.group("version"), match.group("commit"))
+    return found
 
 
 def _require_promote(ctx: ReleaseContext) -> None:

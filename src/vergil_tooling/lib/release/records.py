@@ -8,7 +8,12 @@ each issue in the state block's issue list that has no counting record yet::
 
     - Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
     - Closed by: #4840 (merge commit 1a2b3c4)
-    - Install: ran (`[publish].install`)
+    - Install: ran — installed v2.1.340 (commit fab2581)
+
+The Install line names the release and commit the install reported
+installing (``install_version`` and ``install_commit`` in the state block);
+an install that reported neither reads ``ran (`[publish].install`)``, and a
+repo with none configured ``none configured``.
 
 A record counts, here and as evidence anywhere, only when its comment's
 author and last editor both hold the ``human`` role (:data:`RECORD_ROLES`,
@@ -98,16 +103,20 @@ def record_body(  # noqa: PLR0913 - the record's fields, each named
     prs: Sequence[tuple[int, str]],
     install: Literal["ran", "none configured"],
     supersedes: str | None,
+    installed: tuple[str, str] | None = None,
 ) -> str:
     """The spec §4.9 record of *repo*'s release *version*, published on *date*.
 
     *prs* are the issue's closing PRs, each ``(number, merge commit)``, all
     *repo*'s, as every issue in the list is (a closing reference to another
     repo's issue is not listed). *supersedes* is the ``X.Y.Z`` a
-    superseding release absorbed the issue from, or ``None``.
+    superseding release absorbed the issue from, or ``None``. *installed*
+    is the ``(X.Y.Z, commit)`` an install that ran reported installing, or
+    ``None`` when it reported nothing; the Install line then keeps its
+    plain ``ran`` wording.
     """
     closed_by = ", ".join(f"#{number} (merge commit {sha[:_SHORT_SHA]})" for number, sha in prs)
-    install_line = "ran (`[publish].install`)" if install == "ran" else "none configured"
+    install_line = _install_line(install, installed)
     lines = [
         marker(repo, version),
         f"Released: {repo} v{version} on {date}",
@@ -119,6 +128,18 @@ def record_body(  # noqa: PLR0913 - the record's fields, each named
     if supersedes is not None:
         lines.append(f"- Supersedes: v{supersedes.removeprefix('v')}")
     return "\n".join(lines)
+
+
+def _install_line(
+    install: Literal["ran", "none configured"], installed: tuple[str, str] | None
+) -> str:
+    """The record's Install line after ``- Install: ``."""
+    if install != "ran":
+        return "none configured"
+    if installed is None:
+        return "ran (`[publish].install`)"
+    version, commit = installed
+    return f"ran — installed v{version} (commit {commit[:_SHORT_SHA]})"
 
 
 def counting_record(
@@ -221,6 +242,8 @@ class _Release:
     date: str
     release_url: str
     install: Literal["ran", "none configured"]
+    # What the install reported installing, (X.Y.Z, commit), or None.
+    installed: tuple[str, str] | None
 
 
 def _release(ctx: ReleaseContext, current: StateBlock) -> _Release:
@@ -246,6 +269,11 @@ def _release(ctx: ReleaseContext, current: StateBlock) -> _Release:
         date=_release_date(ctx.repo, ctx.tag),
         release_url=ctx.release_url,
         install="ran" if current.install_done else "none configured",
+        installed=(
+            (current.install_version, current.install_commit)
+            if current.install_version is not None and current.install_commit is not None
+            else None
+        ),
     )
 
 
@@ -286,6 +314,7 @@ def _record_issue(
             prs=[(pr, merge_commits[pr]) for pr in issue.prs],
             install=release.install,
             supersedes=supersedes,
+            installed=release.installed,
         ),
     )
     return True
