@@ -417,6 +417,7 @@ def test_unanswered_and_ordinary_requests_are_not_approvals(
     [
         # A typed marker on a body that does not hold exactly what the kind records.
         PROTECTED.replace(f"Protected: {BLOB} ", "Protected: nope "),
+        PROTECTED.replace("Protected: deleted vergil.toml", "Protected: deleted"),
         PROTECTED.replace(f"Diff: {URL}\n", ""),
         PROTECTED.replace(f"Diff: {URL}", f"Diff: {URL}\nDiff: {URL}"),
         PROTECTED.replace("Protected: deleted vergil.toml", f"Protected: {BLOB} docs/a file.toml"),
