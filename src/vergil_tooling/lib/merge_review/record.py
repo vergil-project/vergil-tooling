@@ -87,7 +87,7 @@ _BRANCH_RE = re.compile(r"Branch as reviewed: (?:yes|no)")
 
 #: A batch commit's trailing issue ref, `` (#N)``.
 _SUBJECT_REF_RE = re.compile(r" \(#([1-9][0-9]*)\)$")
-_FIXUP = "fixup! "
+FIXUP_PREFIX = "fixup! "
 
 #: The largest comment body GitHub accepts.
 MAX_BODY = 65536
@@ -244,7 +244,7 @@ class Covered:
     fingerprint: str
 
 
-def _commits(repo: Path, base: str, head: str) -> list[tuple[str, str]]:
+def branch_commits(repo: Path, base: str, head: str) -> list[tuple[str, str]]:
     """``(sha, subject)`` of each commit of ``base..head``, oldest first; refuse a merge."""
     try:
         raw = git.read_output(
@@ -274,7 +274,8 @@ def _commits(repo: Path, base: str, head: str) -> list[tuple[str, str]]:
     return found
 
 
-def _names(subject: str, number: int) -> bool:
+def subject_names(subject: str, number: int) -> bool:
+    """Whether a batch commit *subject* ends in the issue ref `` (#<number>)``."""
     match = _SUBJECT_REF_RE.search(subject)
     return match is not None and int(match.group(1)) == number
 
@@ -287,8 +288,8 @@ def _previous_commit(repo: Path, marker: batch_marker.Marker, issue: str, head: 
     previous = int(marker.issues[position - 1].removeprefix("#"))
     matches = [
         sha
-        for sha, subject in _commits(repo, marker.base_sha, head)
-        if _names(subject, previous) and not subject.startswith(_FIXUP)
+        for sha, subject in branch_commits(repo, marker.base_sha, head)
+        if subject_names(subject, previous) and not subject.startswith(FIXUP_PREFIX)
     ]
     if len(matches) != 1:
         msg = (
@@ -310,19 +311,19 @@ def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, hea
     """
     number = int(issue.removeprefix("#"))
     previous = _previous_commit(repo, marker, issue, head)
-    own = _commits(repo, previous, head)
+    own = branch_commits(repo, previous, head)
     if not own:
         msg = f"the batch branch has no commit for {issue} after {previous[:12]}"
         raise RecordError(msg)
     first_sha, first_subject = own[0]
-    if first_subject.startswith(_FIXUP) or not _names(first_subject, number):
+    if first_subject.startswith(FIXUP_PREFIX) or not subject_names(first_subject, number):
         msg = (
             f"the first commit after {previous[:12]}, {first_sha[:12]} ({first_subject}),"
             f" is not {issue}'s first commit: its subject must end in ' ({issue})'"
         )
         raise RecordError(msg)
     for sha, subject in own[1:]:
-        if subject != f"{_FIXUP}{first_subject}":
+        if subject != f"{FIXUP_PREFIX}{first_subject}":
             msg = (
                 f"commit {sha[:12]} ({subject}) is not a fixup of {issue}'s first commit;"
                 f" {issue} must be the last issue on the branch"
