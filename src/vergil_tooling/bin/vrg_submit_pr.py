@@ -1567,7 +1567,8 @@ def _require_relay_agrees(branch: str, local: WorkflowState) -> None:
     """Refuse when the relay ref disagrees with the local ready-state.
 
     The local worktree file is preferred over the relay ref, but the two are
-    written separately and a relay push can fail with only a warning. When
+    written separately and a relay push can fail after the local write (which
+    fails report-ready but keeps the local file, #5035). When
     they disagree on the status or the recorded head, one of them is stale and
     there is no safe way to pick: refuse and say how to republish both. An
     absent relay ref is not a disagreement (a branch whose relay push never

@@ -15,11 +15,13 @@ A stale branch, whose own commits change no workflow file but whose tree carries
 an outdated one, is refused the same way; report-ready tells it apart as
 ``vrg-git push`` does and fails with the rebase steps, recording nothing (#4077).
 Any other push failure fails report-ready with nothing recorded and no relay ref
-written. A branch with no commits ahead of ``--base`` is refused before
-anything is pushed or recorded, so it is never frozen (#3870). A re-run on a
-frozen branch whose HEAD has drifted past the reported commit is refused before
-anything is pushed. A re-run after a deliberate
-``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
+written. Once the branch is pushed and the state recorded, a relay ref that
+cannot be written fails report-ready, naming the ref, with the local state kept
+for the re-run that writes it (#5035). A branch with no commits ahead of
+``--base`` is refused before anything is pushed or recorded, so it is never
+frozen (#3870). A re-run on a frozen branch whose HEAD has drifted past the
+reported commit is refused before anything is pushed. A re-run after a
+deliberate ``unfreeze`` pushes with a lease on the recorded head, so a rebased branch
 replaces the reported commit but an unexpectedly moved origin is refused (#3783).
 ``unfreeze`` overwrites the relay ref with the reopened state before it
 reopens the local one, and fails with nothing changed if it cannot, so no
@@ -508,7 +510,7 @@ def _refuse_empty_branch(branch: str, base: str) -> None:
         )
 
 
-def _push_relay_ref(state: WorkflowState, base: str) -> None:
+def _push_relay_ref(state: WorkflowState, base: str) -> str | None:
     """Mirror the ready state onto the reserved relay ref, after the local write.
 
     Unconditional by design (Task 3, epic vergil-project/.github#148): every
@@ -516,22 +518,30 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
     ``refs/vergil/pr-workflow/<branch>`` via ``GitHubTransport`` — no
     off-platform detection — so a cloud VM's report-ready is visible to the Mac
     that later runs ``vrg-submit-pr`` (the two never share a disk). The durable
-    local file has already been written and stays put; a push failure is
-    therefore surfaced loudly on stderr but never rolls the local state back.
+    local file has already been written and stays put, so a failure never rolls
+    the local state back. It is a failed handoff all the same (#5035): the
+    returned message, naming the ref that was not written and the re-run that
+    writes it, fails report-ready once the rest of its recording is done. A
+    success returns None.
 
     ``report-ready`` speaks a JSON-on-stdout contract; ``GitHubTransport.write``
     is quiet-by-design (#2793), routing the relay push's git chatter to stderr
     itself, so no caller-side ``redirect_stdout`` workaround is needed here to
     keep stdout a pure JSON document.
     """
-    relay = GitHubTransport(git.current_branch(), base=base)
+    relay = GitHubTransport(state.branch, base=base)
     try:
         relay.write(state)
     except (subprocess.CalledProcessError, OSError) as exc:
-        print(
-            f"warning: could not push pr-workflow relay ref {relay.ref}: {error_text(exc)}",
-            file=sys.stderr,
+        return (
+            f"report-ready: the relay ref {relay.ref} was NOT written "
+            f"({error_text(exc)}). The ready state is recorded only in this "
+            "worktree's .vergil/pr-workflow.json, so a vrg-submit-pr "
+            f"{state.branch} that reads origin cannot find it and the handoff is "
+            "not complete. Re-run report-ready with the same arguments to write "
+            "the relay ref."
         )
+    return None
 
 
 def _listed(issues: list[str]) -> str:
@@ -583,9 +593,10 @@ def _remove_batch_markers(marker_refs: list[str]) -> None:
     """Remove the batch markers once the ready state is recorded.
 
     Runs after the local state write, report-ready's point of no return, and
-    after the relay push, whatever that did (it only warns). A failure is
-    loud, never skipped: the state stays recorded, and a re-run of report-ready
-    (a frozen re-run, which pushes nothing new) removes them.
+    after the relay push, whatever that did: a relay failure fails report-ready
+    only once the markers are gone (#5035). A failure here is loud, never
+    skipped: the state stays recorded, and a re-run of report-ready (a frozen
+    re-run, which pushes nothing new) removes them.
     """
     try:
         batch_marker.remove_markers(git.main_worktree_root(), marker_refs)
@@ -674,10 +685,21 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     )
     _push_branch(branch, lease_sha=lease_sha)
     transport.write(state)
-    _push_relay_ref(state, args.base)
+    relay_failure = _push_relay_ref(state, args.base)
     response: dict[str, object] = {"ok": True, "status": state.status}
     if batch:
-        _remove_batch_markers(marker_refs)
+        try:
+            _remove_batch_markers(marker_refs)
+        except WorkflowError as exc:
+            if relay_failure is None:
+                raise
+            raise WorkflowError(f"{relay_failure}\n{exc}") from exc
+    if relay_failure is not None:
+        # The recording is done (markers included), so the re-run it names is a
+        # frozen re-run that only writes the relay ref; but the handoff is not
+        # complete, so report-ready fails rather than print ok (#5035).
+        raise WorkflowError(relay_failure)
+    if batch:
         # Printed as this repo's #N refs, the form batch-start and batch-show
         # print, so a reader matches the lists as they are (#4297). The state
         # keeps the values as given: vrg-submit-pr reads them from it.

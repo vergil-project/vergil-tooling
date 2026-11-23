@@ -205,8 +205,10 @@ relay ref `refs/vergil/pr-workflow/<branch>` (unconditional — no config,
 no off-platform detection), so a cloud VM's report-ready reaches the Mac
 that later runs `vrg-submit-pr <branch>` even though the two never share a
 disk. The relay push is a pure ref write built with git plumbing; it never
-advances the branch, so it stays **freeze-neutral**. A push failure is
-loud on stderr but never rolls back the durable local file. Because the
+advances the branch, so it stays **freeze-neutral**. A relay ref that
+cannot be written fails `report-ready` (exit 1, no `ok`), naming the ref
+that was not written, but never rolls back the durable local file: the
+re-run it names writes the relay ref (#5035). Because the
 ref is world-readable on a public repo, keep secrets out of
 `--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
 `vrg-commit`, `vrg-reword` and the `vrg-git` push path then refuse further

@@ -14,6 +14,7 @@ from tests.vergil_tooling.conftest import local_settings_violation
 from vergil_tooling.bin import vrg_pr_workflow
 from vergil_tooling.bin.vrg_git import _diagnose_workflow_refusal
 from vergil_tooling.lib import git, local_settings
+from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -84,7 +85,7 @@ def _stub_relay_push() -> Iterator[None]:
     stubbed so these tests do not depend on it. Stubbing GitHubTransport keeps the
     relay push a no-op. The real push contract is still covered by
     test_report_ready_pushes_relay_ref and
-    test_report_ready_relay_push_failure_surfaces_but_local_persists (which
+    test_report_ready_relay_push_failure_fails_but_local_persists (which
     re-patch GitHubTransport locally), and by test_github_transport.py.
     """
     with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport"):
@@ -159,12 +160,13 @@ def test_report_ready_pushes_relay_ref(
     assert (in_git_repo / ".vergil" / "pr-workflow.json").is_file()
 
 
-def test_report_ready_relay_push_failure_surfaces_but_local_persists(
+def test_report_ready_relay_push_failure_fails_but_local_persists(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A relay push failure surfaces loudly on stderr but never undoes the durable
-    # local write (which happens first and stays): report-ready still succeeds
-    # and .vergil/pr-workflow.json still holds the ready state.
+    # A relay push failure fails report-ready (#5035): an unwritten relay ref is
+    # an incomplete handoff, never an ok. It still never undoes the durable local
+    # write (which happens first and stays), so the re-run it names finds the
+    # ready state and only has the relay ref left to write.
     with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
         mock_transport.return_value.ref = "refs/vergil/pr-workflow/feature/42-x"
         mock_transport.return_value.write.side_effect = subprocess.CalledProcessError(
@@ -186,18 +188,72 @@ def test_report_ready_relay_push_failure_surfaces_but_local_persists(
             ]
         )
     captured = capsys.readouterr()
-    # Local write is durable: the command still succeeds and stdout is unchanged.
-    assert rc == 0
-    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
-    # The push failure surfaced loudly on stderr.
-    assert "warning" in captured.err.lower()
-    assert "relay ref" in captured.err.lower()
+    # The command fails, prints no ok, and names what did not happen.
+    assert rc == 1
+    assert captured.out == ""
+    assert (
+        "error: report-ready: the relay ref refs/vergil/pr-workflow/feature/42-x "
+        "was NOT written" in captured.err
+    )
+    assert "Re-run report-ready with the same arguments" in captured.err
     # And the local state file persists with the ready metadata.
     state_path = in_git_repo / ".vergil" / "pr-workflow.json"
     assert state_path.is_file()
     persisted = json.loads(state_path.read_text())
     assert persisted["status"] == "ready"
     assert persisted["pr_metadata"]["title"] == "t"
+
+
+_REPORT_ARGS = (
+    "--base",
+    "develop",
+    "report-ready",
+    "--issue",
+    "42",
+    "--title",
+    "t",
+    "--summary",
+    "s",
+    "--notes",
+    "n",
+)
+_RELAY_REF = "refs/vergil/pr-workflow/feature/42-x"
+
+
+def test_report_ready_unavailable_relay_blob_fails_then_rerun_writes_ref(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The #5035 incident, on real plumbing: the relay payload's blob is not in
+    # the object store when mktree looks for it ("fatal: entry
+    # 'pr-workflow.json' object <sha> is unavailable"). report-ready must fail,
+    # not print ok, and the re-run it names must write the relay ref.
+    real_stdin = git.read_output_stdin
+
+    def _hash_without_write(stdin: str, *args: str) -> str:
+        if args[:1] == ("hash-object",):
+            return real_stdin(stdin, "hash-object", "--stdin")
+        return real_stdin(stdin, *args)
+
+    # Undo the module's autouse relay stub: this test pushes the real relay ref
+    # to the local bare origin.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport", GitHubTransport),
+        patch.object(git, "read_output_stdin", _hash_without_write),
+    ):
+        rc = vrg_pr_workflow.main(list(_REPORT_ARGS))
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert f"the relay ref {_RELAY_REF} was NOT written" in captured.err
+    assert "is unavailable" in captured.err
+    assert _rev(_origin(in_git_repo), _RELAY_REF) == ""
+    assert _rev(_origin(in_git_repo), "refs/heads/feature/42-x") != ""
+
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport", GitHubTransport):
+        rc = vrg_pr_workflow.main(list(_REPORT_ARGS))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+    assert _rev(_origin(in_git_repo), _RELAY_REF) != ""
 
 
 def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
