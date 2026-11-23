@@ -167,3 +167,42 @@ def test_cache_path_follows_xdg_cache_home(tmp_path: Path) -> None:
     assert gh_version.cache_path({}, home=tmp_path) == (
         tmp_path / ".cache" / "vergil" / "gh-version.json"
     )
+
+
+def test_unstattable_gh_is_refused(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gh_version.shutil, "which", lambda _name: "/nonexistent/bin/gh")
+    with pytest.raises(gh_version.GhVersionError, match="cannot stat the gh binary"):
+        gh_version.require_minimum(cache=cache)
+
+
+def test_gh_that_cannot_run_is_refused(bin_dir: Path, cache: Path) -> None:
+    gh = bin_dir / "gh"
+    gh.write_text("not a program", encoding="utf-8")
+    gh.chmod(0o755)
+    with pytest.raises(gh_version.GhVersionError, match="cannot run"):
+        gh_version.require_minimum(cache=cache)
+    assert not cache.exists()
+
+
+def test_cache_write_failure_leaves_no_temp_file(
+    bin_dir: Path, cache: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_gh(bin_dir, _CURRENT)
+
+    def broken_fdopen(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(gh_version.os, "fdopen", broken_fdopen)
+    gh_version.require_minimum(cache=cache)
+    assert "cannot cache the gh version" in capsys.readouterr().err
+    assert list(cache.parent.iterdir()) == []
+
+
+def test_cached_version_that_cannot_be_ordered_is_refused(bin_dir: Path, cache: Path) -> None:
+    _fake_gh(bin_dir, _CURRENT)
+    gh_version.require_minimum(cache=cache)
+    data = json.loads(cache.read_text(encoding="utf-8"))
+    data["version"] = "2.x"
+    cache.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(gh_version.GhVersionError, match="cannot tell whether gh 2.x"):
+        gh_version.require_minimum(cache=cache)
