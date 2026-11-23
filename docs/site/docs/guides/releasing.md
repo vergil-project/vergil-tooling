@@ -1256,7 +1256,7 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
   prints, the `install` stage records that release and commit in the
   state block (`install_version` and `install_commit`), and the line
   names them: `ran — installed v2.1.340 (commit fab2581)`. An install
-  that reports neither keeps the plain `ran (`[publish].install`)`.
+  that reports neither keeps the plain `` ran (`[publish].install`) ``.
   The stage refuses while the state block does not record `install`
   done.
 - Every issue in the list gets its record, whatever its state: closed as
