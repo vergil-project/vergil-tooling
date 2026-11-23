@@ -715,6 +715,18 @@ def test_batch_stopped_lists_items_in_order() -> None:
     assert [item.number for item in _stops().stopped] == [7, 9]
 
 
+def test_batch_named_is_every_stop_outside_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert BatchStops().named == ()
+    assert [item.number for item in _stops().named] == [7, 9]
+
+
+def test_batch_named_is_only_read_failures_under_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Spec §5.3: a stop caused by untrusted content is counted only in public logs.
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert [item.number for item in _stops().named] == [9]
+
+
 def test_batch_summary_empty_prints_nothing() -> None:
     BatchStops().print_summary(stream := io.StringIO())
     assert stream.getvalue() == ""

@@ -777,28 +777,20 @@ def test_blockers_of_empty_when_no_reflinks(layer: FakeItems) -> None:
 
 
 def test_all_blockers_closed_true_when_all_closed() -> None:
-    with (
-        patch("vergil_tooling.lib.epics.blockers_of", return_value=[IssueRef("o", "r", 5)]),
-        patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"),
-    ):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+    with patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"):
+        assert epics.all_blockers_closed([IssueRef("o", "r", 5)]) is True
 
 
 def test_all_blockers_closed_false_when_any_open() -> None:
-    with (
-        patch(
-            "vergil_tooling.lib.epics.blockers_of",
-            return_value=[IssueRef("o", "r", 5), IssueRef("o", "r", 8)],
-        ),
-        patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]),
-    ):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is False
+    with patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]):
+        assert epics.all_blockers_closed([IssueRef("o", "r", 5), IssueRef("o", "r", 8)]) is False
 
 
 def test_all_blockers_closed_true_when_no_blockers() -> None:
     # No blockers -> nothing holds it -> runnable (vacuously all-closed).
-    with patch("vergil_tooling.lib.epics.blockers_of", return_value=[]):
-        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+    with patch("vergil_tooling.lib.epics._issue_state") as state:
+        assert epics.all_blockers_closed([]) is True
+    state.assert_not_called()
 
 
 SIBLING = IssueRef("org", "repo-b", 102)

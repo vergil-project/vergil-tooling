@@ -393,14 +393,49 @@ def blockers_of(task: IssueRef) -> list[IssueRef]:
     ]
 
 
-def all_blockers_closed(task: IssueRef) -> bool:
-    """True iff every blocker of *task* is CLOSED.
+def all_blockers_closed(blockers: list[IssueRef]) -> bool:
+    """True iff every one of *blockers*, a task's blockers already read, is CLOSED.
 
-    No blockers means nothing holds *task*, so it is runnable — the empty case is
-    vacuously True. Used by the validation-aware rollup to classify an open
-    validation task as runnable (blockers closed) vs blocked.
+    No blockers means nothing holds the task, so it is runnable — the empty
+    case is vacuously True. It takes the list rather than the task, so a
+    batch run reads the blockers with :func:`blockers_or_stop` and stops an
+    untrusted child alone; the audit uses it to classify an open child as
+    runnable (blockers closed) vs blocked.
     """
-    return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
+    return all(_issue_state(dep) == "CLOSED" for dep in blockers)
+
+
+#: The field a blocker read's stop names: the ``Blocked-by:`` lines are in the body.
+BLOCKERS_STOP_FIELD = "body"
+
+
+def blockers_or_stop(task: IssueRef, stops: trust.BatchStops) -> list[IssueRef] | None:
+    """*task*'s blockers, as :func:`blockers_of` reads them, or ``None`` on a stop.
+
+    For a batch run, which stops the item, not the run (spec §5.3 of epic
+    vergil-project/.github#1467): an untrusted body
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`) is added to
+    *stops* with its own metadata and cause, and a body the trust layer cannot
+    read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`) as a
+    read failure on the ``body`` field, with its message as the detail. The
+    caller leaves *task* out and carries on; anything else propagates.
+    """
+    try:
+        return blockers_of(task)
+    except trust.UntrustedContentError as exc:
+        stops.add(exc.item, exc.item.cause)
+    except trust.TrustReadError as exc:
+        item = trust.Skipped(
+            repo=_repo_slug(task),
+            number=task.number,
+            kind="issue",
+            login=None,
+            at="",
+            field=BLOCKERS_STOP_FIELD,
+            cause=trust.READ_FAILURE,
+        )
+        stops.add(item, trust.READ_FAILURE, detail=str(exc))
+    return None
 
 
 def native_parent_of(task: IssueRef) -> IssueRef | None:

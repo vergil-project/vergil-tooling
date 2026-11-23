@@ -206,20 +206,26 @@ def epic_drift(org: str | None = None) -> list[roadmap.EpicSummary]:
 
 @dataclass(frozen=True)
 class OperationalStatus:
-    """An epic's outstanding (open) operational children, split runnable vs blocked."""
+    """An epic's outstanding (open) operational children, split runnable vs blocked.
+
+    ``stopped`` holds the open operational children whose body the trust layer
+    does not trust or cannot read in full, so neither runnable nor blocked can
+    be said of them (spec §5.3 of epic vergil-project/.github#1467; #4971).
+    """
 
     epic: epics.IssueRef
     runnable: tuple[epics.IssueRef, ...]  # open operational children, all blockers closed
     blocked: tuple[epics.IssueRef, ...]  # open operational children, a blocker still open
     by_kind: dict[epics.IssueRef, str]  # each pending child -> its kind (validation/deployment)
+    stopped: tuple[epics.IssueRef, ...] = ()  # open operational children, body not trusted
 
     @property
     def pending(self) -> tuple[epics.IssueRef, ...]:
-        """All outstanding operational children (runnable + blocked)."""
-        return self.runnable + self.blocked
+        """All outstanding operational children (runnable + blocked + stopped)."""
+        return self.runnable + self.blocked + self.stopped
 
 
-def operational_status(epic: epics.IssueRef) -> OperationalStatus:
+def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> OperationalStatus:
     """Classify *epic*'s open operational children as runnable vs blocked, by kind.
 
     An operational child (validation, deployment, …) is runnable when every task
@@ -227,9 +233,15 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
     runnable-vs-blocked split, tagged by kind, is the honest "what still has to
     run" signal — and the seed of a future automator that runs operational tasks
     as their dependencies land.
+
+    A child whose body is untrusted, or cannot be read in full, is a stop on
+    that child only (:func:`epics.blockers_or_stop`): it is added to *stops*,
+    listed as ``stopped`` (still pending, with its kind), and the rest are
+    classified.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
+    stopped: list[epics.IssueRef] = []
     by_kind: dict[epics.IssueRef, str] = {}
     for child in epics.child_states(epic):
         if child.state != "OPEN":
@@ -238,54 +250,77 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
         if kind is None:
             continue
         by_kind[child.ref] = kind
-        target = runnable if epics.all_blockers_closed(child.ref) else blocked
+        blockers = epics.blockers_or_stop(child.ref, stops)
+        if blockers is None:
+            stopped.append(child.ref)
+            continue
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
     return OperationalStatus(
-        epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), by_kind=by_kind
+        epic=epic,
+        runnable=tuple(runnable),
+        blocked=tuple(blocked),
+        by_kind=by_kind,
+        stopped=tuple(stopped),
     )
 
 
 @dataclass(frozen=True)
 class ChildStatus:
-    """An epic's open children, split runnable vs blocked by their Blocked-by deps."""
+    """An epic's open children, split runnable vs blocked by their Blocked-by deps.
+
+    ``stopped`` holds the open children whose body is untrusted or cannot be
+    read in full, so their dependencies are unknown (#4971).
+    """
 
     epic: epics.IssueRef
     runnable: tuple[epics.IssueRef, ...]  # open children, all blockers closed
     blocked: tuple[epics.IssueRef, ...]  # open children, a blocker still open
+    stopped: tuple[epics.IssueRef, ...] = ()  # open children, body not trusted
 
 
-def child_status(epic: epics.IssueRef) -> ChildStatus:
+def child_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> ChildStatus:
     """Classify *every* open child of *epic* as runnable vs blocked.
 
     Where :func:`operational_status` is scoped to operational children (its
     runnable/blocked split feeds the "operation-pending" report), this classifies
-    *all* open children — plain tasks included — through the already-generic
-    :func:`epics.all_blockers_closed`. It makes an epic driver's plain-task
-    frontier (the open tasks whose every ``Blocked-by`` dependency is closed)
-    machine-derivable instead of inferred from plan prose (#2269).
+    *all* open children — plain tasks included — by their ``Blocked-by:``
+    lines. It makes an epic driver's plain-task frontier (the open tasks whose
+    every ``Blocked-by`` dependency is closed) machine-derivable instead of
+    inferred from plan prose (#2269). A child whose body is untrusted, or
+    cannot be read in full, is added to *stops* and listed as ``stopped``,
+    never as runnable; the rest are classified.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
+    stopped: list[epics.IssueRef] = []
     for child in epics.child_states(epic):
         if child.state != "OPEN":
             continue
-        target = runnable if epics.all_blockers_closed(child.ref) else blocked
+        blockers = epics.blockers_or_stop(child.ref, stops)
+        if blockers is None:
+            stopped.append(child.ref)
+            continue
+        target = runnable if epics.all_blockers_closed(blockers) else blocked
         target.append(child.ref)
-    return ChildStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
+    return ChildStatus(
+        epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), stopped=tuple(stopped)
+    )
 
 
-def operational_pending(org: str) -> list[OperationalStatus]:
+def operational_pending(org: str, *, stops: trust.BatchStops) -> list[OperationalStatus]:
     """Open finite epics with outstanding operational children.
 
     Reports the "code-complete, operation-pending" state that keeps an epic
     honestly not-done: its code tasks may all be merged, but until its
     operational tasks (validations, deployments, …) run the epic is not finished.
-    Only epics with at least one open operational child appear. Scoped to
-    ``<org>/.github``, the home of every epic.
+    Only epics with at least one open operational child appear, a stopped one
+    included; each stop is added to *stops*. Scoped to ``<org>/.github``, the
+    home of every epic.
     """
     pending: list[OperationalStatus] = []
     for summary in roadmap.gather(org):
-        status = operational_status(epics.IssueRef(org, ".github", summary.number))
+        status = operational_status(epics.IssueRef(org, ".github", summary.number), stops=stops)
         if status.pending:
             pending.append(status)
     return pending
@@ -1375,7 +1410,12 @@ def render(
                 ", ".join(f"{ref.slug} ({status.by_kind.get(ref, '?')})" for ref in status.blocked)
                 or "none"
             )
-            lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
+            line = f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}"
+            if status.stopped:
+                # A count only: under GitHub Actions an untrusted-content stop is
+                # never named (spec §5.3); stderr names each one where it may.
+                line += f"; stopped: {len(status.stopped)} (see stderr)"
+            lines.append(line)
     lines += _render_proxy_closures(proxy_closures)
     lines += _render_proxy_errors(proxy_errors)
     lines += _render_orphan_pass(orphans, retired_labels, body_only)

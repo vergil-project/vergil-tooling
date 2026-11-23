@@ -18,6 +18,7 @@ from vergil_tooling.lib import (
     identity_mode,
     proxies,
     security_records,
+    trust,
 )
 from vergil_tooling.lib.cli import cli_main
 
@@ -175,7 +176,11 @@ def _audit(args: argparse.Namespace, org: str) -> int:
         return 1 if proxy_errors else orphan_rc
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org)
-    pending_operational = epic_audit.operational_pending(org)
+    # A batch run stops the child, not the audit (spec §5.3 of epic
+    # vergil-project/.github#1467; #4971): an operational child whose body is
+    # untrusted is counted in the report, named on stderr, and exits 1.
+    stops = trust.BatchStops()
+    pending_operational = epic_audit.operational_pending(org, stops=stops)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
     # #238): apply=False mutates nothing. It reads under the org's token, as
@@ -217,8 +222,9 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
         )
     )
-    # A preview with a broken proxy link never exits clean.
-    return 1 if proxy_errors else security_rc
+    stops.print_summary(sys.stderr)
+    # A preview with a broken proxy link or a stopped child never exits clean.
+    return 1 if proxy_errors or stops.stopped else security_rc
 
 
 def _apply_orphan_pass(org: str, issues: list[epic_audit.OpenIssue]) -> int:

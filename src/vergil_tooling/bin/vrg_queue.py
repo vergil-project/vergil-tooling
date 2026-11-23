@@ -71,6 +71,18 @@ same flags (``--json``, ``--repo``, ``--root``). Its home is the org's
 ``.github``; with ``--repo``, only the epic's tasks in that repo are listed.
 An org with no hoshin epic yet gives an empty
 list. A bare ``vrg-queue`` never shows it.
+
+In both task views, a task whose body the trust layer does not trust, or
+cannot read in full, is **stopped**, not the view (#4971): its
+``Blocked-by:`` lines count only from a trusted body. A text run lists the
+rest; the header reads ``<N> open task(s), <K> stopped`` (``<N>`` counting
+them), and each stopped task follows as ``<ref>  stopped: its body is
+untrusted (see stderr)`` or ``... could not be read (see stderr)``. Under
+GitHub Actions a task stopped on untrusted content is counted, never named,
+on stdout and stderr alike. Every stop is then named on stderr by
+:class:`~vergil_tooling.lib.trust.BatchStops` and the run exits 1. A
+``--json`` run with a stopped task prints nothing on stdout, names every stop
+and says why no JSON was printed on stderr, and exits 1.
 """
 
 from __future__ import annotations
@@ -120,7 +132,8 @@ _VIEWS = {
 # Trusted authors that are not configured fail the intake, planning and deferred views
 # (invalid ones are a ``ValueError``), never counting every comment instead.
 # An item's comment read the trust layer cannot complete stops that item only
-# (the view's ``stops``); any other ``TrustReadError`` still fails the view.
+# (the view's ``stops``), as does a task view's body read the layer does not
+# trust or cannot complete; any other ``TrustReadError`` still fails the view.
 _VIEW_ERRORS = (
     github.GitHubAPIError,
     trust.TrustReadError,
@@ -275,24 +288,35 @@ def _tasks(
     to the hoshin epic's children in *repo*. *roots* (``--root``) replace the
     platform's repo roots for the clones the in-flight marks are read from.
     """
+    stops = trust.BatchStops()
     with github.target_org(owner):
         home = epics.require_org_home(owner)
         name = owner if repo is None else repo.split("/", 1)[1]
         try:
             read = queue_view.hoshin_items if view == _HOSHIN else queue_view.adhoc_items
-            items = read(home, repo=repo, roots=roots)
+            items = read(home, repo=repo, roots=roots, stops=stops)
         except github.MissingGitHubTokenError:
             raise
         except _TASK_ERRORS as exc:
             _report_failure(view, home, name, exc)
             return 1
     if as_json:
+        if stops.stopped:
+            # Never a partial list: one without its stopped tasks is not the whole view.
+            _report_stops(view, home, name, stops, as_json=True)
+            return 1
         print(json.dumps(queue_view.adhoc_to_json(items), indent=2))
         return 0
-    print(f"{view} queue for {name} in {home}: {len(items)} open task(s)")
+    header = f"{view} queue for {name} in {home}: {len(items) + len(stops.stopped)} open task(s)"
+    if stops.stopped:
+        header += f", {len(stops.stopped)} stopped"
+    print(header)
     if items:
         print(queue_view.render_adhoc_text(items, now=datetime.now(UTC)))
-    return 0
+    for item in stops.named:
+        print(_stopped_line(item))
+    _report_stops(view, home, name, stops, as_json=False)
+    return stops.exit_code()
 
 
 def _report_failure(queue: str, home: str, name: str, exc: Exception) -> None:
@@ -326,8 +350,14 @@ def _print_queue(
     print(header)
     if items:
         print(queue_view.render_text(items, now=datetime.now(UTC)))
-    for item in stops.stopped:
-        print(f"{item.repo}#{item.number}  stopped: its comments could not be read (see stderr)")
+    for item in stops.named:
+        print(_stopped_line(item))
+
+
+def _stopped_line(item: trust.Skipped) -> str:
+    """The listing's line for a stopped item: its ref, the field and why, metadata only."""
+    why = "could not be read" if item.cause == trust.READ_FAILURE else "is untrusted"
+    return f"{item.repo}#{item.number}  stopped: its {item.field} {why} (see stderr)"
 
 
 class _Parser(argparse.ArgumentParser):

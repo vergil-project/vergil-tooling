@@ -77,6 +77,13 @@ recorded as a read-failure stop in the caller's
 :class:`~vergil_tooling.lib.trust.BatchStops`, and the view carries on with the
 rest. Any other read failure still fails the whole view.
 
+The ad-hoc and hoshin views read each task's ``Blocked-by:`` lines from its
+body, which counts only when the trust layer trusts it (#4922). A task whose
+body is untrusted, or cannot be read in full, stops that task only (#4971):
+it is left out and recorded in the caller's
+:class:`~vergil_tooling.lib.trust.BatchStops` with its cause, and the view
+carries on with the rest.
+
 Planning and deferred items carry an **epic size**
 (:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
 its comments with their authors, and derives its size record from the
@@ -707,7 +714,11 @@ def _in_flight_signals(
 
 
 def adhoc_items(
-    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    repo: str | None = None,
+    roots: Sequence[Path] | None = None,
 ) -> list[AdhocItem]:
     """The open tasks under every live ad-hoc epic in *home*.
 
@@ -717,17 +728,23 @@ def adhoc_items(
     ``.github``, with :func:`epics.require_org_home`. A task with any in-flight mark is
     ``in-flight``, whatever its blockers; the marks of each repo with open
     tasks are read from its main clone under *roots* (default: the platform's
-    repo roots). A failed read of the epics, a sub-issue list, a task, a
-    blocker list, a blocker's state or any in-flight source raises, as does a
-    truncated epic search or a repo with no main clone; nothing is shown
-    short or wrongly ready.
+    repo roots). A task whose body is untrusted, or cannot be read in full
+    by the trust layer, is left out and added to *stops* (spec §5.3: a batch
+    run stops the item, not the run). A failed read of the epics, a
+    sub-issue list, a task, a blocker's state or any in-flight source
+    raises, as does a truncated epic search or a repo with no main clone;
+    nothing is shown short or wrongly ready.
     """
     bare = None if repo is None else _bare_name(repo)
-    return _standing_items(_adhoc_epics(home, bare), repo=None, roots=roots)
+    return _standing_items(_adhoc_epics(home, bare), repo=None, roots=roots, stops=stops)
 
 
 def hoshin_items(
-    home: str, *, repo: str | None = None, roots: Sequence[Path] | None = None
+    home: str,
+    *,
+    stops: trust.BatchStops,
+    repo: str | None = None,
+    roots: Sequence[Path] | None = None,
 ) -> list[AdhocItem]:
     """The open tasks under *home*'s hoshin epic, as :func:`adhoc_items` gives them.
 
@@ -736,14 +753,14 @@ def hoshin_items(
     an empty list. The caller resolves *home*, the org's ``.github``, with
     :func:`epics.require_org_home`. With *repo*
     (``owner/name``), only the epic's children in that repo are listed.
-    Fields, states, in-flight marks, dispositions, order and failures are
-    :func:`adhoc_items`'s.
+    Fields, states, in-flight marks, dispositions, order, stops and failures
+    are :func:`adhoc_items`'s.
     """
     if repo is not None:
         _bare_name(repo)
     owner = home.split("/", 1)[0]
     epic = epics.find_standing_epic(epics.HOSHIN, home, owner)
-    return _standing_items([] if epic is None else [epic], repo=repo, roots=roots)
+    return _standing_items([] if epic is None else [epic], repo=repo, roots=roots, stops=stops)
 
 
 def _bare_name(repo: str) -> str:
@@ -754,13 +771,20 @@ def _bare_name(repo: str) -> str:
 
 
 def _standing_items(
-    epic_refs: Sequence[IssueRef], *, repo: str | None, roots: Sequence[Path] | None
+    epic_refs: Sequence[IssueRef],
+    *,
+    repo: str | None,
+    roots: Sequence[Path] | None,
+    stops: trust.BatchStops,
 ) -> list[AdhocItem]:
     """The open children of *epic_refs* as tasks, by repo and oldest first.
 
     The shared body of :func:`adhoc_items` and :func:`hoshin_items`. With
     *repo* (``owner/name``), a child in any other repo is left out before it
-    is read (GitHub names ignore case). Every read failure raises.
+    is read (GitHub names ignore case). A child whose body the trust layer
+    does not trust, or cannot read in full, is a stop on that child only
+    (:func:`epics.blockers_or_stop`): it is left out, added to *stops*, and
+    the rest are read. Every other read failure raises.
     """
     found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
     for epic in epic_refs:
@@ -770,9 +794,10 @@ def _standing_items(
             if repo is not None and _repo_of(child.ref).casefold() != repo.casefold():
                 continue
             view = _view(child.ref, "title,createdAt,labels")
-            open_blockers = tuple(
-                dep for dep in epics.blockers_of(child.ref) if epics.issue_state(dep) != "CLOSED"
-            )
+            blockers = epics.blockers_or_stop(child.ref, stops)
+            if blockers is None:
+                continue
+            open_blockers = tuple(dep for dep in blockers if epics.issue_state(dep) != "CLOSED")
             found.append((child.ref, view, open_blockers))
     signals = _in_flight_signals([ref for ref, _, _ in found], roots)
     items: list[AdhocItem] = []

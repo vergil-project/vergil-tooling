@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -409,7 +409,7 @@ def test_vrg_queue_adhoc_text_and_json(
         assert main(["adhoc", "--json"]) == 0
         data = json.loads(capsys.readouterr().out)
     # Org-wide: the org's .github, checked to exist, and no narrowing.
-    items.assert_called_with("org/.github", repo=None, roots=None)
+    items.assert_called_with("org/.github", stops=ANY, repo=None, roots=None)
     dotgithub_exists.assert_called_with("org", ".github")
     assert lines[0] == "adhoc queue for org in org/.github: 1 open task(s)"
     assert lines[1].startswith("org/tool#8  ")
@@ -457,7 +457,9 @@ def test_vrg_queue_adhoc_repo_narrows_to_its_epic(
 ) -> None:
     seen: list[str | None] = []
 
-    def _items(home: str, *, repo: str | None = None, roots: Any = None) -> list[AdhocItem]:
+    def _items(
+        home: str, *, stops: trust.BatchStops, repo: str | None = None, roots: Any = None
+    ) -> list[AdhocItem]:
         seen.append(github._target_org.get())
         return []
 
@@ -470,7 +472,7 @@ def test_vrg_queue_adhoc_repo_narrows_to_its_epic(
     assert rc == 0
     cur.assert_not_called()
     dotgithub_exists.assert_called_once_with("org", ".github")
-    items.assert_called_once_with("org/.github", repo="org/no-adhoc-yet", roots=None)
+    items.assert_called_once_with("org/.github", stops=ANY, repo="org/no-adhoc-yet", roots=None)
     assert seen == ["org"]
     assert capsys.readouterr().out == (
         "adhoc queue for no-adhoc-yet in org/.github: 0 open task(s)\n"
@@ -520,7 +522,9 @@ def test_vrg_queue_adhoc_passes_roots() -> None:
         patch(f"{_MOD}.queue_view.adhoc_items", return_value=[]) as items,
     ):
         assert main(["adhoc", "--root", "/a", "--root", "/b"]) == 0
-    items.assert_called_once_with("org/.github", repo=None, roots=[Path("/a"), Path("/b")])
+    items.assert_called_once_with(
+        "org/.github", stops=ANY, repo=None, roots=[Path("/a"), Path("/b")]
+    )
 
 
 def test_vrg_queue_root_only_applies_to_adhoc(capsys: pytest.CaptureFixture[str]) -> None:
@@ -582,7 +586,9 @@ def test_vrg_queue_hoshin_json(
 ) -> None:
     seen: list[str | None] = []
 
-    def _items(home: str, *, repo: str | None = None, roots: Any = None) -> list[AdhocItem]:
+    def _items(
+        home: str, *, stops: trust.BatchStops, repo: str | None = None, roots: Any = None
+    ) -> list[AdhocItem]:
         seen.append(github._target_org.get())
         return [_HOSHIN_ITEM]
 
@@ -600,7 +606,7 @@ def test_vrg_queue_hoshin_json(
     dotgithub_exists.assert_called_once_with("vergil-project", ".github")
     adhoc.assert_not_called()
     items.assert_called_once_with(
-        "vergil-project/.github", repo="vergil-project/docs", roots=[Path("/r")]
+        "vergil-project/.github", stops=ANY, repo="vergil-project/docs", roots=[Path("/r")]
     )
     assert seen == ["vergil-project"]
     assert json.loads(capsys.readouterr().out) == queue_view.adhoc_to_json([_HOSHIN_ITEM])
@@ -614,7 +620,7 @@ def test_vrg_queue_hoshin_text(
         patch(f"{_MOD}.queue_view.hoshin_items", return_value=[_HOSHIN_ITEM]) as items,
     ):
         assert main(["hoshin"]) == 0
-    items.assert_called_once_with("org/.github", repo=None, roots=None)
+    items.assert_called_once_with("org/.github", stops=ANY, repo=None, roots=None)
     dotgithub_exists.assert_called_with("org", ".github")
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "hoshin queue for org in org/.github: 1 open task(s)"
@@ -644,6 +650,103 @@ def test_vrg_queue_hoshin_read_failure_exits_1(capsys: pytest.CaptureFixture[str
     assert captured.err == (
         f"vrg-queue: hoshin queue for org in org/.github could not be read: {exc}\n"
     )
+
+
+# -- task views: per-task stops on an untrusted body (#4971) ------------------------
+
+_UNTRUSTED_TASK = trust.Skipped(
+    "org/tool", 3, "edit", "drive-by", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
+)
+_UNREADABLE_TASK = trust.Skipped("org/tool", 4, "issue", None, "", "body", trust.READ_FAILURE)
+_TASK_DETAIL = "cannot read who wrote the content (read_issue org/tool#4): the body is missing"
+
+
+def _stopping_tasks(*items: AdhocItem) -> Any:
+    """A task view listing *items* that stops org/tool#3 (untrusted) and #4 (unreadable)."""
+
+    def view(
+        _home: str, *, stops: trust.BatchStops, repo: str | None = None, roots: Any = None
+    ) -> list[AdhocItem]:
+        stops.add(_UNTRUSTED_TASK, trust.UNTRUSTED)
+        stops.add(_UNREADABLE_TASK, trust.READ_FAILURE, detail=_TASK_DETAIL)
+        return list(items)
+
+    return view
+
+
+def _run_tasks(
+    capsys: pytest.CaptureFixture[str], argv: list[str], view: Any
+) -> tuple[int, str, str]:
+    target = "hoshin_items" if argv[0] == "hoshin" else "adhoc_items"
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
+        patch(f"{_MOD}.queue_view.{target}", side_effect=view),
+    ):
+        rc = main(argv)
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+@pytest.mark.parametrize("view", ["adhoc", "hoshin"])
+def test_task_view_text_lists_the_rest_and_the_stops(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, view: str
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    rc, out, err = _run_tasks(capsys, [view], _stopping_tasks(_ADHOC_ITEM))
+    assert rc == 1
+    lines = out.splitlines()
+    assert lines[0] == f"{view} queue for org in org/.github: 3 open task(s), 2 stopped"
+    assert lines[1].startswith("org/tool#8  ")
+    assert lines[2:] == [
+        "org/tool#3  stopped: its body is untrusted (see stderr)",
+        "org/tool#4  stopped: its body could not be read (see stderr)",
+    ]
+    assert err.splitlines() == [
+        "stopped: org/tool#3 edit drive-by at 2026-11-01T00:00:00Z on body (untrusted)",
+        f"stopped on a read failure: org/tool#4 on body: {_TASK_DETAIL}",
+    ]
+
+
+@pytest.mark.parametrize("view", ["adhoc", "hoshin"])
+def test_task_view_json_with_a_stop_prints_nothing(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, view: str
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    rc, out, err = _run_tasks(capsys, [view, "--json"], _stopping_tasks(_ADHOC_ITEM))
+    assert rc == 1
+    assert out == ""
+    assert err.splitlines()[-1] == (
+        f"vrg-queue: {view} queue for org in org/.github: 2 item(s) stopped, so no JSON "
+        "is printed (a list without them is not the whole queue)"
+    )
+
+
+def test_task_view_under_actions_never_names_an_untrusted_stop(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    rc, out, err = _run_tasks(capsys, ["adhoc"], _stopping_tasks())
+    assert rc == 1
+    assert out.splitlines() == [
+        "adhoc queue for org in org/.github: 2 open task(s), 2 stopped",
+        "org/tool#4  stopped: its body could not be read (see stderr)",
+    ]
+    assert err.splitlines() == [
+        "stopped 2 item(s) (read-failure: 1, untrusted: 1)",
+        "stopped on a read failure: org/tool#4",
+    ]
+    assert "org/tool#3" not in out + err
+    assert "drive-by" not in out + err
+
+
+def test_task_view_without_stops_exits_0(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    rc, out, err = _run_tasks(capsys, ["hoshin"], lambda _h, **_k: [_HOSHIN_ITEM])
+    assert rc == 0
+    assert out.splitlines()[0] == "hoshin queue for org in org/.github: 1 open task(s)"
+    assert err == ""
 
 
 # -- epic size: exit 2, --sort, --size --------------------------------------------

@@ -18,7 +18,7 @@ from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarker
 from vergil_tooling.lib.security_records import Advisory
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
 _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
@@ -1285,22 +1285,38 @@ def _adhoc(
     children: dict[int, list[ChildState]],
     views: dict[int, dict[str, Any]],
     *,
-    blockers: dict[int, list[IssueRef]] | None = None,
+    blockers: Mapping[int, list[IssueRef] | Exception] | None = None,
     states: dict[int, str] | None = None,
     repo: str | None = None,
+    stops: trust.BatchStops | None = None,
 ) -> tuple[list[queue_view.AdhocItem], _FakeGh]:
-    """Run :func:`queue_view.adhoc_items` on ``org/.github`` against fakes."""
+    """Run :func:`queue_view.adhoc_items` on ``org/.github`` against fakes.
+
+    A *blockers* value that is an exception is raised by that task's read.
+    """
     gh = _FakeGh(views, listing=listing)
     blocked = blockers or {}
+
+    def blockers_of(ref: IssueRef) -> list[IssueRef]:
+        found = blocked.get(ref.number, [])
+        if isinstance(found, Exception):
+            raise found
+        return found
+
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(f"{_MOD}.epics.child_states", side_effect=lambda epic: children[epic.number]),
-        patch(f"{_MOD}.epics.blockers_of", side_effect=lambda ref: blocked.get(ref.number, [])),
+        patch(f"{_MOD}.epics.blockers_of", side_effect=blockers_of),
         patch(f"{_MOD}.epics.issue_state", side_effect=lambda ref: (states or {})[ref.number]),
         patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
         patch(f"{_MOD}.in_flight.repo_signals", side_effect=_no_marks_signals),
     ):
-        items = queue_view.adhoc_items("org/.github", repo=repo, roots=[Path("/roots")])
+        items = queue_view.adhoc_items(
+            "org/.github",
+            stops=trust.BatchStops() if stops is None else stops,
+            repo=repo,
+            roots=[Path("/roots")],
+        )
     return items, gh
 
 
@@ -1411,6 +1427,72 @@ def test_adhoc_items_blocked_state() -> None:
     assert free.blocked_by == ()
 
 
+# A task whose body an outsider edited, and one whose body cannot be read in full.
+_UNTRUSTED_BODY = trust.Skipped(
+    "org/vergil-tooling", 3, "edit", "drive-by", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
+)
+_BODY_READ_FAILURE = trust.Skipped(
+    "org/vergil-tooling", 4, "issue", None, "", "body", trust.READ_FAILURE
+)
+
+
+def _stopping_blockers() -> dict[int, list[IssueRef] | Exception]:
+    """#3's body untrusted, #4's unreadable, #5 blocked by nothing."""
+    return {
+        3: trust.UntrustedContentError(_UNTRUSTED_BODY, "the issue body is untrusted"),
+        4: trust.TrustReadError("read_issue org/vergil-tooling#4", "the body is missing"),
+        5: [],
+    }
+
+
+def test_adhoc_untrusted_body_stops_only_its_task(capsys: pytest.CaptureFixture[str]) -> None:
+    # Spec §5.3 of epic vergil-project/.github#1467: a batch run stops the item (#4971).
+    children = {
+        100: [ChildState(IssueRef("org", "vergil-tooling", n), "OPEN", "") for n in (3, 4, 5)]
+    }
+    views = {n: _view(f"t{n}", f"2026-10-2{n}T00:00:00Z") for n in (3, 4, 5)}
+    stops = trust.BatchStops()
+    items, _ = _adhoc(
+        _ADHOC_LISTING[:1], children, views, blockers=_stopping_blockers(), stops=stops
+    )
+    assert [(item.ref.number, item.state) for item in items] == [(5, "ready")]
+    assert stops.stopped == (_UNTRUSTED_BODY, _BODY_READ_FAILURE)
+    assert stops.exit_code() == 1
+    stops.print_summary(stream := io.StringIO())
+    assert stream.getvalue() == (
+        "stopped: org/vergil-tooling#3 edit drive-by at 2026-11-01T00:00:00Z on body (untrusted)\n"
+        "stopped on a read failure: org/vergil-tooling#4 on body: cannot read who wrote the "
+        "content (read_issue org/vergil-tooling#4): the body is missing\n"
+    )
+    # The view prints no stop itself: the caller reports them after its listing.
+    assert capsys.readouterr().err == ""
+
+
+def test_hoshin_untrusted_body_stops_only_its_task() -> None:
+    children = [ChildState(IssueRef("org", "vergil-tooling", n), "OPEN", "") for n in (3, 4, 5)]
+    views = {n: _view(f"t{n}", f"2026-10-2{n}T00:00:00Z") for n in (3, 4, 5)}
+    blocked = _stopping_blockers()
+
+    def blockers_of(ref: IssueRef) -> list[IssueRef]:
+        found = blocked[ref.number]
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    stops = trust.BatchStops()
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=_FakeGh(views)),
+        patch(f"{_MOD}.epics.find_standing_epic", return_value=_HOSHIN_EPIC),
+        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.epics.blockers_of", side_effect=blockers_of),
+        patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
+        patch(f"{_MOD}.in_flight.repo_signals", side_effect=_no_marks_signals),
+    ):
+        items = queue_view.hoshin_items("org/.github", stops=stops, roots=[Path("/roots")])
+    assert [item.ref.number for item in items] == [5]
+    assert stops.stopped == (_UNTRUSTED_BODY, _BODY_READ_FAILURE)
+
+
 def test_adhoc_items_kind_from_labels() -> None:
     children = {
         100: [
@@ -1453,7 +1535,7 @@ def test_adhoc_items_malformed_search_raises(listing: Any, match: str) -> None:
         patch(f"{_MOD}.github.read_json", return_value=listing),
         pytest.raises(ValueError, match=match),
     ):
-        queue_view.adhoc_items("org/.github")
+        queue_view.adhoc_items("org/.github", stops=trust.BatchStops())
 
 
 def test_adhoc_items_no_epics_is_empty() -> None:
@@ -1462,7 +1544,7 @@ def test_adhoc_items_no_epics_is_empty() -> None:
 
 def test_adhoc_items_rejects_a_bare_repo() -> None:
     with pytest.raises(ValueError, match="owner/name"):
-        queue_view.adhoc_items("org/.github", repo="vergil-tooling")
+        queue_view.adhoc_items("org/.github", stops=trust.BatchStops(), repo="vergil-tooling")
 
 
 def test_adhoc_items_sub_issue_read_failure_raises() -> None:
@@ -1473,7 +1555,7 @@ def test_adhoc_items_sub_issue_read_failure_raises() -> None:
         patch(f"{_MOD}.epics.child_states", side_effect=failure),
         pytest.raises(github.GitHubAPIError, match="502"),
     ):
-        queue_view.adhoc_items("org/.github")
+        queue_view.adhoc_items("org/.github", stops=trust.BatchStops())
 
 
 @pytest.mark.parametrize("failing", ["blockers_of", "issue_state"])
@@ -1493,7 +1575,7 @@ def test_adhoc_items_blocker_read_failure_raises(failing: str) -> None:
         patch(f"{_MOD}.epics.issue_state", **_effect(state)),
         pytest.raises(github.GitHubAPIError, match="403"),
     ):
-        queue_view.adhoc_items("org/.github")
+        queue_view.adhoc_items("org/.github", stops=trust.BatchStops())
 
 
 def _effect(value: Any) -> dict[str, Any]:
@@ -1511,7 +1593,7 @@ def test_adhoc_items_never_mutate() -> None:
         patch(f"{_MOD}.github.create_issue") as create,
         patch(f"{_MOD}.github.run") as run,
     ):
-        assert queue_view.adhoc_items("org/.github") == []
+        assert queue_view.adhoc_items("org/.github", stops=trust.BatchStops()) == []
     ensure.assert_not_called()
     create.assert_not_called()
     run.assert_not_called()
@@ -1548,7 +1630,9 @@ def _hoshin(
         patch(f"{_MOD}.in_flight.repo_signals", side_effect=signals),
         patch(f"{_MOD}.epics.ensure_standing_epic") as ensure,
     ):
-        items = queue_view.hoshin_items("org/.github", repo=repo, roots=[Path("/roots")])
+        items = queue_view.hoshin_items(
+            "org/.github", stops=trust.BatchStops(), repo=repo, roots=[Path("/roots")]
+        )
     ensure.assert_not_called()
     find.assert_called_once_with(epics.HOSHIN, "org/.github", "org")
     return items, find, kids
@@ -1608,7 +1692,7 @@ def test_hoshin_items_without_repo_lists_every_repo() -> None:
 
 def test_hoshin_items_rejects_a_bare_repo() -> None:
     with pytest.raises(ValueError, match="owner/name"):
-        queue_view.hoshin_items("org/.github", repo="docs")
+        queue_view.hoshin_items("org/.github", stops=trust.BatchStops(), repo="docs")
 
 
 def test_hoshin_items_ambiguous_epic_raises() -> None:
@@ -1617,7 +1701,7 @@ def test_hoshin_items_ambiguous_epic_raises() -> None:
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=failure),
         pytest.raises(epics.EpicTitleAmbiguousError, match="two hoshin epics"),
     ):
-        queue_view.hoshin_items("org/.github")
+        queue_view.hoshin_items("org/.github", stops=trust.BatchStops())
 
 
 def test_hoshin_items_sub_issue_read_failure_raises() -> None:
@@ -1627,7 +1711,7 @@ def test_hoshin_items_sub_issue_read_failure_raises() -> None:
         patch(f"{_MOD}.epics.child_states", side_effect=failure),
         pytest.raises(github.GitHubAPIError, match="502"),
     ):
-        queue_view.hoshin_items("org/.github")
+        queue_view.hoshin_items("org/.github", stops=trust.BatchStops())
 
 
 # -- render_adhoc_text / adhoc_to_json --------------------------------------------
