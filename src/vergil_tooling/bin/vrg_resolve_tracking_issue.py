@@ -22,7 +22,6 @@ Consumed by the ``version-bump-pr`` composite action in vergil-actions.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import subprocess
 import sys
 from typing import cast
@@ -56,22 +55,27 @@ def main(argv: list[str] | None = None) -> int:
     pr_num = _extract_pr_number(subject)
 
     if pr_num is None:
-        with contextlib.suppress(subprocess.CalledProcessError):
-            try:
-                pr_num = _pr_from_api(args.commit)
-            except ValueError as exc:
-                print(
-                    f"ERROR: malformed GitHub API response for commit {args.commit}: {exc}",
-                    file=sys.stderr,
-                )
-                return 2
-            except UnmergedPRsError as exc:
-                print(
-                    f"ERROR: commit {args.commit} has no merged PR, only {exc}. "
-                    "Use --pr N to specify the PR number directly.",
-                    file=sys.stderr,
-                )
-                return 1
+        try:
+            pr_num = _pr_from_api(args.commit)
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"ERROR: failed to look up the PR of commit {args.commit}: {error_text(exc)}",
+                file=sys.stderr,
+            )
+            return 2
+        except ValueError as exc:
+            print(
+                f"ERROR: malformed GitHub API response for commit {args.commit}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        except UnmergedPRsError as exc:
+            print(
+                f"ERROR: commit {args.commit} has no merged PR, only {exc}. "
+                "Use --pr N to specify the PR number directly.",
+                file=sys.stderr,
+            )
+            return 1
 
     if pr_num is None:
         print(
