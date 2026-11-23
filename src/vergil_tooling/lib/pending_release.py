@@ -794,9 +794,7 @@ def _issue_list(
     features = {
         pr.number: pr
         for pr in prs
-        if pr is not None
-        and pr.branch is not None
-        and pr.branch.startswith(_FEATURE_BRANCH_PREFIX)
+        if pr is not None and pr.branch is not None and pr.branch.startswith(_FEATURE_BRANCH_PREFIX)
     }
     closed_by: dict[int, set[int]] = {}
     warnings: list[str] = []
@@ -949,9 +947,7 @@ def gather_issue_list(*, base: str, head: str, remote: str = "origin") -> tuple[
         commits, _ = _compare(repo, base, head, _RELEASE_INTEGRATION)
         chain = first_parent_chain(commits, head)
         shas = [cast("str", commit["sha"]) for commit in chain]
-        prs, skipped = _prs_by_sha(
-            repo, shas, _RELEASE_INTEGRATION, closing=True, authors=authors
-        )
+        prs, skipped = _prs_by_sha(repo, shas, _RELEASE_INTEGRATION, closing=True, authors=authors)
         trust.report_skipped(skipped, stream=sys.stderr)
         issues, warnings = _issue_list(repo, prs.values(), authors)
     except PendingReleaseError:

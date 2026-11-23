@@ -78,6 +78,8 @@ def _pr(
     if base is not None:
         node["baseRefName"] = base
     return node
+
+
 _AUTHORS = TrustedAuthors(human=("human",), agents=("agent",))
 
 
