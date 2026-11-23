@@ -14,6 +14,11 @@ Each commit is mapped to its PR **by SHA**, through GitHub's
 associated-pull-request lookup restricted to merged PRs into the integration
 branch, so a squash merge, a merge commit and a rebase-merged batch PR (whose
 commit subjects carry issue numbers, not the PR number) all map the same way.
+A PR's title, head branch and labels classify its row only when the trust
+layer accepts the PR: its head is in the repo itself and its author holds a
+role (epic vergil-project/.github#1467). Any other merged PR is an
+:attr:`ChangeKind.UNTRUSTED` row, shown by its commit subject and reported on
+stderr, metadata only.
 
 A lookup that fails or cannot give a complete answer raises
 :class:`PendingReleaseError`; there is never a partial list. Every error
@@ -125,6 +130,11 @@ class ChangeKind(enum.Enum):
     AUTOMATION = "automation"
     OTHER = "other"
     NO_PR = "no-pr"
+    UNTRUSTED = "untrusted"
+    """A PR the trust layer does not accept: a fork's, or an outsider's.
+
+    Its title, branch and labels are never read: the row shows the commit
+    subject, and it adds nothing to a release's issue list."""
 
 
 @dataclass(frozen=True)
@@ -147,12 +157,15 @@ class PendingChange:
     pr_number: int | None
     """The PR number; ``None`` only for :attr:`ChangeKind.NO_PR`."""
     branch: str | None
-    """The PR's head branch; ``None`` for :attr:`ChangeKind.NO_PR`."""
+    """The PR's head branch; ``None`` for :attr:`ChangeKind.NO_PR` and
+    :attr:`ChangeKind.UNTRUSTED`."""
     title: str
-    """The PR title, or the commit subject for :attr:`ChangeKind.NO_PR`."""
+    """The PR title, or the commit subject for :attr:`ChangeKind.NO_PR` and
+    :attr:`ChangeKind.UNTRUSTED`."""
     kind: ChangeKind
     type_label: str
-    """``deps``, ``release``, ``automation``, the conventional type, or ``-``."""
+    """``deps``, ``release``, ``automation``, the conventional type,
+    ``untrusted``, or ``-``."""
     merged_ts: float
     """Epoch seconds: the PR's merge time, or the commit date for NO_PR."""
     shas: tuple[str, ...]
@@ -173,8 +186,10 @@ class PendingRelease:
 @dataclass(frozen=True)
 class _PullRequest:
     number: int
-    title: str
-    branch: str
+    # The title and head branch of a PR the trust layer accepts; ``None`` for
+    # one it does not, whose labels are empty too.
+    title: str | None
+    branch: str | None
     merged_ts: float
     labels: tuple[str, ...]
     # The PR's GraphQL node, read by the issue list's trust check.
@@ -392,6 +407,7 @@ def _pr_fields(*, closing: bool) -> str:
         totalCount
         nodes {{
           number title headRefName mergedAt baseRefName merged
+          author {{ __typename login }} createdAt {trust.SAME_REPO_FIELDS}
           labels(first: {_LABEL_LIMIT}) {{ totalCount nodes {{ name }} }}{extra}
         }}
       }}"""
@@ -429,26 +445,73 @@ def _complete_nodes(
     return nodes
 
 
-def _merged_pr(sha: str, commit: dict[str, object], integration: str) -> _PullRequest | None:
-    """The one merged PR into *integration* associated with commit *sha*, if any."""
+def _judge_pr(
+    node: Mapping[str, object], *, repo: str, authors: TrustedAuthors
+) -> trust.Skipped | None:
+    """``None`` when the trust layer accepts PR *node* of *repo*, else its skip record.
+
+    The PR is accepted when its head is in *repo* itself
+    (:func:`~vergil_tooling.lib.trust.is_same_repo`) and its author holds a
+    role (:func:`~vergil_tooling.lib.trust.judge_identity`). The record names
+    the fork ``head`` or the ``author``, metadata only. Raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError` when the author or the
+    head repository cannot be read.
+    """
+    number = _int(node["number"], "PR number")
+    what = f"PR #{number}"
+    author = trust.identity(node["author"], call=f"pending release {repo}", what=what)
+    login = None if author.login is None else trust.normalise_login(author.login)
+    at = _str(node["createdAt"], f"createdAt of {what}")
+    if not trust.is_same_repo(repo, node):
+        return trust.Skipped(repo, number, "pr", login, at, "head", trust.CROSS_REPOSITORY)
+    judgement = trust.judge_identity(author, org=repo.partition("/")[0], authors=authors)
+    if judgement.role is None:
+        return trust.Skipped(repo, number, "pr", login, at, "author", str(judgement.cause))
+    return None
+
+
+def _merged_pr(
+    sha: str,
+    commit: dict[str, object],
+    integration: str,
+    *,
+    repo: str,
+    authors: TrustedAuthors,
+    skipped: list[trust.Skipped],
+) -> _PullRequest | None:
+    """The one merged PR into *integration* associated with commit *sha*, if any.
+
+    Only a PR the trust layer accepts (:func:`_judge_pr`) gives its title,
+    head branch and labels. A merged PR it does not accept is added to
+    *skipped* and, when no accepted one is associated, stands for the commit
+    with no title, branch or labels.
+    """
     short = sha[:_SHORT_SHA]
     connection = _obj(commit["associatedPullRequests"], "associatedPullRequests")
-    matches: list[_PullRequest] = []
+    accepted: list[_PullRequest] = []
+    refused: list[_PullRequest] = []
     for node in _complete_nodes(connection, f"associatedPullRequests for {short}"):
         if node["merged"] is not True or node["baseRefName"] != integration:
             continue
         number = _int(node["number"], "PR number")
+        merged_ts = _timestamp(node["mergedAt"], "PR mergedAt")
+        skip = _judge_pr(node, repo=repo, authors=authors)
+        if skip is not None:
+            skipped.append(skip)
+            refused.append(_PullRequest(number, None, None, merged_ts, (), node))
+            continue
         labels = _complete_nodes(_obj(node["labels"], "labels"), f"labels of #{number} for {short}")
-        matches.append(
+        accepted.append(
             _PullRequest(
                 number=number,
                 title=_str(node["title"], "PR title"),
                 branch=_str(node["headRefName"], "PR headRefName"),
-                merged_ts=_timestamp(node["mergedAt"], "PR mergedAt"),
+                merged_ts=merged_ts,
                 labels=tuple(_str(label["name"], "label name") for label in labels),
                 node=node,
             )
         )
+    matches = accepted or refused
     if len(matches) > 1:
         numbers = ", ".join(f"#{pr.number}" for pr in matches)
         raise _error(f"commit {short} has {len(matches)} merged PRs into {integration}: {numbers}")
@@ -456,10 +519,12 @@ def _merged_pr(sha: str, commit: dict[str, object], integration: str) -> _PullRe
 
 
 def _prs_by_sha(
-    repo: str, shas: Sequence[str], integration: str, *, closing: bool
-) -> dict[str, _PullRequest | None]:
+    repo: str, shas: Sequence[str], integration: str, *, closing: bool, authors: TrustedAuthors
+) -> tuple[dict[str, _PullRequest | None], list[trust.Skipped]]:
+    """Each commit's merged PR into *integration*, and a skip record for each PR not accepted."""
     owner, name = repo.split("/", 1)
     result: dict[str, _PullRequest | None] = {}
+    skipped: list[trust.Skipped] = []
     for start in range(0, len(shas), _GRAPHQL_CHUNK):
         chunk = shas[start : start + _GRAPHQL_CHUNK]
         data = github.graphql(_pr_query(chunk, closing=closing), owner=owner, name=name)
@@ -468,8 +533,15 @@ def _prs_by_sha(
             node = repository[f"c{index}"]
             if node is None:
                 raise _error(f"commit {sha[:_SHORT_SHA]} not found on GitHub")
-            result[sha] = _merged_pr(sha, _obj(node, f"commit {sha[:_SHORT_SHA]}"), integration)
-    return result
+            result[sha] = _merged_pr(
+                sha,
+                _obj(node, f"commit {sha[:_SHORT_SHA]}"),
+                integration,
+                repo=repo,
+                authors=authors,
+                skipped=skipped,
+            )
+    return result, list(dict.fromkeys(skipped))
 
 
 def _changes(
@@ -507,6 +579,19 @@ def _changes(
                 )
             )
             continue
+        if pr.title is None:
+            changes.append(
+                PendingChange(
+                    pr_number=pr.number,
+                    branch=None,
+                    title=_subject(commit),
+                    kind=ChangeKind.UNTRUSTED,
+                    type_label=ChangeKind.UNTRUSTED.value,
+                    merged_ts=pr.merged_ts,
+                    shas=(sha,),
+                )
+            )
+            continue
         kind, type_label = classify(pr.title, pr.branch, pr.labels)
         changes.append(
             PendingChange(
@@ -523,9 +608,18 @@ def _changes(
 
 
 def _gather(
-    integration: str, remote: str, head: str | None, *, closing: bool = False
+    integration: str,
+    remote: str,
+    head: str | None,
+    *,
+    authors: TrustedAuthors,
+    closing: bool = False,
 ) -> tuple[PendingRelease, str, dict[str, _PullRequest | None]]:
-    """The pending release, the remote's ``<owner>/<repo>``, and each chain commit's PR."""
+    """The pending release, the remote's ``<owner>/<repo>``, and each chain commit's PR.
+
+    Each merged PR the trust layer does not accept is reported on stderr,
+    metadata only.
+    """
     repo = github.github_remote_repo(git.remote_url(remote))
     if repo is None:
         raise _error(f"{remote} is not a github.com remote")
@@ -545,7 +639,8 @@ def _gather(
     commits, main_moved_ts = _compare(repo, main_sha, dev_sha, integration)
     chain = first_parent_chain(commits, dev_sha)
     shas = [cast("str", commit["sha"]) for commit in chain]
-    prs = _prs_by_sha(repo, shas, integration, closing=closing)
+    prs, skipped = _prs_by_sha(repo, shas, integration, closing=closing, authors=authors)
+    trust.report_skipped(skipped, stream=sys.stderr)
     pending = PendingRelease(tags=tags, main_moved_ts=main_moved_ts, changes=_changes(chain, prs))
     return pending, repo, prs
 
@@ -692,13 +787,16 @@ def _issue_list(
 ) -> tuple[tuple[IssueEntry, ...], list[str]]:
     """Each issue the ``feature/`` PRs among *prs* close, by number, with every closing PR.
 
+    A PR the trust layer does not accept has no branch, so it adds nothing.
     The second value holds a warning for each closing reference that does not
     count, naming each untrusted identity by login and cause only.
     """
     features = {
         pr.number: pr
         for pr in prs
-        if pr is not None and pr.branch.startswith(_FEATURE_BRANCH_PREFIX)
+        if pr is not None
+        and pr.branch is not None
+        and pr.branch.startswith(_FEATURE_BRANCH_PREFIX)
     }
     closed_by: dict[int, set[int]] = {}
     warnings: list[str] = []
@@ -777,12 +875,18 @@ def gather_pending_release(
     release reads what it was cut from even when the branch has moved since
     (spec §4.1 of epic vergil-project/.github#1440).
 
+    A merged PR is classified by its title, head branch and labels only when
+    the trust layer accepts it: a same-repo PR with a trusted author
+    (:attr:`ChangeKind.UNTRUSTED` otherwise, reported on stderr).
+
     Read-only: it never fetches and never writes a ref. Raises
-    :class:`PendingReleaseError` when any lookup fails or is incomplete, with
-    the underlying error as its ``__cause__``.
+    :class:`PendingReleaseError` when the trusted authors cannot be loaded or
+    any lookup fails or is incomplete, with the underlying error as its
+    ``__cause__``.
     """
+    authors = _trusted_authors()
     try:
-        return _gather(integration, remote, head)[0]
+        return _gather(integration, remote, head, authors=authors)[0]
     except PendingReleaseError:
         raise
     except LOOKUP_ERRORS as exc:
@@ -807,7 +911,9 @@ def gather_release_contents(
     """
     authors = _trusted_authors()
     try:
-        pending, repo, prs = _gather(_RELEASE_INTEGRATION, remote, cut, closing=True)
+        pending, repo, prs = _gather(
+            _RELEASE_INTEGRATION, remote, cut, authors=authors, closing=True
+        )
         issues, warnings = _issue_list(repo, prs.values(), authors)
     except PendingReleaseError:
         raise
@@ -843,7 +949,10 @@ def gather_issue_list(*, base: str, head: str, remote: str = "origin") -> tuple[
         commits, _ = _compare(repo, base, head, _RELEASE_INTEGRATION)
         chain = first_parent_chain(commits, head)
         shas = [cast("str", commit["sha"]) for commit in chain]
-        prs = _prs_by_sha(repo, shas, _RELEASE_INTEGRATION, closing=True)
+        prs, skipped = _prs_by_sha(
+            repo, shas, _RELEASE_INTEGRATION, closing=True, authors=authors
+        )
+        trust.report_skipped(skipped, stream=sys.stderr)
         issues, warnings = _issue_list(repo, prs.values(), authors)
     except PendingReleaseError:
         raise

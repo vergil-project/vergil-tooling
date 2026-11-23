@@ -31,7 +31,7 @@ argument = "_pr_query(chunk, closing=closing)"
 fields = ["headRefName", "body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
 reason = """The query is built per chunk of commit SHAs. It selects each commit's \
 associated PRs (_pr_fields: number, title, headRefName, mergedAt, baseRefName, \
-merged, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
+merged, author, createdAt, trust.SAME_REPO_FIELDS, labels) and, with closing=True, CLOSING_FIELDS (the body with its edit \
 history, closingIssuesReferences and the connected events)."""
 
 # --- judged ----------------------------------------------------------------------
@@ -146,10 +146,14 @@ deleted, which the job does to its earlier runs' branches in every case."""
 [[judged]]
 path = "lib/pending_release.py"
 function = "_prs_by_sha"
-fields = ["body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
-judge = ["lib/pending_release.py:trusted_closing_refs"]
-reason = """CLOSING_FIELDS are read only for trusted_closing_refs (_closing_refs), \
-which judges the body through trust.judge_body and each hand link's actor through \
+fields = ["headRefName", "body", "userContentEdits", "closingIssuesReferences", "timelineItems"]
+judge = ["lib/pending_release.py:_judge_pr", "lib/pending_release.py:trusted_closing_refs"]
+reason = """A merged PR's title, head branch and labels are read only once _judge_pr \
+accepts it: trust.is_same_repo puts its head in the repo itself and \
+trust.judge_identity gives its author a role. Any other PR is an untrusted row with \
+no branch, so it neither classifies the row nor reaches the issue list. \
+CLOSING_FIELDS are read only for trusted_closing_refs (_closing_refs), which judges \
+the body through trust.judge_body and each hand link's actor through \
 trust.judge_identity."""
 
 [[judged]]
@@ -268,25 +272,11 @@ task = "vergil-project/vergil-tooling#4987"
 reason = "fixed by vergil-project/vergil-tooling#4987"
 
 [[pending]]
-path = "lib/pending_release.py"
-function = "_prs_by_sha"
-fields = ["headRefName"]
-task = "vergil-project/vergil-tooling#4986"
-reason = "fixed by vergil-project/vergil-tooling#4986"
-
-[[pending]]
 path = "lib/queue_view.py"
 function = "planning_items"
 fields = ["body"]
 task = "vergil-project/vergil-tooling#4989"
 reason = "fixed by vergil-project/vergil-tooling#4989"
-
-[[pending]]
-path = "lib/release/rebuild.py"
-function = "_merged_pr"
-fields = ["--head"]
-task = "vergil-project/vergil-tooling#4986"
-reason = "fixed by vergil-project/vergil-tooling#4986"
 
 [[pending]]
 path = "lib/security_records.py"

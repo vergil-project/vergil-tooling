@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import trust
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.pending_release import PendingReleaseError
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
@@ -43,16 +43,41 @@ _OWN = (IssueEntry(f"{_REPO}#11", (8,)),)
 _PRIOR_ISSUES = (IssueEntry(f"{_REPO}#10", (7,)), IssueEntry(f"{_REPO}#11", (6,)))
 
 
-def _pr(merge: str, head: str, number: int) -> dict[str, Any]:
-    return {
-        "url": f"https://github.com/{_REPO}/pull/{number}",
-        "mergeCommit": {"oid": merge},
-        "headRefOid": head,
-    }
-
-
 _HUMAN = {"__typename": "User", "login": "human"}
 _AGENT = {"__typename": "Bot", "login": "agent"}
+_OUTSIDER = {"__typename": "User", "login": "drive-by"}
+
+
+def _pr(
+    merge: str | None,
+    head: str,
+    number: int,
+    *,
+    author: dict[str, str] = _AGENT,
+    fork: bool = False,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """A merged PR as the trust layer's branch query returns it.
+
+    The fake fills in ``headRefName`` with the branch asked for and, unless
+    *base* is given, the base a release or back-merge PR has.
+    """
+    node: dict[str, Any] = {
+        "number": number,
+        "url": f"https://github.com/{_REPO}/pull/{number}",
+        "title": "release",
+        "headRefOid": head,
+        "state": "MERGED",
+        "createdAt": trust_stubs.CREATED,
+        "author": author,
+        "mergeCommit": None if merge is None else {"oid": merge},
+        "isCrossRepository": fork,
+        "headRepositoryOwner": {"login": "mallory" if fork else _REPO.split("/")[0]},
+        "headRepository": {"name": _REPO.split("/")[1]},
+    }
+    if base is not None:
+        node["baseRefName"] = base
+    return node
 _AUTHORS = TrustedAuthors(human=("human",), agents=("agent",))
 
 
@@ -86,6 +111,9 @@ class _Facts:
     # An answer, or an exception to raise, in place of a gh command's, by its
     # first two words.
     answers: dict[tuple[str, ...], object] = field(default_factory=dict)
+    # An answer, or an exception to raise, in place of the branch query's.
+    branch_answer: object = None
+    branches: list[str] = field(default_factory=list)
 
     def read_json(self, *args: str) -> object:
         if args[:2] in self.answers:
@@ -93,8 +121,6 @@ class _Facts:
             if isinstance(answer, Exception):
                 raise answer
             return answer
-        if args[:2] == ("pr", "list"):
-            return self.merged.get(args[args.index("--head") + 1], [])
         if args[:2] == ("run", "list"):
             return self.runs
         if args[:2] == ("run", "view"):
@@ -105,13 +131,29 @@ class _Facts:
             return [{"number": i["number"], "title": i["title"]} for i in self.closed]
         raise AssertionError(args)
 
-    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
-        assert query == trust._ITEM_QUERY, "only the item query is faked"
+    def graphql(self, query: str, **variables: Any) -> Any:
         assert f"{variables['owner']}/{variables['name']}" == _REPO
+        if query == trust._BRANCH_QUERIES["merged"]:
+            return self._branch(variables["branch"])
+        assert query == trust._ITEM_QUERY, "only the item and merged-branch queries are faked"
         for issue in self.closed:
             if issue["number"] == variables["number"]:
                 return trust_stubs.item(nodes=issue["comments"])
         raise AssertionError(variables)
+
+    def _branch(self, branch: str) -> Any:
+        self.branches.append(branch)
+        if isinstance(self.branch_answer, Exception):
+            raise self.branch_answer
+        if self.branch_answer is not None:
+            return self.branch_answer
+        base = "develop" if branch.startswith("release/post-") else "main"
+        nodes = [
+            {"headRefName": branch, "baseRefName": base, **node}
+            for node in self.merged.get(branch, [])
+        ]
+        page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+        return {"repository": {"pullRequests": page}}
 
     def git(self, *args: str) -> str:
         if args[0] == "ls-remote":
@@ -266,8 +308,6 @@ _FAILED = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
 @pytest.mark.parametrize(
     ("untagged", "command", "answer", "match"),
     [
-        (False, ("pr", "list"), {"not": "a list"}, "is not a list"),
-        (False, ("pr", "list"), [{"url": "u", "mergeCommit": None}], "has no URL, merge"),
         (True, ("run", "list"), _FAILED, "main CD runs for mmmmmmmmmmmm could not be read"),
         (True, ("run", "list"), {"not": "a list"}, "could not be listed in full"),
         (True, ("run", "list"), [{"databaseId": "x"}], "include an unreadable run"),
@@ -291,6 +331,145 @@ def test_an_unexpected_answer_refuses(
         _untagged(found)
     found.answers[command] = answer
     with pytest.raises(ReleaseError, match=match):
+        _rebuild()
+
+
+# --- the release PR is read through the trust layer (GHSA-97c7-wmr4-gm37) ---
+
+
+def test_a_fork_pr_on_the_release_branch_never_stands_in_for_it(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    found, _ = facts
+    found.merged[f"release/{_OLD}"].insert(0, _pr("f" * 40, "g" * 40, 60, fork=True))
+    assert _rebuild() == Rebuilt(issues=_OWN, main_commit=None, tag=f"v{_OLD}")
+    err = capsys.readouterr().err
+    assert f"skipped untrusted content: {_REPO}#60 pr agent at " in err
+    assert "on head (cross-repository)" in err
+
+
+@pytest.mark.parametrize(
+    ("node", "cause"),
+    [
+        (_pr(_MERGE, _HEAD, 60, fork=True), "on head (cross-repository)"),
+        (_pr(_MERGE, _HEAD, 60, author=_OUTSIDER), "drive-by at 2026-11-01T09:30:00Z on author"),
+    ],
+    ids=["fork", "outsider"],
+)
+def test_a_release_pr_the_layer_does_not_accept_is_not_merged(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    node: dict[str, Any],
+    cause: str,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    found, mocks = facts
+    found.merged[f"release/{_OLD}"] = [node]
+    with pytest.raises(ReleaseError, match="nothing of it reached main"):
+        _rebuild()
+    assert cause in capsys.readouterr().err
+    mocks["issues"].assert_not_called()
+
+
+def test_an_outsiders_back_merge_pr_does_not_count(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, _ = facts
+    found.merged[f"release/post-{_OLD}"] = [_pr("b" * 40, "c" * 40, 51, author=_OUTSIDER)]
+    with pytest.raises(ReleaseError, match="back-merge PR .* is not merged"):
+        _rebuild()
+
+
+def test_skipped_release_prs_are_counted_under_actions(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    found, _ = facts
+    found.merged[f"release/{_OLD}"].insert(0, _pr("f" * 40, "g" * 40, 60, fork=True))
+    _rebuild()
+    err = capsys.readouterr().err
+    assert "skipped 1 untrusted item(s) (cross-repository: 1)" in err
+    assert "#60" not in err
+
+
+def test_a_pr_of_the_branch_into_another_base_does_not_count(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, _ = facts
+    found.merged[f"release/{_OLD}"] = [_pr(_MERGE, _HEAD, 50, base="develop")]
+    with pytest.raises(ReleaseError, match="nothing of it reached main"):
+        _rebuild()
+
+
+def test_the_release_pr_is_found_through_the_trust_layer(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, mocks = facts
+    _rebuild()
+    assert found.branches == [f"release/{_OLD}", f"release/post-{_OLD}"]
+    assert not any(c.args[:2] == ("pr", "list") for c in mocks["json"].call_args_list)
+
+
+def test_a_merged_release_pr_with_no_merge_commit_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, _ = facts
+    found.merged[f"release/{_OLD}"] = [_pr(None, _HEAD, 50)]
+    with pytest.raises(ReleaseError, match=r"\(https://github.com/owner/repo/pull/50\) has no"):
+        _rebuild()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"repository": None},
+        github.GitHubAPIError(1, ["gh", "api", "graphql"], stderr="HTTP 502"),
+        RuntimeError("GraphQL errors"),
+    ],
+    ids=["malformed", "api-error", "graphql-errors"],
+)
+def test_a_release_pr_read_the_layer_cannot_complete_refuses_in_one_line(
+    facts: tuple[_Facts, dict[str, MagicMock]], answer: object
+) -> None:
+    found, mocks = facts
+    found.branch_answer = answer
+    with pytest.raises(ReleaseError) as info:
+        _rebuild()
+    message = str(info.value)
+    assert message.startswith(
+        "Release 2.1.5 cannot be superseded: the merged PR of release/2.1.5 into main "
+        "could not be read: cannot read who wrote the content (prs_for_branch "
+    )
+    assert "\n" not in message
+    mocks["issues"].assert_not_called()
+
+
+def test_a_release_pr_read_with_no_token_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, _ = facts
+    found.branch_answer = github.MissingGitHubTokenError(1, ["gh"], stderr="no token")
+    with pytest.raises(ReleaseError, match="the merged PR of release/2.1.5 into main could not"):
+        _rebuild()
+
+
+def test_a_release_pr_read_with_no_trusted_authors_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    error = TrustedAuthorsNotConfiguredError("trusted authors are not configured")
+    with (
+        patch("vergil_tooling.lib.trust.load_trusted_authors", side_effect=error),
+        pytest.raises(
+            ReleaseError,
+            match="the merged PR of release/2.1.5 into main could not be read: trusted authors",
+        ),
+    ):
         _rebuild()
 
 
