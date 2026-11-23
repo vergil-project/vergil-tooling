@@ -20,6 +20,7 @@ from vergil_tooling.lib import branch_sweep, github
 from vergil_tooling.lib.branch_sweep import Action
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -39,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
     except (subprocess.CalledProcessError, ValueError) as exc:
         detail = " ".join(error_text(exc).split())
         print(f"vrg-branch-sweep: cannot list branches of {repo}: {detail}", file=sys.stderr)
+        return 1
+    except TrustedAuthorsNotConfiguredError as exc:
+        print(f"vrg-branch-sweep: {exc}", file=sys.stderr)
         return 1
     for line in branch_sweep.format_outcomes(outcomes):
         print(line)

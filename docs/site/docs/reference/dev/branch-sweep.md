@@ -92,7 +92,8 @@ command reports an `error` line with the cause, finishes the remaining
 branches, and then exits 1. A failure to read the repo's default branch or
 branch list stops the sweep at once with exit 1, since nothing can be
 decided without them. Missing or invalid GitHub credentials end the run
-with the standard authentication message.
+with the standard authentication message, and trusted authors that are not
+configured end it with a one-line error and exit 1.
 
 ## Exit codes
 
