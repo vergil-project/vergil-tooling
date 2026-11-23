@@ -225,6 +225,14 @@ closed by hand once the problem is dealt with. It is homed in
 `vrg-epic-create --standing operations --org <org>` ensures the epic without
 filing a task. Its closed children drain into per-quarter
 `Archive (operations): <org>` archives like the other standing kinds.
+An ops issue is not PR-workable: `vrg-pr-workflow report-ready` and
+`vrg-submit-pr` refuse it as they refuse a queue item, and a code fix found
+while working one is filed as a follow-up task in its own repo. The daily
+sweep's drift close (`vrg-epic-audit --close`) never closes an ops issue that
+a merged PR names, and `vrg-intake-route` never routes one out of the
+operations epic. An intake item may be routed *into* it as a one-off
+(`--epic operations`), so an operational problem captured by hand reaches the
+queue through intake review.
 
 ### Proxy epics
 

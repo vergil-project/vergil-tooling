@@ -56,7 +56,9 @@ routes each container allows:
   A one-off never goes under the hoshin epic, which holds only the hoshin
   review's logbook tasks: the ``hoshin`` sentinel is refused by name before
   anything resolves, so a refused route creates nothing, and an explicit ref
-  to a hoshin epic is refused once it resolves.
+  to a hoshin epic is refused once it resolves. A one-off may go under the
+  operations epic (``--epic operations``), so an operational problem captured
+  by hand reaches the operations queue through intake review.
 - **planning** — reparent onto the planning epic of the same queue home,
   from intake, deferred or ad hoc (an ad-hoc task found too big for one PR,
   #4598, refused while an open PR would close it), or an unparented issue.
@@ -96,7 +98,8 @@ body the trust layer trusts: an untrusted body is a stop before any write
 (:class:`~vergil_tooling.lib.trust.UntrustedContentError`), and a recreate
 copies that same trusted body, read before the move.
 
-A task in a development epic, an epic, and an unparented issue are refused
+An item under the hoshin epic, an ops issue under the operations epic, a
+task in a development epic, an epic, and an unparented issue are refused
 (``planning`` alone accepts an unparented issue, the ``epic-create`` free-text
 path, and a follow-on brainstorm under a development epic), the refusal naming
 the parent. A planning item refuses drop, defer and
@@ -185,6 +188,11 @@ HOSHIN_REFUSAL = (
 HOSHIN_ITEM_REFUSAL = (
     "{item} is under the hoshin epic {epic}, which holds only the logbook tasks "
     "/vergil:hoshin files and works; its tasks are never routed"
+)
+# The refusal of every route for an ops issue (epic vergil-project/.github#1494):
+# it stays under the operations epic until it is closed by hand.
+OPERATIONS_ITEM_REFUSAL = (
+    "{item} is an ops issue under {epic}; it is closed by hand once dealt with, never routed"
 )
 
 # A transfer carries the old parent over eventually, not atomically: a link
@@ -403,6 +411,8 @@ def _check_eligible(ref: IssueRef, action: RouteAction, parent: IssueRef | None)
         return _DEVELOPMENT
     if kind == epics.HOSHIN.key:
         raise RouteRefusedError(HOSHIN_ITEM_REFUSAL.format(item=ref.slug, epic=parent.slug))
+    if kind == epics.OPERATIONS.key:
+        raise RouteRefusedError(OPERATIONS_ITEM_REFUSAL.format(item=ref.slug, epic=parent.slug))
     if kind is None or kind not in ROUTES:
         raise RouteRefusedError(
             f"{ref.slug} is under {parent.slug}, not a container epic (intake, planning, "
@@ -1120,6 +1130,8 @@ def _one_off_target(item: IssueRef, action: OneOff) -> IssueRef | None:
     if action.epic == epics.ADHOC.sentinel:
         owner, bare = dest.split("/", 1)
         return epics.find_standing_epic(epics.ADHOC, epics.resolve_epic_home(owner, bare), bare)
+    if action.epic == epics.OPERATIONS.sentinel:
+        return epics.find_standing_epic(epics.OPERATIONS, *epics.operations_home(dest))
     target = epics.qualify_epic_ref(action.epic, repo=dest)
     return target if target.owner == item.owner else None
 

@@ -1779,7 +1779,28 @@ def test_task_drift_skips_pr_ref_to_queue_item() -> None:
     with (
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=intake) as parent,
-        patch("vergil_tooling.lib.epics.queue_kind", return_value="intake"),
+        patch("vergil_tooling.lib.epics.unbuildable_kind", return_value="intake"),
+    ):
+        assert _drift(prs, "org") == []
+    parent.assert_called_once_with(epics.IssueRef("org", "repo", 8))
+
+
+def test_task_drift_skips_ops_issue() -> None:
+    # A merged PR naming an ops issue never closes it: an ops issue is closed by
+    # hand (epic vergil-project/.github#1494). The parent's labels are read for real.
+    prs = _one_pr_reffing_8()
+    ops_epic = epics.IssueRef("org", ".github", 3)
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        if args[2] == "3":
+            return {"labels": [{"name": "epic"}, {"name": "operations"}]}
+        return {"state": "open", "title": "t", "body": "b"}
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=ops_epic) as parent,
     ):
         assert _drift(prs, "org") == []
     parent.assert_called_once_with(epics.IssueRef("org", "repo", 8))
@@ -1797,7 +1818,7 @@ def test_task_drift_flags_task_under_finite_epic() -> None:
             "vergil_tooling.lib.epics.parent_of",
             return_value=epics.IssueRef("org", ".github", 40),
         ),
-        patch("vergil_tooling.lib.epics.queue_kind", return_value=None),
+        patch("vergil_tooling.lib.epics.unbuildable_kind", return_value=None),
     ):
         result = _drift(prs, "org")
     assert result == [TaskDrift("org/repo", 8, 31, "u")]

@@ -42,6 +42,7 @@ PLANNING = IssueRef("org", ".github", 8)
 ADHOC_DOTGITHUB = IssueRef("org", ".github", 9)
 DEFERRED = IssueRef("org", ".github", 10)
 TOOL_ADHOC = IssueRef("org", ".github", 11)
+OPERATIONS = IssueRef("org", ".github", 12)
 DEV_EPIC = IssueRef("org", ".github", 400)
 TODAY = date(2026, 10, 23)
 ORIG_URL = "https://github.com/org/.github/issues/352"
@@ -66,6 +67,7 @@ class Env:
             DEFERRED: "deferred",
             ADHOC_DOTGITHUB: "ad-hoc",
             TOOL_ADHOC: "ad-hoc",
+            OPERATIONS: "operations",
         }
         # The issues carrying the 'epic' label (epics.is_epic).
         self.epic_refs: set[IssueRef] = {INTAKE, PLANNING, DEFERRED, ADHOC_DOTGITHUB, DEV_EPIC}
@@ -172,7 +174,12 @@ class Env:
         if kind is epics.ADHOC:
             return self.adhoc_epics.get(name)
         assert name == "org"
-        return {"intake": INTAKE, "planning": PLANNING, "deferred": DEFERRED}[kind.key]
+        return {
+            "intake": INTAKE,
+            "planning": PLANNING,
+            "deferred": DEFERRED,
+            "operations": OPERATIONS,
+        }[kind.key]
 
     def queue_kind(self, ref: IssueRef) -> str | None:
         kind = self.kinds.get(ref)
@@ -271,6 +278,7 @@ def env() -> Iterator[Env]:
         # home in org/.github.
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=lambda owner, bare: "org/.github"),
         patch(f"{_MOD}.epics.queue_home", side_effect=lambda repo: ("org/.github", "org")),
+        patch(f"{_MOD}.epics.operations_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=state.find_standing_epic),
         patch(
             f"{_MOD}.epics.qualify_epic_ref",
@@ -2077,6 +2085,60 @@ def test_one_off_refuses_hoshin_epic_ref(env: Env) -> None:
     assert _transfer_calls(env) == []
     env.add_child.assert_not_called()
     env.reparent_child.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        Defer(reason="r", revisit_when="w"),
+        ToPlanning(),
+        Drop(reason="r"),
+        OneOff(repo="org/tool"),
+        Split(into=(IssueRef("org", "tool", 10),), reason="r"),
+    ],
+    ids=["defer", "planning", "drop", "one-off", "split"],
+)
+def test_route_refuses_item_under_operations(env: Env, action: RouteAction) -> None:
+    # An ops issue stays under the operations epic until it is closed by hand.
+    env.parent = OPERATIONS
+    env.native_parent[ITEM] = OPERATIONS
+    with pytest.raises(RouteRefusedError) as excinfo:
+        route(ITEM, action, today=TODAY)
+    message = str(excinfo.value)
+    assert message == (
+        "org/.github#352 is an ops issue under org/.github#12; it is closed by hand once "
+        "dealt with, never routed"
+    )
+    _assert_untouched(env)
+    env.resolve_epic_ref.assert_not_called()
+    env.add_child.assert_not_called()
+    env.remove_child.assert_not_called()
+    assert _transfer_calls(env) == []
+
+
+def test_route_one_off_into_operations_allowed(env: Env) -> None:
+    # A hand-captured operational problem reaches the operations queue through intake.
+    env.native_parent[ITEM] = INTAKE
+    env.resolve_epic_ref.return_value = OPERATIONS
+    result = route(ITEM, OneOff(repo="org/.github", epic="operations"), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    env.resolve_epic_ref.assert_called_once_with("operations", repo="org/.github")
+    env.reparent_child.assert_called_once_with(OPERATIONS, ITEM)
+    assert env.native_parent[ITEM] == OPERATIONS
+
+
+def test_route_one_off_rerun_into_operations_clears_a_stale_queue_listing(env: Env) -> None:
+    # A re-run of a one-off into the operations epic finishes the move (#4291)
+    # rather than being refused as a route out of it.
+    moved = IssueRef("org", "tool", 900)
+    env.parent = OPERATIONS
+    env.native_parent[moved] = OPERATIONS
+    env.stale_listing[INTAKE] = {moved}
+    result = route(moved, OneOff(repo="org/tool", epic="operations"), today=TODAY)
+    assert result == RouteResult(final=moved, moved_by="none")
+    env.remove_child.assert_called_once_with(INTAKE, moved)
+    assert env.native_parent[moved] == OPERATIONS
+    env.resolve_epic_ref.assert_not_called()
 
 
 def test_route_one_off_refuses_queue_epic(env: Env) -> None:

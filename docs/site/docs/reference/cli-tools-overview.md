@@ -151,8 +151,8 @@ A single-issue PR whose issue is an epic's documentation task also closes the
 epic's planning issue, on a `- Planning issue: Closes <ref>` line of its own;
 when it cannot, it says why (see
 [the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
-It refuses an issue whose native parent is an intake, planning or deferred
-epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
+It refuses an issue whose native parent is an intake, planning, deferred or
+operations epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
 identities are refused, and agents hand off with
 `vrg-pr-workflow report-ready` instead.
 
@@ -231,7 +231,11 @@ its old head, and fails with nothing changed if that push fails (#3815).
 `vrg-submit-pr`) refuses an issue whose native parent is an intake, planning
 or deferred epic: a queue item is not buildable until it is routed with
 `epic-review intake`, expanded with `epic-create`, or revived with
-`epic-review deferred` (epics vergil-project/.github#176 and #508).
+`epic-review deferred` (epics vergil-project/.github#176 and #508). Both
+refuse an ops issue too, one whose native parent is the
+[operations epic](../standards/github-issues.md#standing-epics): no PR closes
+it, so a fix is filed as a follow-up task in its own repo and the ops issue
+is closed by hand (epic vergil-project/.github#1494).
 Local-settings guard: `report-ready` refuses an agent (warns a human), before
 pushing or recording anything, while a loadable `.claude/settings.local.json`
 is not absent or `{}` (epic vergil-project/.github#558).
@@ -258,7 +262,7 @@ the check again when it builds the body (see
 Any other issue, and a batch, prints no `planning_close`.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
-this repo, a task (not an epic, archive or queue item), not operational, not
+this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly Blocked-by an open deployment task and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
@@ -1089,7 +1093,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   repo (transfer, or recreate with a link back when GitHub refuses the
   transfer) and link it under that repo's ad-hoc epic (default `adhoc`) or the
   named epic. It refuses the hoshin epic: `--epic hoshin` before anything
-  resolves (so nothing is created), and a ref that names a hoshin epic. A planning item's `in-progress` label is removed from the moved
+  resolves (so nothing is created), and a ref that names a hoshin epic. It
+  accepts `--epic operations`, the org's operations epic, so an operational
+  problem captured by hand reaches the operations queue. A planning item's `in-progress` label is removed from the moved
   issue once the move has settled; a recreated issue never carries it. A
   one-off also ends the item's estimated size, from intake, planning or
   deferred alike: a recreated issue never carries an `epic-size:*` label, and
@@ -1156,6 +1162,8 @@ Which routes an item allows depends on the container epic it is in:
 | deferred | `defer` (refresh), `intake`, `planning`, `one-off`, `drop`, `split`, `size` |
 | no parent | `planning` (the `epic-create` free-text path) |
 | a development epic | `planning` for a follow-on brainstorm only; any other task is refused, naming the parent |
+| the hoshin epic | none — its logbook tasks are never routed |
+| the operations epic | none — an ops issue is closed by hand once dealt with, never routed |
 | anything else | none — refused, naming the parent |
 
 A planning item's development epics are those an `Epic:` marker in a
@@ -1690,7 +1698,8 @@ Report epic/task drift and invariant violations for an org, as Markdown on
 stdout. It is read-only by default. **Drift** is a task still open although
 a merged PR that links it landed within the last `--window-days` days (a
 body's one linkage line, or every `Closes` line of a body with several, so
-each issue of a batch PR is checked), and
+each issue of a batch PR is checked; a queue item, an operational task and
+an ops issue under the operations epic never are), and
 an open finite epic whose children are all closed (a standing or
 [proxy epic](../standards/github-issues.md#proxy-epics) never is). The **invariant** checks
 are the [compliance invariants](../standards/github-issues.md#compliance-invariants):
