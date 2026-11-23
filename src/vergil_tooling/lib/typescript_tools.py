@@ -127,11 +127,16 @@ def check_version_matches(repo_root: Path) -> list[str]:
     The same cross-check ``vrg-version show`` makes, so a ``package.json``
     version that is missing or differs from ``VERSION`` fails on the PR, not
     first at ``vrg-release`` preflight (spec §6.5). A missing ``VERSION`` is
-    the problem too.
+    the problem too. A missing ``package.json`` is left to
+    :func:`check_dev_dependencies`, so the pre-gate reports it once (#4992).
     """
     try:
         version.show(repo_root)
-    except (version.VersionSyncError, FileNotFoundError) as exc:
+    except FileNotFoundError as exc:
+        return [str(exc)]
+    except version.VersionSyncError as exc:
+        if not (repo_root / "package.json").is_file():
+            return []
         return [str(exc)]
     return []
 
@@ -484,8 +489,11 @@ def check_prettier_single_source(repo_root: Path) -> list[str]:
     """
     fix = f"Fix: delete it; the repo's one Prettier config is {_PRETTIER_CONFIG}"
     problems: list[str] = []
+    package_json = repo_root / "package.json"
     try:
-        manifest = read_package_json(repo_root / "package.json")
+        # A missing package.json has no "prettier" key; check_dev_dependencies
+        # reports it missing, once (#4992).
+        manifest = read_package_json(package_json) if package_json.exists() else {}
     except PackageJsonError as exc:
         problems.append(f'cannot check package.json for a "prettier" key: {exc}')
     else:

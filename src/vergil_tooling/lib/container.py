@@ -91,12 +91,15 @@ def read_package_json(path: Path) -> dict[str, object]:
     """Return the parsed ``package.json`` at *path* as a JSON object.
 
     The one parser of ``package.json``. Raises :class:`PackageJsonError` naming
-    the file and the failure when it cannot be read, is not JSON, or is not a
-    JSON object (epic vergil-project/.github#1174, spec §6.7): a broken
+    the file and the failure when it is missing, cannot be read, is not JSON,
+    or is not a JSON object (epic vergil-project/.github#1174, spec §6.7): a broken
     manifest is an error to fix, never "not TypeScript".
     """
     try:
         text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        msg = f"package.json not found at {path}. Fix: create it"
+        raise PackageJsonError(msg) from exc
     except OSError as exc:
         raise _package_json_error(path, exc.strerror or str(exc)) from exc
     except UnicodeDecodeError as exc:

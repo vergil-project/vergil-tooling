@@ -178,3 +178,19 @@ def test_invalid_config_is_one_line(tmp_path: Path, capsys: pytest.CaptureFixtur
     err = capsys.readouterr().err
     assert err.startswith(f"vrg-version: {tmp_path / 'vergil.toml'} is not valid TOML: ")
     assert err.count("\n") == 1
+
+
+def test_non_utf8_package_json_is_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_toml(tmp_path, "typescript")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
+    (tmp_path / "package.json").write_bytes(b'{"version": "0.1.0", "name": "\xff"}')
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(tmp_path, "show")
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(
+        f"vrg-version: package.json at {tmp_path / 'package.json'} cannot be parsed"
+    )
+    assert err.count("\n") == 1

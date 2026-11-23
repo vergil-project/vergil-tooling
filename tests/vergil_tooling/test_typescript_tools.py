@@ -690,3 +690,54 @@ def test_unparseable_package_json_is_reported(tmp_path: Path) -> None:
     (repo / "package.json").write_text("{", encoding="utf-8")
     (problem,) = check_prettier_single_source(repo)
     assert problem.startswith('cannot check package.json for a "prettier" key: package.json at ')
+
+
+# -- a missing or non-UTF-8 package.json is reported once (#4992) -------------------
+
+
+def _git_versioned_repo(tmp_path: Path) -> Path:
+    """A real git repository (the Prettier check lists its files) with matching versions."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    return _versioned_repo(tmp_path, "0.1.0", "0.1.0")
+
+
+def test_missing_package_json_is_reported_once(tmp_path: Path) -> None:
+    repo = _git_versioned_repo(tmp_path)
+    (repo / "package.json").unlink()
+    with patch.object(typescript_tools, "load_required", return_value={"typescript": 6}):
+        problems = run_pre_gate_checks(repo)
+    package_problems = [problem for problem in problems if "package.json" in problem]
+    assert package_problems == [
+        f"package.json not found at {repo / 'package.json'}. Fix: create it"
+    ]
+
+
+def test_missing_package_json_leaves_the_version_check_quiet(tmp_path: Path) -> None:
+    repo = _versioned_repo(tmp_path, "0.1.0", "0.1.0")
+    (repo / "package.json").unlink()
+    assert check_version_matches(repo) == []
+
+
+def test_missing_package_json_and_version_reports_version(tmp_path: Path) -> None:
+    repo = _versioned_repo(tmp_path, "0.1.0", "0.1.0")
+    (repo / "package.json").unlink()
+    (repo / "VERSION").unlink()
+    (problem,) = check_version_matches(repo)
+    assert "VERSION file not found" in problem
+
+
+def test_missing_package_json_has_no_prettier_key(tmp_path: Path) -> None:
+    repo = _git_versioned_repo(tmp_path)
+    (repo / "package.json").unlink()
+    assert check_prettier_single_source(repo) == []
+
+
+def test_non_utf8_package_json_version_check_names_the_fix(tmp_path: Path) -> None:
+    repo = _git_versioned_repo(tmp_path)
+    path = repo / "package.json"
+    path.write_bytes(b'{"version": "0.1.0", "name": "\xff"}')
+    (problem,) = check_version_matches(repo)
+    assert problem.startswith(f"package.json at {path} cannot be parsed: not UTF-8 (")
+    # The same text as the other checks' report, so the pre-gate lists it once.
+    with patch.object(typescript_tools, "load_required", return_value={"typescript": 6}):
+        assert run_pre_gate_checks(repo).count(problem) == 1

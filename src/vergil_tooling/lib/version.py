@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import cargo_semver
 from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib.container import PackageJsonError, read_package_json
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -397,7 +398,15 @@ def _package_json_version(text: str, canonical: str) -> str:
     Raises :class:`VersionSyncError` naming the fix, setting it to the
     VERSION file's *canonical*, when it is missing or not a string.
     """
-    version = _parse_json_object(text, _PACKAGE_JSON).get("version")
+    return _manifest_version(_parse_json_object(text, _PACKAGE_JSON), canonical)
+
+
+def _manifest_version(manifest: dict[str, object], canonical: str) -> str:
+    """The top-level ``version`` of the parsed ``package.json`` *manifest*.
+
+    Raises :class:`VersionSyncError` as :func:`_package_json_version` does.
+    """
+    version = manifest.get("version")
     if not isinstance(version, str):
         what = "no" if version is None else "a non-string"
         msg = (
@@ -517,11 +526,17 @@ def _cross_check_language_file(
                     file=sys.stderr,
                 )
             else:
-                text = lang_file.read_text()
                 if language == "typescript":
-                    lang_version = _package_json_version(text, canonical_version)
+                    # The shared reader, so a package.json that is not UTF-8 or
+                    # not JSON fails with its message, never a traceback (#4992),
+                    # and the TypeScript pre-gate reports it once.
+                    try:
+                        manifest = read_package_json(lang_file)
+                    except PackageJsonError as exc:
+                        raise VersionSyncError(str(exc)) from exc
+                    lang_version = _manifest_version(manifest, canonical_version)
                 else:
-                    lang_version = _read_version(text, language)
+                    lang_version = _read_version(lang_file.read_text(), language)
                 if lang_version != canonical_version:
                     lang_rel = lang_file.relative_to(repo_root).as_posix()
                     msg = _version_mismatch(lang_rel, canonical_version, lang_version, language)
