@@ -173,13 +173,24 @@ def _translate_segment(segment: str) -> str:
                 start += 1
             end = segment.index("]", start + 1)
             body = segment[start:end]
-            escaped = "".join("\\" + c if c in "\\^[]" else c for c in body)
-            out.append(f"[^/{escaped}]" if negate else f"[{escaped}]")
+            escaped = _class_body(body)
+            # The '/' a negated class must never match goes last, after an
+            # escaped body, so it can never form a range with the body.
+            out.append(f"[^{escaped}/]" if negate else f"[{escaped}]")
             index = end
         else:
             out.append(re.escape(char))
         index += 1
     return "".join(out)
+
+
+def _class_body(body: str) -> str:
+    """Escape a ``[…]`` body for a regex class: a ``-`` is a range only between two characters."""
+    escaped: list[str] = []
+    for position, char in enumerate(body):
+        literal_dash = char == "-" and position in (0, len(body) - 1)
+        escaped.append("\\" + char if char in "\\^[]" or literal_dash else char)
+    return "".join(escaped)
 
 
 def _glob_problem(pattern: str) -> str | None:
@@ -210,6 +221,10 @@ def _glob_problem(pattern: str) -> str | None:
         elif pattern[index] == "]":
             return "a ']' with no '['"
         index += 1
+    try:
+        re.compile(_translate(pattern))
+    except re.error as exc:
+        return f"not a valid glob ({exc})"
     return None
 
 

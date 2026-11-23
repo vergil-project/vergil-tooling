@@ -203,6 +203,7 @@ def test_absent_registry_is_empty(repo: Path) -> None:
         'paths = ["a\\\\b"]',
         'paths = ["a**b"]',
         'paths = ["a]b"]',
+        'paths = ["x/[z-a]"]',
         'paths = ["a/[b/c]"]',
         "other = 1",
         'paths = ["a"]\nextra = 1',
@@ -302,6 +303,15 @@ def test_parse_registry_accepts_globs() -> None:
         ("docs/**/x.md", "docs/a/b/x.md", True),
         ("a.b", "a.b", True),
         ("a.b", "axb", False),
+        ("x/[a-c].md", "x/b.md", True),
+        ("x/[a-c].md", "x/d.md", False),
+        ("x/[!-x]", "x/A", True),
+        ("x/[!-x]", "x/5", True),
+        ("x/[!-x]", "x/-", False),
+        ("x/[!x-]", "x/-", False),
+        ("x/[!x-]", "x/A", True),
+        ("x/[-x]", "x/-", True),
+        ("x/[x-]", "x/b", False),
     ],
 )
 def test_matches(pattern: str, path: str, expected: bool) -> None:
