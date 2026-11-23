@@ -1460,7 +1460,16 @@ def _count(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def records_pass(org: str, *, apply: bool, prog: str) -> int:
+def unlabelled_problem(ref: IssueRef) -> str:
+    """The broken line for *ref*: a ``Security advisory:`` line but no ``security`` label.
+
+    It names the issue alone, never the GHSA IDs its lines carry (spec 6.3 of
+    epic vergil-project/.github#1331).
+    """
+    return f"{ref.slug}: Security advisory: line but no security label"
+
+
+def records_pass(org: str, *, apply: bool, prog: str, unlabelled: Sequence[IssueRef] = ()) -> int:
     """The security-records pass over *org*; *apply* False previews it without writing.
 
     Lists the advisories in the org's advisory home, syncs each paired
@@ -1492,6 +1501,11 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     Actions), it is not reported broken, and each advisory tracking it is left
     unchanged and named on a ``- untrusted:`` line by GHSA ID alone.
 
+    *unlabelled* are the issues the caller found with a ``Security advisory:``
+    line in a trusted body but no ``security`` label (spec 6.3 of epic
+    vergil-project/.github#1331): each is a broken pair, named by issue ref
+    alone (:func:`unlabelled_problem`), whether or not an advisory tracks it.
+
     Exit 1 when the pass fails, when any issue body is untrusted (the preview
     included: a human decides on it), or, with *apply*, when any pair is
     broken or any guard read failed (after syncing the rest). The preview
@@ -1500,13 +1514,17 @@ def records_pass(org: str, *, apply: bool, prog: str) -> int:
     mode = "" if apply else " (preview)"
     try:
         issues = security_issues(org)
-        if not issues and not github.repo_exists(org, ".github"):
+        if not issues and not unlabelled and not github.repo_exists(org, ".github"):
             print(f"Security records{mode}: none.")
             return 0
         home = advisory_home(org)
         result = classify(list_advisories(home), issues)
         guard = guard_check(result, issues)
-        broken = [*result.broken, *moved_problems(result.moved)]
+        broken = [
+            *result.broken,
+            *moved_problems(result.moved),
+            *(unlabelled_problem(ref) for ref in sorted(unlabelled, key=lambda r: r.slug)),
+        ]
         synced = (
             sync_states(home, result, issues, guard)
             if apply

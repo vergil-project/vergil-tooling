@@ -47,6 +47,7 @@ from vergil_tooling.lib import (
     proxies,
     release,
     roadmap,
+    security_records,
     trust,
     trusted_comments,
 )
@@ -1111,6 +1112,45 @@ def body_only_parents(
         pairs.append((ref, parent))
     trust.report_skipped(skipped, stream=sys.stderr)
     return BodyParents(pairs=tuple(pairs), held=frozenset(held))
+
+
+def unlabelled_advisory_lines(
+    org: str,
+    *,
+    stops: trust.BatchStops,
+    authors: TrustedAuthors,
+    issues: list[OpenIssue] | None = None,
+) -> list[epics.IssueRef]:
+    """The open issues with a ``Security advisory:`` line but no ``security`` label.
+
+    Each is a broken pair (spec 6.3 of epic vergil-project/.github#1331),
+    reported whether or not an advisory tracks it. The listed body only picks
+    the candidates; a line counts only from a body the trust layer trusts, so
+    each candidate is read again through the layer. An untrusted body is
+    reported on stderr, metadata only, and is not a broken pair; a body the
+    layer cannot read in full is a stop on that issue alone, added to *stops*.
+    The result is issue refs only, never the lines' GHSA IDs.
+    """
+    if issues is None:
+        issues = open_issues(org)
+    found: list[epics.IssueRef] = []
+    skipped: list[trust.Skipped] = []
+    for issue in issues:
+        if security_records.SECURITY_LABEL in issue.labels:
+            continue
+        if not security_records.parse_advisory_refs(issue.body):
+            continue
+        ref = issue.ref
+        try:
+            content = trust.read_issue(_slug(ref), ref.number, authors=authors)
+        except trust.TrustReadError as exc:
+            _read_failure(stops, _slug(ref), ref.number, "issue", exc)
+            continue
+        skipped += [item for item in content.skipped if item.field == _BODY_FIELD]
+        if content.body is not None and security_records.parse_advisory_refs(content.body):
+            found.append(ref)
+    trust.report_skipped(skipped, stream=sys.stderr)
+    return found
 
 
 def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
