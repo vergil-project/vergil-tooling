@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-
 from vergil_tooling.lib import epics, github, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_workflow import batch_rules

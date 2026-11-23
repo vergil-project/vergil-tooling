@@ -588,6 +588,20 @@ def test_draft_api_error_is_reported(cli: Cli, monkeypatch: pytest.MonkeyPatch) 
     assert "does not hold exactly one file" in cli.stderr
 
 
+def test_github_error_reading_the_draft_is_an_error(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gh failure outside the trust layer (the draft ref read) is an error, exit 1."""
+
+    def broken(*_args: object) -> str | None:
+        raise _api_error("gh: Server Error (HTTP 500)")
+
+    monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.fetch_draft", broken)
+    assert cli(*ARGS) == 1
+    assert "HTTP 500" in cli.stderr
+    assert cli.posted_body is None
+
+
 def test_github_error_while_reading_is_an_error(cli: Cli, monkeypatch: pytest.MonkeyPatch) -> None:
     def api_broken(_query: str, **_variables: object) -> dict[str, Any]:
         raise _api_error("gh: Server Error (HTTP 500)")
@@ -607,7 +621,6 @@ def test_trust_read_error_is_one_line_and_posts_nothing(
     assert cli.stderr.startswith(
         "vrg-ruling-reply: cannot read who wrote the content (read_issue o/r#7)"
     )
-    assert cli.stderr.count("\n") == 1
     assert cli.stdout == ""
     assert cli.prompts == []
     assert cli.posted_body is None

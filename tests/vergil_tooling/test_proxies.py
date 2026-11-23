@@ -341,6 +341,14 @@ def test_is_proxy_ref(labels: tuple[str, ...], expected: bool) -> None:
         assert proxies.is_proxy_ref(PROXY) is expected
 
 
+def test_is_proxy_ref_non_object_view_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=["not", "a view"]),
+        pytest.raises(proxies.ProxyLinkError, match="unexpected 'gh issue view' response"),
+    ):
+        proxies.is_proxy_ref(PROXY)
+
+
 # --- create_proxy ---------------------------------------------------------------
 
 TARGET = "logical-minds-foundry/some-repo"
