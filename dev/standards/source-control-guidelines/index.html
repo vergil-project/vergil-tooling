@@ -18768,12 +18768,15 @@ deletion explicitly. The repository-level setting acts as defense in depth.</p>
 Rulesets replace legacy branch protection rules. Legacy branch protection must
 not be used on any repository.</p>
 <p><strong>Enforce-admins-ON</strong>: Every ruleset has an empty <code>bypass_actors</code> list except
-two. Tag protection may be bypassed only by the repository Admin role (the
+four. Tag protection may be bypassed only by the repository Admin role (the
 human, who moves rolling tags) and the org automation App (whose installation
 token the release pushes <code>vX.Y.Z</code> tags with). Automation branches may be
 bypassed only by the org automation App and the repository Admin role, which
-are the only identities that may write those branches. Every other ruleset
-applies to all users, including repository administrators.</p>
+are the only identities that may write those branches. Main updates may be
+bypassed only by the repository Admin role, the human who merges releases.
+Agent audit markers may be bypassed only by the repository Admin role and
+the org automation App, which runs the audit. Every other ruleset applies to
+all users, including repository administrators.</p>
 <p>The rulesets are declared by <code>compute_desired_state()</code> in
 <code>lib/github_config.py</code> and checked by the config audit; the
 <a href="../../reference/config-audit/#github-checks-rulesets">rulesets table</a> lists
@@ -18832,7 +18835,24 @@ branch names, so a tag or branch of either shape can never appear unprotected.</
      <code>automation/</code> prefix, which mechanized jobs push to and whose PRs
      merge through GitHub auto-merge</li>
 <li>No deletion restriction: the branches are temporary</li>
-<li>Bypass: the org automation App and the repository Admin role only</li>
+<li>
+<p>Bypass: the org automation App and the repository Admin role only</p>
+</li>
+<li>
+<p><strong>Main updates</strong> (targets: <code>main</code>)</p>
+</li>
+<li>Prevent updating <code>main</code>, merging a pull request into it included, so
+     no identity but the human can merge into <code>main</code></li>
+<li>No creation restriction, so repo init can create <code>main</code></li>
+<li>
+<p>Bypass: the repository Admin role only</p>
+</li>
+<li>
+<p><strong>Agent audit markers</strong> (targets: <code>vergil/agent-audit/*</code>)</p>
+</li>
+<li>Prevent creating, updating or deleting the daily agent audit's marker
+     branches, so the identity being audited cannot move them</li>
+<li>Bypass: the repository Admin role and the org automation App only</li>
 </ol>
 <p>Rulesets are managed via the GitHub API or the repository settings UI. When
 creating or updating rulesets, verify the configuration by checking an open PR
