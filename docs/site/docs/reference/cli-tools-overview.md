@@ -588,7 +588,7 @@ to `0.2.0` under `^0.1.3`).
 | Source | `vergil_tooling.bin.vrg_version` |
 | Args | `show [--major-minor] [--ref REF]`, `bump [{patch,minor,major}]` |
 | Preconditions | Run from the repo root; `bump` in a Python or Rust repo needs a running container runtime (a TypeScript repo does not) |
-| Failure mode | An unreadable version raises an uncaught error; for a TypeScript repo's `package.json` or `package-lock.json`, its message names the fix |
+| Failure mode | An expected failure (a missing `VERSION`, a missing or invalid `vergil.toml`, a language version file that disagrees with `VERSION`, a `Cargo.toml` with no version, a TypeScript repo's `package.json` or `package-lock.json` problem, a failed `git show` or lock command) is one line on stderr, `vrg-version: <message>`, and exit 1, not a traceback; for `package.json` or `package-lock.json`, the message names the fix. Any other error keeps its traceback |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
