@@ -1957,13 +1957,24 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 - **A commit with no PR** shows `PROBLEM` in the PR column and `-` for
   BRANCH and TYPE, with its commit date and subject, and a
   `PROBLEM: <sha> reached develop without a PR` note after the table.
+- **A PR the trust layer does not accept** (a fork's, or one whose
+  author holds no role in `vrg-trusted-authors`) never classifies its
+  row: its title, head branch and labels are not read. It shows its
+  number, `-` for BRANCH, `untrusted` for TYPE, its merge time and its
+  commit's subject, and a `PROBLEM: #<n> is not a same-repo PR with a
+  trusted author; its title, branch and labels are not read` note after
+  the table. The skipped PR is reported on stderr, metadata only (counts
+  by cause under GitHub Actions).
 - **Nothing pending** prints `Nothing pending release: develop and main
   are level.` in place of the table.
 - **The summary line** counts the changes: dependency updates, release
   back-merges, automation PRs and other PRs, every bucket listed, plus
-  `<n> PROBLEM: commits with no PR` only when there are some.
+  `<n> PROBLEM: commits with no PR` and `<n> PROBLEM: not a same-repo
+  PR with a trusted author`, each only when there are some.
 - **A lookup that fails or is incomplete** (an API error, a missing
-  branch, a truncated answer) is an error, never a partial list: the
+  branch, a truncated answer, the trusted authors failing to load, or a
+  PR whose author or head repository cannot be read) is an error, never
+  a partial list: the
   section prints its heading, with no release line, and
   `ERROR: pending release: <reason>`
   alone. The rest of the output still prints, then the command exits 1.

@@ -266,6 +266,7 @@ query($owner: String!, $name: String!, $branch: String!, $after: String) {{
       {_PAGE_INFO}
       nodes {{
         number url title headRefName headRefOid baseRefName state createdAt author {_ACTOR}
+        mergeCommit {{ oid }}
         {SAME_REPO_FIELDS}
       }}
     }}
@@ -440,7 +441,8 @@ class PRRef:
 
     *head* is the branch name, *head_oid* the head commit and *base* the
     branch the PR merges into; *state* is GraphQL's ``OPEN``, ``CLOSED`` or
-    ``MERGED``.
+    ``MERGED``. *merge_oid* is a merged PR's merge commit, ``None`` while
+    it has none.
     """
 
     number: int
@@ -451,6 +453,7 @@ class PRRef:
     base: str
     author_role: Role
     state: str
+    merge_oid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1291,7 +1294,16 @@ def _branch_pr(
         base=_text(pr, "baseRefName", call, what),
         author_role=judgement.role,
         state=_text(pr, "state", call, what),
+        merge_oid=_merge_oid(pr, call, what),
     )
+
+
+def _merge_oid(pr: Mapping[str, Any], call: str, what: str) -> str | None:
+    """The oid of *pr*'s ``mergeCommit``, or ``None`` when GraphQL gives it none."""
+    merge = _get(pr, "mergeCommit", call, what)
+    if merge is None:
+        return None
+    return _text(_obj(merge, call, f"the merge commit of {what}"), "oid", call, what)
 
 
 def prs_for_branch(

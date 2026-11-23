@@ -959,6 +959,7 @@ def _pr(
     fork: bool = False,
     title: str = "release 1.2.3",
     state: str = "OPEN",
+    merge: str | None = None,
 ) -> dict[str, Any]:
     return {
         "number": number,
@@ -970,6 +971,7 @@ def _pr(
         "state": state,
         "createdAt": CREATED,
         "author": author,
+        "mergeCommit": None if merge is None else {"oid": merge},
         "isCrossRepository": fork,
         "headRepositoryOwner": {"login": "mallory" if fork else ORG},
         "headRepository": {"name": "widgets"},
@@ -1495,6 +1497,14 @@ def test_prs_for_branch_state_filter(answer: Any, state: str, states: str) -> No
     assert f"pullRequests(headRefName: $branch, {states}first: 100" in query
 
 
+def test_prs_for_branch_gives_a_merged_prs_merge_commit(answer: Any) -> None:
+    query = trust._BRANCH_QUERIES["merged"]
+    answer({query: [_prs([_pr(5, state="MERGED", merge="m" * 40)])]})
+    found, _ = _branch(state="merged")
+    assert found[0].merge_oid == "m" * 40
+    assert "mergeCommit { oid }" in query
+
+
 def test_prs_for_branch_pages(answer: Any) -> None:
     query = trust._BRANCH_QUERIES["all"]
     calls = answer({query: [_prs([_pr(5)], cursor="p1"), _prs([_pr(6, fork=True)])]}).calls
@@ -1531,6 +1541,21 @@ def test_prs_for_branch_loads_configured_authors(
         ),
         pytest.param(_prs([{**_pr(5), "headRefOid": ""}]), "no usable headRefOid", id="no-oid"),
         pytest.param(_prs([{**_pr(5), "baseRefName": ""}]), "no usable baseRefName", id="no-base"),
+        pytest.param(
+            _prs([{k: v for k, v in _pr(5).items() if k != "mergeCommit"}]),
+            "PR 5 has no mergeCommit",
+            id="no-merge-commit",
+        ),
+        pytest.param(
+            _prs([{**_pr(5), "mergeCommit": "x"}]),
+            "the merge commit of PR 5 is missing or not an object",
+            id="merge-commit-not-object",
+        ),
+        pytest.param(
+            _prs([{**_pr(5), "mergeCommit": {"oid": ""}}]),
+            "no usable oid",
+            id="merge-commit-no-oid",
+        ),
         pytest.param(_prs(["x"]), "not an object", id="not-object"),
     ],
 )

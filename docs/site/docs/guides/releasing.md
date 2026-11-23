@@ -490,7 +490,12 @@ warning naming the identity and what it did, never reads the state
 block, and rebuilds the release from what GitHub and git record about
 it instead:
 
-- **Its release PR,** `release/X.Y.Z` into `main`, must be merged. A
+- **Its release PR,** `release/X.Y.Z` into `main`, must be merged. It
+  and the back-merge PR are found through the trust layer: only a
+  same-repo PR whose author holds a role in `vrg-trusted-authors`
+  counts, so a fork PR or an outsider's PR on a branch of the same name
+  never stands in for either, and each one left out is reported on
+  stderr, metadata only. A read the layer cannot complete refuses. A
   release whose release PR never merged left nothing on `main`, so
   there is nothing to supersede: the run refuses and says to close the
   release PR and the tracking issue by hand, delete `release/X.Y.Z`
@@ -1186,10 +1191,14 @@ Follow-ups move to their own issues.
 
 The issue list is the union of the closing references of every PR in
 `main..<cut>` whose head branch starts `feature/`, a batch PR included.
-Release back-merges, dependency updates, automation PRs and commits
-with no PR contribute none, and a closing reference to an issue in
-another repo is ignored. Each issue is listed once, by number, with
-every PR that closes it.
+A PR's head branch is read only when the trust layer accepts the PR: a
+same-repo PR whose author holds a role in `vrg-trusted-authors`. A fork
+PR, or one an outsider opened, is an `untrusted` row of the Contents
+table, by its commit subject, and is reported on stderr, metadata only.
+Release back-merges, dependency updates, automation PRs, untrusted PRs
+and commits with no PR contribute none, and a closing reference to an
+issue in another repo is ignored. Each issue is listed once, by number,
+with every PR that closes it.
 
 Only a trusted closing reference counts:
 

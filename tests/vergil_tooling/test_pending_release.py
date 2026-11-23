@@ -71,6 +71,16 @@ def _linear(shas: list[str], **subjects: str) -> list[dict[str, Any]]:
     return commits
 
 
+_HUMAN_ACTOR = {"__typename": "User", "login": "human"}
+
+
+@pytest.fixture(autouse=True)
+def _trusted_authors() -> Any:
+    """Every read loads the test's trusted authors; a test may patch the loader again."""
+    with patch("vergil_tooling.lib.pending_release.load_trusted_authors", return_value=_TRUSTED):
+        yield
+
+
 def _pr(
     number: int,
     title: str = "feat: a thing",
@@ -81,7 +91,10 @@ def _pr(
     merged: bool = True,
     labels: tuple[str, ...] = (),
     label_total: int | None = None,
+    author: dict[str, str] | None = _HUMAN_ACTOR,
+    fork: bool = False,
 ) -> dict[str, Any]:
+    """A merged PR node; by default a same-repo PR the trusted human opened."""
     return {
         "number": number,
         "title": title,
@@ -89,6 +102,11 @@ def _pr(
         "mergedAt": merged_at,
         "baseRefName": base,
         "merged": merged,
+        "author": author,
+        "createdAt": "2026-11-01T09:30:00Z",
+        "isCrossRepository": fork,
+        "headRepositoryOwner": {"login": "mallory" if fork else "o"},
+        "headRepository": {"name": "r"},
         "labels": {
             "totalCount": len(labels) if label_total is None else label_total,
             "nodes": [{"name": name} for name in labels],
@@ -411,6 +429,147 @@ def test_unmerged_or_other_base_pr_ignored() -> None:
     result, _, _ = _gather(_linear([sha]), nodes)
     (change,) = result.changes
     assert change.kind is ChangeKind.NO_PR
+
+
+# --- only PRs the trust layer accepts classify a row (GHSA-97c7-wmr4-gm37) ---
+
+_OUTSIDER = {"__typename": "User", "login": "mallory"}
+_SPAM_TITLE = "feat: SPAM-MARKER-TEXT [here](https://example.invalid/a)"
+
+
+@pytest.mark.parametrize(
+    ("node", "field_cause"),
+    [
+        (
+            _pr(5, _SPAM_TITLE, "release/post-9.9.9", fork=True, labels=("dependency-update",)),
+            "on head (cross-repository)",
+        ),
+        (
+            _pr(5, _SPAM_TITLE, "automation/x/1", author=_OUTSIDER),
+            "on author (untrusted)",
+        ),
+        (
+            _pr(5, _SPAM_TITLE, "deps/update-1", author={"__typename": "User", "login": "agent"}),
+            "on author (wrong-type)",
+        ),
+        (_pr(5, _SPAM_TITLE, "feature/1-x", author=None), "on author (deleted)"),
+    ],
+    ids=["fork", "outsider", "impostor", "deleted"],
+)
+def test_a_pr_the_layer_does_not_accept_is_an_untrusted_row(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    node: dict[str, Any],
+    field_cause: str,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    sha = _sha(1)
+    commits = [_commit(sha, [_MAIN], "the commit subject")]
+    result, _, _ = _gather(commits, {sha: _assoc(node)})
+    (change,) = result.changes
+    assert change.kind is ChangeKind.UNTRUSTED
+    assert change.pr_number == 5
+    assert change.branch is None
+    assert change.title == "the commit subject"
+    assert change.type_label == "untrusted"
+    assert change.merged_ts == _ts("2026-11-12T10:00:00Z")
+    err = capsys.readouterr().err
+    assert err.startswith("skipped untrusted content: o/r#5 pr ")
+    assert err.endswith(f"{field_cause}\n")
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_untrusted_skips_are_counts_only_under_actions(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    sha = _sha(1)
+    _gather(_linear([sha]), {sha: _assoc(_pr(5, fork=True))})
+    assert capsys.readouterr().err == "skipped 1 untrusted item(s) (cross-repository: 1)\n"
+
+
+def test_an_untrusted_batch_pr_is_one_row_reported_once(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    shas = [_sha(1), _sha(2)]
+    nodes = {sha: _assoc(_pr(5, author=_OUTSIDER)) for sha in shas}
+    result, _, _ = _gather(_linear(shas), nodes)
+    (change,) = result.changes
+    assert (change.kind, change.shas) == (ChangeKind.UNTRUSTED, tuple(shas))
+    assert capsys.readouterr().err.count("skipped untrusted content") == 1
+
+
+def test_an_accepted_pr_wins_over_an_untrusted_one_on_the_same_commit() -> None:
+    sha = _sha(1)
+    nodes = {sha: _assoc(_pr(6, fork=True, branch="release/post-1"), _pr(5, "fix: a"))}
+    result, _, _ = _gather(_linear([sha]), nodes)
+    (change,) = result.changes
+    assert (change.pr_number, change.kind, change.type_label) == (5, ChangeKind.OTHER, "fix")
+
+
+def test_two_untrusted_merged_prs_for_one_commit_raise() -> None:
+    sha = _sha(1)
+    nodes = {sha: _assoc(_pr(5, fork=True), _pr(6, author=_OUTSIDER))}
+    with pytest.raises(PendingReleaseError, match="has 2 merged PRs into develop: #5, #6"):
+        _gather(_linear([sha]), nodes)
+
+
+def test_an_automation_pr_by_the_automation_app_is_accepted() -> None:
+    sha = _sha(1)
+    bot = {"__typename": "Bot", "login": "o-automation"}
+    nodes = {sha: _assoc(_pr(5, "chore: sync", "automation/sync/1", author=bot))}
+    result, _, _ = _gather(_linear([sha]), nodes)
+    assert result.changes[0].kind is ChangeKind.AUTOMATION
+
+
+def test_pending_release_query_reads_the_author_and_head_repository() -> None:
+    sha = _sha(1)
+    _, _, graphql = _gather(_linear([sha]), {sha: _assoc(_pr(1))})
+    assert "author { __typename login } createdAt" in graphql.queries[0]
+    assert trust.SAME_REPO_FIELDS in graphql.queries[0]
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"isCrossRepository": None}, "PR 5 has no isCrossRepository flag"),
+        ({"author": {"login": "human"}}, "cannot read who wrote the content"),
+    ],
+    ids=["no-flag", "no-typename"],
+)
+def test_a_pr_the_layer_cannot_judge_raises(change: dict[str, Any], match: str) -> None:
+    sha = _sha(1)
+    with pytest.raises(PendingReleaseError, match=match):
+        _gather(_linear([sha]), {sha: _assoc({**_pr(5), **change})})
+
+
+def test_pending_release_trusted_authors_failure_raises() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.pending_release.load_trusted_authors",
+            side_effect=TrustedAuthorsNotConfiguredError("not configured"),
+        ),
+        pytest.raises(PendingReleaseError, match="could not load the trusted authors"),
+    ):
+        gather_pending_release(integration="develop")
+
+
+def test_an_untrusted_feature_pr_adds_nothing_to_a_pinned_issue_list(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    s1 = _sha(1)
+    commits = _linear([s1])
+    fork = {**_feature_pr(1, 10), "isCrossRepository": True}
+    fork["headRepositoryOwner"] = {"login": "mallory"}
+    with (
+        patch("vergil_tooling.lib.git.remote_url", return_value=_URL),
+        patch("vergil_tooling.lib.github.read_json", return_value=_page(commits, 1)),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_GraphQL({s1: _assoc(fork)})),
+    ):
+        assert gather_issue_list(base=_MAIN, head=s1) == ()
+    assert "o/r#1 pr human at" in capsys.readouterr().err
 
 
 def test_nothing_pending() -> None:
@@ -916,18 +1075,23 @@ def test_issue_list_excludes_earlier_untrusted_edit(capsys: pytest.CaptureFixtur
 
 
 def test_issue_list_excludes_untrusted_or_deleted_author(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     s1, s2 = _sha(1), _sha(2)
     nodes = {
         s1: _assoc(_feature_pr(1, 10, author="mallory")),
         s2: _assoc(_feature_pr(2, 11, author=None)),
     }
-    _, issues, _ = _contents(_linear([s1, s2]), nodes)
+    pending, issues, _ = _contents(_linear([s1, s2]), nodes)
     assert issues == ()
+    assert [(c.pr_number, c.kind, c.branch) for c in pending.changes] == [
+        (1, ChangeKind.UNTRUSTED, None),
+        (2, ChangeKind.UNTRUSTED, None),
+    ]
     err = capsys.readouterr().err
-    assert "untrusted mallory" in err
-    assert "untrusted (no login)" in err
+    assert f"skipped untrusted content: o/r#1 pr mallory at {_CREATED} on author (untrusted)" in err
+    assert f"o/r#2 pr a deleted account at {_CREATED} on author (deleted)" in err
 
 
 def test_issue_list_excludes_untrusted_manual_link(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1072,7 +1236,7 @@ def test_closing_refs_reject_user_named_like_app() -> None:
 def test_closing_refs_never_parse_an_untrusted_body(capsys: pytest.CaptureFixture[str]) -> None:
     s1 = _sha(1)
     body = "Closes #10\nSPAM-MARKER-TEXT [here](https://example.invalid/a)"
-    nodes = {s1: _assoc(_feature_pr(1, 10, body=body, author="mallory"))}
+    nodes = {s1: _assoc(_feature_pr(1, 10, body=body, editor="mallory"))}
     _, issues, _ = _contents(_linear([s1]), nodes)
     assert issues == ()
     err = capsys.readouterr().err
@@ -1149,7 +1313,7 @@ def test_issue_list_of_a_pinned_range_warns_on_an_uncounted_reference(
         patch("vergil_tooling.lib.github.read_json", return_value=_page(commits, 1)),
         patch(
             "vergil_tooling.lib.github.graphql",
-            side_effect=_GraphQL({s1: _assoc(_feature_pr(1, 10, author="mallory"))}),
+            side_effect=_GraphQL({s1: _assoc(_feature_pr(1, 10, editor="mallory"))}),
         ),
     ):
         assert gather_issue_list(base=_MAIN, head=s1) == ()
