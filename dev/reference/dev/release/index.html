@@ -18452,6 +18452,13 @@ the PRs, the tag and the CD runs it produced. <code>--resume</code> checks those
 facts against GitHub and git, then runs only the stages not recorded
 done; see
 <a href="../../../guides/releasing/#resuming-a-release">Resuming a release</a>.</p>
+<p><code>prepare</code> and <code>back-merge-bump</code> adopt an existing release or back-merge
+PR by its branch (<code>release/X.Y.Z</code>, <code>release/post-X.Y.Z</code>), so a re-run
+never opens a second one. Only a same-repo PR with a trusted author is
+adopted: a fork PR on the same branch name, or a PR whose author holds
+no role, is reported on stderr, metadata only, and never adopted or
+merged. Several open PRs on the branch, or a lookup that cannot
+complete, stop the stage, naming them.</p>
 <p>Once every earlier stage has succeeded, <code>release-records</code> posts a
 <code>Released:</code> record, as the human running the release, on each issue in
 the issue list that has no counting record yet. A record counts only
@@ -18583,7 +18590,10 @@ release takes <code>X.Y.(Z+1)</code> unless <code>minor</code> or <code>major</c
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a
 comment, any such PR whose linked fix task was closed as completed (the
-update landed through the fix PR), and deletes its head branch. A failed
+update landed through the fix PR), and deletes its head branch. The
+branch is deleted only when the PR is a same-repo PR with a trusted
+author: a fork PR's head is in the fork, so the branch of that name here
+is kept, and the fork PR is reported on stderr, metadata only. A failed
 branch delete is reported, not fatal. The <code>Fix task:</code> link counts only
 from a trusted PR body, and a completed close counts only when a trusted
 identity closed the fix task: a close by anyone else stops the release

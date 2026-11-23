@@ -19793,7 +19793,10 @@ uncommitted changes that are not a partial bump, or a local branch whose
 tip differs from <code>origin</code>'s. Remove or reconcile the branch, then resume.</p>
 <p>An open back-merge PR from the earlier run is adopted and merged, and a
 merged one is skipped. A PR closed without merging is not adopted: the
-resume opens a new PR from the reused branch.</p>
+resume opens a new PR from the reused branch. Here, and when <code>prepare</code>
+adopts the release PR, only a same-repo PR with a trusted author is
+adopted: a fork PR on the branch's name is reported on stderr and never
+adopted or merged.</p>
 <p>Within a run, <code>prepare</code>, <code>back-merge-bump</code> and the dependency update never
 retry a failed <code>gh pr create</code> blindly, since GitHub can open the PR and
 still return an error. After a failed attempt the stage looks for an open
@@ -20149,8 +20152,10 @@ labelled <code>dependency-update</code>. For each one:</p>
   merged, so preflight comments on the deps PR, closes it, deletes its
   <code>deps/update-&lt;version&gt;</code> branch, and records it in the <code>prepare</code> comment
   on the tracking issue. GitHub's delete-on-merge setting never applies
-  to a PR closed without merging, so preflight deletes the branch itself.
-  If that delete fails, the PR stays closed and the gate still clears,
+  to a PR closed without merging, so preflight deletes the branch itself,
+  but only for a same-repo PR with a trusted author: a fork PR's head is
+  in the fork, so the branch of that name here is kept and the fork PR
+  is reported on stderr. If that delete fails, the PR stays closed and the gate still clears,
   but the release prints a warning and the <code>prepare</code> comment names the
   branch to delete by hand.</li>
 <li><strong>The fix task is still open, the PR has no fix task, or the fix task
