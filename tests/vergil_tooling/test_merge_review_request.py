@@ -1704,6 +1704,7 @@ def _pr_node(
         "title": title,
         "headRefName": head,
         "headRefOid": "f" * 40,
+        "baseRefName": "develop",
         "state": state,
         "createdAt": _CREATED,
         "author": author,
