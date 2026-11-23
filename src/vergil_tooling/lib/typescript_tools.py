@@ -485,7 +485,8 @@ def check_prettier_single_source(repo_root: Path) -> list[str]:
     ``"prettier"`` key in ``package.json``, or any ``.prettierrc``,
     ``.prettierrc.*`` or ``prettier.config.*`` in the tree other than the
     root ``.prettierrc.json``. What ``.gitignore`` excludes is not searched,
-    and neither is ``node_modules``.
+    and neither is ``node_modules``. A ``package.json`` that cannot be parsed is
+    reported as :func:`read_package_json` words it, as the other checks do.
     """
     fix = f"Fix: delete it; the repo's one Prettier config is {_PRETTIER_CONFIG}"
     problems: list[str] = []
@@ -495,7 +496,9 @@ def check_prettier_single_source(repo_root: Path) -> list[str]:
         # reports it missing, once (#4992).
         manifest = read_package_json(package_json) if package_json.exists() else {}
     except PackageJsonError as exc:
-        problems.append(f'cannot check package.json for a "prettier" key: {exc}')
+        # The same text as the other checks' report of it, so the pre-gate
+        # lists an unparsable package.json once (#5020).
+        problems.append(str(exc))
     else:
         if "prettier" in manifest:
             problems.append(f'package.json: has a "prettier" key, a second Prettier config. {fix}')
