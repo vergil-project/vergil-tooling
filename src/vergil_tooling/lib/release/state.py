@@ -82,6 +82,10 @@ class StateBlock:
     without_deps: bool
     done: tuple[str, ...]
     install_done: bool
+    # The release and commit the install reported installing (spec §4.9),
+    # both None when it reported neither or has not run.
+    install_version: str | None
+    install_commit: str | None
     records_posted: tuple[str, ...]
     # The X.Y.Z of the release this one supersedes (spec §4.7), and the refs
     # of the issues absorbed from it, whose records say so (spec §4.9).
@@ -129,6 +133,8 @@ def initial_state(  # noqa: PLR0913 - the state's creation fields, each named
         without_deps=without_deps,
         done=(),
         install_done=False,
+        install_version=None,
+        install_commit=None,
         records_posted=(),
         supersedes=supersedes,
         absorbed=absorbed,
@@ -303,6 +309,8 @@ def parse_state(body: str) -> StateBlock:
         without_deps=_boolean("without_deps", data["without_deps"]),
         done=_strings("done", data["done"]),
         install_done=_boolean("install_done", data["install_done"]),
+        install_version=_optional_string("install_version", data["install_version"]),
+        install_commit=_optional_string("install_commit", data["install_commit"]),
         records_posted=_strings("records_posted", data["records_posted"]),
         supersedes=_optional_string("supersedes", data["supersedes"]),
         absorbed=_strings("absorbed", data["absorbed"]),

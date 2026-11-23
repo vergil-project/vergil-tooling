@@ -215,8 +215,19 @@ def _record_done(ctx: ReleaseContext, name: str) -> None:
             # (spec §4.9); with none configured it is done but did not run.
             install_done=current.install_done
             or (name == "install" and ctx.install_commands is not None),
+            # What the install reported installing, for the records' Install
+            # line (spec §4.9); one that reported nothing leaves them as they are.
+            install_version=_reported(ctx, name, 0) or current.install_version,
+            install_commit=_reported(ctx, name, 1) or current.install_commit,
         ),
     )
+
+
+def _reported(ctx: ReleaseContext, name: str, index: int) -> str | None:
+    """Field *index* of what stage *name*'s install reported, or None for any other stage."""
+    if name != "install" or ctx.install_reported is None:
+        return None
+    return ctx.install_reported[index]
 
 
 def _record_failure(ctx: ReleaseContext, name: str) -> None:

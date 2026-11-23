@@ -1234,7 +1234,7 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 
 - Release: https://github.com/vergil-project/vergil-tooling/releases/tag/v2.1.340
 - Closed by: #4840 (merge commit 1a2b3c4)
-- Install: ran (`[publish].install`)
+- Install: ran — installed v2.1.340 (commit fab2581)
 ```
 
 - The date is the day the GitHub Release was published, and each closing
@@ -1242,6 +1242,12 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 - The install line reads `ran` when the repo configures
   `[publish].install` and `none configured` when it does not; a record
   in a repo with no install attests the release and its publish only.
+  When the install's output reports what it installed, in a line
+  holding `installed vX.Y.Z (commit <sha>)` as `vrg-tooling-install`
+  prints, the `install` stage records that release and commit in the
+  state block (`install_version` and `install_commit`), and the line
+  names them: `ran — installed v2.1.340 (commit fab2581)`. An install
+  that reports neither keeps the plain `ran (`[publish].install`)`.
   The stage refuses while the state block does not record `install`
   done.
 - Every issue in the list gets its record, whatever its state: closed as
