@@ -409,6 +409,79 @@ def test_bump_unwritable_go_version_file_fails_and_restores(tmp_path: Path) -> N
     assert version_go.read_text() == 'package pkg\n\nVersion = "1.0.5"\n'
 
 
+_UNWRITTEN = r"not written as {}, the line the bump rewrites\. Fix: write it exactly as {}, then"
+
+
+@pytest.mark.parametrize(
+    ("language", "rel", "text", "match"),
+    [
+        (
+            "python",
+            "pyproject.toml",
+            '[project]\nname = "example"\nversion="1.0.0"\n',
+            r"^cannot bump pyproject\.toml from 1\.0\.0 to 1\.0\.1: its version is "
+            + _UNWRITTEN.format('version = "1.0.0"', 'version = "1.0.0"'),
+        ),
+        (
+            "python",
+            "pyproject.toml",
+            '[tool.example]\nversion = "1.0.0"\n\n[project]\nname = "example"\nversion="1.0.0"\n',
+            r"^cannot bump pyproject\.toml from 1\.0\.0 to 1\.0\.1: ",
+        ),
+        (
+            "python",
+            "pyproject.toml",
+            '[project]\nname = "example"\nversion = "0.9.0"\n',
+            r"^VERSION contains 1\.0\.0 but pyproject\.toml contains 0\.9\.0\. "
+            r'Fix: set it to the VERSION file\'s 1\.0\.0 as version = "1\.0\.0", then bump again$',
+        ),
+        (
+            "go",
+            "version.go",
+            'package pkg\n\nVersion   =   "1.0.0"\n',
+            r"^cannot bump version\.go from 1\.0\.0 to 1\.0\.1: its version is "
+            + _UNWRITTEN.format('Version = "1.0.0"', 'Version = "1.0.0"'),
+        ),
+        (
+            "go",
+            "version.go",
+            'package pkg\n\nVersion = "0.9.0"\n',
+            r"^VERSION contains 1\.0\.0 but version\.go contains 0\.9\.0\. Fix: ",
+        ),
+        (
+            None,
+            ".claude-plugin/plugin.json",
+            '{\n  "name": "example",\n  "version":"1.0.0"\n}\n',
+            r"^cannot bump plugin\.json from 1\.0\.0 to 1\.0\.1: its version is "
+            + _UNWRITTEN.format('"version": "1.0.0"', '"version": "1.0.0"'),
+        ),
+        (
+            None,
+            ".claude-plugin/plugin.json",
+            '{\n  "name": "example",\n  "version": "0.9.0"\n}\n',
+            r"^VERSION contains 1\.0\.0 but plugin\.json contains 0\.9\.0\. Fix: ",
+        ),
+    ],
+)
+def test_bump_unchanged_version_file_fails_and_restores(
+    tmp_path: Path, language: str | None, rel: str, text: str, match: str
+) -> None:
+    """A text replace that leaves a version file's version as it was fails the bump (#5052)."""
+    _write_toml(tmp_path, language)
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    version_file = tmp_path / rel
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(text)
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run") as mock_run,
+        pytest.raises(VersionSyncError, match=match),
+    ):
+        bump(tmp_path)
+    mock_run.assert_not_called()
+    assert (tmp_path / "VERSION").read_text() == "1.0.0\n"
+    assert version_file.read_text() == text
+
+
 def test_bump_skips_nonexistent_language_file(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
     (tmp_path / "VERSION").write_text("1.0.0\n")

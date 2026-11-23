@@ -729,16 +729,48 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
 
     if language == "rust":
         text = _rewrite_cargo_version(text, old, new)
-    elif language == "python":
-        text = text.replace(f'version = "{old}"', f'version = "{new}"', 1)
-    elif language == "go":
-        text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
-    elif language == "claude-plugin":
-        text = text.replace(f'"version": "{old}"', f'"version": "{new}"', 1)
+    elif language in _VERSION_LINES:
+        line = _VERSION_LINES[language]
+        text = text.replace(line.format(old), line.format(new), 1)
+        _check_version_rewrite(text, version_file.name, language, old, new)
     else:
         text = new + "\n"
 
     _write_version_text(version_file, text)
+
+
+# The exact version line the text replace in :func:`_write_version` rewrites,
+# by version file format.
+_VERSION_LINES: dict[str, str] = {
+    "python": 'version = "{}"',
+    "go": 'Version = "{}"',
+    "claude-plugin": '"version": "{}"',
+}
+
+
+def _check_version_rewrite(text: str, name: str, language: str, old: str, new: str) -> None:
+    """Check that *text*, the rewritten version file *name*, holds the version *new*.
+
+    A text replace that matches nothing leaves the file as it was, so the
+    bump would report success while the file and VERSION disagree (#5052).
+    Raises :class:`VersionSyncError` naming the file and the fix otherwise.
+    """
+    found = _read_version(text, language, name)
+    if found == new:
+        return
+    expected = _VERSION_LINES[language].format(old)
+    if found == old:
+        msg = (
+            f"cannot bump {name} from {old} to {new}: its version is not written as "
+            f"{expected}, the line the bump rewrites. "
+            f"Fix: write it exactly as {expected}, then bump again"
+        )
+    else:
+        msg = (
+            f"VERSION contains {old} but {name} contains {found}. "
+            f"Fix: set it to the VERSION file's {old} as {expected}, then bump again"
+        )
+    raise VersionSyncError(msg)
 
 
 def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
