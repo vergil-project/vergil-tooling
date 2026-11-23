@@ -1634,6 +1634,70 @@ def test_read_reviews_malformed_raises(answer: Any, answers: Any, match: str) ->
     assert "SPAM-MARKER-TEXT" not in str(info.value)
 
 
+# --- read_review_edits ----------------------------------------------------------------
+
+
+def test_read_review_edits_lists_every_untrusted_edit(answer: Any) -> None:
+    review_edits = _edits([HUMAN, OUTSIDER, DELETED])
+    review = _review("1", AGENT, editor=HUMAN, edited=True, edits=review_edits)
+    inline = _review_comment("11", HUMAN, editor=HUMAN, edited=True, edits=_edits([OUTSIDER]))
+    spam = _review_comment("12", OUTSIDER, SPAM, editor=OUTSIDER, edited=True)
+    spam["userContentEdits"] = _edits([OUTSIDER])
+    outsider_review = _review("2", OUTSIDER, SPAM, editor=OUTSIDER, edited=True)
+    outsider_review["userContentEdits"] = _edits([OUTSIDER])
+    answer(_review_answers((review, [inline, spam]), (outsider_review, [])))
+    content, edits = trust.read_review_edits(REPO, 7, authors=AUTHORS)
+    # read_reviews' judgement: the first untrusted editor of each, the outsider's own.
+    assert [(s.kind, s.field) for s in content.skipped] == [
+        ("edit", "review 1"),
+        ("review", "review 2"),
+        ("edit", "review comment 11"),
+        ("review-comment", "review comment 12"),
+    ]
+    # Every untrusted edit of trusted reviews and inline comments; none of the outsider's own.
+    assert [(s.field, s.login, s.cause) for s in edits] == [
+        ("review 1", "drive-by", trust.UNTRUSTED),
+        ("review 1", None, trust.DELETED),
+        ("review comment 11", "drive-by", trust.UNTRUSTED),
+    ]
+    assert all(s.kind == "edit" and s.at == EDITED and s.number == 7 for s in edits)
+
+
+def test_read_review_edits_judges_the_last_edit_and_every_page(answer: Any) -> None:
+    # The last edit, by an impostor, is listed; the next page of edits is read too.
+    impostor = {"__typename": "User", "login": "the-agent"}
+    review = _review("1", editor=impostor, edited=True, edits=_edits([HUMAN], cursor="re1"))
+    answer(
+        {
+            **_review_answers((review, [])),
+            trust._REVIEW_EDITS_QUERY: [{"node": {"userContentEdits": _edits([OUTSIDER])}}],
+        }
+    )
+    _, edits = trust.read_review_edits(REPO, 7, authors=AUTHORS)
+    assert [(s.login, s.cause) for s in edits] == [
+        ("the-agent", trust.WRONG_TYPE),
+        ("drive-by", trust.UNTRUSTED),
+    ]
+
+
+def test_read_review_edits_roles_and_loaded_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An agent's review edited by the human: with only the human accepted, the
+    # review's author holds no accepted role, so its edits are not listed.
+    review = _review("1", AGENT, editor=HUMAN, edited=True, edits=_edits([HUMAN]))
+    answer(_review_answers((review, []), (_review("2", HUMAN, editor=AGENT, edited=True), [])))
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    content, edits = trust.read_review_edits(REPO, 7, roles=frozenset({Role.HUMAN}))
+    assert [(s.kind, s.field, s.cause) for s in content.skipped] == [
+        ("review", "review 1", trust.NOT_ACCEPTED),
+        ("edit", "review 2", trust.NOT_ACCEPTED),
+    ]
+    assert [(s.field, s.login, s.cause) for s in edits] == [
+        ("review 2", "the-agent", trust.NOT_ACCEPTED)
+    ]
+
+
 # --- query cost ---------------------------------------------------------------------
 
 # GitHub refuses a query whose worst case exceeds this many nodes: the product
@@ -1674,6 +1738,7 @@ def test_worst_case_nodes_counts_nesting() -> None:
         trust._COMMENTS_QUERY,
         trust._COMMENT_EDITS_QUERY,
         trust._EVENTS_QUERY,
+        trust._EVENTS_WITH_RENAMES_QUERY,
         trust._COMMIT_QUERY,
         *trust._BRANCH_QUERIES.values(),
         trust._REVIEWS_QUERY,
@@ -1681,6 +1746,7 @@ def test_worst_case_nodes_counts_nesting() -> None:
         trust._REVIEW_COMMENTS_QUERY,
         trust._REVIEW_COMMENT_EDITS_QUERY,
         *trust._SEARCH_QUERIES.values(),
+        *trust._CLOSE_SEARCH_QUERIES.values(),
         *trust._LIST_QUERIES.values(),
         trust._RENAMES_QUERY,
     ],

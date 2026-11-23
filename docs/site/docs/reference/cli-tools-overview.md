@@ -1727,7 +1727,8 @@ separate read-only mode, which `hoshin start` runs. Across the repos of every
 org listed in the Vergil configuration (an `[orgs.<org>]` stanza), or of
 `--org` alone, it lists what untrusted accounts did at or after `--since`:
 issues and PRs they opened, their comments, reviews and inline review
-comments, their edits to trusted bodies and comments, their renames of
+comments, their edits to trusted bodies, comments, reviews and inline review
+comments (every edit, not only the latest), their renames of
 trusted items, and their closes and reopens. Edits, renames and closes come
 first, under **Possible tampering**, then the rest, each newest first, one
 line per item:
