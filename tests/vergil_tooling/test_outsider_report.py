@@ -96,13 +96,21 @@ class Item:
     comments: list[Any] = field(default_factory=list)
     events: list[tuple[str, Any, str]] = field(default_factory=list)
     reviews: list[tuple[Any, list[Any]]] = field(default_factory=list)
+    # The body's whole edit history, newest first, in place of one *editor*.
+    history: list[tuple[Any, str]] | None = None
 
     @property
     def kind(self) -> str:
         return "issue" if self.typename == "Issue" else "pr"
 
     def body_fields(self) -> dict[str, Any]:
-        return _content(self.author, self.body, self.created, self.editor, self.edited_at)
+        fields = _content(self.author, self.body, self.created, self.editor, self.edited_at)
+        if self.history:
+            fields["editor"], fields["lastEditedAt"] = self.history[0]
+            fields["userContentEdits"] = _page(
+                [{"editedAt": at, "editor": editor} for editor, at in self.history]
+            )
+        return fields
 
     def hit(self) -> dict[str, Any]:
         path = "issues" if self.kind == "issue" else "pull"
@@ -150,10 +158,13 @@ class FakeGitHub:
                 "comments": _page(item.comments),
             }
             return {"repository": {"issueOrPullRequest": node}}
-        if query == trust._EVENTS_QUERY:
+        if query in (trust._EVENTS_QUERY, trust._EVENTS_WITH_RENAMES_QUERY):
+            events = list(item.events)
+            if query == trust._EVENTS_WITH_RENAMES_QUERY:
+                events += [("RenamedTitleEvent", actor, at) for actor, at in item.renames]
             nodes = [
                 {"__typename": typename, "actor": actor, "createdAt": at}
-                for typename, actor, at in item.events
+                for typename, actor, at in events
             ]
             node = {"__typename": item.typename, "timelineItems": _page(nodes)}
             return {"repository": {"issueOrPullRequest": node}}
@@ -308,6 +319,54 @@ def test_reopen_by_outsider_is_listed_not_tamper(fake: FakeGitHub) -> None:
     _hold(fake, Item(REPO, 15, events=[("ReopenedEvent", OUTSIDER, NEW)]))
     [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
     assert (item.kind, item.tamper) == ("reopen", False)
+
+
+def test_rename_after_an_old_body_edit_is_listed(fake: FakeGitHub) -> None:
+    # The search's judgement stops at the old body edit; the rename still counts.
+    _hold(fake, Item(REPO, 70, editor=OUTSIDER, edited_at=OLD, renames=[(OUTSIDER, NEW)]))
+    [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert (item.kind, item.at, item.tamper) == ("rename", NEW, True)
+
+
+def test_every_rename_is_judged(fake: FakeGitHub) -> None:
+    # Two untrusted renames, one before the window and one in it (oldest first).
+    _hold(fake, Item(REPO, 71, renames=[(OUTSIDER, OLD), (HUMAN, NEW), (IMPOSTOR, NEWER)]))
+    [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert (item.kind, item.login, item.at, item.cause) == (
+        "rename",
+        "the-agent",
+        NEWER,
+        trust.WRONG_TYPE,
+    )
+
+
+def test_every_body_edit_is_judged(fake: FakeGitHub) -> None:
+    # The last edit is trusted; two untrusted ones lie behind it, one in the window.
+    history = [(HUMAN, NEWEST), (OUTSIDER, NEW), (OUTSIDER, OLD)]
+    _hold(fake, Item(REPO, 72, history=history))
+    [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert (item.kind, item.at, item.url) == ("edit", NEW, f"https://github.com/{REPO}/issues/72")
+
+
+def test_every_comment_edit_is_judged(fake: FakeGitHub) -> None:
+    edited = comment(73, HUMAN, OLD, "a trusted comment", editor=HUMAN, edited_at=NEWEST)
+    edited["userContentEdits"] = _page(
+        [
+            {"editedAt": NEWEST, "editor": HUMAN},
+            {"editedAt": NEWER, "editor": OUTSIDER},
+            {"editedAt": OLD, "editor": OUTSIDER},
+        ]
+    )
+    _hold(fake, Item(REPO, 73, comments=[edited]))
+    [item] = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert (item.kind, item.at) == ("edit", NEWER)
+    assert item.url.endswith("#issuecomment-73")
+
+
+def test_outsider_renaming_own_issue_is_not_tamper(fake: FakeGitHub) -> None:
+    _hold(fake, Item(REPO, 74, author=OUTSIDER, created=NEW, renames=[(OUTSIDER, NEWER)]))
+    items = outsider_activity(ORG, since=SINCE, authors=AUTHORS)
+    assert [(i.kind, i.tamper) for i in items] == [("issue", False)]
 
 
 def test_other_events_are_not_listed(fake: FakeGitHub) -> None:

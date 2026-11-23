@@ -13,8 +13,10 @@ untrusted thing done since a time, newest first:
 Every trust decision is the trust layer's (:mod:`vergil_tooling.lib.trust`).
 The items come from a GitHub search of the org's issues and PRs updated since
 the time (:func:`trust.search_items`, which refuses a window GitHub's search
-would cut short), then each item's comments, reviews and close events are read
-in full through the layer. Each item is metadata and a link only, never the
+would cut short), then each item's body, comments, reviews, every edit, and
+every close, reopen and rename are read in full through the layer
+(:func:`trust.read_issue_edits`, :func:`trust.read_reviews`,
+:func:`trust.read_events`), so no untrusted act hides behind another. Each item is metadata and a link only, never the
 untrusted text. Nothing here writes to GitHub.
 """
 
@@ -41,7 +43,7 @@ EDIT = "edit"
 # An untrusted edit, rename or close changes trusted content or state.
 _TAMPER_KINDS = frozenset({EDIT, RENAME, CLOSE})
 
-_EVENT_KINDS = {"closed": CLOSE, "reopened": REOPEN}
+_EVENT_KINDS = {"closed": CLOSE, "reopened": REOPEN, "renamed": RENAME}
 
 _ITEM_KINDS: tuple[trust.ItemKind, ...] = ("issue", "pr")
 
@@ -116,30 +118,33 @@ def _url(item_url: str, field: str) -> str:
 
 
 def _from_skip(org: str, skip: trust.Skipped, item_url: str) -> OutsiderItem:
-    kind = skip.kind
-    if kind == "event" and skip.field == "title":
-        kind = RENAME
     return OutsiderItem(
         org=org,
         repo=skip.repo,
         number=skip.number,
-        kind=kind,
+        kind=skip.kind,
         login=skip.login,
         at=skip.at,
         url=_url(item_url, skip.field),
         cause=skip.cause,
-        tamper=kind in _TAMPER_KINDS,
+        tamper=skip.kind in _TAMPER_KINDS,
     )
 
 
 def _event_items(
-    org: str, repo: str, number: int, item_url: str, authors: TrustedAuthors
+    org: str,
+    repo: str,
+    number: int,
+    item_url: str,
+    authors: TrustedAuthors,
+    *,
+    trusted_item: bool,
 ) -> list[OutsiderItem]:
-    """The untrusted closes and reopens of *repo*#*number*."""
+    """Every untrusted close and reopen of *repo*#*number*, and rename of a *trusted_item*."""
     items: list[OutsiderItem] = []
-    for event in trust.read_events(repo, number):
+    for event in trust.read_events(repo, number, renames=True):
         kind = _EVENT_KINDS.get(event.kind)
-        if kind is None:
+        if kind is None or (kind == RENAME and not trusted_item):
             continue
         judgement = trust.role_of(event.actor, org=org, authors=authors)
         if judgement.cause is None:
@@ -163,11 +168,15 @@ def _event_items(
 
 def _search_window(
     org: str, since: str, kind: trust.ItemKind, authors: TrustedAuthors
-) -> tuple[list[tuple[str, int]], list[trust.Skipped]]:
-    """The org's items of *kind* updated since *since*, and the search's own skips."""
+) -> list[tuple[str, int]]:
+    """The org's items of *kind* updated since *since*, trusted or not.
+
+    The search only finds the items: its judgement of each stops at the first
+    untrusted thing, so each item is then read in full.
+    """
     hits, skipped = trust.search_items(f"org:{org} updated:>={since}", kind=kind, authors=authors)
     keys = {(hit.repo, hit.number) for hit in hits} | {(s.repo, s.number) for s in skipped}
-    return sorted(keys), skipped
+    return sorted(keys)
 
 
 def outsider_activity(
@@ -191,15 +200,15 @@ def outsider_activity(
     stamp = _stamp(start)
     found: set[OutsiderItem] = set()
     for kind in _ITEM_KINDS:
-        keys, search_skips = _search_window(org, stamp, kind, authors)
-        urls = {key: _item_url(*key, kind) for key in keys}
-        skips: list[trust.Skipped] = list(search_skips)
-        for repo, number in keys:
-            skips += trust.read_issue(repo, number, authors=authors).skipped
+        for repo, number in _search_window(org, stamp, kind, authors):
+            url = _item_url(repo, number, kind)
+            content, edits = trust.read_issue_edits(repo, number, authors=authors)
+            skips = [*content.skipped, *edits]
             if kind == "pr":
                 skips += trust.read_reviews(repo, number, authors=authors).skipped
-            found.update(_event_items(org, repo, number, urls[repo, number], authors))
-        found.update(_from_skip(org, skip, urls[skip.repo, skip.number]) for skip in skips)
+            found.update(_from_skip(org, skip, url) for skip in skips)
+            trusted_item = content.author_role is not None
+            found.update(_event_items(org, repo, number, url, authors, trusted_item=trusted_item))
     recent = [item for item in found if parse_since(item.at) >= start]
     return newest_first(recent)
 
