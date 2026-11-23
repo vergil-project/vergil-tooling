@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.337] - 2026-11-23
+
+### Bug fixes
+
+- read release-notes and rebuild PRs through the trust layer (#5013)
+- judge batch-check bodies and in-flight PRs through the trust layer (#5015)
+- read closing references through the trust layer in finalize and intake routing (#5014)
+- read security-record issue bodies only through the trust layer (#5017)
+- read the epic docs body and the planning hold's body through the trust layer (#5016)
+- report vrg-version's expected errors in one line, not a traceback (#4484)
+- read package.json with the shared reader in vrg-version show (#4992)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- remove the private-repo leftovers from the site docs (#5029)
+- describe epic-review planning's close outcome for ready-to-close items (#4691)
+- drop the stale Python .venv rows from releasing.md (#4991)
+
+### Features
+
+- add vrg-ops-report for unattended job failures (#5024)
+- refuse PRs for ops issues and keep the sweep off them (#5025)
+- allow the read-only remote, config, tag and variable queries (#5001)
+- allow vrg-gh release download for the agent identity (#5002)
+
 ## [2.1.336] - 2026-11-23
 
 ### Bug fixes
