@@ -22163,6 +22163,12 @@ publishes the same rendering.</p>
 days. <code>--repo</code> narrows it to one repo; <code>--out-dir</code> instead writes the
 multi-page form for a docs site (<code>index.md</code>, <code>days/&lt;date&gt;.md</code>,
 <code>repos/&lt;name&gt;.md</code>). The docs-refresh workflow publishes it.</p>
+<p>It reads the issues through the trust layer's batched search, which judges
+each issue's author, editors, renames and latest close in the same paged
+calls. An issue opened or last closed by an identity outside the trusted
+roles is left out and reported on stderr, metadata only (counts by cause
+under GitHub Actions). A window with more closures than GitHub's search
+returns is split by date and read in full.</p>
 <table>
 <thead>
 <tr>
@@ -22185,7 +22191,7 @@ multi-page form for a docs site (<code>index.md</code>, <code>days/&lt;date&gt;.
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exits 1 when no App installation covers the org</td>
+<td>Exits 1 when no App installation covers the org, or on a trust-layer read failure (including a single day with more closures than the search returns); nothing is written</td>
 </tr>
 <tr>
 <td>Exit codes</td>
