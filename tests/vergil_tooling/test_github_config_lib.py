@@ -71,8 +71,8 @@ from vergil_tooling.lib.github_config import (
     compute_diff,
     desired_actions_permissions,
     desired_audit_marker_ruleset,
-    desired_automation_environment,
     desired_automation_branch_ruleset,
+    desired_automation_environment,
     desired_branch_protection_ruleset,
     desired_ci_gates_rulesets,
     desired_main_update_ruleset,
@@ -109,7 +109,7 @@ def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[obje
         if not isinstance(page, dict) or key not in page:
             msg = f"paginated response from {endpoint!r} has no {key!r} list"
             raise ValueError(msg)
-        page = cast("dict[str, object]", page)[key]
+        page = page[key]
     if not isinstance(page, list):
         msg = f"paginated response from {endpoint!r} is not a list: {type(page).__name__}"
         raise ValueError(msg)
@@ -4380,12 +4380,27 @@ def test_environment_read_failure_propagates(error: GitHubAPIError) -> None:
         (_custom_env_json(deployment_branch_policy="custom"), None),
         (
             _custom_env_json(
-                deployment_branch_policy={"protected_branches": True, "custom_branch_policies": True}
+                deployment_branch_policy={
+                    "protected_branches": True,
+                    "custom_branch_policies": True,
+                }
             ),
             None,
         ),
         (_custom_env_json(protection_rules={"type": "wait_timer"}), None),
+        (_custom_env_json(protection_rules=["wait_timer"]), None),
+        (_custom_env_json(protection_rules=[{"type": "custom_app_gate"}]), None),
         (_custom_env_json(protection_rules=[{"type": "wait_timer", "wait_timer": "30"}]), None),
+        (_custom_env_json(protection_rules=[{"type": "wait_timer", "wait_timer": True}]), None),
+        (_custom_env_json(protection_rules=[{"type": "required_reviewers"}]), None),
+        (
+            _custom_env_json(
+                protection_rules=[
+                    {"type": "required_reviewers", "reviewers": [{"type": "User", "reviewer": {}}]}
+                ]
+            ),
+            None,
+        ),
         (_custom_env_json(), [{"name": "develop", "type": "ref"}]),
         (_custom_env_json(), [{"name": 7, "type": "branch"}]),
     ],
@@ -4446,6 +4461,47 @@ def test_apply_environment_creates_before_it_deletes() -> None:
     ):
         _apply_environments("o/r", [desired_automation_environment()])
     assert calls == ["PUT", "POST", "POST", "DELETE"]
+
+
+def test_branch_policies_read_failure_propagates() -> None:
+    error = GitHubAPIError(1, ("gh", "api", _ENV_POLICIES), "", "gh: Server Error (HTTP 500)")
+    with pytest.raises(GitHubAPIError, match="500"):
+        _fetch_environment_with(_custom_env_json(), error)
+
+
+@pytest.mark.parametrize(
+    ("policy", "body"),
+    [
+        ("all", None),
+        ("protected", {"protected_branches": True, "custom_branch_policies": False}),
+    ],
+)
+def test_apply_environment_without_custom_policies_lists_none(
+    policy: str, body: dict[str, bool] | None
+) -> None:
+    env = dataclasses.replace(
+        desired_automation_environment(), deployment_branch_policy=policy, custom_branches=[]
+    )
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json_paginated") as mock_list,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+    ):
+        _apply_environments("o/r", [env])
+    mock_write.assert_called_once_with(
+        "PUT", _ENV, {"wait_timer": 0, "reviewers": [], "deployment_branch_policy": body}
+    )
+    mock_list.assert_not_called()
+
+
+def test_apply_environment_refuses_unknown_policy_before_writing() -> None:
+    good = desired_automation_environment()
+    bad = dataclasses.replace(good, name="other", deployment_branch_policy="selected")
+    with (
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        pytest.raises(ValueError, match="unknown deployment branch policy"),
+    ):
+        _apply_environments("o/r", [good, bad])
+    mock_write.assert_not_called()
 
 
 def test_apply_environment_refuses_reviewers_it_cannot_name() -> None:

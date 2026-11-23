@@ -1677,9 +1677,7 @@ def _environment_reviewers(raw: object, endpoint: str) -> list[str]:
     for entry_raw in cast("list[object]", raw):
         entry = cast("dict[str, object]", entry_raw) if isinstance(entry_raw, dict) else {}
         reviewer_raw = entry.get("reviewer")
-        reviewer = (
-            cast("dict[str, object]", reviewer_raw) if isinstance(reviewer_raw, dict) else {}
-        )
+        reviewer = cast("dict[str, object]", reviewer_raw) if isinstance(reviewer_raw, dict) else {}
         kind = entry.get("type")
         who = reviewer.get("login") or reviewer.get("slug")
         if not isinstance(kind, str) or not isinstance(who, str):
@@ -2518,10 +2516,12 @@ def _apply_environments(repo: str, desired: list[DesiredEnvironment]) -> None:
 
     The environment is written whole (no reviewers is ``[]``, which clears
     them). Missing custom policies are created before stray ones are
-    deleted, so the policy set never passes through empty. An environment
-    with reviewers is refused before anything is written: the desired state
-    names a reviewer by login, and GitHub's write needs its numeric ID.
+    deleted, so the policy set never passes through empty. Every environment
+    is checked before anything is written: one with reviewers is refused
+    (the desired state names a reviewer by login, and GitHub's write needs
+    its numeric ID), as is an unknown branch policy.
     """
+    bodies: list[tuple[DesiredEnvironment, dict[str, bool] | None]] = []
     for env in desired:
         if env.reviewers:
             msg = (
@@ -2529,20 +2529,21 @@ def _apply_environments(repo: str, desired: list[DesiredEnvironment]) -> None:
                 "which this tool cannot resolve to GitHub IDs"
             )
             raise ValueError(msg)
-    for env in desired:
-        policy = _environment_policy_body(env)
+        bodies.append((env, _environment_policy_body(env)))
+    for env, policy in bodies:
         github.write_json(
             "PUT",
             _environment_endpoint(repo, env.name),
             {"wait_timer": env.wait_timer, "reviewers": [], "deployment_branch_policy": policy},
         )
-        if policy is None or not policy["custom_branch_policies"]:
+        if env.deployment_branch_policy != "custom":
             continue
         endpoint = _branch_policies_endpoint(repo, env.name)
         live = _parse_branch_policies(
             github.read_json_paginated(endpoint, "branch_policies"), endpoint
         )
-        wanted = {("branch", b) for b in env.custom_branches} | {("tag", t) for t in env.custom_tags}
+        wanted = {("branch", b) for b in env.custom_branches}
+        wanted |= {("tag", t) for t in env.custom_tags}
         have = {(kind, name) for kind, name, _ in live}
         for kind, name in sorted(wanted - have):
             github.write_json("POST", endpoint, {"name": name, "type": kind})
