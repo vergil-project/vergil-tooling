@@ -1417,6 +1417,34 @@ def test_main_runner_labels_fails(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "ubuntu-latest is not allowed; use ubuntu-24.04" in captured.err
 
 
+def test_main_secrets_inherit_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    _workflow(
+        tmp_path,
+        "on: push\njobs:\n  quality:\n"
+        "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n"
+        "    secrets: inherit\n",
+    )
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ),
+    ):
+        assert main() == 1
+    captured = capsys.readouterr()
+    assert "Running: secrets-inherit" in captured.out
+    assert "job quality passes secrets: inherit to" in captured.err
+
+
 # -- _find_workflow_files -----------------------------------------------------
 
 

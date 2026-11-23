@@ -126,6 +126,8 @@ def test_aliased_inherit_is_checked() -> None:
 def test_no_jobs_has_nothing_to_check() -> None:
     assert inherit_violations("on: push\n") == []
     assert inherit_violations("") == []
+    assert inherit_violations("just a string\n") == []
+    assert inherit_violations("on: push\njobs:\n  a:\n  b: [1]\n") == []
 
 
 def test_unparseable_raises() -> None:

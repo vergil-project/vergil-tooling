@@ -123,7 +123,8 @@ def _mapping_value(node: yaml.Node | None, key: str) -> yaml.Node | None:
     """The value under the scalar *key* of the mapping *node*, or ``None``."""
     if not isinstance(node, yaml.MappingNode):
         return None
-    for key_node, value in node.value:
+    pairs: list[tuple[yaml.Node, yaml.Node]] = node.value
+    for key_node, value in pairs:
         if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
             return value
     return None

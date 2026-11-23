@@ -1235,10 +1235,10 @@ class TestRenderCdWorkflow:
 
     @pytest.mark.parametrize(
         ("language", "package"),
-        [("python", False), ("go", False), ("rust", False), (None, False), ("python", True)],
+        [("python", False), ("go", False), ("rust", False), ("", False), ("python", True)],
     )
     def test_generated_cd_inherits_only_for_cd_release(
-        self, language: str | None, *, package: bool
+        self, language: str, *, package: bool
     ) -> None:
         # Every `secrets: inherit` the generated cd.yml writes calls an
         # App-key workflow the secrets-inherit check allows (epic .github#1384).
