@@ -29,12 +29,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import branch_sweep, epics, github, trust
+from vergil_tooling.lib import branch_sweep, epics, github
+from vergil_tooling.lib.issue_body import line_content, line_ending, split_lines
+from vergil_tooling.lib.issue_body import read_body as read_body
+from vergil_tooling.lib.issue_body import write_body as write_body
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-
-    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 DOCS = ("spec", "plan", "retrospective")
 """The three documents, in the order the section lists them."""
@@ -112,25 +113,6 @@ def _same_repo(a: str, b: str) -> bool:
 # --- lines and fences --------------------------------------------------------
 
 
-def _split(body: str) -> list[str]:
-    """*body*'s lines, each with its line ending.
-
-    Only ``\\n`` (with an optional ``\\r`` before it) ends a line, as in
-    Markdown; :meth:`str.splitlines` would also split on a form feed, U+2028
-    and the like, which render inside one line.
-    """
-    parts = body.split("\n")
-    lines = [part + "\n" for part in parts[:-1]]
-    if parts[-1]:
-        lines.append(parts[-1])
-    return lines
-
-
-def _content(line: str) -> str:
-    """*line* without its line ending."""
-    return line.rstrip("\r\n")
-
-
 def _is_marker(content: str, marker: str) -> bool:
     """True when *content* is *marker*, indented at most three spaces.
 
@@ -140,12 +122,6 @@ def _is_marker(content: str, marker: str) -> bool:
     text = content.rstrip()
     indent = len(text) - len(text.lstrip(" "))
     return indent <= 3 and text[indent:] == marker
-
-
-def _newline(body: str) -> str:
-    """The body's line ending: that of its first line break, ``\\n`` by default."""
-    index = body.find("\n")
-    return "\r\n" if index > 0 and body[index - 1] == "\r" else "\n"
 
 
 class _Fences:
@@ -191,7 +167,7 @@ def _region(lines: list[str]) -> tuple[int, int] | None:
     begins: list[int] = []
     ends: list[int] = []
     for index, line in enumerate(lines):
-        content = _content(line)
+        content = line_content(line)
         if fences.step(content):
             continue
         if _is_marker(content, BEGIN):
@@ -296,11 +272,11 @@ def parse(body: str, home_repo: str | None = None) -> dict[str, Entry] | None:
     if home_repo is not None and "/" in home_repo:
         msg = f"home_repo is a repo name, not owner/name: {home_repo!r}"
         raise ValueError(msg)
-    lines = _split(body)
+    lines = split_lines(body)
     region = _region(lines)
     if region is None:
         return None
-    inner = [_content(line).strip() for line in lines[region[0] + 1 : region[1]]]
+    inner = [line_content(line).strip() for line in lines[region[0] + 1 : region[1]]]
     inner = [line for line in inner if line]
     if not inner or inner[0] != HEADING:
         msg = f"Documents section does not start with {HEADING}"
@@ -384,8 +360,8 @@ def strip_legacy(body: str) -> tuple[str, list[str]]:
     the body), one blank line after it goes too, so no double gap is left.
     Every other line keeps its exact bytes.
     """
-    lines = _split(body)
-    contents = [_content(line) for line in lines]
+    lines = split_lines(body)
+    contents = [line_content(line) for line in lines]
     fences = _Fences()
     fenced = [fences.step(content) for content in contents]
     region = _region(lines)
@@ -402,7 +378,7 @@ def strip_legacy(body: str) -> tuple[str, list[str]]:
             index += 1
             continue
         removed += [contents[i] for i in range(index, end) if contents[i].strip()]
-        alone = not kept or not _content(kept[-1]).strip()
+        alone = not kept or not line_content(kept[-1]).strip()
         if alone and end < len(lines) and not contents[end].strip():
             end += 1
         index = end
@@ -418,13 +394,13 @@ def upsert(body: str, block: str) -> tuple[str, list[str]]:
     (:func:`strip_legacy`). Raises :class:`EpicDocsFormatError` on half a
     section, before anything is changed.
     """
-    lines = _split(body)
+    lines = split_lines(body)
     region = _region(lines)
-    newline = _newline(body)
+    newline = line_ending(body)
     framed = block.replace("\n", newline)
     if region is not None:
         begin, end = region
-        tail_ending = lines[end][len(_content(lines[end])) :]
+        tail_ending = lines[end][len(line_content(lines[end])) :]
         replaced = "".join(lines[:begin]) + framed + tail_ending + "".join(lines[end + 1 :])
         return strip_legacy(replaced)
     rest, removed = strip_legacy(body)
@@ -435,37 +411,15 @@ def upsert(body: str, block: str) -> tuple[str, list[str]]:
 
 
 # --- GitHub reads and writes --------------------------------------------------
+#
+# The body is read through the trust layer and written back by
+# :mod:`vergil_tooling.lib.issue_body` (``read_body``, ``write_body``, re-exported
+# here for ``vrg-epic-docs``).
 
 
 def default_branch(owner: str, repo: str) -> str:
     """The default branch of *owner*/*repo*, queried from GitHub."""
     return branch_sweep.default_branch(f"{owner}/{repo}")
-
-
-def _issue_endpoint(owner: str, repo: str, number: int) -> str:
-    return f"repos/{owner}/{repo}/issues/{number}"
-
-
-def read_body(owner: str, repo: str, number: int, *, authors: TrustedAuthors | None = None) -> str:
-    """The body of issue *owner*/*repo*#*number*, read only when the trust layer trusts it.
-
-    ``vrg-epic-docs`` parses the links in the body and writes the body back,
-    so it is read through :func:`vergil_tooling.lib.trust.read_issue` with
-    ``require_body=True`` (spec §5.2 of epic vergil-project/.github#1467): a
-    body whose author or an editor holds no role raises
-    :class:`~vergil_tooling.lib.trust.UntrustedContentError` (metadata only),
-    and a read the layer cannot complete raises
-    :class:`~vergil_tooling.lib.trust.TrustReadError`. An issue with no body
-    gives ``""``. *authors* defaults to the loaded configuration, whose
-    errors propagate.
-    """
-    content = trust.read_issue(f"{owner}/{repo}", number, require_body=True, authors=authors)
-    return content.body or ""
-
-
-def write_body(owner: str, repo: str, number: int, body: str) -> None:
-    """Replace the body of issue *owner*/*repo*#*number* with *body*."""
-    github.write_json("PATCH", _issue_endpoint(owner, repo, number), {"body": body})
 
 
 _NOT_FOUND_RE = re.compile(r"\(HTTP 404\)$", re.MULTILINE)
@@ -654,7 +608,7 @@ def _outside_section(body: str) -> str:
     Discovery reads only what the epic's prose mentions: the section's own
     links name documents already decided, possibly another epic's.
     """
-    lines = _split(body)
+    lines = split_lines(body)
     region = _region(lines)
     if region is None:
         return body
