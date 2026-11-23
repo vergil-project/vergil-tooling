@@ -80,9 +80,7 @@ class TestCliMain:
         err = _exit_message(exc, capsys)
         assert err == f"{github.missing_token_message(_PROG)}\n"
 
-    def test_gh_version_error_is_a_clean_message(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_gh_version_error_is_a_clean_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = gh_version.GhVersionError("gh 2.96.0 (/usr/bin/gh) is too old")
         err = _exit_message(exc, capsys)
         assert err == f"{_PROG}: gh 2.96.0 (/usr/bin/gh) is too old\n"
