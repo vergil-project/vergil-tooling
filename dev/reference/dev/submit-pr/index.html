@@ -18782,7 +18782,10 @@ agent's <code>report-ready</code> mirrors its ready-state onto the reserved ref
 <p>For each branch, the tool:</p>
 <ol>
 <li>resolves the ready-state from a local worktree's <code>pr-workflow.json</code>
-   when one exists, else fetches it from the relay ref;</li>
+   when one exists, else fetches it from the relay ref. The relay payload
+   is used only when the author GitHub links to its commit is the trusted
+   human; any other author (an agent or bot email included) stops the
+   run with nothing opened, naming the login only;</li>
 <li>verifies the tip of <code>origin/&lt;branch&gt;</code> matches the recorded <code>head_sha</code>
    (a mismatch fails loudly: the metadata is for a different commit);</li>
 <li>opens the PR with <code>--head &lt;branch&gt;</code> and <strong>does not push</strong>, since the
@@ -18918,8 +18921,13 @@ says why it is gone:</p>
 </table>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
 <p><code>Ref</code>, or <code>Closes</code>, which submit auto-selects for a managed task (an
-issue with an <code>epic</code>-labelled parent) so it closes on merge. <code>Fixes</code> and
-<code>Resolves</code> are rejected.</p>
+issue with an <code>epic</code>-labelled parent) so it closes on merge. The parent is
+the native one, else the <code>Parent:</code> line of the issue's body when the trust
+layer trusts that body; an untrusted body is reported on stderr and gives
+no parent. <code>Fixes</code> and <code>Resolves</code> are rejected.</p>
+<p>A trust-layer failure before any PR opens (an untrusted relay payload, a
+read the layer cannot complete, or no trusted-authors configuration) ends
+the run with a one-line error and nothing opened.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Normal flow: resolve the worktree, list it, open with auto-merge</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># on, then watch it merge and settle develop</span>

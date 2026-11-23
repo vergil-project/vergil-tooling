@@ -20278,7 +20278,8 @@ enforcing policy: a subcommand allowlist, read-only forms of <code>reflog</code>
 <code>symbolic-ref</code>, denied subcommands (<code>commit</code>, <code>config</code> and others; use
 <code>vrg-commit</code> for commits), a flag deny-list (<code>push --force</code>, <code>branch -D</code>,
 <code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
-<code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue, and the
+<code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue opened by a
+trusted author, and the
 report-ready freeze. It protects origin, not the local checkout: <code>reset</code>,
 <code>clean</code>, a pathspec <code>checkout</code> and <code>rebase -i --autosquash</code> run only on a
 branch that is neither protected nor frozen, and fail closed when the
@@ -20379,7 +20380,8 @@ branch mode</strong> (positional <code>&lt;branch&gt; [&lt;branch&gt; …]</code
 <strong>worktree-free</strong> for branches already on origin — the Mac side of the
 cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's <code>pr-workflow.json</code> when present, else the relay ref
-<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
+<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>, used only when the author GitHub links
+to its commit is the trusted human; origin's tip is checked against the
 recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.
 Every mode driven by a ready-state opens the PR only at the <code>head_sha</code> the
 latest <code>report-ready</code> recorded and refuses rather than pick another head

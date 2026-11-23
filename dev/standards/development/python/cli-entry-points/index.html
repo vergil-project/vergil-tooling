@@ -18549,7 +18549,7 @@ first top-level function in every <code>bin/</code> module that defines one.</p>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="o">...</span>
 </code></pre></div>
 <p>The decorator is the command boundary for the known GitHub authentication
-failures. When <code>main</code> lets one escape, it prints a single <code>&lt;prog&gt;: &lt;message&gt;</code>
+failures and the trust layer's failures. When <code>main</code> lets one escape, it prints a single <code>&lt;prog&gt;: &lt;message&gt;</code>
 report on stderr and exits with status <code>1</code> instead of a traceback:</p>
 <table>
 <thead>
@@ -18570,6 +18570,18 @@ report on stderr and exits with status <code>1</code> instead of a traceback:</p
 <tr>
 <td><code>github.MissingGitHubTokenError</code></td>
 <td><code>github.missing_token_message()</code></td>
+</tr>
+<tr>
+<td><code>trust.UntrustedContentError</code></td>
+<td>the stop's metadata-only message; under GitHub Actions only its cause</td>
+</tr>
+<tr>
+<td><code>trust.TrustReadError</code></td>
+<td>the read failure's message (the call and gh's last error line)</td>
+</tr>
+<tr>
+<td><code>trusted_authors.TrustedAuthorsNotConfiguredError</code></td>
+<td>the missing-configuration message</td>
 </tr>
 </tbody>
 </table>

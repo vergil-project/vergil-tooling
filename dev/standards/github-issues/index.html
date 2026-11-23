@@ -19218,7 +19218,9 @@ kind or has an epic parent.</strong> The legitimate top-level kinds are:</p>
 <li><strong>archives</strong> (<code>archive</code> label) — the per-quarter buckets of closed standing-epic
   children;</li>
 <li><strong>release tracking issues</strong> (<code>release: X.Y.Z</code>), which <code>vrg-release</code> creates
-  top-level for the length of a release.</li>
+  top-level for the length of a release. The title or progress marker counts
+  only when the issue's body is trusted; a look-alike from an untrusted
+  author is reported and treated as an ordinary issue.</li>
 </ul>
 <p>There is no opt-out and no "unlinked" state. An issue's parent tells you where
 it stands:</p>
