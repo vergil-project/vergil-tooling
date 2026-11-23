@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_ops_report
-from vergil_tooling.lib import identity_mode, ops_report, trust
+from vergil_tooling.lib import github, identity_mode, ops_report, trust
 from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.identity_mode import IdentityMode
 
@@ -101,6 +101,19 @@ def test_unknown_result_exits_1(recorder: Recorder, capsys: pytest.CaptureFixtur
     assert vrg_ops_report.main([*ARGS, "--results", "success,neutral"]) == 1
     assert recorder.calls == []
     assert "--results" in capsys.readouterr().err
+
+
+def test_missing_token_reaches_the_cli_boundary(
+    monkeypatch: pytest.MonkeyPatch, recorder: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def no_token(*_args: Any, **_kwargs: Any) -> ops_report.Outcome:
+        raise github.MissingGitHubTokenError(1, ["gh"], stderr="gh: GH_TOKEN environment variable")
+
+    monkeypatch.setattr(ops_report, "report", no_token)
+    with pytest.raises(SystemExit) as exc:
+        vrg_ops_report.main([*ARGS, "--results", "failure"])
+    assert exc.value.code == 1
+    assert "vrg-ops-report" in capsys.readouterr().err
 
 
 def test_bad_repo_is_a_usage_error(recorder: Recorder) -> None:

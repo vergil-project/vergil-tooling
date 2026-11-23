@@ -213,6 +213,7 @@ def gh(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github, "create_issue", fake.create_issue)
     monkeypatch.setattr(github, "run", fake.run)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    monkeypatch.setattr(ops_report, "load_trusted_authors", lambda: AUTHORS)
     return fake
 
 
@@ -357,6 +358,11 @@ def test_latest_state_follows_last_app_marker(gh: FakeGitHub) -> None:
 
 def test_latest_state_body_only_is_failing(gh: FakeGitHub) -> None:
     gh.add(6)
+    assert _state(gh, 6) == "failing"
+
+
+def test_latest_state_ignores_untrusted_body(gh: FakeGitHub) -> None:
+    gh.add(6, author=OUTSIDER, body=ops_report.MARKER_RECOVERED)
     assert _state(gh, 6) == "failing"
 
 
@@ -576,3 +582,40 @@ def test_report_trust_read_error_propagates(
     with pytest.raises(trust.TrustReadError):
         _report("failure")
     assert gh.created == []
+
+
+@pytest.mark.parametrize("repo", ["docs", "acme/", "/docs", "acme/docs/x"])
+def test_report_refuses_bad_repo(gh: FakeGitHub, links: Links, repo: str) -> None:
+    with pytest.raises(ValueError, match="OWNER/NAME"):
+        ops_report.report(repo, JOB, "failure", run_url=RUN, step=None, today=TODAY)
+    assert gh.searches == []
+
+
+def test_report_refuses_unknown_result(gh: FakeGitHub, links: Links) -> None:
+    skipped: Any = "skipped"
+    with pytest.raises(ValueError, match="unknown result 'skipped'"):
+        ops_report.report(REPO, JOB, skipped, run_url=RUN, step=None, today=TODAY)
+    assert gh.searches == []
+
+
+def test_report_create_with_unreadable_url_raises(
+    gh: FakeGitHub, links: Links, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(github, "create_issue", lambda **_kwargs: "not a url")
+    with pytest.raises(ops_report.OpsReportError, match="cannot read its number"):
+        _report("failure")
+
+
+def test_report_failed_listing_check_names_created_issue(
+    gh: FakeGitHub, links: Links, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = gh.graphql
+
+    def fail_after_create(query: str, **variables: Any) -> dict[str, Any]:
+        if gh.created and query == trust._SEARCH_QUERIES["issue"]:
+            raise github.GitHubAPIError(1, ["gh"], stderr="HTTP 502: bad gateway")
+        return real(query, **variables)
+
+    monkeypatch.setattr(github, "graphql", fail_after_create)
+    with pytest.raises(ops_report.OpsReportError, match=f"created {REPO}#100 but checking"):
+        _report("failure")

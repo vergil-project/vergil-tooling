@@ -35,13 +35,14 @@ import logging
 import re
 import sys
 import time
-from typing import TYPE_CHECKING, Literal, cast, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 
 from vergil_tooling.lib import epics, github, retry, trust
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.markdown_escape import escape_inline
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.shell_ref import quoted_slug
+from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -57,6 +58,8 @@ State = Literal["failing", "recovered"]
 
 #: The GitHub job results a named job's result combines (``needs.<job>.result``).
 JOB_RESULTS: tuple[str, ...] = (*get_args(Result), "skipped")
+# The order a named job's results win in (spec §5.3).
+_PRECEDENCE: tuple[Result, ...] = ("failure", "cancelled", "success")
 
 #: The label of an ops issue the reporter files; it never matches one filed by hand.
 LABEL = "ops-report"
@@ -106,9 +109,9 @@ def combine_results(results: Sequence[str]) -> Result | None:
             f"unknown job result(s) {', '.join(map(repr, unknown))};"
             f" expected {', '.join(JOB_RESULTS)}"
         )
-    for result in ("failure", "cancelled", "success"):
+    for result in _PRECEDENCE:
         if result in results:
-            return cast("Result", result)
+            return result
     return None
 
 
@@ -186,7 +189,7 @@ def latest_state(content: trust.IssueContent) -> State:
     pieces += [c.body for c in content.comments if c.role is trust.Role.AUTOMATION]
     state: State = "failing"
     for text in pieces:
-        first = text.strip().splitlines()[0].strip() if text.strip() else ""
+        first = text.strip().partition("\n")[0].strip()
         if first in _STATE_OF_MARKER:
             state = _STATE_OF_MARKER[first]
     return state
@@ -331,7 +334,7 @@ def report(
     run_url = _check_run_url(run_url)
     if step is not None:
         step = _check_step(step)
-    authors = trust.load_trusted_authors()
+    authors = load_trusted_authors()
     found = find_open_reports(repo, job, authors=authors)
     if not found:
         if result == "success":

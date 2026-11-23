@@ -114,3 +114,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-url", required=True, help="The https:// URL of the run")
     parser.add_argument("--step", help="The failing step's name, if known")
     return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
