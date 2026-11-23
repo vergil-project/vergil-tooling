@@ -240,18 +240,39 @@ def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None
     assert "malformed GitHub API response" in capsys.readouterr().err
 
 
-def test_api_fallback_error_still_reports_strategies(
+def test_api_fallback_git_error_exits_2(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    api_err = subprocess.CalledProcessError(returncode=1, cmd=["gh"], stderr="fail")
+    """A failed ``git rev-parse`` in the fallback is a git failure, never 'no PR'."""
+    git_err = subprocess.CalledProcessError(returncode=1, cmd=["git"], stderr="bad revision")
     with (
-        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", api_err]),
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", git_err]),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
     ):
         result = main([])
-    assert result == 1
+    assert result == 2
     err = capsys.readouterr().err
-    assert "cannot determine PR" in err
+    assert "failed to look up the PR of commit HEAD: " in err
+    assert "bad revision" in err
+    assert "cannot determine PR" not in err
+
+
+def test_api_fallback_api_error_exits_2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failed ``commits/{sha}/pulls`` read is a GitHub API failure, never 'no PR'."""
+    api_err = subprocess.CalledProcessError(returncode=1, cmd=["gh"], stderr="HTTP 502")
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json_paginated", side_effect=api_err),
+    ):
+        result = main([])
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "failed to look up the PR of commit HEAD: " in err
+    assert "HTTP 502" in err
+    assert "cannot determine PR" not in err
 
 
 # --- main: error paths ---
