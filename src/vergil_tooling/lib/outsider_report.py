@@ -16,8 +16,8 @@ the time (:func:`trust.search_items`, which refuses a window GitHub's search
 would cut short), then each item's body, comments, reviews, every edit, and
 every close, reopen and rename are read in full through the layer
 (:func:`trust.read_issue_edits`, :func:`trust.read_reviews`,
-:func:`trust.read_events`), so no untrusted act hides behind another. Each item is metadata and a link only, never the
-untrusted text. Nothing here writes to GitHub.
+:func:`trust.read_events`), so no untrusted act hides behind another. Each
+item is metadata and a link only, never the untrusted text. Nothing here writes to GitHub.
 """
 
 from __future__ import annotations
