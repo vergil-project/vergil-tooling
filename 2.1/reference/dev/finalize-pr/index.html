@@ -1472,6 +1472,8 @@
       
         
       
+        
+      
     
     
     
@@ -1524,6 +1526,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.338/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.338
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19007,7 +19037,12 @@ names what replaced it:</p>
 <li><strong>A required check was cancelled</strong> and no newer run of its workflow
    replaced the cancelled run: <em>failed: cancelled</em>, naming the check. The
    PR stays pending for two minutes first, in case a re-run starts.</li>
-<li><strong>A conflict</strong> with its base: <em>failed: conflict</em>.</li>
+<li><strong>A conflict</strong> with its base, reported at the same head for two
+   minutes: <em>failed: conflict</em>. After a push, GitHub takes a while to
+   recompute whether the PR can merge, and meanwhile it may still report
+   the conflict the push resolved. So the PR stays pending first, shown as
+   <code>conflict reported, waiting for GitHub to settle it</code>. A new head starts
+   the two minutes again, and any other merge state clears the conflict.</li>
 </ol>
 <p><strong>A superseded run is not a failure.</strong> A push to an open PR starts a new
 CI run, and the workflow's <code>concurrency: cancel-in-progress</code> cancels the
@@ -19063,7 +19098,9 @@ the batch:</p>
 <ul>
 <li><strong>PR</strong> and <strong>TITLE</strong>: the PR number and its title, cut to 50
   characters with <code>...</code>.</li>
-<li><strong>STATE</strong>: while the PR is pending, <code>checks pending (&lt;n&gt;)</code> (checks not
+<li><strong>STATE</strong>: while the PR is pending, <code>conflict reported, waiting for
+  GitHub to settle it</code> (a conflict not yet reported for two minutes),
+  <code>checks pending (&lt;n&gt;)</code> (checks not
   finished yet, counting a required check that has not registered),
   <code>checks green, merging</code> (no check left, and GitHub can merge it),
   <code>behind develop</code>, or <code>waiting (&lt;merge state&gt;)</code> for any other merge
@@ -19098,7 +19135,10 @@ depends on where the output goes:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Watch status after 5m15s: no change; 1 merged, 2 pending, 0 failed; 1h54m45s left before the batch deadline
 </code></pre></div>
 <p>The run log, <code>.vergil/vrg-finalize-pr-&lt;stamp&gt;.log</code>, is shared by the
-watch and the settle phase. It keeps every table in which some PR's
+watch and the settle phase. Its first line names the installed
+vergil-tooling version (<code>vrg-finalize-pr: vergil-tooling &lt;version&gt;</code>),
+as does the run's first line of output, so a run can be tied to the
+release that made it. It keeps every table in which some PR's
 state changed, each under a timestamped <code>status changed:</code> line, so the
 full history survives the terminal's redraw. When no PR merged, the run
 ends by naming the log. The per-PR outcome lines (<code>&lt;url&gt;: merged</code>) go to
