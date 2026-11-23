@@ -1048,7 +1048,7 @@ def _check_issue_is_open_task(branch: str) -> str | None:
     vergil-project/.github#1467, spec §5.3): an outsider-opened issue is a
     stop, refused with the trust layer's metadata-only message. One ``gh issue
     view`` reads state and labels together; only an open task is then read
-    through the trust layer (:func:`_check_trusted_author`). Fail closed: a
+    through the trust layer (:func:`_check_issue_opener`). Fail closed: a
     failed or malformed read refuses with the reason and never passes as "a
     task".
     """
@@ -1072,10 +1072,10 @@ def _check_issue_is_open_task(branch: str) -> str | None:
             "a branch carries an open task's work. Reopen the issue, or create a "
             "new task and use its number."
         )
-    return _check_trusted_author(branch, number)
+    return _check_issue_opener(branch, number)
 
 
-def _check_trusted_author(branch: str, number: str) -> str | None:
+def _check_issue_opener(branch: str, number: str) -> str | None:
     """Refuse *branch* when issue #*number* was not opened by a trusted author.
 
     Only the author decides it, as for any tool pointed at an item: a trusted
