@@ -1453,10 +1453,31 @@ def test_sync_reports_an_untrusted_issue_and_exits_1(
         TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
     ],
 )
-def test_main_reports_a_trust_error_as_one_line(
-    env: MagicMock, capsys: pytest.CaptureFixture[str], error: Exception
+def test_a_trust_error_reaching_the_boundary_is_one_line(
+    env: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
 ) -> None:
+    # cli_main maps a trust-layer error that escapes a command to one line.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     env.list_advisories.side_effect = error
-    assert main(["list"]) == 1
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list"])
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err == f"vrg-security-record: {error}\n"
+
+
+def test_an_untrusted_stop_under_actions_names_only_its_cause(
+    env: MagicMock, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    env.list_advisories.side_effect = trust.UntrustedContentError(_SKIP, "the body is untrusted")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list"])
+    assert excinfo.value.code == 1
     err = capsys.readouterr().err
-    assert err == f"vrg-security-record: {error}\n"
+    assert err == (
+        "vrg-security-record: stopped before any write on untrusted content (untrusted)\n"
+    )
+    assert "drive-by" not in err
