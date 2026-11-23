@@ -790,7 +790,13 @@ create it waits until the lookup lists the new issue, so the next run finds
 it. It **never closes an issue**. Every read goes through the trust layer:
 only issues, and report comments, written by the automation App count, so
 an outsider's issue with the same title or an outsider's
-`ops-report: recovered` comment is ignored. Issue text carries the run link,
+`ops-report: recovered` comment is ignored. An open ops issue the App
+opened whose body someone else edited, or that someone else renamed, is
+skipped too, so the next failure opens a new issue; the new issue names
+each skipped one by number only
+(`skipped (edited by someone other than the App): #N`), never quoting it,
+and leaves it open with no comment. An outsider-opened issue with the same
+title is never named. Issue text carries the run link,
 job, step, date and issue numbers only, never log text.
 
 | Attribute | Value |

@@ -24,8 +24,17 @@ and a report comment counts only when the App wrote it: an outsider's issue
 with the same title and label, or an outsider's comment carrying a marker,
 is never acted on. The previous-occurrence lookup follows the same rule.
 
+**A skipped, edited ops issue is named by number only.** When someone other
+than the App edits an open ops issue's body or renames it, the lookup skips
+it and the next failure opens a second issue. That new issue's body names
+each such skipped issue (:func:`skipped_open_reports`) by its number, so the
+job's history stays linked, and nothing else of it: its text is never read,
+quoted or acted on. Only an issue the App opened counts; an outsider's issue
+found by the same search is never named.
+
 **Public text only:** a body or comment holds a marker line and the job, run
-link, step, date, other open issues and previous occurrence; never log text
+link, step, date, other open issues, skipped edited issues (numbers only) and
+previous occurrence; never log text
 or environment values (spec §2.3).
 """
 
@@ -139,10 +148,21 @@ def _split(repo: str) -> tuple[str, str]:
     return owner, name
 
 
-def _reports(
+# A skip that shows the App opened the issue and someone else changed it: a body
+# edit (the author passed, an editor did not) or a rename (the body passed).
+_EDITED_SKIPS: frozenset[tuple[str, str]] = frozenset({("edit", "body"), ("event", "title")})
+
+
+def _search(
     repo: str, job: str, state: Literal["open", "closed"], authors: TrustedAuthors | None
-) -> list[int]:
-    """App-opened *state* issues in *repo* with *job*'s exact title and the label, ascending."""
+) -> tuple[list[int], list[int]]:
+    """``(reports, edited)``: *state* ops issues of *job* in *repo*, each ascending.
+
+    *reports* are the App-opened issues with *job*'s exact title and the label
+    that the trust layer accepts. *edited* are the numbers of the search's
+    results the layer skipped because someone other than the App edited or
+    renamed an issue the App opened; only their numbers are kept.
+    """
     _, name = _split(repo)
     title = report_title(name, job)
     hits, skipped = trust.search_items(
@@ -152,7 +172,7 @@ def _reports(
         authors=authors,
     )
     trust.report_skipped(skipped, stream=sys.stderr)
-    return sorted(
+    reports = sorted(
         hit.number
         for hit in hits
         if hit.state == state.upper()
@@ -160,6 +180,15 @@ def _reports(
         and LABEL in hit.labels
         and hit.body_role is trust.Role.AUTOMATION
     )
+    edited = sorted({item.number for item in skipped if (item.kind, item.field) in _EDITED_SKIPS})
+    return reports, edited
+
+
+def _reports(
+    repo: str, job: str, state: Literal["open", "closed"], authors: TrustedAuthors | None
+) -> list[int]:
+    """App-opened *state* issues in *repo* with *job*'s exact title and the label, ascending."""
+    return _search(repo, job, state, authors)[0]
 
 
 def find_open_reports(repo: str, job: str, *, authors: TrustedAuthors | None = None) -> list[int]:
@@ -170,6 +199,20 @@ def find_open_reports(repo: str, job: str, *, authors: TrustedAuthors | None = N
     issue is never matched.
     """
     return _reports(repo, job, "open", authors)
+
+
+def skipped_open_reports(
+    repo: str, job: str, *, authors: TrustedAuthors | None = None
+) -> list[int]:
+    """The open ops issues of *job* in *repo* the lookup skipped as edited, ascending.
+
+    The numbers of the open issues the search for *job*'s title and the
+    :data:`LABEL` label found that the org's automation App opened and someone
+    else then edited (its body) or renamed. Only the numbers: the trust layer
+    hands back no text of a skipped issue. An outsider-opened issue is never
+    listed.
+    """
+    return _search(repo, job, "open", authors)[1]
 
 
 def previous_occurrence(
@@ -223,6 +266,7 @@ def _text(
     today: date,
     others: Sequence[int] = (),
     previous: int | None = None,
+    edited: Sequence[int] = (),
 ) -> str:
     """A report's text: its marker line, then the public facts only."""
     lines = [_MARKERS[result], ""]
@@ -240,6 +284,7 @@ def _text(
             f"- also open with this title: {', '.join(f'#{n}' for n in others)}"
             " (none is closed automatically)"
         )
+    lines += [f"- skipped (edited by someone other than the App): #{n}" for n in edited]
     if previous is not None:
         lines.append(f"- previous occurrence: #{previous}")
     return "\n".join(lines) + "\n"
@@ -340,7 +385,7 @@ def report(
     if step is not None:
         step = check_step(step)
     authors = load_trusted_authors()
-    found = find_open_reports(repo, job, authors=authors)
+    found, edited = _search(repo, job, "open", authors)
     if not found:
         if result == "success":
             return "nothing"
@@ -353,6 +398,7 @@ def report(
             step=step,
             today=today,
             authors=authors,
+            edited=edited,
             sleep=sleep or time.sleep,
             clock=clock or time.monotonic,
         )
@@ -379,14 +425,26 @@ def _create(
     step: str | None,
     today: date,
     authors: TrustedAuthors,
+    edited: Sequence[int],
     sleep: Callable[[float], None],
     clock: Callable[[], float],
 ) -> Outcome:
-    """Open *job*'s ops issue under the operations epic and wait until it is listed."""
+    """Open *job*'s ops issue under the operations epic and wait until it is listed.
+
+    Its body names each skipped, edited open ops issue in *edited* by number.
+    """
     epic = epics.ensure_operations_epic(repo)
     previous = previous_occurrence(repo, job, authors=authors)
     ensure_labels(repo, [LABEL])
-    body = _text(result, job=job, run_url=run_url, step=step, today=today, previous=previous)
+    body = _text(
+        result,
+        job=job,
+        run_url=run_url,
+        step=step,
+        today=today,
+        previous=previous,
+        edited=edited,
+    )
     url = github.create_issue(repo=repo, title=title, body=body, labels=[LABEL])
     try:
         number = int(url.strip().rstrip("/").rsplit("/", 1)[-1])
