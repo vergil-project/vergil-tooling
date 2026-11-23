@@ -48,6 +48,7 @@ from vergil_tooling.lib.github_config import (
     NotChecked,
     UndeclaredParam,
     _apply_actions_permissions,
+    _apply_environments,
     _apply_repo_settings,
     _apply_rulesets,
     _apply_security_settings,
@@ -70,6 +71,7 @@ from vergil_tooling.lib.github_config import (
     compute_diff,
     desired_actions_permissions,
     desired_audit_marker_ruleset,
+    desired_automation_environment,
     desired_automation_branch_ruleset,
     desired_branch_protection_ruleset,
     desired_ci_gates_rulesets,
@@ -98,11 +100,16 @@ def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[obje
     the whole GitHub API as one ``read_json`` endpoint→payload mock. This shim
     resolves the listing through that mock (looked up at call time, so each
     test's patch applies) and keeps the helper's contract: a non-list page
-    raises ``ValueError``. Pagination itself is exercised end to end by
-    ``test_*_rulesets_reads_every_page``.
+    raises ``ValueError``, as does an envelope page with no *key* list (the
+    environment's branch policies). Pagination itself is exercised end to end
+    by ``test_*_rulesets_reads_every_page``.
     """
-    assert key is None
-    page = github_config.github.read_json("api", endpoint)
+    page: object = github_config.github.read_json("api", endpoint)
+    if key is not None:
+        if not isinstance(page, dict) or key not in page:
+            msg = f"paginated response from {endpoint!r} has no {key!r} list"
+            raise ValueError(msg)
+        page = cast("dict[str, object]", page)[key]
     if not isinstance(page, list):
         msg = f"paginated response from {endpoint!r} is not a list: {type(page).__name__}"
         raise ValueError(msg)
@@ -2637,6 +2644,7 @@ def test_apply_desired_state_orchestrates_all() -> None:
         patch("vergil_tooling.lib.github_config._apply_security_settings") as mock_sec,
         patch("vergil_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
         patch("vergil_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
+        patch("vergil_tooling.lib.github_config._apply_environments") as mock_envs,
         patch(
             "vergil_tooling.lib.github_config._cleanup_classic_branch_protection",
             return_value=[],
@@ -2647,6 +2655,7 @@ def test_apply_desired_state_orchestrates_all() -> None:
     mock_sec.assert_called_once_with("o/r", state.security)
     mock_actions.assert_called_once_with("o/r", state.actions_permissions)
     mock_rulesets.assert_called_once_with("o/r", state.rulesets)
+    mock_envs.assert_called_once_with("o/r", state.environments)
     mock_cleanup.assert_called_once_with("o/r", state.rulesets)
     assert result == []
 
@@ -3159,7 +3168,11 @@ def test_classic_develop_unreadable_is_not_checked_not_drift() -> None:
         patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
     ):
         result = fetch_actual_state("o/r")
-    assert [nc.field for nc in result.not_checked] == ["classic_protection.develop"]
+    # The automation environment's read is refused the same way.
+    assert [nc.field for nc in result.not_checked] == [
+        "classic_protection.develop",
+        "environments.automation",
+    ]
     diff = compute_diff(
         desired=_desired_for_strict_tests(), actual=result.state, not_checked=result.not_checked
     )
@@ -3347,8 +3360,9 @@ def test_fetch_actual_state_records_unreadable_admin_settings() -> None:
         "actions_permissions.default_workflow_permissions",
         "actions_permissions.can_approve_pull_request_reviews",
         "classic_protection.develop",
+        "environments.automation",
     }
-    assert {nc.permission for nc in result.not_checked} == {"administration=read"}
+    assert {nc.permission for nc in result.not_checked} == {"administration=read", "actions=read"}
 
     desired = _state(_vergil_config())
     diff = compute_diff(desired=desired, actual=result.state, not_checked=result.not_checked)
@@ -3382,6 +3396,7 @@ def test_fetch_actual_state_selected_actions_unreadable() -> None:
     assert [nc.field for nc in result.not_checked] == [
         "actions_permissions.patterns_allowed",
         "classic_protection.develop",
+        "environments.automation",
     ]
 
 
@@ -4166,3 +4181,295 @@ class TestRequiredEvidenceGates:
         gate = EvidenceGate(name="test", checks=("test / unit / 3.14",))
         assert gate.name == "test"
         assert gate.checks == ("test / unit / 3.14",)
+
+
+# ---------------------------------------------------------------------------
+# The automation environment (epic vergil-project/.github#1384, Task 3b)
+# ---------------------------------------------------------------------------
+
+_ENV = "repos/o/r/environments/automation"
+_ENV_POLICIES = f"{_ENV}/deployment-branch-policies"
+
+
+def _not_found(endpoint: str) -> GitHubAPIError:
+    return GitHubAPIError(1, ("gh", "api", endpoint), "", "gh: Not Found (HTTP 404)")
+
+
+def _custom_env_json(**extra: object) -> dict[str, object]:
+    return {
+        "name": "automation",
+        "protection_rules": [{"id": 1, "node_id": "n", "type": "branch_policy"}],
+        "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True},
+        **extra,
+    }
+
+
+def _policy(name: str, kind: str = "branch", policy_id: int = 1) -> dict[str, object]:
+    return {"id": policy_id, "node_id": "n", "name": name, "type": kind}
+
+
+def _fetch_environment_with(
+    env: object, policies: list[object] | Exception | None = None
+) -> FetchResult:
+    """Run ``fetch_actual_state`` with the automation environment mocked."""
+
+    def read_json(*args: str) -> object:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {**_REPO_SETTINGS_JSON, "security_and_analysis": {}}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == _ENV:
+            if isinstance(env, Exception):
+                raise env
+            return env
+        if endpoint == _ENV_POLICIES:
+            if isinstance(policies, Exception):
+                raise policies
+            return {"total_count": len(policies or []), "branch_policies": policies or []}
+        if endpoint.endswith("/protection"):
+            raise _not_found(endpoint)
+        return {}
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=True),
+    ):
+        return fetch_actual_state("o/r")
+
+
+def _env_items(diff: ConfigDiff) -> dict[str, DiffItem]:
+    return {i.field: i for i in diff.items if i.field.startswith("environments.")}
+
+
+def test_automation_environment_allows_only_develop_and_main() -> None:
+    env = desired_automation_environment()
+    assert env.name == "automation"
+    assert env.deployment_branch_policy == "custom"
+    assert set(env.custom_branches) == {"develop", "main"}
+    assert env.custom_tags == []
+    assert env.reviewers == []
+    assert env.wait_timer == 0
+
+
+def test_desired_state_carries_the_automation_environment() -> None:
+    assert _state(_vergil_config()).environments == [desired_automation_environment()]
+    # A docs-single-branch repo gets the same policy: one naming a branch the
+    # repo does not have admits nothing.
+    docs_only = _vergil_config(release_model="docs-single-branch")
+    assert _state(docs_only).environments == [desired_automation_environment()]
+
+
+def test_environment_drift_is_reported() -> None:
+    result = _fetch_environment_with(_custom_env_json(), [_policy("*")])
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    items = _env_items(diff)
+    assert items["environments.automation.custom_branches"].expected == ["develop", "main"]
+    assert items["environments.automation.custom_branches"].actual == ["*"]
+    assert diff.has_drift()
+
+
+def test_converged_environment_is_compliant() -> None:
+    result = _fetch_environment_with(
+        _custom_env_json(), [_policy("main", policy_id=2), _policy("develop")]
+    )
+    assert result.state.environments == [desired_automation_environment()]
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    assert _env_items(diff) == {}
+
+
+def test_missing_environment_is_drift() -> None:
+    result = _fetch_environment_with(_not_found(_ENV))
+    assert result.state.environments == []
+    assert result.not_checked == []
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    item = _env_items(diff)["environments.automation"]
+    assert (item.expected, item.actual) == ("present", "missing")
+
+
+def test_environment_allowing_all_branches_is_drift() -> None:
+    # GitHub returns a null policy for "all branches"; no policies are listed.
+    result = _fetch_environment_with(_custom_env_json(deployment_branch_policy=None))
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    items = _env_items(diff)
+    assert items["environments.automation.deployment_branch_policy"].actual == "all"
+    assert items["environments.automation.custom_branches"].actual == []
+
+
+def test_environment_protected_branches_policy_is_drift() -> None:
+    result = _fetch_environment_with(
+        _custom_env_json(
+            deployment_branch_policy={"protected_branches": True, "custom_branch_policies": False}
+        )
+    )
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    item = _env_items(diff)["environments.automation.deployment_branch_policy"]
+    assert item.actual == "protected"
+
+
+def test_environment_tag_policy_reviewers_and_wait_timer_are_drift() -> None:
+    env = _custom_env_json(
+        protection_rules=[
+            {"id": 1, "type": "wait_timer", "wait_timer": 30},
+            {
+                "id": 2,
+                "type": "required_reviewers",
+                "reviewers": [
+                    {"type": "User", "reviewer": {"login": "octocat", "id": 9}},
+                    {"type": "Team", "reviewer": {"slug": "admins", "id": 8}},
+                ],
+            },
+        ]
+    )
+    policies: list[object] = [
+        _policy("develop"),
+        _policy("main", policy_id=2),
+        _policy("v*", "tag", 3),
+    ]
+    result = _fetch_environment_with(env, policies)
+    diff = compute_diff(desired=_state(_vergil_config()), actual=result.state)
+    items = _env_items(diff)
+    assert "environments.automation.custom_branches" not in items
+    assert items["environments.automation.custom_tags"].actual == ["v*"]
+    assert items["environments.automation.reviewers"].actual == ["Team:admins", "User:octocat"]
+    assert items["environments.automation.wait_timer"].actual == 30
+
+
+def test_unreadable_environment_is_not_checked() -> None:
+    result = _fetch_environment_with(_forbidden(_ENV))
+    assert NotChecked(field="environments.automation", permission="actions=read") in (
+        result.not_checked
+    )
+    diff = compute_diff(
+        desired=_state(_vergil_config()), actual=result.state, not_checked=result.not_checked
+    )
+    assert _env_items(diff) == {}
+    assert not diff.is_compliant()
+
+
+def test_unreadable_branch_policies_are_not_checked() -> None:
+    result = _fetch_environment_with(_custom_env_json(), _forbidden(_ENV_POLICIES))
+    fields = {nc.field for nc in result.not_checked if nc.field.startswith("environments.")}
+    assert fields == {
+        "environments.automation.custom_branches",
+        "environments.automation.custom_tags",
+    }
+    diff = compute_diff(
+        desired=_state(_vergil_config()), actual=result.state, not_checked=result.not_checked
+    )
+    assert _env_items(diff) == {}
+    assert not diff.is_compliant()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GitHubAPIError(1, ("gh", "api", _ENV), "", "gh: API rate limit exceeded (HTTP 403)"),
+        GitHubAPIError(1, ("gh", "api", _ENV), "", "gh: Server Error (HTTP 500)"),
+    ],
+)
+def test_environment_read_failure_propagates(error: GitHubAPIError) -> None:
+    with pytest.raises(GitHubAPIError):
+        _fetch_environment_with(error)
+
+
+@pytest.mark.parametrize(
+    ("env", "policies"),
+    [
+        (["not", "an", "object"], None),
+        (_custom_env_json(deployment_branch_policy="custom"), None),
+        (
+            _custom_env_json(
+                deployment_branch_policy={"protected_branches": True, "custom_branch_policies": True}
+            ),
+            None,
+        ),
+        (_custom_env_json(protection_rules={"type": "wait_timer"}), None),
+        (_custom_env_json(protection_rules=[{"type": "wait_timer", "wait_timer": "30"}]), None),
+        (_custom_env_json(), [{"name": "develop", "type": "ref"}]),
+        (_custom_env_json(), [{"name": 7, "type": "branch"}]),
+    ],
+)
+def test_malformed_environment_raises(env: object, policies: list[object] | None) -> None:
+    # A malformed answer fails closed, never reads as a converged environment.
+    with pytest.raises((RuntimeError, ValueError)):
+        _fetch_environment_with(env, policies)
+
+
+def test_apply_environment_creates_and_converges_policies() -> None:
+    live: list[object] = [_policy("*", policy_id=11), _policy("develop", policy_id=12)]
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json_paginated",
+            return_value=live,
+        ) as mock_list,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_environments("o/r", [desired_automation_environment()])
+    assert mock_write.call_args_list[0].args == (
+        "PUT",
+        _ENV,
+        {
+            "wait_timer": 0,
+            "reviewers": [],
+            "deployment_branch_policy": {
+                "protected_branches": False,
+                "custom_branch_policies": True,
+            },
+        },
+    )
+    mock_list.assert_called_once_with(_ENV_POLICIES, "branch_policies")
+    assert [c.args for c in mock_write.call_args_list[1:]] == [
+        ("POST", _ENV_POLICIES, {"name": "main", "type": "branch"}),
+    ]
+    mock_del.assert_called_once_with(f"{_ENV_POLICIES}/11")
+
+
+def test_apply_environment_creates_before_it_deletes() -> None:
+    # The missing policies are written before the stray ones go, so the
+    # policy set never passes through empty.
+    calls: list[str] = []
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.read_json_paginated",
+            return_value=[_policy("*", policy_id=11)],
+        ),
+        patch(
+            "vergil_tooling.lib.github_config.github.write_json",
+            side_effect=lambda method, *_: calls.append(method),
+        ),
+        patch(
+            "vergil_tooling.lib.github_config.github.delete",
+            side_effect=lambda *_: calls.append("DELETE"),
+        ),
+    ):
+        _apply_environments("o/r", [desired_automation_environment()])
+    assert calls == ["PUT", "POST", "POST", "DELETE"]
+
+
+def test_apply_environment_refuses_reviewers_it_cannot_name() -> None:
+    env = dataclasses.replace(desired_automation_environment(), reviewers=["User:octocat"])
+    with (
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        pytest.raises(ValueError, match="reviewers"),
+    ):
+        _apply_environments("o/r", [env])
+    mock_write.assert_not_called()
+
+
+def test_apply_desired_state_applies_environments() -> None:
+    state = _state(_vergil_config())
+    with (
+        patch("vergil_tooling.lib.github_config._apply_repo_settings"),
+        patch("vergil_tooling.lib.github_config._apply_security_settings"),
+        patch("vergil_tooling.lib.github_config._apply_actions_permissions"),
+        patch("vergil_tooling.lib.github_config._apply_rulesets"),
+        patch("vergil_tooling.lib.github_config._apply_environments") as mock_envs,
+        patch(
+            "vergil_tooling.lib.github_config._cleanup_classic_branch_protection",
+            return_value=[],
+        ),
+    ):
+        apply_desired_state("o/r", state)
+    mock_envs.assert_called_once_with("o/r", state.environments)

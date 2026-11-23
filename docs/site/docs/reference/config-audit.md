@@ -11,8 +11,9 @@ reconciles it. It combines two independent halves:
   `.claude/hooks/guard.sh`, reusable-workflow pins, `.gitignore`,
   `.github/dependabot.yml`, the per-language managed files (such as
   TypeScript's `tsconfig.vergil.json`), and `.github/workflows/ops.yml`.
-- **GitHub API checks** — repo settings, branch rulesets, and the
-  required-status-check set, fetched from the GitHub API.
+- **GitHub API checks** — repo settings, branch rulesets, the
+  required-status-check set and the `automation` environment, fetched
+  from the GitHub API.
 
 ## The `audit` command
 
@@ -675,6 +676,49 @@ order:
   branch, `gh api repos/{owner}/{repo}/rulesets`, or this audit). The error is
   still raised. To diagnose a refusal, or to probe whether a ruleset blocks a
   write, use `git push`, which prints the rule.
+
+## GitHub checks — the automation environment
+
+Every repo gets an `automation` deployment environment, declared by
+`desired_automation_environment()` in `lib/github_config.py`
+([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384)).
+Every secret a workflow reads that can write or act, the org automation
+App's `APP_CLIENT_ID` and `APP_PRIVATE_KEY` first, lives only in this
+environment, never at org or repo level, and every job that needs one
+declares `environment: automation`. The environment's deployment branch
+policy admits only `develop` and `main` (releases run on `main`), so a
+workflow running on any other branch, such as an agent's feature branch,
+runs without those secrets.
+
+| Field | Desired |
+|---|---|
+| Deployment branch policy | custom branch policies (not "all branches", not "protected branches") |
+| Custom branch policies | exactly `develop` and `main` |
+| Custom tag policies | none |
+| Required reviewers | none |
+| Wait timer | 0 |
+
+- **Each field is compared on its own**, as
+  `environments.automation.<field>`. A missing environment is one item,
+  `environments.automation: expected='present', actual='missing'`. A
+  policy such as `*` shows up as drift on `custom_branches`. Other
+  environments in the repo are not read or compared.
+- **Reads need `actions=read`.** GitHub's
+  [permissions required for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
+  lists the environment read and its `deployment-branch-policies`
+  listing under Actions (read). A permission-gap 403 on the environment
+  is reported as `environments.automation` not checked; one on the
+  listing as `environments.automation.custom_branches` and
+  `.custom_tags` not checked. A 404 is a missing environment. Any other
+  error, a malformed answer or a protection rule of a type the audit does
+  not know fails the audit rather than read as converged.
+- **`update` writes it whole**, which needs Administration write: a
+  `PUT` of the environment (no reviewers, no wait timer, custom branch
+  policies), then a `POST` of each missing branch policy before a
+  `DELETE` of each stray one, so the policy set never passes through
+  empty. `repo-init` creates it the same way.
+- A `docs-single-branch` repo gets the same policy: one naming a branch
+  the repo does not have admits nothing.
 
 ## GitHub checks — the required-status-check set
 
