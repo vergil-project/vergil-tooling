@@ -339,9 +339,11 @@ plan, merges. So that PR also closes the epic's **planning issue**
 checks whether that issue is an epic's documentation task:
 
 1. Its parent epic's body names the planning issue on a
-   `Planning: <owner>/<repo>#<M>` line.
+   `Planning: <owner>/<repo>#<M>` line. The line counts only from a body
+   the trust layer trusts: an untrusted epic body stops the submission.
 2. That planning issue's latest `Docs task:` marker names the PR's issue.
-   Only comments by trusted authors count.
+   Only comments the trust layer trusts count, and an untrusted planning
+   issue body closes nothing (the reason is printed).
 
 If both hold, the body gets one more line under its issue linkage:
 

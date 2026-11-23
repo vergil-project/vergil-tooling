@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import github, identity_mode, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
 from vergil_tooling.lib.rulings.exchange import (
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     except FatalCheck as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return EXIT_FATAL
-    except (RulingError, TrustedAuthorsNotConfiguredError) as exc:
+    except (RulingError, TrustedAuthorsNotConfiguredError, trust.TrustReadError) as exc:
         print(f"{_PROG}: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except github.MissingGitHubTokenError:
@@ -137,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _stream(ctx: _Context) -> tuple[list[comments.IssueComment], frozenset[int]]:
     """The issue's trusted comment stream and every comment ID on it."""
-    every = comments.fetch_comments(ctx.repo, ctx.issue)
-    return comments.trusted(every, ctx.authors), frozenset(c.id for c in every)
+    stream = comments.read_stream(ctx.repo, ctx.issue, ctx.authors)
+    return stream.comments, stream.all_ids
 
 
 def _check_body(body: str, marker: Marker, ctx: _Context, kind: str) -> None:
@@ -169,7 +169,9 @@ def _request(ctx: _Context, items_path: Path) -> int:
         )
         raise RulingError(msg)
     try:
-        comment_id = post_comment_once(ctx.repo, ctx.issue, body, author=ctx.agent)
+        comment_id = post_comment_once(
+            ctx.repo, ctx.issue, body, author=ctx.agent, authors=ctx.authors
+        )
     except PostNotLanded as exc:
         msg = f"{exc}. Re-running the request is safe"
         raise RulingError(msg) from exc
@@ -241,7 +243,7 @@ def _draft_scope(ctx: _Context, text_path: Path) -> int:
         raise RulingError(msg) from exc
     render_scope_change(text)
     draft_ref.require_remote_is(ctx.repo, remote="origin", command=f"{_PROG} draft-scope")
-    comments.fetch_comments(ctx.repo, ctx.issue)
+    comments.read_stream(ctx.repo, ctx.issue, ctx.authors)
     draft_ref.push_scope_draft(ctx.issue, text, remote="origin")
     print(
         f"{_PROG}: pushed the draft scope change to {draft_ref.scope_draft_ref(ctx.issue)}"
@@ -276,7 +278,9 @@ def _respond(ctx: _Context, request_id: int, reply_id: int, items_path: Path) ->
         _after_respond(ctx.repo, ctx.issue, request_id)
         return EXIT_OK
     try:
-        comment_id = post_comment_once(ctx.repo, ctx.issue, body, author=ctx.agent)
+        comment_id = post_comment_once(
+            ctx.repo, ctx.issue, body, author=ctx.agent, authors=ctx.authors
+        )
     except PostNotLanded as exc:
         msg = f"{exc}. Re-running the response is safe"
         raise RulingError(msg) from exc

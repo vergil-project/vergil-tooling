@@ -24,13 +24,10 @@ _MOD = "vergil_tooling.lib.queue_view"
 _EPIC = IssueRef("org", ".github", 1)
 
 
-_TRUSTED = frozenset({"vergil-user", "human"})
-
-
 @pytest.fixture(autouse=True)
-def trusted() -> Iterator[MagicMock]:
-    # The planning and deferred views read the trusted authors once each.
-    with patch(f"{_MOD}.epic_size.trusted_logins", return_value=_TRUSTED) as loader:
+def authors() -> Iterator[MagicMock]:
+    # Each view reads the trusted authors once, for the trust layer's reads.
+    with patch(f"{_MOD}.load_trusted_authors", return_value=trust_stubs.AUTHORS) as loader:
         yield loader
 
 
@@ -41,17 +38,14 @@ _LAYER: dict[int, list[dict[str, Any]]] = {}
 
 @pytest.fixture(autouse=True)
 def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
-    """The trust layer's GraphQL reads, answered from :data:`_LAYER`; the loader patched."""
+    """The trust layer's GraphQL reads, answered from :data:`_LAYER`."""
     _LAYER.clear()
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
     def graphql(query: str, **variables: Any) -> dict[str, Any]:
         return trust_stubs.item(nodes=_LAYER.get(int(variables["number"]), []))
 
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=graphql) as fake,
-        patch(f"{_MOD}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-    ):
+    with patch("vergil_tooling.lib.github.graphql", side_effect=graphql) as fake:
         yield fake
 
 
@@ -75,21 +69,18 @@ def _view(
 ) -> dict[str, Any]:
     """An issue view; a comment is a body (by ``someone``) or ``(author, body)``.
 
-    The trust layer reads the same comments (``someone`` as the trusted human),
-    or, given, the comment *nodes* (whose bodies ``gh`` then shows too).
+    ``gh`` shows no comments: the trust layer reads them (``someone`` as the
+    trusted human), or, given, the comment *nodes*.
     """
-    authored = [c if isinstance(c, tuple) else ("someone", c) for c in comments]
     if nodes is None:
+        authored = [c if isinstance(c, tuple) else ("someone", c) for c in comments]
         nodes = [
             trust_stubs.comment(i, b, _layer_actor(a)) for i, (a, b) in enumerate(authored, start=1)
         ]
-    else:
-        authored = [(str(n["author"]["login"]), str(n["body"])) for n in nodes]
     return {
         "title": title,
         "createdAt": created_at,
         "labels": [{"name": name} for name in labels],
-        "comments": [{"author": {"login": a}, "body": b} for a, b in authored],
         "body": body,
         "_nodes": nodes,
     }
@@ -1021,25 +1012,77 @@ def test_view_field_lists() -> None:
             reader("org/.github", "org", stops=trust.BatchStops())
         find.assert_called_once_with(kind, "org/.github", "org")
         [fields] = _fields(gh)
-        assert {"labels", "comments"} <= set(fields.split(",")), (kind, fields)
+        # The size comes from the labels and the trust layer's comments: gh
+        # is never asked for comments (or their authors).
+        assert "labels" in fields.split(","), (kind, fields)
+        assert "comments" not in fields.split(","), (kind, fields)
 
 
-def test_planning_item_carries_size(trusted: MagicMock) -> None:
+def test_planning_item_carries_size(authors: MagicMock) -> None:
     [item] = _planning(
         {5: _view("p", "2026-10-01T00:00:00Z", labels=("epic-size:M",), comments=(_SIZED_M14,))}
     )
     assert item.size == _M14
     assert item.note == "Sized 2026-11-16: epic-size M, about 14 tasks."
-    trusted.assert_called_once_with()
+    authors.assert_called_once_with()
 
 
-def test_planning_item_untrusted_sizing_is_ignored() -> None:
+def test_planning_item_untrusted_sizing_is_ignored(capsys: pytest.CaptureFixture[str]) -> None:
     untrusted = ("stranger", _SIZED_M14[1])
     [item] = _planning({5: _view("p", "2026-10-01T00:00:00Z", comments=(untrusted,))})
     assert item.size == SizeRecord(None, None, None, None)
+    _assert_reported(
+        capsys.readouterr().err,
+        f"org/.github#5 comment stranger at {trust_stubs.CREATED} on comment 1 (untrusted)",
+    )
 
 
-def test_deferred_item_carries_size(trusted: MagicMock) -> None:
+# A sizing comment whose reason carries synthetic spam: never shown anywhere.
+_FORGED_SIZING = (
+    "Sized 2026-11-20: epic-size M, about 14 tasks.\nEpic-size: M\n"
+    f"Estimated-tasks: 14\nConfidence: high\nReason: {trust_stubs.SPAM_TEXT}"
+)
+
+
+def _assert_forged_sizing_unseen(item: QueueItem, out: str) -> None:
+    """The forged sizing sized nothing and its text is nowhere in *item* or *out*."""
+    assert item.size is not None
+    assert item.size.error == _LABEL_ERROR
+    assert item.note == f"size: {_LABEL_ERROR}"
+    rendered = queue_view.render_text([item], now=_NOW) + str(queue_view.to_json([item]))
+    for text in (rendered, out):
+        assert "SPAM-MARKER-TEXT" not in text
+        assert "example.invalid" not in text
+        assert "Sized 2026-11-20" not in text
+
+
+def test_sizing_record_from_user_named_like_app(capsys: pytest.CaptureFixture[str]) -> None:
+    nodes = [trust_stubs.comment(1, _FORGED_SIZING, trust_stubs.IMPOSTOR)]
+    view = _view("p", "2026-10-01T00:00:00Z", labels=("epic-size:M",), nodes=nodes)
+    [item] = _planning({5: view})
+    captured = capsys.readouterr()
+    _assert_forged_sizing_unseen(item, captured.out)
+    _assert_reported(
+        captured.err,
+        f"org/.github#5 comment vergil-user at {trust_stubs.CREATED} on comment 1 (wrong-type)",
+    )
+
+
+def test_trusted_sizing_comment_edited_by_outsider_does_not_count(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    nodes = [trust_stubs.comment(1, _FORGED_SIZING, trust_stubs.AGENT, editor=trust_stubs.OUTSIDER)]
+    view = _view("d", "2026-10-01T00:00:00Z", labels=("epic-size:M",), nodes=nodes)
+    [item] = _deferred({1: view})
+    captured = capsys.readouterr()
+    _assert_forged_sizing_unseen(item, captured.out)
+    _assert_reported(
+        captured.err,
+        f"org/.github#1 edit drive-by at {trust_stubs.EDITED} on comment 1 (untrusted)",
+    )
+
+
+def test_deferred_item_carries_size(authors: MagicMock) -> None:
     deferral = ("app/vergil-user", "Deferred 2026-11-17: waits\nRevisit when: X ships")
     [item] = _deferred(
         {
@@ -1054,7 +1097,7 @@ def test_deferred_item_carries_size(trusted: MagicMock) -> None:
     assert item.size == _M14
     assert item.size.display == "M/14"
     assert item.note == "Deferred 2026-11-17: waits | Revisit when: X ships"
-    trusted.assert_called_once_with()
+    authors.assert_called_once_with()
 
 
 def test_error_keeps_held_note() -> None:
@@ -1088,7 +1131,7 @@ def test_error_replaces_latest_comment_note() -> None:
     assert item.note == f"size: {_LABEL_ERROR}"
 
 
-def test_intake_item_has_no_size(trusted: MagicMock) -> None:
+def test_intake_item_has_no_size() -> None:
     children = [ChildState(IssueRef("org", "tool", 3), "OPEN", "")]
     views = {3: _view("t", "2026-10-20T00:00:00Z", labels=("epic-size:M",))}
     with (
@@ -1098,11 +1141,10 @@ def test_intake_item_has_no_size(trusted: MagicMock) -> None:
     ):
         [item] = queue_view.intake_items("org/.github", "org", stops=trust.BatchStops())
     assert item.size is None
-    trusted.assert_not_called()
 
 
-def test_trusted_authors_error_propagates(trusted: MagicMock) -> None:
-    trusted.side_effect = ValueError("trusted_authors: 'human' is empty")
+def test_trusted_authors_error_propagates(authors: MagicMock) -> None:
+    authors.side_effect = ValueError("trusted_authors: 'human' is empty")
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_EPIC),
         patch(f"{_MOD}.epics.child_states", return_value=[]),

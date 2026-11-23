@@ -85,10 +85,10 @@ it is left out and recorded in the caller's
 carries on with the rest.
 
 Planning and deferred items carry an **epic size**
-(:mod:`vergil_tooling.lib.epic_size`): each view reads the item's labels and
-its comments with their authors, and derives its size record from the
-``epic-size:*`` label and the latest trusted sizing comment, reading the
-trusted authors once per view (the loader's errors propagate). An item whose
+(:mod:`vergil_tooling.lib.epic_size`): each view derives its size record
+from the item's ``epic-size:*`` label and the latest sizing comment among
+the comments the trust layer trusts, the same read its notes come from
+(the loader's errors propagate). An item whose
 size is in error keeps a held or deferral note with ``| size: <error>``
 appended; otherwise ``size: <error>`` replaces its latest-comment note.
 :func:`sort_planning` orders the planning queue by age, size or task count,
@@ -295,25 +295,13 @@ def _open_children(kind: epics.StandingKind, home: str, name: str) -> list[Issue
     return [c.ref for c in epics.child_states(epic) if c.state == "OPEN"]
 
 
-def _authored_comments(view: dict[str, Any]) -> list[tuple[str, str]]:
-    """Each comment as ``(author login, body)``, oldest first.
-
-    A comment whose author GitHub does not give (a deleted account) has the
-    login ``""``, which no trusted author matches.
-    """
-    out: list[tuple[str, str]] = []
-    for c in view.get("comments") or []:
-        author = c.get("author") or {}
-        out.append((str(author.get("login") or ""), str(c.get("body") or "")))
-    return out
-
-
 def _labels(view: dict[str, Any]) -> set[str]:
     return {str(lbl.get("name") or "") for lbl in view.get("labels") or []}
 
 
-def _size_record(view: dict[str, Any], trusted: frozenset[str]) -> SizeRecord:
-    return epic_size.size_record(_labels(view), _authored_comments(view), trusted)
+def _size_record(view: dict[str, Any], trusted_bodies: list[str]) -> SizeRecord:
+    """The item's size record, from its labels and the comment bodies the trust layer trusts."""
+    return epic_size.size_record(_labels(view), trusted_bodies)
 
 
 def _with_size_error(note: str, size: SizeRecord, *, keep_note: bool) -> str:
@@ -558,10 +546,9 @@ def planning_items(home: str, name: str, *, stops: trust.BatchStops) -> list[Que
     latest-comment note but does not hold it. An item whose comments cannot be
     read is left out and added to *stops*.
     """
-    trusted = epic_size.trusted_logins()
     authors = load_trusted_authors()
     views = [
-        (ref, _view(ref, "title,createdAt,labels,comments,body"))
+        (ref, _view(ref, "title,createdAt,labels,body"))
         for ref in _open_children(epics.PLANNING, home, name)
     ]
     holds = _holds(views)
@@ -573,7 +560,7 @@ def planning_items(home: str, name: str, *, stops: trust.BatchStops) -> list[Que
         markers = parse_planning_markers(comments)
         hold = holds[ref]
         state, demoted = _planning_state(_labels(view), markers, advisory_held=hold.held)
-        size = _size_record(view, trusted)
+        size = _size_record(view, comments)
         if demoted:
             note = _held_note(ref, hold)
         elif hold.broken is not None:
@@ -601,15 +588,14 @@ def deferred_items(home: str, name: str, *, stops: trust.BatchStops) -> list[Que
     with an empty note. An item whose comments cannot be read is left out and
     added to *stops*.
     """
-    trusted = epic_size.trusted_logins()
     authors = load_trusted_authors()
     keyed: list[tuple[str, QueueItem]] = []
     for ref in _open_children(epics.DEFERRED, home, name):
-        view = _view(ref, "title,createdAt,labels,comments")
-        size = _size_record(view, trusted)
+        view = _view(ref, "title,createdAt,labels")
         comments = _trusted_bodies(ref, authors, stops)
         if comments is None:
             continue
+        size = _size_record(view, comments)
         deferral = parse_latest_deferral(comments)
         note = (
             f"Deferred {deferral.day}: {deferral.reason} | Revisit when: {deferral.revisit_when}"

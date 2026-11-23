@@ -1,7 +1,8 @@
 """Tests for the batch rules: the hard rules and the commit-per-issue invariant.
 
-GitHub reads are faked at the ``epics`` boundary (one in-memory issue world);
-the trusted authors are faked at the loader. The commit checks run real git on
+GitHub reads are faked at the ``epics`` boundary (one in-memory issue world),
+except the issue's author, which the real trust layer judges from a faked
+GraphQL item; the trusted authors are faked at the loader. The commit checks run real git on
 a temporary repository.
 """
 
@@ -10,9 +11,11 @@ from __future__ import annotations
 import itertools
 import subprocess
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+from tests.vergil_tooling import trust_stubs
 
 from vergil_tooling.lib import epics, github, trust
 from vergil_tooling.lib.epics import IssueRef
@@ -28,7 +31,11 @@ from vergil_tooling.lib.pr_workflow.batch_rules import (
     is_batch,
 )
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
-from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import (
+    OrgConfig,
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -50,7 +57,8 @@ class Issue:
     labels: set[str] = field(default_factory=set)
     native_parent: IssueRef | None = EPIC
     reflink_parent: IssueRef | None = None
-    author: str = f"app/{AGENT}"
+    # The author as GraphQL returns it: an agent App is a Bot.
+    author: dict[str, str] = field(default_factory=lambda: {"__typename": "Bot", "login": AGENT})
     blockers: list[IssueRef] = field(default_factory=list)
     state: str = "OPEN"
 
@@ -85,7 +93,17 @@ class FakeGitHub:
             return issue.native_parent or issue.reflink_parent
 
         monkeypatch.setattr(epics, "parent_of", parent_of)
-        monkeypatch.setattr(epics, "issue_author", lambda ref: self._get("author", ref).author)
+
+        def graphql(query: str, **variables: Any) -> dict[str, Any]:
+            assert query == trust._ITEM_QUERY, "only the item query is faked"
+            ref = IssueRef(
+                str(variables["owner"]), str(variables["name"]), int(variables["number"])
+            )
+            return trust_stubs.item(
+                author=self._get("author", ref).author, body=trust_stubs.SPAM_TEXT
+            )
+
+        monkeypatch.setattr(github, "graphql", graphql)
         monkeypatch.setattr(epics, "blockers_of", lambda ref: self._get("blockers", ref).blockers)
         monkeypatch.setattr(epics, "issue_state", lambda ref: self._get("state", ref).state)
 
@@ -129,7 +147,7 @@ def test_hard_rules_accept_two_same_epic_tasks(world: FakeGitHub) -> None:
 
 
 def test_hard_rules_accept_eight_and_a_human_author(world: FakeGitHub) -> None:
-    world.issues[_ref(12)].author = HUMAN
+    world.issues[_ref(12)].author = {"__typename": "User", "login": HUMAN}
     check_hard_rules([f"#{n}" for n in range(10, 18)], repo=REPO)
 
 
@@ -219,15 +237,40 @@ def test_hard_rules_refuse_queue_item(world: FakeGitHub) -> None:
 
 
 def test_hard_rules_refuse_untrusted_author(world: FakeGitHub) -> None:
-    world.issues[_ref(11)].author = "mallory"
+    world.issues[_ref(11)].author = {"__typename": "User", "login": "mallory"}
     message = _refused(["#10", "#11"], "trusted author")
-    assert "#11 was opened by mallory" in message
+    assert "#11 was not opened by a trusted author: acme/tools#11 issue mallory" in message
+    assert message.endswith("(untrusted)")
+    assert trust_stubs.SPAM_TEXT not in message
 
 
-def test_hard_rules_refuse_an_app_prefixed_untrusted_author(world: FakeGitHub) -> None:
-    world.issues[_ref(11)].author = "app/mallory-bot"
+def test_hard_rules_refuse_an_app_untrusted_author(world: FakeGitHub) -> None:
+    world.issues[_ref(11)].author = {"__typename": "Bot", "login": "mallory-bot"}
     message = _refused(["#10", "#11"], "trusted author")
-    assert "app/mallory-bot" in message
+    assert "issue mallory-bot" in message
+
+
+def test_hard_rules_refuse_a_user_named_like_the_agent_app(world: FakeGitHub) -> None:
+    world.issues[_ref(11)].author = {"__typename": "User", "login": AGENT}
+    message = _refused(["#10", "#11"], "trusted author")
+    assert f"acme/tools#11 issue {AGENT}" in message
+    assert message.endswith("(wrong-type)")
+    assert trust_stubs.SPAM_TEXT not in message
+
+
+def test_hard_rules_refuse_an_automation_author(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The org's automation App holds a role, but not one a batch's issue may be opened by."""
+    authors = TrustedAuthors(
+        human=(HUMAN,),
+        agents=(AGENT,),
+        orgs={"acme": OrgConfig(automation_app="acme-automation")},
+    )
+    monkeypatch.setattr(batch_rules, "load_trusted_authors", lambda: authors)
+    world.issues[_ref(11)].author = {"__typename": "Bot", "login": "acme-automation"}
+    message = _refused(["#10", "#11"], "trusted author")
+    assert message.endswith("(not-accepted)")
 
 
 @pytest.mark.parametrize(

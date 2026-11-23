@@ -12,10 +12,12 @@ The link runs both ways, each side on a machine-read line alone on its line:
   proxy's body;
 - the primary records each proxy in a **comment**, never its body (agents
   rewrite an epic's body), carrying ``Proxy: <owner>/.github#<N>``
-  (:func:`proxy_line`, read by :func:`proxies_of`). Only comments whose author
-  ``vrg-trusted-authors`` lists count (a leading ``app/`` stripped), so a
-  forged comment on the primary counts for nothing. A proxy is never
-  removed from the list: one created by mistake is closed and stays listed.
+  (:func:`proxy_line`, read by :func:`proxies_of`). Only comments the trust
+  layer trusts count (:func:`vergil_tooling.lib.trusted_comments.bodies`: an
+  author and editors that hold a role of the right account type), so a
+  forged or outsider-edited comment on the primary counts for nothing. A
+  proxy is never removed from the list: one created by mistake is closed and
+  stays listed.
 
 :func:`create_proxy` (``vrg-epic-create --proxy-for``) is the sanctioned way
 to make a proxy and post its ``Proxy:`` comment. It refuses, with
@@ -26,7 +28,10 @@ Every reader fails loudly: a ``Primary:`` or ``Proxy:`` line that cannot be
 parsed or resolved raises :class:`ProxyLinkError`, a failed GitHub read
 propagates, and a failed trusted-author load propagates. None of them is ever a
 skipped item. The ``Primary:`` line counts only from a body the trust layer
-trusts: an untrusted body is a stop, never a link.
+trusts: an untrusted body is a stop
+(:class:`~vergil_tooling.lib.trust.UntrustedContentError`), never a link, and a
+read the layer cannot complete raises
+:class:`~vergil_tooling.lib.trust.TrustReadError`.
 """
 
 from __future__ import annotations
@@ -35,10 +40,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import epic_size, epics, github, trust
+from vergil_tooling.lib import epics, github, trust, trusted_comments
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels
-from vergil_tooling.lib.trusted_authors import trusted_comment_lines
 
 PRIMARY_MARKER = "Primary:"
 PROXY_MARKER = "Proxy:"
@@ -111,13 +115,18 @@ def primary_of(proxy: IssueRef) -> IssueRef:
     :class:`ProxyLinkError` when the body has no ``Primary:`` line, more than
     one, a malformed one, or one naming an issue without the ``epic`` label.
     """
-    content = trust.read_issue(f"{proxy.owner}/{proxy.repo}", proxy.number, require_body=True)
-    primary = _primary_in_body(proxy, content.body or "")
+    primary = _primary_in_body(proxy, _trusted_body(proxy))
     if not epics.is_epic(primary):
         raise ProxyLinkError(
             f"proxy {proxy.slug} names {primary.slug} as its primary, which is not an epic"
         )
     return primary
+
+
+def _trusted_body(ref: IssueRef) -> str:
+    """*ref*'s body, which the trust layer must trust (an untrusted one is a stop)."""
+    content = trust.read_issue(f"{ref.owner}/{ref.repo}", ref.number, require_body=True)
+    return content.body or ""
 
 
 def _primary_in_body(proxy: IssueRef, body: str) -> IssueRef:
@@ -136,15 +145,18 @@ def _primary_in_body(proxy: IssueRef, body: str) -> IssueRef:
 def proxies_of(primary: IssueRef) -> tuple[IssueRef, ...]:
     """Every proxy *primary*'s trusted comments name, sorted, without repeats.
 
-    The union of the ``Proxy:`` lines in comments by trusted authors
-    (:func:`epic_size.trusted_logins`); others are ignored. A trusted
-    ``Proxy:`` line that is malformed, or names an issue outside an
-    ``<owner>/.github`` home, raises :class:`ProxyLinkError`.
+    The union of the ``Proxy:`` lines, each alone on its line, in the
+    comments the trust layer trusts; each comment it leaves out is reported
+    on stderr, metadata only. A trusted ``Proxy:`` line that is malformed, or
+    names an issue outside an ``<owner>/.github`` home, raises
+    :class:`ProxyLinkError`; a read the layer cannot complete raises
+    :class:`~vergil_tooling.lib.trust.TrustReadError`.
     """
-    trusted = epic_size.trusted_logins()
-    comments = _view(primary, "comments").get("comments") or []
+    lines = [
+        line.strip() for body in trusted_comments.bodies(primary) for line in body.splitlines()
+    ]
     found: dict[str, IssueRef] = {}
-    for line in trusted_comment_lines(comments, trusted):
+    for line in lines:
         if not line.startswith(PROXY_MARKER):
             continue
         ref = _parse(line, _PROXY_RE, f"a comment on {primary.slug}")
@@ -259,7 +271,7 @@ def _proxy_rows(home: str) -> list[dict[str, Any]]:
         "--limit",
         str(epics.LISTING_LIMIT),
         "--json",
-        "number,state,title,body",
+        "number,state,title",
     )
     if not isinstance(raw, list):
         raise ProxyLinkError(f"unexpected 'gh issue list' response for {home}: {raw!r}")
@@ -288,20 +300,22 @@ def _existing_proxies(
     Read from the home's ``epic`` + ``proxy`` issues, plus any proxy in *home*
     the primary's trusted comments name (*listed*) that the listing missed (a
     just-created proxy can lag the listing). Every candidate's ``Primary:``
-    line is parsed, so a malformed one fails loudly; a listed proxy that is not
-    a proxy naming *primary* raises :class:`ProxyLinkError`.
+    line is parsed from its body as the trust layer reads it, so a malformed
+    one fails loudly and an untrusted body is a stop
+    (:class:`~vergil_tooling.lib.trust.UntrustedContentError`); a listed proxy
+    that is not a proxy naming *primary* raises :class:`ProxyLinkError`.
     """
     owner, repo = home.split("/", 1)
     found: dict[int, _Existing] = {}
     for row in _proxy_rows(home):
         ref = IssueRef(owner, repo, int(row["number"]))
-        if _same_ref(_primary_in_body(ref, str(row.get("body") or "")), primary):
+        if _same_ref(_primary_in_body(ref, _trusted_body(ref)), primary):
             found[ref.number] = _Existing(ref, _is_open(row), str(row.get("title") or ""))
     for ref in listed:
         if ref.owner.lower() != owner.lower() or ref.number in found:
             continue
-        view = _view(ref, "labels,state,title,body")
-        named = _primary_in_body(ref, str(view.get("body") or ""))
+        view = _view(ref, "labels,state,title")
+        named = _primary_in_body(ref, _trusted_body(ref))
         if not epics.is_proxy(_label_names(view)) or not _same_ref(named, primary):
             raise ProxyLinkError(
                 f"a trusted comment on {primary.slug} names {ref.slug} as its proxy, but"

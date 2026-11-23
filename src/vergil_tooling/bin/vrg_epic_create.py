@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github, proxies
+from vergil_tooling.lib import epics, github, proxies, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 
@@ -173,7 +173,14 @@ def _proxy_for(args: argparse.Namespace) -> int:
         return 1
     try:
         result = proxies.create_proxy(primary, args.repo)
-    except (proxies.ProxyRefusedError, proxies.ProxyLinkError) as exc:
+    except (
+        proxies.ProxyRefusedError,
+        proxies.ProxyLinkError,
+        # A proxy or primary the trust layer does not trust, or cannot read in
+        # full: a one-line, metadata-only message, before any write.
+        trust.UntrustedContentError,
+        trust.TrustReadError,
+    ) as exc:
         print(f"vrg-epic-create: {exc}", file=sys.stderr)
         return 1
     proxy = result.proxy.slug

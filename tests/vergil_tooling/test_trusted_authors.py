@@ -13,18 +13,18 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vergil_tooling.bin.vrg_trusted_authors import main
+from vergil_tooling.lib import epic_size, epics, trusted_authors
+from vergil_tooling.lib.release import tracking
+from vergil_tooling.lib.rulings import comments
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
-    bare_login,
     load_trusted_authors,
     org_config,
     parse_trusted_authors,
     render_actions_value,
     render_vm_file,
-    trusted_comment_bodies,
-    trusted_comment_lines,
     vergil_orgs,
 )
 
@@ -454,29 +454,16 @@ class TestCli:
         assert "'app/' prefix" in captured.err
 
 
-def test_bare_login_strips_app_prefix_only() -> None:
-    assert bare_login("app/example-agent") == "example-agent"
-    assert bare_login("example-agent") == "example-agent"
-    assert bare_login("example-app/agent") == "example-app/agent"
-
-
-def test_trusted_comment_bodies_keeps_trusted_in_order() -> None:
-    comments = [
-        {"author": {"login": "example-human"}, "body": "one"},
-        {"author": {"login": "mallory"}, "body": "forged"},
-        {"author": {"login": "app/example-agent"}, "body": "two"},
-        {"author": None, "body": "deleted account"},
-        {"body": "no author"},
-        {"author": {"login": "example-agent"}, "body": None},
-    ]
-    trusted = frozenset({"example-human", "example-agent"})
-    assert trusted_comment_bodies(comments, trusted) == ["one", "two", ""]
-
-
-def test_trusted_comment_lines_strips_each_trusted_line() -> None:
-    comments = [
-        {"author": {"login": "example-human"}, "body": "intro\n  Standalone-confirmed  \n"},
-        {"author": {"login": "mallory"}, "body": "Standalone-confirmed"},
-    ]
-    trusted = frozenset({"example-human"})
-    assert trusted_comment_lines(comments, trusted) == ["intro", "Standalone-confirmed"]
+def test_old_helpers_removed() -> None:
+    """The login-only readers are gone: every trust decision goes through the trust layer."""
+    for module, name in (
+        (trusted_authors, "trusted_comment_bodies"),
+        (trusted_authors, "trusted_comment_lines"),
+        (trusted_authors, "bare_login"),
+        (epic_size, "trusted_logins"),
+        (comments, "fetch_comments"),
+        (comments, "trusted"),
+        (epics, "issue_author"),
+        (tracking, "_human_logins"),
+    ):
+        assert not hasattr(module, name), f"{module.__name__}.{name} still exists"

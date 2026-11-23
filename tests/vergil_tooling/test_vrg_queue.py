@@ -955,7 +955,7 @@ def test_trusted_authors_missing_fails_through_the_real_view(
     exc = trusted_authors.TrustedAuthorsNotConfiguredError("trusted authors are not configured")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tool"),
-        patch("vergil_tooling.lib.epic_size.load_trusted_authors", side_effect=exc),
+        patch("vergil_tooling.lib.queue_view.load_trusted_authors", side_effect=exc),
     ):
         rc = main(["planning"])
     captured = capsys.readouterr()

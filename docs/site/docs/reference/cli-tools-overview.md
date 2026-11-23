@@ -832,9 +832,13 @@ proxy whose title differs from the derived one is retitled, so a re-run brings
 an older proxy up to date; a proxy is found by its `Primary:` line and labels,
 never its title. The comment is posted only when no trusted comment on the
 primary already names the proxy, so a re-run on an up-to-date proxy writes
-nothing. It refuses, before any write, a primary in the
+nothing. The `Primary:` lines and `Proxy:` comments are read through the
+trust layer: a comment it does not trust is left out and reported on stderr,
+and a proxy body it does not trust stops the command. It refuses, before any
+write, a primary in the
 target's own org and a primary that is not an open development epic (a standing
-epic, a proxy, an archive or a closed epic). It reads and writes each org
+epic, a proxy, an archive or a closed epic), and a body or comment list the
+trust layer does not trust or cannot read in full. It reads and writes each org
 under that org's App token. The title and body are derived, so it takes no
 `--title`, `--body`, `--body-file`, `--label` or `--assignee`.
 
@@ -1202,7 +1206,8 @@ Each planning and deferred line shows the item's **epic size** after its age:
 `M/14` (the size and the estimated task count), `?` when unsized, or `!` when
 its sizing is in error: its `epic-size:*` label and its latest trusted sizing
 comment disagree, one is missing, it has several size labels, or the comment
-is malformed. Only comments by trusted authors count. For an item in error, a
+is malformed. Only comments the trust layer trusts count (the comments the
+item's notes come from). For an item in error, a
 held or deferral note is kept with `| size: <error>` appended; otherwise
 `size: <error>` replaces its latest-comment note. `--json` adds `epic_size`,
 `estimated_tasks`, `confidence` and `size_error` (each `null` when unset) to
@@ -1555,7 +1560,9 @@ become `validate_stages`. The change class is
 [`vrg-change-class`](#vrg-change-class)'s, with the allow-list committed at
 the merge base.
 
-It reads the body of the `--issue` itself, as `issue_body`, and derives
+It reads the body of the `--issue` itself, as `issue_body`, through the
+trust layer, and refuses when the layer does not trust it (metadata only,
+never the body's text); it derives
 `epic_open_tasks` from the issue's native parent: when the parent carries
 `epic` and not `ad-hoc`, its open sub-issues, every page, as
 `{"ref", "title"}`, without the issue itself; otherwise `[]`. When the
@@ -1567,9 +1574,11 @@ labels or the sub-issues cannot be read, and, for a proxy, when its
 `Primary:` line cannot be resolved, the primary has no trusted `Proxy:`
 comment naming it back, or any of the primary's proxy links is broken.
 
-It reads the comments of the `--issue` itself, every page, and keeps only
-those posted by the one human login of the trusted-authors configuration
-(see [`vrg-trusted-authors`](#vrg-trusted-authors)), oldest first, as
+It reads the comments of the `--issue` itself through the trust layer,
+every page, and keeps only those posted by the one human login of the
+trusted-authors configuration (see
+[`vrg-trusted-authors`](#vrg-trusted-authors)), a GitHub user account, and
+edited by no one else, oldest first, as
 `issue_comments`, each `{"author", "created_at", "body"}`. Agent and
 third-party comments are dropped. A human comment that has been edited is
 left out and counted in `issue_comments_excluded_edited`. It refuses when
@@ -1588,8 +1597,10 @@ result raised, an ID given to both, a check with no `--fix-id`, and an
 earlier defect named by neither unless a later result marks it `fixed`.
 
 For a fix to an open PR, `--pr` names the PR by number or URL. The PR must
-be in the `--issue` repository, open, and headed by the current branch.
-When its body has more than one `Closes` line it is a batch PR: the
+be in the `--issue` repository, open, and a same-repo PR with a trusted
+author headed by the current branch, and its body must be one the trust
+layer trusts: a linkage line an outsider wrote or edited in never names an
+issue. When its body has more than one `Closes` line it is a batch PR: the
 `--issue` must be one of them, and every step's request adds
 `batch_issues` (each other issue's ref, body and human comments, read as
 for the `--issue`), `batch_commits` (every commit under review as
@@ -1678,7 +1689,7 @@ epic), or whose body names an `epic`-labelled issue in another org (it belongs
 under that org's proxy), each with its reason. A cross-org issue the body
 names that cannot be read (private, deleted, or in an org the App cannot
 reach) is listed as a reason of its own. A task drops out of the report once
-a comment by a trusted author carries the line `Standalone-confirmed`, alone
+a comment the trust layer trusts carries the line `Standalone-confirmed`, alone
 on its line, recording the human's ruling that it is standalone. The report
 never refuses, moves, closes or labels anything, does not change the exit
 status, and, like the proxy link drift section, runs with `--close` too.

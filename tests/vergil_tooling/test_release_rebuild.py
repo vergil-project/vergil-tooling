@@ -14,12 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.pending_release import PendingReleaseError
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.rebuild import Rebuilt, rebuild_breached
 from vergil_tooling.lib.release.state import IssueEntry
 from vergil_tooling.lib.release.supersede import Superseded, load_superseded
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,11 +51,21 @@ def _pr(merge: str, head: str, number: int) -> dict[str, Any]:
     }
 
 
-def _closing_comment(login: str, version: str = _OLD, number: int = 40) -> dict[str, Any]:
-    return {
-        "author": {"login": login},
-        "body": f"Superseded by release {version}: https://github.com/{_REPO}/issues/{number}\n\nmore",
-    }
+_HUMAN = {"__typename": "User", "login": "human"}
+_AGENT = {"__typename": "Bot", "login": "agent"}
+_AUTHORS = TrustedAuthors(human=("human",), agents=("agent",))
+
+
+def _closing_comment(
+    author: dict[str, str] = _HUMAN,
+    version: str = _OLD,
+    number: int = 40,
+    *,
+    editor: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """The closing comment ``prepare`` posts, as the layer's GraphQL comment node."""
+    body = f"Superseded by release {version}: https://github.com/{_REPO}/issues/{number}\n\nmore"
+    return trust_stubs.comment(1, body, author, editor=editor)
 
 
 @dataclass
@@ -87,8 +100,18 @@ class _Facts:
         if args[:2] == ("run", "view"):
             return {"jobs": self.jobs[args[2]]}
         if args[:2] == ("issue", "list"):
-            return self.closed
+            # The search only picks candidates: their comments come through the layer.
+            assert args[args.index("--json") + 1] == "number,title"
+            return [{"number": i["number"], "title": i["title"]} for i in self.closed]
         raise AssertionError(args)
+
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        assert query == trust._ITEM_QUERY, "only the item query is faked"
+        assert f"{variables['owner']}/{variables['name']}" == _REPO
+        for issue in self.closed:
+            if issue["number"] == variables["number"]:
+                return trust_stubs.item(nodes=issue["comments"])
+        raise AssertionError(variables)
 
     def git(self, *args: str) -> str:
         if args[0] == "ls-remote":
@@ -112,7 +135,8 @@ def facts() -> Iterator[tuple[_Facts, dict[str, MagicMock]]]:
         patch(_REBUILD + ".git.run") as m_run,
         patch(_REBUILD + ".gather_issue_list", return_value=_OWN) as m_issues,
         patch(_REBUILD + ".read_state") as m_read,
-        patch(_REBUILD + "._human_logins", return_value=("human",)),
+        patch("vergil_tooling.lib.github.graphql", side_effect=found.graphql),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=_AUTHORS),
     ):
         yield found, {"json": m_json, "run": m_run, "issues": m_issues, "read": m_read}
 
@@ -253,12 +277,6 @@ _FAILED = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
         (False, ("issue", "list"), _FAILED, "the release that 2.1.5 superseded could not be"),
         (False, ("issue", "list"), {"not": "a list"}, "could not be searched in full"),
         (False, ("issue", "list"), ["not an issue"], "returned 'not an issue'"),
-        (
-            False,
-            ("issue", "list"),
-            [{"number": 39, "title": f"release: {_PRIOR}", "comments": None}],
-            "issue 39's comments are None",
-        ),
     ],
 )
 def test_an_unexpected_answer_refuses(
@@ -276,13 +294,28 @@ def test_an_unexpected_answer_refuses(
         _rebuild()
 
 
-def test_a_comment_that_is_not_an_object_does_not_count(
+def test_a_comment_that_is_not_an_object_refuses(
     facts: tuple[_Facts, dict[str, MagicMock]],
 ) -> None:
+    """A comment the trust layer cannot read is a refusal, never a comment that does not count."""
     found, mocks = facts
     found.closed = [{"number": 39, "title": f"release: {_PRIOR}", "comments": ["text"]}]
-    assert _rebuild().issues == _OWN
+    with pytest.raises(ReleaseError, match="the comments of #39 could not be read"):
+        _rebuild()
     mocks["read"].assert_not_called()
+
+
+def test_a_closing_comment_trust_load_failure_refuses(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+) -> None:
+    found, _ = facts
+    found.closed = [_prior_issue(_closing_comment())]
+    error = TrustedAuthorsNotConfiguredError("trusted authors are not configured")
+    with (
+        patch("vergil_tooling.lib.trust.load_trusted_authors", side_effect=error),
+        pytest.raises(ReleaseError, match="trusted authors are not configured"),
+    ):
+        _rebuild()
 
 
 @pytest.mark.parametrize(
@@ -311,7 +344,7 @@ def test_a_breached_superseded_release_with_no_merged_release_pr_refuses(
     facts: tuple[_Facts, dict[str, MagicMock]],
 ) -> None:
     found, mocks = facts
-    found.closed = [_prior_issue(_closing_comment("human"))]
+    found.closed = [_prior_issue(_closing_comment())]
     mocks["read"].side_effect = TrackingIssueBreach("ghost", "reopened the issue", number=39)
     with pytest.raises(ReleaseError, match="the release it superseded, 2.1.4, has no merged"):
         _rebuild()
@@ -328,7 +361,7 @@ def test_absorbed_issues_come_from_the_superseded_release_state(
     facts: tuple[_Facts, dict[str, MagicMock]],
 ) -> None:
     found, mocks = facts
-    found.closed = [_prior_issue(_closing_comment("human"))]
+    found.closed = [_prior_issue(_closing_comment())]
     mocks["read"].return_value = MagicMock(issues=_PRIOR_ISSUES)
     assert _rebuild().issues == (
         IssueEntry(f"{_REPO}#10", (7,)),
@@ -341,9 +374,9 @@ def test_absorbed_issues_come_from_the_superseded_release_state(
 @pytest.mark.parametrize(
     "closed",
     [
-        _prior_issue(_closing_comment("agent")),
-        _prior_issue(_closing_comment("human", number=41)),
-        _prior_issue(_closing_comment("human"), title="release notes"),
+        _prior_issue(_closing_comment(_AGENT)),
+        _prior_issue(_closing_comment(number=41)),
+        _prior_issue(_closing_comment(), title="release notes"),
     ],
     ids=["agent-comment", "other-issue", "not-a-release"],
 )
@@ -358,9 +391,9 @@ def test_a_closing_comment_counts_only_from_a_human_for_this_issue(
 
 def test_two_superseded_releases_refuse(facts: tuple[_Facts, dict[str, MagicMock]]) -> None:
     found, _ = facts
-    other = _prior_issue(_closing_comment("human"))
+    other = _prior_issue(_closing_comment())
     other["number"] = 38
-    found.closed = [_prior_issue(_closing_comment("human")), other]
+    found.closed = [_prior_issue(_closing_comment()), other]
     with pytest.raises(ReleaseError, match="more than one release says 2.1.5 superseded it"):
         _rebuild()
 
@@ -369,7 +402,7 @@ def test_a_breached_superseded_release_is_rebuilt_too(
     facts: tuple[_Facts, dict[str, MagicMock]],
 ) -> None:
     found, mocks = facts
-    found.closed = [_prior_issue(_closing_comment("human"))]
+    found.closed = [_prior_issue(_closing_comment())]
     found.merged[f"release/{_PRIOR}"] = [_pr(_PRIOR_MERGE, _PRIOR_HEAD, 45)]
     mocks["read"].side_effect = TrackingIssueBreach("ghost", "reopened the issue", number=39)
     prior_own = (IssueEntry(f"{_REPO}#9", (5,)),)
@@ -438,3 +471,34 @@ def test_breach_message_points_at_supersede() -> None:
     assert "can never pass this check again" in message
     assert "`vrg-release --supersede <version>`" in message
     assert "clean it up" not in message
+
+
+@pytest.mark.parametrize(
+    ("comment", "cause"),
+    [
+        (_closing_comment({"__typename": "Bot", "login": "human"}), "wrong-type"),
+        (_closing_comment(editor=trust_stubs.OUTSIDER), "untrusted"),
+        (_closing_comment(editor=_AGENT), "not-accepted"),
+        (_closing_comment(trust_stubs.OUTSIDER), "untrusted"),
+    ],
+    ids=["bot-named-like-the-human", "edited-by-an-outsider", "edited-by-an-agent", "outsider"],
+)
+def test_a_closing_comment_the_layer_does_not_trust_does_not_count(
+    facts: tuple[_Facts, dict[str, MagicMock]],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    comment: dict[str, Any],
+    cause: str,
+) -> None:
+    """Only the human's own, unedited-by-others closing comment names the superseded release."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    found, mocks = facts
+    comment = {**comment, "body": f"{comment['body']}\n{trust_stubs.SPAM_TEXT}"}
+    found.closed = [_prior_issue(comment)]
+    assert _rebuild().issues == _OWN
+    mocks["read"].assert_not_called()
+    captured = capsys.readouterr()
+    assert f"skipped untrusted content: {_REPO}#39 " in captured.err
+    assert captured.err.count("skipped untrusted content") == 1
+    assert f"on comment 1 ({cause})" in captured.err
+    assert trust_stubs.SPAM_TEXT not in captured.out + captured.err

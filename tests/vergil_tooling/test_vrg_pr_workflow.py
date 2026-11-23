@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -465,6 +466,36 @@ def test_report_ready_reports_a_planning_close_it_could_not_check(
     assert out["planning_close"]["unknown"].startswith(
         "could not check whether #10 is an epic's documentation task"
     )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.TrustReadError("read_issue acme/.github#7", "HTTP 502"),
+        trust.UntrustedContentError(
+            trust.Skipped("acme/.github", 7, "edit", "drive-by", "t", "body", trust.UNTRUSTED),
+            "the issue body is untrusted",
+        ),
+    ],
+    ids=["read-failure", "untrusted-epic-body"],
+)
+def test_report_ready_reports_a_planning_close_the_trust_layer_stopped(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    """A trust-layer stop in the preview is reported as unknown, never a failed report-ready."""
+    _branch(ready_clone, "docs: the spec and plan")
+    per_issue["planning"].side_effect = error
+    assert _report("10") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ready"
+    unknown = out["planning_close"]["unknown"]
+    assert unknown.startswith("could not check whether #10 is an epic's documentation task")
+    assert str(error) in unknown
 
 
 def test_report_ready_batch_rerun_with_the_same_list_succeeds(

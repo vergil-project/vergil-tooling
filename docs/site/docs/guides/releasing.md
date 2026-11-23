@@ -507,8 +507,10 @@ it instead:
   `main` commit its release PR merged onto and the release PR's head,
   as [the issue list](#the-issue-list) reads them. When the breached
   release itself superseded a release, the issues it absorbed are read
-  from that release's tracking issue, found by the closing comment a
-  `human` login of `vrg-trusted-authors` posted on it; that issue's
+  from that release's tracking issue, found by the closing comment the
+  human posted on it (a comment by the `human` role of
+  `vrg-trusted-authors`, a GitHub user account, that no one else has
+  edited, as the trust layer reads it); that issue's
   state is read under the identity rule, or rebuilt the same way when
   it fails the rule too.
 

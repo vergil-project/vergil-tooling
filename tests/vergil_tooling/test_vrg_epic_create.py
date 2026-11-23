@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_create import main, parse_args
-from vergil_tooling.lib import github, proxies
+from vergil_tooling.lib import github, proxies, trust
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
@@ -259,6 +259,39 @@ def test_proxy_for_refusal_exits_1(error: Exception, capsys: pytest.CaptureFixtu
         rc = main(_PROXY_ARGS)
     assert rc == 1
     assert f"vrg-epic-create: {error}" in capsys.readouterr().err
+
+
+_SKIPPED = trust.Skipped(
+    repo="logical-minds-foundry/.github",
+    number=320,
+    kind="issue",
+    login="drive-by",
+    at="2026-11-01T09:30:00Z",
+    field="body",
+    cause="untrusted",
+)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.UntrustedContentError(_SKIPPED, "the issue body is untrusted"),
+        trust.TrustReadError("read_issue logical-minds-foundry/.github#320", "no data"),
+    ],
+    ids=["untrusted-content", "trust-read-error"],
+)
+def test_proxy_for_untrusted_content_is_one_line_error(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A proxy or primary the trust layer does not trust (or cannot read in
+    # full) is a one-line, metadata-only error, exit 1: never a traceback.
+    with patch(f"{_MOD}.proxies.create_proxy", side_effect=error):
+        rc = main(_PROXY_ARGS)
+    assert rc == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"vrg-epic-create: {error}\n"
+    assert len(err.splitlines()) == 1
 
 
 def test_proxy_for_token_missing_refuses(capsys: pytest.CaptureFixture[str]) -> None:

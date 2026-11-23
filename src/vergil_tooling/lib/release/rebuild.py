@@ -22,9 +22,10 @@ record about release ``X.Y.Z``:
 - its issue list: the issues the ``feature/`` PRs of its release PR's range
   close (:func:`pending_release.gather_issue_list`), and, when it superseded
   a release itself, that release's issue list, which it absorbed. That
-  release is found by the closing comment a human login posted on its
-  tracking issue, and its state is read under the identity rule, or rebuilt
-  the same way when its own issue is breached.
+  release is found by the closing comment the human posted on its tracking
+  issue, as the trust layer judges it (a GraphQL ``User`` of the ``human``
+  role, the comment edited by no one else), and its state is read under the
+  identity rule, or rebuilt the same way when its own issue is breached.
 
 The superseding release's own fresh-start checks then judge the rest, as
 for any supersede. Every read fails loudly: a lookup that fails or returns
@@ -39,15 +40,15 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, trust
 from vergil_tooling.lib.cd_runs import is_release_job
 from vergil_tooling.lib.pending_release import PendingReleaseError, gather_issue_list
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.state import IssueEntry
-from vergil_tooling.lib.release.tracking import _human_logins, read_state
-from vergil_tooling.lib.trusted_authors import bare_login
+from vergil_tooling.lib.release.tracking import read_state
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,6 +63,10 @@ _PR_LIMIT = 10
 _RUN_LIMIT = 50
 _ISSUE_LIMIT = 100
 _SHORT = 12
+# The superseded marker counts only on a comment the human wrote and no one else edited.
+_HUMAN_ONLY = frozenset({trust.Role.HUMAN})
+# The field the layer gives a body's Skipped record; the body is not read here.
+_BODY_FIELD = "body"
 
 
 @dataclass(frozen=True)
@@ -265,10 +270,14 @@ def _check_no_release_job_passed(repo: str, version: str, run_id: str) -> None:
 def _predecessor(repo: str, version: str, number: int) -> tuple[str, int] | None:
     """The ``(version, number)`` of the release *version* superseded, or None when none.
 
-    It is the closed ``release: X.Y.Z`` issue that a human login of
-    ``vrg-trusted-authors`` closed with the comment ``prepare`` posts,
-    ``Superseded by release <version>: <the issue URL of #number>``. More
-    than one such issue refuses.
+    It is the closed ``release: X.Y.Z`` issue that the human closed with the
+    comment ``prepare`` posts, ``Superseded by release <version>: <the issue
+    URL of #number>``. The search only picks the candidates: each one's
+    comments are read through the trust layer, and the marker counts only on
+    a comment the human (a GraphQL ``User`` of ``vrg-trusted-authors``) wrote
+    and no one else edited. Each comment left out is reported on stderr,
+    metadata only. More than one such issue refuses, and so does a read the
+    layer cannot complete.
     """
     marker = f"Superseded by release {version}: https://github.com/{repo}/issues/{number}"
     cmd = (
@@ -283,7 +292,7 @@ def _predecessor(repo: str, version: str, number: int) -> tuple[str, int] | None
         "--limit",
         str(_ISSUE_LIMIT),
         "--json",
-        "number,title,comments",
+        "number,title",
     )
     what = f"the release that {version} superseded"
     try:
@@ -292,38 +301,32 @@ def _predecessor(repo: str, version: str, number: int) -> tuple[str, int] | None
         raise _lookup_error(version, exc, what) from exc
     if not isinstance(found, list) or len(found) >= _ISSUE_LIMIT:
         raise _refuse(version, f"{what} could not be searched in full: {found!r}.")
-    humans = set(_human_logins())
     matches: list[tuple[str, int]] = []
     for item in found:
         if not isinstance(item, dict):
             raise _refuse(version, f"the search for {what} returned {item!r}.")
         title = _TITLE_RE.match(str(item.get("title", "")))
-        comments = item.get("comments")
         if title is None:
             continue
-        if not isinstance(comments, list):
-            raise _refuse(version, f"issue {item.get('number')!r}'s comments are {comments!r}.")
-        if any(_closes_as_superseded(comment, humans, marker) for comment in comments):
-            matches.append((title.group(1), int(str(item["number"]))))
+        candidate = int(str(item["number"]))
+        if _closes_as_superseded(repo, version, candidate, marker):
+            matches.append((title.group(1), candidate))
     if len(matches) > 1:
         numbers = ", ".join(f"#{n}" for _, n in matches)
         raise _refuse(version, f"more than one release says {version} superseded it: {numbers}.")
     return matches[0] if matches else None
 
 
-def _closes_as_superseded(comment: object, humans: set[str], marker: str) -> bool:
-    if not isinstance(comment, dict):
-        return False
-    comment = cast("dict[str, object]", comment)
-    author = comment.get("author")
-    login = author.get("login") if isinstance(author, dict) else None
-    body = comment.get("body")
-    return (
-        isinstance(login, str)
-        and bare_login(login) in humans
-        and isinstance(body, str)
-        and body.startswith(marker)
+def _closes_as_superseded(repo: str, version: str, number: int, marker: str) -> bool:
+    """Whether a comment on *repo*#*number* that the layer trusts as the human's starts *marker*."""
+    try:
+        content = trust.read_issue(repo, number, roles=_HUMAN_ONLY)
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        raise _refuse(version, f"the comments of #{number} could not be read: {exc}") from exc
+    trust.report_skipped(
+        [item for item in content.skipped if item.field != _BODY_FIELD], stream=sys.stderr
     )
+    return any(comment.body.startswith(marker) for comment in content.comments)
 
 
 def _issue_list(

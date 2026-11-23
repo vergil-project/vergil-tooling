@@ -15,11 +15,25 @@ from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 PROXY = IssueRef("logical-minds-foundry", ".github", 320)
 PRIMARY = IssueRef("vergil-project", ".github", 1417)
-TRUSTED = frozenset({"wphillipmoore", "wphillipmoore-vergil-user"})
+PRIMARY_KEY = ("vergil-project/.github", 1417)
 
 
-def _comment(login: str, body: str) -> dict[str, Any]:
-    return {"author": {"login": login}, "body": body}
+@pytest.fixture(autouse=True)
+def _no_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The skip reports these tests check are the per-item lines, not Actions counts.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+def _comment(actor: Any, body: str, *, editor: Any = None) -> dict[str, Any]:
+    """An ``IssueComment`` node by *actor* (a GraphQL actor, ``None`` a deleted account)."""
+    return trust_stubs.comment(1, body, actor, editor=editor)
+
+
+def _numbered(*nodes: dict[str, Any]) -> list[dict[str, Any]]:
+    """*nodes* renumbered from 1, as GitHub gives each comment its own id."""
+    return [
+        {**node, "id": f"IC_{i}", "fullDatabaseId": str(i)} for i, node in enumerate(nodes, start=1)
+    ]
 
 
 def _views(views: dict[IssueRef, dict[str, Any]]) -> Any:
@@ -53,10 +67,14 @@ def _primary_of(
 
 
 def _proxies_of(comments: list[dict[str, Any]]) -> tuple[IssueRef, ...]:
-    views = {PRIMARY: {"comments": comments}}
+    """:func:`proxies.proxies_of` of PRIMARY, its comments read through the real trust layer."""
+    items = trust_stubs.FakeItems(
+        {PRIMARY_KEY: trust_stubs.item(nodes=_numbered(*comments))}, strict=True
+    )
     with (
-        patch("vergil_tooling.lib.github.read_json", side_effect=_views(views)),
-        patch("vergil_tooling.lib.proxies.epic_size.trusted_logins", return_value=TRUSTED),
+        patch("vergil_tooling.lib.github.read_json", side_effect=AssertionError("no gh read")),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
         return proxies.proxies_of(PRIMARY)
 
@@ -165,45 +183,101 @@ def test_primary_of_untrusted_body_is_a_stop(author: Any, editor: Any, cause: st
 
 def test_proxies_of_union_of_trusted_comments() -> None:
     comments = [
-        _comment("wphillipmoore-vergil-user", "Proxy: wphillipmoore/.github#9"),
-        _comment("wphillipmoore", "Created.\n\nProxy: logical-minds-foundry/.github#320\n"),
-        _comment("wphillipmoore-vergil-user", "Proxy: wphillipmoore/.github#9"),
+        _comment(trust_stubs.AGENT, "Proxy: wphillipmoore/.github#9"),
+        _comment(trust_stubs.HUMAN, "Created.\n\nProxy: logical-minds-foundry/.github#320\n"),
+        _comment(trust_stubs.AGENT, "Proxy: wphillipmoore/.github#9"),
     ]
     assert _proxies_of(comments) == (PROXY, IssueRef("wphillipmoore", ".github", 9))
 
 
 def test_proxies_of_none() -> None:
-    assert _proxies_of([_comment("wphillipmoore", "LGTM")]) == ()
+    assert _proxies_of([_comment(trust_stubs.HUMAN, "LGTM")]) == ()
 
 
-def test_proxies_of_ignores_untrusted_comment() -> None:
+def test_proxies_of_ignores_untrusted_comment(capsys: pytest.CaptureFixture[str]) -> None:
     comments = [
-        _comment("mallory", "Proxy: mallory-org/.github#1"),
-        _comment("", "Proxy: ghost-org/.github#2"),
-        _comment("wphillipmoore", "Proxy: logical-minds-foundry/.github#320"),
+        _comment(trust_stubs.OUTSIDER, "Proxy: mallory-org/.github#1"),
+        _comment(None, "Proxy: ghost-org/.github#2"),
+        _comment(trust_stubs.HUMAN, "Proxy: logical-minds-foundry/.github#320"),
     ]
     assert _proxies_of(comments) == (PROXY,)
+    out, err = capsys.readouterr()
+    at = trust_stubs.CREATED
+    assert err == (
+        f"skipped untrusted content: vergil-project/.github#1417 comment drive-by at {at}"
+        " on comment 1 (untrusted)\n"
+        "skipped untrusted content: vergil-project/.github#1417 comment a deleted account"
+        f" at {at} on comment 2 (deleted)\n"
+    )
+    assert "mallory-org" not in out + err
+    assert "ghost-org" not in out + err
 
 
-def test_proxies_of_ignores_untrusted_malformed_line() -> None:
+def test_proxies_of_ignores_untrusted_malformed_line(capsys: pytest.CaptureFixture[str]) -> None:
     # A forged malformed line must not be able to break the primary's readers.
-    comments = [_comment("mallory", "Proxy: garbage")]
+    comments = [_comment(trust_stubs.OUTSIDER, f"Proxy: garbage\n{trust_stubs.SPAM_TEXT}")]
     assert _proxies_of(comments) == ()
+    out, err = capsys.readouterr()
+    assert "on comment 1 (untrusted)" in err
+    assert "garbage" not in out + err
+    assert "SPAM-MARKER-TEXT" not in out + err
 
 
-def test_proxies_of_strips_app_prefix() -> None:
+@pytest.mark.parametrize("login", ["vergil-user", "app/vergil-user", "vergil-user[bot]"])
+def test_proxies_of_strips_app_prefix(login: str) -> None:
+    agent = {"__typename": "Bot", "login": login}
+    comments = [_comment(agent, "Proxy: logical-minds-foundry/.github#320")]
+    assert _proxies_of(comments) == (PROXY,)
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "at", "cause"),
+    [
+        (trust_stubs.IMPOSTOR, None, "comment", "vergil-user", trust_stubs.CREATED, "wrong-type"),
+        (
+            trust_stubs.AGENT,
+            trust_stubs.OUTSIDER,
+            "edit",
+            "drive-by",
+            trust_stubs.EDITED,
+            "untrusted",
+        ),
+    ],
+    ids=["user-named-like-app", "trusted-comment-edited-by-outsider"],
+)
+def test_proxy_line_from_user_named_like_app(
+    capsys: pytest.CaptureFixture[str],
+    author: Any,
+    editor: Any,
+    kind: str,
+    login: str,
+    at: str,
+    cause: str,
+) -> None:
+    # A Proxy: line counts only from a comment the layer trusts: a User account
+    # named like the agent App, or an outsider's edit of a trusted comment,
+    # makes it count for nothing, reported metadata only.
+    forged = f"{trust_stubs.SPAM_TEXT}\nProxy: mallory-org/.github#666\n"
     comments = [
-        _comment("app/wphillipmoore-vergil-user", "Proxy: logical-minds-foundry/.github#320")
+        _comment(author, forged, editor=editor),
+        _comment(trust_stubs.HUMAN, "Proxy: logical-minds-foundry/.github#320"),
     ]
     assert _proxies_of(comments) == (PROXY,)
+    out, err = capsys.readouterr()
+    assert err == (
+        f"skipped untrusted content: vergil-project/.github#1417 {kind} {login} at {at}"
+        f" on comment 1 ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in out + err
+    assert "mallory-org" not in out + err
 
 
 def test_proxies_of_trusted_load_failure_raises() -> None:
-    views = {PRIMARY: {"comments": []}}
+    items = trust_stubs.FakeItems({PRIMARY_KEY: trust_stubs.item()}, strict=True)
     with (
-        patch("vergil_tooling.lib.github.read_json", side_effect=_views(views)),
+        patch("vergil_tooling.lib.github.graphql", side_effect=items),
         patch(
-            "vergil_tooling.lib.proxies.epic_size.trusted_logins",
+            "vergil_tooling.lib.trust.load_trusted_authors",
             side_effect=TrustedAuthorsNotConfiguredError("not configured"),
         ),
         pytest.raises(TrustedAuthorsNotConfiguredError),
@@ -213,38 +287,38 @@ def test_proxies_of_trusted_load_failure_raises() -> None:
 
 def test_proxies_of_line_not_alone_ignored() -> None:
     comments = [
-        _comment("wphillipmoore", "The Proxy: logical-minds-foundry/.github#320 line is below."),
-        _comment("wphillipmoore", "see Proxy: wphillipmoore/.github#9"),
+        _comment(trust_stubs.HUMAN, "The Proxy: logical-minds-foundry/.github#320 line is below."),
+        _comment(trust_stubs.HUMAN, "see Proxy: wphillipmoore/.github#9"),
     ]
     assert _proxies_of(comments) == ()
 
 
 def test_proxies_of_malformed_trusted_line_raises() -> None:
-    comments = [_comment("wphillipmoore", "Proxy: logical-minds-foundry/.github#320 (new)")]
+    comments = [_comment(trust_stubs.HUMAN, "Proxy: logical-minds-foundry/.github#320 (new)")]
     with pytest.raises(ProxyLinkError, match="malformed"):
         _proxies_of(comments)
 
 
 def test_proxies_of_outside_dotgithub_raises() -> None:
-    comments = [_comment("wphillipmoore", "Proxy: logical-minds-foundry/some-repo#3")]
+    comments = [_comment(trust_stubs.HUMAN, "Proxy: logical-minds-foundry/some-repo#3")]
     with pytest.raises(ProxyLinkError, match="not in an <owner>/.github home"):
         _proxies_of(comments)
 
 
 def test_proxies_of_unreadable_primary_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", side_effect=RuntimeError("gh failed")),
-        patch("vergil_tooling.lib.proxies.epic_size.trusted_logins", return_value=TRUSTED),
-        pytest.raises(RuntimeError, match="gh failed"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=RuntimeError("gh failed")),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        pytest.raises(trust.TrustReadError, match="read_issue vergil-project/.github#1417"),
     ):
         proxies.proxies_of(PRIMARY)
 
 
-def test_proxies_of_non_object_view_raises() -> None:
+def test_proxies_of_malformed_primary_read_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[]),
-        patch("vergil_tooling.lib.proxies.epic_size.trusted_logins", return_value=TRUSTED),
-        pytest.raises(ProxyLinkError, match="unexpected"),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": None}),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        pytest.raises(trust.TrustReadError, match="read_issue vergil-project/.github#1417"),
     ):
         proxies.proxies_of(PRIMARY)
 
@@ -273,7 +347,6 @@ TARGET = "logical-minds-foundry/some-repo"
 HOME = "logical-minds-foundry/.github"
 PRIMARY_REPO = "vergil-project/.github"
 PRIMARY_TITLE = "Epic: keep ad-hoc queues standalone"
-AGENT = "app/wphillipmoore-vergil-user"
 WRITES = ("create", "reopen", "retitle", "comment", "ensure_labels")
 DERIVED_TITLE = "Epic (proxy): vergil-project/.github#1417 — keep ad-hoc queues standalone"
 
@@ -301,14 +374,17 @@ class FakeGitHub:
             "labels": [{"name": name} for name in primary_labels],
             "state": primary_state,
             "title": primary_title,
-            "comments": list(comments or []),
         }
+        # The primary's comment nodes, as the trust layer reads them.
+        self.comments: list[dict[str, Any]] = _numbered(*(comments or []))
         self.home = dict(proxies_in_home or {})
         self.unlisted = unlisted
         self.listing: object = None
         self.no_install = no_install
         self.calls: list[tuple[str, str | None, Any]] = []
         self.next_number = 400
+        # Who wrote and last edited each home proxy's body; the trusted human unless named.
+        self.body_actors: dict[int, tuple[Any, Any]] = {}
 
     def _org(self) -> str | None:
         from vergil_tooling.lib import github
@@ -330,7 +406,6 @@ class FakeGitHub:
                     "number": number,
                     "state": proxy["state"],
                     "title": proxy["title"],
-                    "body": proxy["body"],
                 }
                 for number, proxy in sorted(self.home.items())
                 if number not in self.unlisted
@@ -341,7 +416,24 @@ class FakeGitHub:
             return self.primary
         assert repo == HOME
         proxy = self.home[number]
-        return {**proxy, "labels": [{"name": name} for name in proxy["labels"]]}
+        return {
+            "state": proxy["state"],
+            "title": proxy["title"],
+            "labels": [{"name": name} for name in proxy["labels"]],
+        }
+
+    def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        """The trust layer's item read: the primary's comments, or a home proxy's body."""
+        assert query == trust._ITEM_QUERY, "only the item read is faked"
+        org = self._org()
+        repo, number = f"{variables['owner']}/{variables['name']}", int(variables["number"])
+        self.calls.append(("graphql", org, (repo, number)))
+        if (repo, number) == PRIMARY_KEY:
+            return trust_stubs.item(nodes=self.comments)
+        assert repo == HOME
+        proxy = self.home[number]
+        author, editor = self.body_actors.get(number, (trust_stubs.HUMAN, None))
+        return trust_stubs.item(body=proxy["body"], author=author, editor=editor)
 
     def ensure_labels(self, repo: str, names: list[str]) -> None:
         self.calls.append(("ensure_labels", self._org(), (repo, tuple(names))))
@@ -355,6 +447,7 @@ class FakeGitHub:
             "body": kwargs["body"],
             "labels": kwargs["labels"],
         }
+        self.body_actors[number] = (trust_stubs.AGENT, None)
         return f"https://github.com/{kwargs['repo']}/issues/{number}"
 
     def run(self, *args: str) -> None:
@@ -373,7 +466,7 @@ class FakeGitHub:
         assert args[:2] == ("issue", "comment")
         assert (args[4], int(args[2])) == (PRIMARY_REPO, PRIMARY.number)
         self.calls.append(("comment", org, args[6]))
-        self.primary["comments"].append(_comment(AGENT, args[6]))
+        self.comments = _numbered(*self.comments, _comment(trust_stubs.AGENT, args[6]))
 
     def writes(self) -> list[tuple[str, str | None, Any]]:
         return [call for call in self.calls if call[0] in WRITES]
@@ -384,7 +477,10 @@ class FakeGitHub:
             patch("vergil_tooling.lib.github.run", side_effect=self.run),
             patch("vergil_tooling.lib.github.create_issue", side_effect=self.create_issue),
             patch("vergil_tooling.lib.proxies.ensure_labels", side_effect=self.ensure_labels),
-            patch("vergil_tooling.lib.proxies.epic_size.trusted_logins", return_value=TRUSTED),
+            patch("vergil_tooling.lib.github.graphql", side_effect=self.graphql),
+            patch(
+                "vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS
+            ),
         ):
             return proxies.create_proxy(PRIMARY, target)
 
@@ -400,8 +496,8 @@ def _home_proxy(
     }
 
 
-def _recorded(proxy: IssueRef = PROXY, login: str = AGENT) -> dict[str, Any]:
-    return _comment(login, proxies.proxy_comment(proxy))
+def _recorded(proxy: IssueRef = PROXY, actor: Any = trust_stubs.AGENT) -> dict[str, Any]:
+    return _comment(actor, proxies.proxy_comment(proxy))
 
 
 def test_proxy_for_creates_and_comments() -> None:
@@ -587,9 +683,58 @@ def test_proxy_for_unlisted_stale_proxy_retitled() -> None:
     assert fake.home[320]["title"] == DERIVED_TITLE
 
 
-def test_proxy_for_untrusted_comment_does_not_count() -> None:
-    fake = FakeGitHub(comments=[_recorded(login="mallory")], proxies_in_home={320: _home_proxy()})
+@pytest.mark.parametrize(
+    ("actor", "editor", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "wrong-type"),
+        (trust_stubs.AGENT, trust_stubs.OUTSIDER, "untrusted"),
+    ],
+    ids=["outsider", "user-named-like-app", "edited-by-outsider"],
+)
+def test_proxy_for_untrusted_comment_does_not_count(
+    capsys: pytest.CaptureFixture[str], actor: Any, editor: Any, cause: str
+) -> None:
+    recorded = _comment(actor, proxies.proxy_comment(PROXY), editor=editor)
+    fake = FakeGitHub(comments=[recorded], proxies_in_home={320: _home_proxy()})
     assert fake.create().commented
+    err = capsys.readouterr().err
+    assert err.startswith("skipped untrusted content: vergil-project/.github#1417 ")
+    assert err.endswith(f" on comment 1 ({cause})\n")
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "cause"),
+    [
+        (trust_stubs.OUTSIDER, None, "untrusted"),
+        (trust_stubs.IMPOSTOR, None, "wrong-type"),
+        (trust_stubs.AGENT, trust_stubs.OUTSIDER, "untrusted"),
+    ],
+    ids=["outsider-body", "user-named-like-app", "edited-by-outsider"],
+)
+@pytest.mark.parametrize("unlisted", [False, True], ids=["listed", "unlisted"])
+def test_proxy_for_untrusted_proxy_body_in_home_stops(
+    capsys: pytest.CaptureFixture[str], author: Any, editor: Any, cause: str, unlisted: bool
+) -> None:
+    # A home proxy's Primary: line counts only from a body the layer trusts:
+    # an untrusted one stops create_proxy before any write, metadata only,
+    # whether the listing or the primary's comment found it.
+    spam = {**_home_proxy(), "body": f"{trust_stubs.SPAM_TEXT}\n{proxies.primary_line(PRIMARY)}\n"}
+    fake = FakeGitHub(
+        comments=[_recorded()],
+        proxies_in_home={320: spam},
+        unlisted=frozenset({320}) if unlisted else frozenset(),
+    )
+    fake.body_actors[320] = (author, editor)
+    with pytest.raises(trust.UntrustedContentError) as excinfo:
+        fake.create()
+    assert excinfo.value.item.repo == HOME
+    assert excinfo.value.item.number == 320
+    assert excinfo.value.item.field == "body"
+    assert excinfo.value.item.cause == cause
+    assert fake.writes() == []
+    out, err = capsys.readouterr()
+    assert "SPAM-MARKER-TEXT" not in str(excinfo.value) + out + err
 
 
 def test_proxy_for_other_primarys_proxy_ignored() -> None:
