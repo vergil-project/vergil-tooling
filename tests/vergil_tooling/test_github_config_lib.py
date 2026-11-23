@@ -69,9 +69,11 @@ from vergil_tooling.lib.github_config import (
     compute_desired_state,
     compute_diff,
     desired_actions_permissions,
+    desired_audit_marker_ruleset,
     desired_automation_branch_ruleset,
     desired_branch_protection_ruleset,
     desired_ci_gates_rulesets,
+    desired_main_update_ruleset,
     desired_repo_settings,
     desired_rolling_tag_branch_ruleset,
     desired_security_settings,
@@ -1265,13 +1267,15 @@ def test_compute_desired_state_requires_resolved_integration_checks() -> None:
     assert "test / integration / 3.13" in _check_names(gates)
 
 
-def test_compute_desired_state_has_six_rulesets() -> None:
+def test_compute_desired_state_has_eight_rulesets() -> None:
     state = _state(_vergil_config())
     assert [r.name for r in state.rulesets] == [
         "Branch protection",
         "Tag protection",
         "Rolling tag branch names",
         "Automation branches",
+        "Main updates",
+        "Agent audit markers",
         CI_GATES_DEVELOP,
         CI_GATES_MAIN,
     ]
@@ -3863,6 +3867,59 @@ def test_automation_ruleset_without_app_id_is_skipped() -> None:
     assert desired_automation_branch_ruleset(None).bypass_actors is None
 
 
+def _bypass_ids(rs: DesiredRuleset) -> set[tuple[object, object]]:
+    assert rs.bypass_actors is not None
+    return {(a["actor_type"], a["actor_id"]) for a in rs.bypass_actors}
+
+
+def test_main_update_ruleset_restricts_updates() -> None:
+    rs = desired_main_update_ruleset(123, app_merges_releases=False)
+    assert rs.name == "Main updates"
+    assert rs.target == "branch"
+    assert rs.enforcement == "active"
+    assert rs.ref_include == ["refs/heads/main"]
+    assert [r["type"] for r in rs.rules] == ["update"]
+
+
+def test_main_update_bypass_is_admin_and_optional_app() -> None:
+    assert _bypass_ids(desired_main_update_ruleset(123, app_merges_releases=False)) == {
+        ("RepositoryRole", 5)
+    }
+    assert _bypass_ids(desired_main_update_ruleset(123, app_merges_releases=True)) == {
+        ("RepositoryRole", 5),
+        ("Integration", 123),
+    }
+
+
+def test_audit_marker_ruleset_bypass_is_admin_and_app_only() -> None:
+    rs = desired_audit_marker_ruleset(123)
+    assert rs.name == "Agent audit markers"
+    assert rs.target == "branch"
+    assert rs.enforcement == "active"
+    assert rs.ref_include == ["refs/heads/vergil/agent-audit/*"]
+    assert [r["type"] for r in rs.rules] == ["update", "creation", "deletion"]
+    assert _bypass_ids(rs) == {("RepositoryRole", 5), ("Integration", 123)}
+
+
+def test_new_rulesets_leave_bypass_unmanaged_without_app_id() -> None:
+    assert desired_main_update_ruleset(None, app_merges_releases=False).bypass_actors is None
+    assert desired_audit_marker_ruleset(None).bypass_actors is None
+
+
+def test_compute_desired_state_main_updates_bypass_is_the_admin_only() -> None:
+    # The human merges every release PR into main (vrg-release refuses every
+    # agent identity), so the App is not a bypass actor of "Main updates".
+    state = _state(_vergil_config())
+    rs = next(r for r in state.rulesets if r.name == "Main updates")
+    assert _bypass_ids(rs) == {("RepositoryRole", 5)}
+
+
+def test_compute_desired_state_audit_markers_bypass_is_admin_and_app() -> None:
+    state = _state(_vergil_config())
+    rs = next(r for r in state.rulesets if r.name == "Agent audit markers")
+    assert _bypass_ids(rs) == {("RepositoryRole", 5), ("Integration", _APP_ID)}
+
+
 def test_diff_skips_bypass_actors_when_desired_is_none() -> None:
     desired = compute_desired_state(
         _vergil_config(),
@@ -3904,6 +3961,7 @@ def test_diff_reports_wrong_automation_app_id() -> None:
     assert [d.field for d in diff.items] == [
         "rulesets.Tag protection.bypass_actors",
         "rulesets.Automation branches.bypass_actors",
+        "rulesets.Agent audit markers.bypass_actors",
     ]
 
 

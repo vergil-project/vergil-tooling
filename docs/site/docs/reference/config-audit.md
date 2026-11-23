@@ -576,6 +576,8 @@ order:
 | `Tag protection` | tag | `refs/tags/v*.*.*`, `refs/tags/v*.*` | `creation`, `deletion`, `non_fast_forward`, `update` | the repository Admin role (`RepositoryRole`, `actor_id` 5) and the org automation App (`Integration`, its App ID) |
 | `Rolling tag branch names` | branch | `refs/heads/v[0-9]*` | `creation`, `update`, `non_fast_forward` | none |
 | `Automation branches` | branch | `refs/heads/automation/**` | `creation`, `update`, `non_fast_forward` | the org automation App (`Integration`, its App ID) and the repository Admin role (`RepositoryRole`, `actor_id` 5) |
+| `Main updates` | branch | `refs/heads/main` | `update` | the repository Admin role (`RepositoryRole`, `actor_id` 5) |
+| `Agent audit markers` | branch | `refs/heads/vergil/agent-audit/*` | `update`, `creation`, `deletion` | the repository Admin role (`RepositoryRole`, `actor_id` 5) and the org automation App (`Integration`, its App ID) |
 | `CI gates (develop)` | branch | `refs/heads/develop` | `required_status_checks` (see below), not strict | none |
 | `CI gates (main)` | branch | `refs/heads/main` | `required_status_checks` (see below), strict | none |
 
@@ -623,6 +625,21 @@ order:
   never from the API, and looks the ID up with `GET /apps/{slug}`. An org
   with no stanza, a missing configuration or a failed lookup fails the run
   (exit 2).
+- **Main updates** lets only the human admin update `main`. A pull
+  request's merge updates its base branch, and GitHub's `update` rule
+  allows that only to a bypass actor, so no other identity can merge into
+  `main`, whatever pull-request permission it holds. A GitHub App's
+  permissions cover a whole repository, never one branch, so this is what
+  keeps an agent that may merge its own PRs into `develop` out of `main`
+  ([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384),
+  spec §4.1). The org automation App is not a bypass actor: `vrg-release`
+  refuses every agent identity, so the human merges every release PR. The
+  ruleset has no `creation` rule, so repo init can still create `main`.
+- **Agent audit markers** keeps the `vergil/agent-audit/` marker branches,
+  which record where the daily agent audit has checked up to, out of reach
+  of the identity being audited. Only the human admin (whose repo init
+  creates them) and the org automation App (which runs the audit) can
+  create, move or delete one.
 - **Bypass actors are not compared under an App token that is not the
   automation identity**, such as an agent App's token or a CI
   `GITHUB_TOKEN`. Such a token cannot read a ruleset's bypass list, so in
