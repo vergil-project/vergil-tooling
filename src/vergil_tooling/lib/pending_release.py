@@ -107,6 +107,10 @@ _DEPS_LABEL = "dependency-update"
 # Mechanized PRs are opened from ``automation/<job>/<run-id>`` branches
 # (epic vergil-project/.github#1064).
 _AUTOMATION_BRANCH_PREFIX = "automation/"
+# Language lifecycle PRs (a version added or dropped) are opened from
+# ``lifecycle/<language>-<add|drop>-<version>`` branches. ``lib/open_prs.py``
+# types open PRs through :func:`classify`, so both sections agree.
+_LIFECYCLE_BRANCH_PREFIX = "lifecycle/"
 
 # ``scheme://user[:secret]@`` in a URL: the userinfo is removed from every
 # error reason. The match runs to the last ``@`` before the path, so a secret
@@ -128,6 +132,7 @@ class ChangeKind(enum.Enum):
     DEPS = "deps"
     RELEASE = "release"
     AUTOMATION = "automation"
+    LIFECYCLE = "lifecycle"
     OTHER = "other"
     NO_PR = "no-pr"
     UNTRUSTED = "untrusted"
@@ -278,6 +283,8 @@ def first_parent_chain(commits: list[dict[str, object]], head: str) -> list[dict
 
 def classify(title: str, branch: str | None, labels: Sequence[str]) -> tuple[ChangeKind, str]:
     """The kind and TYPE label of a PR, from its *title*, head *branch* and *labels*."""
+    if branch is not None and branch.startswith(_LIFECYCLE_BRANCH_PREFIX):
+        return ChangeKind.LIFECYCLE, "lifecycle"
     if branch is not None and branch.startswith(_RELEASE_BRANCH_PREFIX):
         return ChangeKind.RELEASE, "release"
     # The branch decides before the dependency-update label: an automation

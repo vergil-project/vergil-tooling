@@ -473,6 +473,7 @@ def _pending_summary(changes: Sequence[PendingChange]) -> str:
         f"{_count(kinds.count(ChangeKind.DEPS), 'dependency update')}, "
         f"{_count(kinds.count(ChangeKind.RELEASE), 'release back-merge')}, "
         f"{_count(kinds.count(ChangeKind.AUTOMATION), 'automation PR')}, "
+        f"{_count(kinds.count(ChangeKind.LIFECYCLE), 'lifecycle PR')}, "
         f"{_count(kinds.count(ChangeKind.OTHER), 'other PR')}"
     )
     problems = kinds.count(ChangeKind.NO_PR)
