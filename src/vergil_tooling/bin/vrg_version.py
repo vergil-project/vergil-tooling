@@ -11,6 +11,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.version import (
     CargoVersionError,
+    VersionFileError,
     VersionSyncError,
     bump,
     show,
@@ -52,12 +53,19 @@ def main() -> None:
 
     # The expected failures (#4484): a missing VERSION file, a missing or
     # invalid vergil.toml, a version file that disagrees with VERSION, a
-    # Cargo.toml or package.json problem, and a git or lock command that
+    # Cargo.toml or package.json problem, a version file that does not parse
+    # or holds no version (#5019), and a git or lock command that
     # fails, whose own output is already on the terminal. Each is one line
     # and exit 1; anything else is a bug and keeps its traceback.
     try:
         _run(args, repo_root)
-    except (CargoVersionError, ConfigError, VersionSyncError, FileNotFoundError) as exc:
+    except (
+        CargoVersionError,
+        ConfigError,
+        VersionFileError,
+        VersionSyncError,
+        FileNotFoundError,
+    ) as exc:
         _fail(str(exc))
     except subprocess.CalledProcessError as exc:
         command = exc.cmd if isinstance(exc.cmd, str) else " ".join(map(str, exc.cmd))
