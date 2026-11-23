@@ -186,10 +186,32 @@ def test_preflight_stage_renders_the_checklist_the_issue_is_created_with() -> No
     with patch(_MOD + ".preflight", return_value=ctx):
         _preflight_stage(state)
     assert ctx.progress_block is not None
-    names = [stage.name for stage in build_stages()]
+    # publish-status reports only to the terminal and has no box (#4946).
+    names = [stage.name for stage in build_stages() if stage.name != "publish-status"]
     pairs = checklist.parse(ctx.progress_block)
     assert [name for name, _ in pairs] == names
     assert [name for name, done in pairs if done] == ["audit", "preflight"]
+
+
+def test_a_finished_release_leaves_no_unticked_stage() -> None:
+    # #4946: every tracked stage ticks its own box, so once each has run, the
+    # checklist close-tracking leaves on the closed issue has no open box.
+    from vergil_tooling.lib.release import checklist
+    from vergil_tooling.lib.release.resume import ALWAYS_RUN
+
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    ctx = _ctx()
+    with patch(_MOD + ".preflight", return_value=ctx):
+        _preflight_stage(state)
+    assert ctx.progress_block is not None
+    body = ctx.progress_block
+    for stage in build_stages():
+        if stage.name not in ALWAYS_RUN:
+            body = checklist.tick(body, stage.name)
+    pairs = checklist.parse(body)
+    assert pairs
+    assert [name for name, done in pairs if not done] == []
+    assert pairs[-1][0] == "close-tracking"
 
 
 def test_preflight_stage_passes_allow_pending_deps() -> None:
@@ -248,6 +270,7 @@ def test_tracked_stage_ticks_checklist_with_prior_stages_prechecked() -> None:
         _tracked("prepare", MagicMock())(state)
     names = m_ensure.call_args.args[1]
     checked = m_ensure.call_args.kwargs["checked"]
+    assert "publish-status" not in names
     assert names[: names.index("prepare")] == checked
     assert "prepare" not in checked
     m_tick.assert_called_once_with(state.ctx, "prepare")

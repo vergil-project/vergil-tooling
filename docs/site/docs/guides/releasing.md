@@ -199,8 +199,11 @@ run when it fails. A *deferred* stage records its failure and lets the
 later stages run, except those [the hold rule](#the-hold-rule) holds
 back; the run then exits 1 with a summary. Every tracked
 stage posts a completion or failure comment on the release tracking
-issue and ticks its box in the issue's stage checklist. A stage that
-succeeds also records itself done in the issue's state block, with the
+issue and ticks its box in the issue's stage checklist. The checklist
+lists every stage but `publish-status`, which runs after
+`close-tracking` has made the last write to the issue and reports only
+to the terminal, so a finished release's checklist has every box
+ticked. A stage that succeeds also records itself done in the issue's state block, with the
 facts later stages need; a [resume](#resuming-a-release) runs only the
 stages not recorded done.
 
