@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18167,8 +18197,6 @@
       
         
       
-        
-      
     
     
     
@@ -18229,34 +18257,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -19057,9 +19057,9 @@ audit does not guess the value. It reports the setting as not checked:</p>
   requirement for any other field, so the line for one of those says
   <code>needs a token GitHub returns the field to</code>. A repo setting of the
   wrong type is an error.</li>
-<li>A setting the desired state leaves unmanaged (secret scanning on a
-  private repo without GHAS) is skipped as before, not listed as not
-  checked.</li>
+<li>A setting the desired state leaves unmanaged (a ruleset's
+  <code>bypass_actors</code> under a token that cannot see them) is skipped as
+  before, not listed as not checked.</li>
 <li>A 403 that names no missing permission (a rate limit, for example) is
   still an error, as is any other unexpected status.</li>
 <li><strong>An empty bypass list under the automation identity is not checked.</strong>
@@ -19356,8 +19356,9 @@ root:
 <h3 id="propagation-the-rolling-vxy-pin">Propagation — the rolling <code>vX.Y</code> pin<a class="headerlink" href="#propagation-the-rolling-vxy-pin" title="Permanent link">&para;</a></h3>
 <p>Every managed repo pins <code>vergil-tooling</code> to the <strong>rolling major-minor
 tag</strong> <code>vX.Y</code>, never a specific patch. The nightly <code>ops.yml</code> job installs
-<code>vergil-tooling@vX.Y</code>, which always resolves to the latest patch under
-that line — including its fragment set. So:</p>
+<code>vergil-tooling@vX.Y</code>, which resolves to the release the rolling tag
+names, the latest patch under that line unless a rollback moved it
+back — including its fragment set. So:</p>
 <blockquote>
 <p>change a fragment → release a <code>vergil-tooling</code> patch under <code>vX.Y</code> →
 <strong>every repo's nightly <code>update</code> finds the fence drifted</strong> and opens a
@@ -19410,7 +19411,7 @@ each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:<
 <tr>
 <td><code>security.vulnerability_alerts</code></td>
 <td><code>true</code></td>
-<td>Dependabot alerts on, for <strong>every</strong> repo, public or private</td>
+<td>Dependabot alerts on, for <strong>every</strong> repo</td>
 </tr>
 <tr>
 <td><code>security.dependabot_security_updates</code></td>
@@ -19420,17 +19421,15 @@ each difference as a <code>security.&lt;field&gt;</code> <code>DiffItem</code>:<
 <tr>
 <td><code>security.secret_scanning</code></td>
 <td><code>enabled</code></td>
-<td>Only when GHAS is available; otherwise unmanaged</td>
+<td>For every repo</td>
 </tr>
 <tr>
 <td><code>security.secret_scanning_push_protection</code></td>
 <td><code>enabled</code></td>
-<td>Only when GHAS is available; otherwise unmanaged</td>
+<td>For every repo</td>
 </tr>
 </tbody>
 </table>
-<p>GHAS is available when <code>[project].ghas</code> in <code>vergil.toml</code> says so, and
-otherwise exactly when the repo is not private.</p>
 <p>The first two rows are the <strong>report-only Dependabot posture</strong> (epic
 <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>):
 alerts are on so the nightly
@@ -19548,10 +19547,13 @@ order:</p>
   agent with Contents write could push to such a branch and have its
   content merged with no human in the loop. Deletion is not restricted:
   the branches are temporary. The App's numeric ID differs per org. The
-  tooling reads the App's slug from <code>$VRG_AUTOMATION_APP</code> or, for a human
-  run, from the org-level Actions variable <code>VRG_AUTOMATION_APP</code>, and looks
-  the ID up with <code>GET /apps/{slug}</code>. A missing variable or a failed lookup
-  fails the run (exit 2).</li>
+  tooling reads the App's slug from <code>$VRG_AUTOMATION_APP</code> in a job of the
+  same org, and otherwise (a human run, or a job of another org) from the
+  org's <code>[orgs.&lt;org&gt;]</code> stanza of the
+  <a href="../../guides/account-setup/#trusted-authors">trusted-authors configuration</a>,
+  never from the API, and looks the ID up with <code>GET /apps/{slug}</code>. An org
+  with no stanza, a missing configuration or a failed lookup fails the run
+  (exit 2).</li>
 <li><strong>Bypass actors are not compared under an App token that is not the
   automation identity</strong>, such as an agent App's token or a CI
   <code>GITHUB_TOKEN</code>. Such a token cannot read a ruleset's bypass list, so in

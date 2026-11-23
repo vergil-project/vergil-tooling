@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18069,8 +18099,6 @@
       
         
       
-        
-      
     
     
     
@@ -18131,34 +18159,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18812,7 +18812,10 @@ agent's <code>report-ready</code> mirrors its ready-state onto the reserved ref
 <p>For each branch, the tool:</p>
 <ol>
 <li>resolves the ready-state from a local worktree's <code>pr-workflow.json</code>
-   when one exists, else fetches it from the relay ref;</li>
+   when one exists, else fetches it from the relay ref. The relay payload
+   is used only when the author GitHub links to its commit is the trusted
+   human; any other author (an agent or bot email included) stops the
+   run with nothing opened, naming the login only;</li>
 <li>verifies the tip of <code>origin/&lt;branch&gt;</code> matches the recorded <code>head_sha</code>
    (a mismatch fails loudly: the metadata is for a different commit);</li>
 <li>opens the PR with <code>--head &lt;branch&gt;</code> and <strong>does not push</strong>, since the
@@ -18926,7 +18929,7 @@ says why it is gone:</p>
 <tbody>
 <tr>
 <td><code>--finalize</code></td>
-<td>Finalizing is the default</td>
+<td><code>vrg-submit-pr</code> always finalizes</td>
 </tr>
 <tr>
 <td><code>--no-finalize</code></td>
@@ -18948,8 +18951,13 @@ says why it is gone:</p>
 </table>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
 <p><code>Ref</code>, or <code>Closes</code>, which submit auto-selects for a managed task (an
-issue with an <code>epic</code>-labelled parent) so it closes on merge. <code>Fixes</code> and
-<code>Resolves</code> are rejected.</p>
+issue with an <code>epic</code>-labelled parent) so it closes on merge. The parent is
+the native one, else the <code>Parent:</code> line of the issue's body when the trust
+layer trusts that body; an untrusted body is reported on stderr and gives
+no parent. <code>Fixes</code> and <code>Resolves</code> are rejected.</p>
+<p>A trust-layer failure before any PR opens (an untrusted relay payload, a
+read the layer cannot complete, or no trusted-authors configuration) ends
+the run with a one-line error and nothing opened.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Normal flow: resolve the worktree, list it, open with auto-merge</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># on, then watch it merge and settle develop</span>
@@ -18999,9 +19007,11 @@ plan, merges. So that PR also closes the epic's <strong>planning issue</strong>
 checks whether that issue is an epic's documentation task:</p>
 <ol>
 <li>Its parent epic's body names the planning issue on a
-   <code>Planning: &lt;owner&gt;/&lt;repo&gt;#&lt;M&gt;</code> line.</li>
+   <code>Planning: &lt;owner&gt;/&lt;repo&gt;#&lt;M&gt;</code> line. The line counts only from a body
+   the trust layer trusts: an untrusted epic body stops the submission.</li>
 <li>That planning issue's latest <code>Docs task:</code> marker names the PR's issue.
-   Only comments by trusted authors count.</li>
+   Only comments the trust layer trusts count, and an untrusted planning
+   issue body closes nothing (the reason is printed).</li>
 </ol>
 <p>If both hold, the body gets one more line under its issue linkage:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gu">## Issue Linkage</span>

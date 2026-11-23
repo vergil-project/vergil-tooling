@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -17890,34 +17918,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18664,9 +18664,8 @@ every repository.</p>
 <h3 id="one-uniform-evidence-source-always-artifacts">One uniform evidence source — always artifacts<a class="headerlink" href="#one-uniform-evidence-source-always-artifacts" title="Permanent link">&para;</a></h3>
 <p>Every gate — <strong>including the security scanners</strong> — uploads its report(s) as a
 <code>ci-evidence-&lt;gate&gt;</code> artifact <strong>unconditionally</strong>, decoupled from any
-code-scanning upload. Under GitHub Advanced Security, CodeQL still drops its
-SARIF as an artifact alongside its code-scanning upload; Trivy and Semgrep do
-the same regardless of GHAS availability.</p>
+code-scanning upload. CodeQL, Trivy and Semgrep each drop their SARIF as an
+artifact alongside their code-scanning upload.</p>
 <p>The harvester therefore reads <strong>artifacts only</strong> and never touches the
 code-scanning API — one code path, no GHAS branching, one fewer external
 dependency that can fail. Severity metrics come from each gate's <code>evidence.json</code>
@@ -18747,8 +18746,8 @@ evidence, so it does not satisfy the gate.</p>
 <p>The set of gates that MUST emit evidence is <strong>not a hand-maintained list.</strong> It
 is <strong>derived from the same source of truth that drives branch protection</strong>:
 <code>lib/github_config.py:desired_ci_gates_rulesets()</code> computes a repo's required
-status checks from its <code>VergilConfig</code> (language, resolved versions, GHAS
-availability, and whether a <code>[package]</code> section is present). The evidence
+status checks from its <code>VergilConfig</code> (language, resolved versions, and
+whether a <code>[package]</code> section is present). The evidence
 layer consumes that <em>same</em> computation, so the gates that are <strong>enforced to
 merge</strong> and the gates that are <strong>required to have evidence</strong> are provably the
 same set, with no drift.</p>
@@ -18823,8 +18822,9 @@ and at least one report file, or the release fails completeness.
 <code>version/</code> is a sanity check on version state, not substantive evidence, and
 <code>docs</code> is low-signal; the absence of either does not fail the release.</p>
 <h3 id="per-repo-correctness-for-free">Per-repo correctness for free<a class="headerlink" href="#per-repo-correctness-for-free" title="Permanent link">&para;</a></h3>
-<p>Because the set is <em>derived</em>, a repo with a different real profile — no GHAS
-(CodeQL not required), a non-Python stack, or a gate legitimately disabled —
+<p>Because the set is <em>derived</em>, a repo with a different real profile — a
+language CodeQL does not analyze (CodeQL not required), a non-Python stack, or a
+gate legitimately disabled —
 demands evidence for exactly the gates it actually gates on. It cannot
 spuriously fail for a gate it never ran. Adding a future required gate
 automatically pulls it into the evidence set via the shared config; the
@@ -19020,7 +19020,7 @@ self-describing and verifiable:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>v{version}-ci-evidence.tar.gz
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>└─ evidence/
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>   ├─ manifest.json          # top-level machine index (see below)
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>   ├─ checks.json            # raw check-runs snapshot (name, conclusion, timing, log URL)
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>   ├─ checks.json            # raw check-runs snapshot (name, conclusion)
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>   ├─ gates/
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>   │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage-&lt;ver&gt;.xml, junit-&lt;ver&gt;.xml (per Python version), evidence.json
@@ -19032,7 +19032,11 @@ self-describing and verifiable:</p>
 <ul>
 <li><code>manifest.json</code> is the curated, per-gate machine index (schema below).</li>
 <li><code>checks.json</code> is the <strong>raw</strong> check-run snapshot — distinct from the manifest's
-  curated view — capturing every check's name, conclusion, timing, and log URL.</li>
+  curated view — capturing each counted check's name and conclusion. Only the
+  check runs of the selected CI run's own check suite (created by GitHub
+  Actions) and the <code>CodeQL</code>, <code>Semgrep OSS</code> and <code>Trivy</code> checks created by
+  GitHub Advanced Security count; a check run of the same name from another
+  App or workflow is left out.</li>
 <li><code>gates/sbom/</code> is present only when the release built a package SBOM. The
   assemble step copies the SBOM already built during publish (also a
   standalone Release asset) into the bundle, so the archive stays fully
@@ -19143,6 +19147,12 @@ run on the <strong>release PR</strong>, whose validated tree is identical to wha
 PR head) and harvested at publish time while the PR's runs and artifacts are
 still fresh. <code>released_commit</code> records what shipped; <code>validated_head_sha</code> records
 what was validated — they name the same tree.</p>
+<p>The release PR is the merge commit's one <strong>merged same-repo PR with a trusted
+author</strong>, read through the trust layer: a fork PR, a PR by an author with no
+role, and an unmerged PR never stand in for it, and with none (or several) the
+harvest fails rather than take the first PR of the commit. The CI run is the
+latest green <code>CI</code> run built from the repo itself; a fork's run of the same
+commit is ignored.</p>
 <h2 id="verification-how-a-downstream-auditor-checks-the-bundle">Verification: how a downstream auditor checks the bundle<a class="headerlink" href="#verification-how-a-downstream-auditor-checks-the-bundle" title="Permanent link">&para;</a></h2>
 <p>An auditor who pulls a release months later verifies the bundle in two steps:</p>
 <p><strong>1. Verify the attestation (chain of custody).</strong> After the bundle is assembled,

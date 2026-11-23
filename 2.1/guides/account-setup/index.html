@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18080,8 +18110,6 @@
       
         
       
-        
-      
     
     
     
@@ -18142,34 +18170,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -19066,28 +19066,60 @@ VM. The dual-identity model uses one stanza per role.</p>
 <h3 id="trusted-authors">Trusted authors<a class="headerlink" href="#trusted-authors" title="Permanent link">&para;</a></h3>
 <p>An optional top-level <code>[trusted_authors]</code> stanza lists the GitHub logins
 whose issues and comments automation may trust: your own login, and the
-logins of your agent identities (the Apps' bot accounts).</p>
+logins of your agent identities (the Apps' bot accounts). Beside it, one
+<code>[orgs.&lt;org&gt;]</code> stanza per org Vergil manages names that org's automation
+App, the App that runs its fully mechanized workflows.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[trusted_authors]</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">human</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"&lt;your-login&gt;"</span><span class="p">]</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">agents</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"&lt;user-app-bot-login&gt;"</span><span class="p">,</span><span class="w"> </span><span class="s2">"&lt;audit-app-bot-login&gt;"</span><span class="p">]</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">[orgs.</span><span class="err">&lt;</span><span class="k">org</span><span class="err">&gt;</span><span class="k">]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">automation_app</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"&lt;automation-app-slug&gt;"</span>
 </code></pre></div>
 <ul>
+<li><strong>Three roles.</strong> <code>human</code> (a user account) and <code>agents</code> (bot accounts) are
+  trusted in every Vergil org; an org's <code>automation_app</code> (login
+  <code>&lt;slug&gt;[bot]</code>) is trusted only in that org's repos.</li>
+<li><strong>The listed orgs are the Vergil orgs.</strong> An org without a stanza is not
+  managed by Vergil. Adding an org to Vergil adds its stanza, as a step of
+  setting the org up. The slug is an opaque value: copy it from the App,
+  never derive it from the org's name.</li>
 <li><strong>Both lists are required and non-empty</strong>, every entry is a non-empty
-  string, and no login may appear in both lists.</li>
+  string, no login may appear in two roles, at least one <code>[orgs.&lt;org&gt;]</code>
+  stanza is required, and each needs its <code>automation_app</code>.</li>
 <li><strong>Store the bare login.</strong> GitHub reports an issue opened by an App as
-  <code>app/&lt;login&gt;</code> but that App's comments as <code>&lt;login&gt;</code>; an <code>app/</code>-prefixed
-  entry is rejected, and consumers strip a leading <code>app/</code> before comparing.</li>
-<li><strong>Delivery into VMs.</strong> <code>vrg-vm</code> writes the stanza into every agent VM as
+  <code>app/&lt;login&gt;</code>, that App's comments as <code>&lt;login&gt;</code>, and some reads as
+  <code>&lt;login&gt;[bot]</code>; an <code>app/</code>-prefixed or <code>[bot]</code>-suffixed entry is
+  rejected, and consumers strip them before comparing.</li>
+<li><strong>Delivery into VMs.</strong> <code>vrg-vm</code> writes the stanzas into every agent VM as
   <code>~/.config/vergil/trusted-authors.toml</code> (mode 600) on every path that
   writes vergil config: <code>create</code>, <code>start</code>, <code>restart</code>, <code>rebuild</code>, the cloud
-  credentials stage, and <code>update</code>. When the host has no stanza, <code>vrg-vm</code>
-  <strong>removes</strong> that file, so a VM never trusts a stale list.</li>
+  credentials stage, and <code>update</code>. When the host has no <code>[trusted_authors]</code>
+  stanza, <code>vrg-vm</code> <strong>removes</strong> that file, so a VM never trusts a stale list.</li>
+<li><strong>Delivery into GitHub Actions jobs.</strong> A job reads a derived copy, the
+  compact JSON <code>{"human": [...], "agents": [...], "orgs": {"&lt;org&gt;":
+  {"automation_app": "&lt;slug&gt;"}}}</code>, from <code>$VRG_TRUSTED_AUTHORS</code>. It is read
+  only when <code>GITHUB_ACTIONS</code> is <code>true</code> and neither file exists; when it is
+  missing or invalid there, the read fails.</li>
+<li><strong>Publishing the Actions copy.</strong> It comes from two org Actions variables,
+  <code>VRG_TRUSTED_AUTHORS</code> (that JSON) and <code>VRG_AUTOMATION_APP</code> (the org's own
+  <code>automation_app</code>), which the human writes from the host file with
+  <code>vrg-trusted-authors publish</code>, once per org at setup and again whenever
+  the file changes. The daily config audit runs <code>vrg-trusted-authors check</code>
+  as the org's automation App, which needs read-only Variables permission
+  at organization and repository level: it flags a missing, invalid or
+  not-<code>all</code>-visible variable and any repository-level variable of either
+  name. <code>vrg-trusted-authors render</code> prints what the host file implies, to
+  compare with the audit's values.</li>
 <li><strong>Read it through <code>vrg-trusted-authors</code>, never by hand.</strong> It reads the VM
-  file if present, else the host stanza, and prints <code>human: &lt;login&gt;</code> and
-  <code>agent: &lt;login&gt;</code> lines (<code>--json</code> prints
-  <code>{"human": [...], "agents": [...]}</code>). With nothing configured it exits 1
-  with an error naming both paths; it never prints a default. Skills and
+  file if present, else the host stanzas, and prints <code>human: &lt;login&gt;</code>,
+  <code>agent: &lt;login&gt;</code> and <code>org: &lt;org&gt; automation: &lt;slug&gt;</code> lines (<code>--json</code>
+  prints the same JSON as the Actions copy). With nothing configured it exits
+  1 with an error naming both paths; it never prints a default. Skills and
   doctrine name only this command, never the logins themselves.</li>
+<li><strong>The automation App's slug</strong> for an org comes from its stanza, except in a
+  GitHub Actions job of that same org, which uses the job's
+  <code>$VRG_AUTOMATION_APP</code>; it is never read from the API.</li>
 <li>An invalid stanza makes every <code>vrg-vm</code> command fail loudly when it loads
   <code>identities.toml</code>.</li>
 </ul>

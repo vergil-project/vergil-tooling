@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18108,8 +18138,6 @@
       
         
       
-        
-      
     
     
     
@@ -18170,34 +18198,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18830,8 +18830,8 @@ to ambient <code>gh</code>/<code>git</code> auth:</p>
   configured ... but no target org could be determined</code> and exits
   non-zero. Run it inside a repo whose <code>origin</code> is on GitHub, or name
   the target explicitly.</li>
-<li><strong>More than one target org.</strong> One installation token reaches one
-  org's private repos, so a <code>vrg-gh</code> command naming two owners (for
+<li><strong>More than one target org.</strong> One installation token acts for one
+  org only, so a <code>vrg-gh</code> command naming two owners (for
   example, <code>search prs --owner a --owner b</code>) stops with <code>this command
   targets more than one owner</code>. Run it once per owner. <code>vrg-gh api
   graphql</code> is refused in App mode for the same reason: a GraphQL call
@@ -18848,8 +18848,9 @@ qualifier, and an <code>api repos|orgs|users/&lt;owner&gt;/...</code> endpoint, 
 a path or a full URL. Only a
 command that names no owner falls back to the current repo's <code>origin</code>.
 This matters across orgs: a token for the current repo's org can still
-read other orgs' public repos, so a wrong-org token would not fail. It
-would just leave the target org's private repos out.</p>
+read other orgs' repos, so a wrong-org read would not fail. Its writes
+would, and it would run without the permissions granted on the target
+org.</p>
 <p>Ambient auth may be a human's <code>gh</code> login. Falling back to it would
 let an agent act under a different identity without any sign.</p>
 <p>One case still falls back: the org is known, but the App has no
@@ -19024,8 +19025,8 @@ permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
 <tbody>
 <tr>
 <td>Contents</td>
-<td><strong>Read and write.</strong> Can push branches and read all code in covered repos, private repos included.</td>
-<td><strong>Read-only.</strong> Can read all code in covered repos, private repos included.</td>
+<td><strong>Read and write.</strong> Can push branches and read all code in covered repos.</td>
+<td><strong>Read-only.</strong> Can read all code in covered repos.</td>
 </tr>
 <tr>
 <td>Issues</td>
@@ -19056,9 +19057,8 @@ permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
 </table>
 <p>Branch protection still limits a leaked user-App key. It cannot push
 directly to a protected branch or merge without review. It can still
-push malicious content to feature branches, and it can read every
-private repo its installations cover. Because both Apps can read code,
-treat a leak of either key as exposure of that code.</p>
+push malicious content to feature branches, and it can read and edit
+the draft security advisories in each covered org's <code>.github</code>.</p>
 <p><strong>Contain.</strong></p>
 <ul>
 <li><strong>Delete the compromised key.</strong> Open the App's settings page and go
@@ -19123,7 +19123,7 @@ rulesets, including the bypass lists. With Contents, Pull requests and
 Workflows: Read and write, it can push branches (workflow files
 included), open PRs and merge any whose required checks pass, and it is a bypass actor of every
 repo's <code>Automation branches</code> ruleset. With Dependabot alerts: Read, it
-can read a repo's open alerts, including on a private repo. The App
+can read every covered repo's open alerts. The App
 holds no Repository security advisories permission, so it cannot read
 the draft advisories in the org's <code>.github</code> (see
 <a href="../security-records/">Security Records</a>).</p>

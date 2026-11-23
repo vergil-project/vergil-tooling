@@ -14,7 +14,7 @@
         <link rel="prev" href="../agent-vm-claude-share-set/">
       
       
-        <link rel="next" href="../epic-home-visibility-flip/">
+        <link rel="next" href="../security-records/">
       
       
         
@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -18183,34 +18211,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -18810,8 +18810,11 @@ commit time. Listing, deleting and upstream forms of <code>vrg-git branch</code>
 not checked.</p>
 <p>At creation, <code>vrg-git</code> also reads issue <code>&lt;N&gt;</code> from the current repo. It
 refuses the branch when the issue is closed, or is an epic or archive
-(an umbrella is never closed by a PR). It also refuses when the issue
-cannot be read, so check <code>vrg-gh issue view &lt;N&gt;</code> works and retry.</p>
+(an umbrella is never closed by a PR), or was not opened by a trusted
+author (the trust layer's check; the refusal names the author's login
+and when the issue was opened, never its text). It also refuses when the
+issue or its author cannot be read, or no trusted-authors configuration
+is present, so check <code>vrg-gh issue view &lt;N&gt;</code> works and retry.</p>
 <p>The <code>release/*</code> and <code>promotion/*</code> prefixes are created by automated
 workflows and are exempt from the issue-number rule.</p>
 <p><code>deps/update-&lt;version&gt;</code> is the branch <code>vrg-update-deps</code> (and the
@@ -19113,12 +19116,16 @@ is an integration branch, and never deletes a protected branch.</p>
 <li>Run <code>vrg-release</code> from the root checkout. It creates the tracking
    issue and the <code>release/&lt;version&gt;</code> branch, generates the changelog,
    merges the release PR to <code>main</code>, waits for CD to tag and publish,
-   merges the version bump back to <code>develop</code>, and cleans up.</li>
-<li>As its last step, <code>vrg-release</code> runs the dependency update on the
-   new <code>develop</code> version and opens a <code>dependency-update</code> PR when
-   anything changed. If its validation or merge fails, the PR stays open
-with a fix task, and the next
-   release refuses to start until it is dealt with.</li>
+   merges the version bump back to <code>develop</code>, moves the rolling <code>vX.Y</code>
+   tag, and cleans up.</li>
+<li>It then runs the dependency update on the new <code>develop</code> version,
+   opening a <code>dependency-update</code> PR when anything changed, and the
+   repo's install. If the update's validation or merge fails, the PR
+   stays open with a fix task, and the next release refuses to start
+   until it is dealt with.</li>
+<li>Last, it posts a <code>Released:</code> record on every issue the release
+   closes and closes the tracking issue. Any failed stage leaves the
+   issue open, and <code>vrg-release --resume</code> finishes the release.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
 <p><code>vrg-github-repo-init</code> creates a new managed repository, or adopts

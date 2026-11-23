@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17974,8 +18004,6 @@
       
         
       
-        
-      
     
     
     
@@ -18036,34 +18064,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18470,7 +18470,8 @@ only <code>vrg-release</code> writes; see
 <a href="../../../guides/releasing/#release-tracking-artifacts">Release tracking artifacts</a>.
 <code>prepare</code> locks the issue, and <code>vrg-release</code> trusts the state block only
 while every identity that authored, edited, closed or reopened the issue
-is a <code>human</code> login of <code>vrg-trusted-authors</code>: any other identity stops
+holds the <code>human</code> role (a <code>human</code> login of <code>vrg-trusted-authors</code> whose
+account is a GitHub user): any other identity stops
 the run before it writes anything, as a suspected security breach; see
 <a href="../../../guides/releasing/#the-lock-and-the-identity-rule">The lock and the identity rule</a>.
 Such a release can never be resumed; it is replaced with
@@ -18481,11 +18482,19 @@ the PRs, the tag and the CD runs it produced. <code>--resume</code> checks those
 facts against GitHub and git, then runs only the stages not recorded
 done; see
 <a href="../../../guides/releasing/#resuming-a-release">Resuming a release</a>.</p>
+<p><code>prepare</code> and <code>back-merge-bump</code> adopt an existing release or back-merge
+PR by its branch (<code>release/X.Y.Z</code>, <code>release/post-X.Y.Z</code>), so a re-run
+never opens a second one. Only a same-repo PR with a trusted author is
+adopted: a fork PR on the same branch name, or a PR whose author holds
+no role, is reported on stderr, metadata only, and never adopted or
+merged. Several open PRs on the branch, or a lookup that cannot
+complete, stop the stage, naming them.</p>
 <p>Once every earlier stage has succeeded, <code>release-records</code> posts a
 <code>Released:</code> record, as the human running the release, on each issue in
 the issue list that has no counting record yet. A record counts only
-when its comment's author and last editor are <code>human</code> logins of
-<code>vrg-trusted-authors</code>; a resume posts only the missing ones, and
+when its comment's author and last editor hold the <code>human</code> role, and
+every other comment is reported on stderr, metadata only; a resume posts
+only the missing ones, and
 <code>close-tracking</code> closes the tracking issue only once every record is
 posted; see
 <a href="../../../guides/releasing/#released-records"><code>Released:</code> records</a>.
@@ -18576,7 +18585,10 @@ part of every release</code>.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Run from the root checkout, on <code>develop</code>, with a clean working tree
-  that matches <code>origin/develop</code>.</li>
+  that has not diverged from <code>origin/develop</code>: one that is only behind
+  is fast-forwarded (see
+  <a href="../../../guides/releasing/#the-develop-sync">The develop sync</a>). A
+  <code>--resume</code> runs only the host, <code>gh</code> auth and config checks.</li>
 <li>A reachable container runtime (docker or nerdctl) and an authenticated
   <code>gh</code>. <code>git-cliff</code> runs in the dev container through <code>vrg-container-run</code>,
   so it is not needed on the host.</li>
@@ -18587,7 +18599,10 @@ part of every release</code>.</p>
 version. The refusal names each open issue and the
 <code>vrg-release --resume X.Y.Z</code> that finishes it, or, for an issue with no
 state block (left by older tooling), says to finish that release by
-hand and then close the issue. Lookup failures refuse the release. See
+hand and then close the issue. Only an issue whose body is trusted
+counts: one opened or edited by an identity with no trusted role is
+reported on stderr, metadata only, and never blocks the start. Lookup
+failures refuse the release. See
 <a href="../../../guides/releasing/#one-release-at-a-time">One release at a time</a>.</p>
 <p><code>--supersede X.Y.Z</code> is the one exception: its check passes over release
 <code>X.Y.Z</code>'s own tracking issue, which it reads under the identity rule
@@ -18605,8 +18620,14 @@ release takes <code>X.Y.(Z+1)</code> unless <code>minor</code> or <code>major</c
 <p>On a fresh start (not on <code>--resume</code>), preflight refuses while an open
 PR carries the <code>dependency-update</code> label. First it closes, with a
 comment, any such PR whose linked fix task was closed as completed (the
-update landed through the fix PR), and deletes its head branch. A failed
-branch delete is reported, not fatal. <code>--allow-pending-deps</code> lets the
+update landed through the fix PR), and deletes its head branch. The
+branch is deleted only when the PR is a same-repo PR with a trusted
+author: a fork PR's head is in the fork, so the branch of that name here
+is kept, and the fork PR is reported on stderr, metadata only. A failed
+branch delete is reported, not fatal. The <code>Fix task:</code> link counts only
+from a trusted PR body, and a completed close counts only when a trusted
+identity closed the fix task: a close by anyone else stops the release
+before any PR is touched, naming who closed it. <code>--allow-pending-deps</code> lets the
 release past whatever still blocks. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-dependency-update-gate">The dependency-update gate</a>.</p>
 <h2 id="the-develop-cd-gate">The develop-CD gate<a class="headerlink" href="#the-develop-cd-gate" title="Permanent link">&para;</a></h2>

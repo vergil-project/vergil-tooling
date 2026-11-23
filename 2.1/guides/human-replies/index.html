@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -17890,34 +17918,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18733,9 +18733,14 @@ decided.</p>
 <ul>
 <li><strong>Trusted authors.</strong> Both tools read identity only from the trusted-authors
   configuration (<a href="../account-setup/#trusted-authors">Trusted authors</a>,
-  <code>vrg-trusted-authors</code>): its <code>human</code> login and its <code>agents</code> logins. A leading
-  <code>app/</code> is stripped from every comment author before comparing. Comments by
-  any other login are ignored by every check.</li>
+  <code>vrg-trusted-authors</code>): its <code>human</code> login and its <code>agents</code> logins. Every
+  comment is read through the trust layer: it counts only when its author
+  and every editor are the human (a GitHub user account) or an agent (an
+  App), so a user account named like an agent, the automation App, a
+  deleted account and any other login are ignored by every check, and so is
+  a trusted comment that an outsider has edited. Each comment left out is
+  reported on stderr, metadata only, and a comment list the layer cannot
+  read in full is an error, never a shorter stream.</li>
 <li><strong>One human.</strong> The <code>human</code> entry must hold exactly one login, the
   <strong>human login</strong>. Both tools refuse when it holds none or several.</li>
 <li><strong>The agent login</strong> is derived, never asked of GitHub: <code>&lt;the human

@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../epic-home-visibility-flip/">
+        <link rel="prev" href="../git-workflow/">
       
       
         <link rel="next" href="../human-replies/">
@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -17890,34 +17918,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18190,17 +18190,6 @@
     <span class="md-ellipsis">
       
         Checking existing records after the several-advisories change
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#before-a-private-repo-goes-public" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Before a private repo goes public
       
     </span>
   </a>
@@ -18678,17 +18667,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#before-a-private-repo-goes-public" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Before a private repo goes public
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#accepted-trade-offs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18762,9 +18740,8 @@ extended to several advisories per issue by epic
 <li>a neutral <strong><code>security</code>-labelled issue</strong> in the intake queue, which
     holds only a title, a body that says nothing about the problem, and a
     pointer to the advisory.</li>
-<li><strong>The same rule for every repo, public or private.</strong> Issues are always
-  neutral, and the details always live in the advisory. A private repo
-  gets no exception: its issues are written as if they were public.</li>
+<li><strong>The same rule for every repo.</strong> Issues are always neutral, and the
+  details always live in the advisory.</li>
 <li><strong>Fix it within about a day.</strong> Security is a top priority. A record is
   meant to be short-lived: once it is captured, fixing it comes first,
   with a target of about a day. This target is policy. The tooling does
@@ -18801,20 +18778,11 @@ security record is the durable, private home for them.</p>
   package name (ecosystem <code>other</code>), so it stays queryable. When its fix
   lands in another org, the advisory moves to that org's <code>.github</code> (see
   <a href="#moving-a-record-to-another-org">Moving a record to another org</a>).</li>
-<li><strong>The issue</strong> is created in the affected repo's <strong>queue home</strong>, the same
-  place <code>vrg-intake-create</code> files an item, and linked under its intake
-  epic:</li>
-<li>a public repo's queue home is <code>&lt;org&gt;/.github</code>;</li>
-<li>a private repo keeps its own queues, so its issue stays in the
-    private repo.</li>
+<li><strong>The issue</strong> is created in the affected repo's <strong>queue home</strong>,
+  <code>&lt;org&gt;/.github</code>, the same place <code>vrg-intake-create</code> files an item, and
+  linked under its intake epic. It is never created in a code repo itself.</li>
 </ul>
-<p>It is never created in a public code repo itself.</p>
-<p>The org's <code>.github</code> repo must be <strong>public</strong>. GitHub documents repository
-security advisories for public repos only. When <code>&lt;org&gt;/.github</code> is not
-public, every <code>vrg-security-record</code> command refuses (<code>sync</code> included), and
-<code>vrg-intake-route</code> and <code>vrg-queue planning</code> fail when they meet a security
-item. None of them falls back to an issue-only record. Orgs with a private <code>.github</code>, and
-repos owned by a user account rather than an org, are not supported.</p>
+<p>Repos owned by a user account rather than an org are not supported.</p>
 <h3 id="the-two-reference-lines">The two reference lines<a class="headerlink" href="#the-two-reference-lines" title="Permanent link">&para;</a></h3>
 <p>Each half of a pair names the other with an exact line, alone on its
 line:</p>
@@ -18967,8 +18935,7 @@ and issue ref only. A pair is broken when:</p>
 </ul>
 <p><code>sync</code> reports a broken pair and does not repair it; a human decides
 what to do. Broken pairs make <code>sync</code> exit 1, after it has synced the
-rest; <code>--dry-run</code> reports them and exits 0. An org whose <code>.github</code> is
-private makes both exit 1.</p>
+rest; <code>--dry-run</code> reports them and exits 0.</p>
 <p>Nothing runs <code>sync</code> on a schedule, so an advisory's state lags its issues
 until someone runs it, and no nightly job checks the pairs. Run it after
 closing or reopening a <code>security</code> issue, and regularly in any case.</p>
@@ -19309,23 +19276,6 @@ hand:</p>
 </ul>
 <p><code>sync</code> reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.</p>
-<h2 id="before-a-private-repo-goes-public">Before a private repo goes public<a class="headerlink" href="#before-a-private-repo-goes-public" title="Permanent link">&para;</a></h2>
-<p>Because issues are neutral everywhere, a private repo's issues hold no
-security details, and nothing needs converting. Some places are outside
-the tooling's reach, though. Before you make a private repo public, check
-each of these by hand:</p>
-<ul>
-<li>[ ] <strong>Git history and commit messages</strong>, on every branch and tag that
-      will be published.</li>
-<li>[ ] <strong>PR bodies and review comments</strong>, including closed PRs.</li>
-<li>[ ] <strong>Wikis and Actions logs.</strong> Logs become public with the repo.</li>
-<li>[ ] <strong>Issues written before this policy existed.</strong> Run the past-issues
-      audit on the repo: attach a record to each unfixed one
-      (<code>vrg-security-record create --issue</code>), and label each fixed one
-      <code>security-disclosed</code>.</li>
-</ul>
-<p>The repo's epics move separately; see
-<a href="../epic-home-visibility-flip/">Epic Home Visibility Flips</a>.</p>
 <h2 id="accepted-trade-offs">Accepted trade-offs<a class="headerlink" href="#accepted-trade-offs" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Advisory states lag their issues.</strong> No scheduled job syncs them:
@@ -19335,11 +19285,10 @@ each of these by hand:</p>
   sweep's token.</li>
 <li><strong>Advisories are not next to their code.</strong> Every record is in
   <code>&lt;org&gt;/.github</code>, so every admin and security manager of <code>.github</code> can
-  see every draft, including one about a private (for example, client)
-  repo. Today those are the same people. The package-name field keeps the
+  see every draft. Today those are the same people. The package-name field keeps the
   affected repo queryable.</li>
-<li><strong>A public issue shows that a problem exists.</strong> For a public repo the
-  issue is public. Its <code>security</code> label and advisory line, together with
+<li><strong>A public issue shows that a problem exists.</strong> Every issue is
+  public. Its <code>security</code> label and advisory line, together with
   a title that names the affected area, tell anyone that an unfixed
   security problem exists in that area. The issue never says what the
   problem is, and the record is meant to live about a day. This small,

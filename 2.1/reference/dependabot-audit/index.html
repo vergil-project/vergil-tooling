@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14642,10 +14672,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#output-public-vs-private-repos" class="md-nav__link">
+  <a href="#output" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output: public vs private repos
+        Output
       
     </span>
   </a>
@@ -17950,8 +17980,6 @@
       
         
       
-        
-      
     
     
     
@@ -18012,34 +18040,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18344,10 +18344,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#output-public-vs-private-repos" class="md-nav__link">
+  <a href="#output" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output: public vs private repos
+        Output
       
     </span>
   </a>
@@ -18519,26 +18519,17 @@ stderr, prefixed <code>vrg-dependabot-audit:</code>. The common causes are:</p>
 </tr>
 </tbody>
 </table>
-<h2 id="output-public-vs-private-repos">Output: public vs private repos<a class="headerlink" href="#output-public-vs-private-repos" title="Permanent link">&para;</a></h2>
-<p>Every report starts with a totals line, then ends with a link to the
-repo's Security tab:</p>
+<h2 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h2>
+<p>The report is a totals line, counting the open alerts by severity,
+followed by a link to the repo's Security tab:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>o/r: 2 open Dependabot alerts: 1 critical, 0 high, 0 medium, 1 low
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Review or dismiss at https://github.com/o/r/security/dependabot
 </code></pre></div>
 <p>A severity GitHub adds beyond the four known ones is still counted,
 and it is listed after <code>low</code>.</p>
-<ul>
-<li><strong>Private repos</strong> also get one line per alert, ordered by severity
-  and then package. Each line carries the severity, ecosystem, package,
-  manifest path, GHSA ID, and the alert's URL.</li>
-<li><strong>Public repos</strong> get the totals line and the link only. Package
-  names, manifest paths, and GHSA IDs never appear, because the log of
-  a public repo's workflow run is world-readable. An internal repo is
-  treated like a public one.</li>
-</ul>
-<p>If the repo's visibility cannot be resolved, the command warns on
-stderr and uses the public, counts-only format. It never itemizes a
-repo it has not confirmed is private.</p>
+<p>The report never lists individual alerts. Package names, manifest
+paths, and GHSA IDs never appear, because the log of the nightly
+workflow run is world-readable. The Security tab holds the detail.</p>
 <h2 id="clearing-an-alert">Clearing an alert<a class="headerlink" href="#clearing-an-alert" title="Permanent link">&para;</a></h2>
 <p>Dismissal on GitHub is the only escape hatch. Fix the dependency, or
 dismiss the alert from the Security tab with a reason. Because the

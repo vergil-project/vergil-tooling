@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -17890,34 +17918,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -19009,8 +19009,7 @@ named <code>security</code>, the checks report as:</p>
 <p>CodeQL is skipped when <code>run-codeql</code> is <code>false</code> (set for languages
 CodeQL does not support; <code>vrg-github-repo-init</code> reads the same language
 set as the <a href="#ci-gates">CI gates</a> ruleset, so a repo is never required to
-report a CodeQL check its CI skips) or when <code>upload-sarif</code> is <code>false</code> (set for
-private repositories without GitHub Advanced Security).
+report a CodeQL check its CI skips).
 <code>container-suffix</code> is a deprecated no-op here, and the old
 standards-compliance job is gone: PR issue linkage is now checked by
 <code>vrg-submit-pr</code> when it builds the PR body.</p>
@@ -19269,11 +19268,11 @@ require these checks. The list is computed from
 </tr>
 <tr>
 <td><code>security / codeql</code>, <code>CodeQL</code></td>
-<td>GHAS is available and CodeQL supports the language (<code>python</code>, <code>go</code>, <code>rust</code>, <code>cpp</code> or <code>typescript</code>)</td>
+<td>CodeQL supports the language (<code>python</code>, <code>go</code>, <code>rust</code>, <code>cpp</code> or <code>typescript</code>)</td>
 </tr>
 <tr>
 <td><code>Trivy</code>, <code>Semgrep OSS</code></td>
-<td>GHAS is available</td>
+<td>Always</td>
 </tr>
 <tr>
 <td><code>test / integration / &lt;version&gt;</code></td>
@@ -19281,11 +19280,10 @@ require these checks. The list is computed from
 </tr>
 </tbody>
 </table>
-<p>GHAS (GitHub Advanced Security) is taken from <code>[project].ghas</code> when it
-is set. Otherwise it counts as available for any repository that is not
-private. The bare <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code> checks come from
-GitHub code scanning, not from a workflow job. Without GHAS those checks
-never report, so they are not required.</p>
+<p>The bare <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code> checks come from GitHub
+code scanning (GitHub Advanced Security), not from a workflow job. Every
+repository is public, so code scanning is always available and those
+checks are always required.</p>
 <h3 id="every-check-that-runs-is-a-gate">Every check that runs is a gate<a class="headerlink" href="#every-check-that-runs-is-a-gate" title="Permanent link">&para;</a></h3>
 <p>There is no tier of checks that runs on a PR but does not block it. The
 required set above is pinned by a test so it cannot drift silently.</p>

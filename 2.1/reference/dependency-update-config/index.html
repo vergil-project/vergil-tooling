@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18028,8 +18058,6 @@
       
         
       
-        
-      
     
     
     
@@ -18090,34 +18118,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18550,9 +18550,10 @@
 
 
 <h1 id="dependency-update-reference-dependency-update">Dependency Update Reference (<code>[dependency-update]</code>)<a class="headerlink" href="#dependency-update-reference-dependency-update" title="Permanent link">&para;</a></h1>
-<p>Every <code>vrg-release</code> ends with an <code>update-deps</code> stage that updates the
-repo's dependencies to the newest versions their declared bounds allow
-(see <a href="../../guides/releasing/#dependency-updates">Dependency updates</a>).
+<p>Every <code>vrg-release</code> runs an <code>update-deps</code> stage, once the release is
+tagged and published, that updates the repo's dependencies to the
+newest versions their declared bounds allow (see
+<a href="../../guides/releasing/#dependency-updates">Dependency updates</a>).
 <a href="../dev/update-deps/"><code>vrg-update-deps</code></a> runs the same pipeline by hand.
 This page covers what that pipeline updates: the built-in updaters, the
 per-repo hook a repo configures with <code>[dependency-update]</code> in

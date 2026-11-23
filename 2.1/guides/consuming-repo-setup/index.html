@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -17825,8 +17855,6 @@
       
         
       
-        
-      
     
     
     
@@ -17890,34 +17918,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18963,7 +18963,7 @@ to name the clone's parent directory explicitly. The clone uses SSH
 <p>The wizard runs ten steps, each committed as <code>chore(init): step N - …</code>
 so an interrupted run resumes where it stopped:</p>
 <ol>
-<li>Create the GitHub repository (<code>--visibility</code>, default public).</li>
+<li>Create the GitHub repository, always public.</li>
 <li>Clone it.</li>
 <li>Generate <code>vergil.toml</code> from your answers (see Step 4).</li>
 <li>Scaffold <code>VERSION</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>,
@@ -19448,7 +19448,8 @@ never produces.</p>
    indexes each released package.</li>
 </ol>
 <h3 id="optional-dependency-update-hook">Optional: dependency-update hook<a class="headerlink" href="#optional-dependency-update-hook" title="Permanent link">&para;</a></h3>
-<p>Every <code>vrg-release</code> ends by updating the repo's dependencies (see
+<p>Every <code>vrg-release</code> updates the repo's dependencies once the release is
+tagged and published (see
 <a href="../releasing/#dependency-updates">Dependency updates</a>). The built-in
 updaters cover Python (<code>uv.lock</code>), Rust (<code>Cargo.lock</code>), TypeScript
 (<code>package-lock.json</code>), vergil ecosystem refs, the packaged

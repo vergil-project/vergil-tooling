@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18035,8 +18065,6 @@
       
         
       
-        
-      
     
     
     
@@ -18097,34 +18125,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18599,18 +18599,17 @@ advisory.</p>
 <ul>
 <li><code>--repo</code> always names the <strong>affected</strong> repo, never where anything is
   created.</li>
-<li>The advisory is always created in <code>&lt;org&gt;/.github</code>, where <code>&lt;org&gt;</code> is the
+<li>
+<p>The advisory is always created in <code>&lt;org&gt;/.github</code>, where <code>&lt;org&gt;</code> is the
   owner of <code>--repo</code> (or of the <code>--from</code> and <code>--drop</code> refs for <code>retarget</code>, whose
   <code>--to</code> refs in another org move it there: see
-  <a href="#the-cross-org-move">The cross-org move</a>). The command
-  checks that <code>&lt;org&gt;/.github</code> is public and otherwise refuses with:</li>
-</ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-security-record: &lt;org&gt;/.github is not public; security records need a public org .github (private orgs are unsupported)
-</code></pre></div>
-<ul>
-<li>The issue is created in the affected repo's queue home (<code>&lt;org&gt;/.github</code>
-  for a public repo, the repo itself for a private one) and linked under
-  that home's intake epic, which is created if absent.</li>
+  <a href="#the-cross-org-move">The cross-org move</a>).</p>
+</li>
+<li>
+<p>The issue is created in the affected repo's queue home, <code>&lt;org&gt;/.github</code>,
+  and linked under
+  that home's intake epic, which is created if absent.</p>
+</li>
 </ul>
 <p>Every run scopes its GitHub App token to <code>&lt;org&gt;</code>. In human mode the
 human's own <code>gh</code> login is used.</p>
@@ -18706,8 +18705,10 @@ completes whatever steps are missing:</p>
   line;</li>
 <li>without <code>--issue</code>, it looks among the intake epic's sub-issues for one
   whose body has the advisory's <code>Security advisory:</code> line (it never uses
-  search, whose index can lag). If none is found it creates the issue and
-  links it. Then it writes the tracking line.</li>
+  search, whose index can lag). A match counts only when the trust layer
+  trusts that body (its author and every editor trusted); any other is
+  skipped and reported on stderr, metadata only. If none is found it
+  creates the issue and links it. Then it writes the tracking line.</li>
 </ul>
 <p>Every step is idempotent, so running a resume command twice is safe.</p>
 <p><code>create</code> makes the advisory's <strong>first</strong> pairing, on its own path, not
@@ -18720,8 +18721,8 @@ steps run. Move an advisory that is already paired with <code>retarget</code>.</
 <h2 id="list">list<a class="headerlink" href="#list" title="Permanent link">&para;</a></h2>
 <p>Lists the records in the org's <code>.github</code>, one line per advisory, sorted
 by GHSA ID:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>GHSA-xxxx-xxxx-xxxx  draft  vergil-tooling  tracks: vergil-project/.github#123
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>GHSA-yyyy-yyyy-yyyy  triage  (no affected repo)  tracks: (no tracking issue)  [external report]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>GHSA-xxxx-xxxx-xxxx  draft  vergil-tooling  tracks: vergil-project/.github#123
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>GHSA-yyyy-yyyy-yyyy  triage  (no affected repo)  tracks: (no tracking issue)  [external report]
 </code></pre></div>
 <p>Each line has the GHSA ID, the advisory state, the affected repo (its
 package name) and the tracked issues. <code>[external report]</code> marks an
@@ -18765,8 +18766,16 @@ line, then <code>summary:</code> and <code>description:</code> with the advisory
 <p>If any advisory to print does not exist in <code>&lt;org&gt;/.github</code>, <code>show</code>
 refuses and prints no pair at all, not even the ones that exist. The
 refusal names every missing advisory:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-security-record: advisory GHSA-xxxx-xxxx-xxxx does not exist in vergil-project/.github
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-security-record: advisories GHSA-xxxx-xxxx-xxxx, GHSA-yyyy-yyyy-yyyy do not exist in vergil-project/.github
+</code></pre></div>
+<p>Given an issue, <code>show</code> prints only the advisories that <strong>track</strong> it, whose
+<code>Tracking issue:</code> lines name it: a body line alone, which anyone who can
+write the body can add, never shows a pair. Each named advisory that does
+not track the issue is named on stderr and not shown, and an issue none of
+whose advisories track it is refused:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-security-record: not shown: advisory GHSA-xxxx-xxxx-xxxx does not track vergil-project/tool#12
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-security-record: no advisory vergil-project/tool#12 names tracks it
 </code></pre></div>
 <h2 id="retarget">retarget<a class="headerlink" href="#retarget" title="Permanent link">&para;</a></h2>
 <p>Moves an advisory's tracking from an issue it tracks to new issues. It is
@@ -18845,7 +18854,8 @@ succeeded:</p>
    <code>security</code>-labelled issue in the org whose <code>Security advisory:</code> line
    names this GHSA ID (found by REST listing, never by search). Each one
    gets the comment <code>Security record moved to &lt;refs&gt;</code> (posted once, even on
-   a re-run). Then this advisory's line is removed, together with the
+   a re-run; only a trusted author's copy of it counts as already posted,
+   and any other is reported on stderr, metadata only). Then this advisory's line is removed, together with the
    <code>security</code> label when no other advisory line remains, in one edit. An
    issue that also names other advisories keeps their lines and the
    label. An issue that names only other advisories is never touched.
@@ -18909,9 +18919,9 @@ copies it. A <code>--to</code> set spanning orgs is refused before any read:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>vrg-security-record: advisory &lt;GHSA-id&gt;: this would stop tracking the open issue &lt;ref&gt;; a move to &lt;org&gt;/.github closes this advisory, so it cannot keep tracking an issue in &lt;org&gt;. Close or retarget that work first, then run: vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;ref&gt;' --to '&lt;ref&gt;' …. Leaving an open issue untracked is the human's decision
 </code></pre></div>
 <ul>
-<li>The fix org's <code>.github</code> must be public. Its advisories are listed, and
-  each one with a <code>Moved from: &lt;GHSA-id&gt;</code> line naming this advisory alone
-  on its line is a candidate. One candidate is reused only when it is a
+<li>The fix org's <code>.github</code> advisories are listed, and each one with a
+  <code>Moved from: &lt;GHSA-id&gt;</code> line naming this advisory alone on its line is a
+  candidate. One candidate is reused only when it is a
   <code>draft</code> and not an external report; more than one candidate, or any
   that is an external report or in another state, refuses the move,
   naming each, and nothing is created. A reused copy must also be the one
@@ -18987,8 +18997,7 @@ left unchanged: &lt;error&gt;</code>; the rest are still synced.</p>
 broken pairs, &lt;h&gt; held, &lt;e&gt; errors.</code> Each noun agrees with its count, so a
 count of 1 reads <code>1 advisory state synced</code>, <code>1 broken pair</code> or <code>1 error</code>.
 It exits 1 when any pair is broken or any parent read failed (after
-syncing the rest), or when the pass fails, including when the org's
-<code>.github</code> is private. An org with no <code>security</code> issues and no <code>.github</code>
+syncing the rest), or when the pass fails. An org with no <code>security</code> issues and no <code>.github</code>
 repo prints <code>Security records: none.</code></p>
 <table>
 <thead>
@@ -19053,7 +19062,10 @@ each starts only once the one before it succeeded:</p>
      hold: close the issue first (as not planned, for dropped work), or
      retarget the record.</li>
 <li><strong>Comment.</strong> Post <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on each
-   issue, skipping one that already carries that exact comment.</li>
+   issue, skipping one that already carries that exact comment from a
+   trusted author (its author and every editor trusted, judged by the trust
+   layer); any other copy is reported on stderr, metadata only, and the
+   comment is posted.</li>
 <li><strong>Close.</strong> Set the advisory's state to <code>closed</code>, unless it already is.</li>
 </ol>
 <p>The comments go first, so a closed record always has its audit trail.
@@ -19155,9 +19167,9 @@ do.</p>
   when no advisory tracks the issue, is a broken pair: the note reports it
   (<code>broken pair: …</code>) and the item is not held. The docs PR's planning
   close applies the same rule and gives the same reason.</p>
-<p>It lists each org's advisories once per view, and skips an org whose
-  <code>.github</code> is absent or not public unless one of its items has an
-  advisory line (then the private home is refused). An advisory line
+<p>It lists each org's advisories once per view, and skips an org with no
+  <code>.github</code> unless one of its items has an advisory line (then the home
+  is read anyway, and a failed read fails the view). An advisory line
   naming an org other than the issue's own is refused, not ignored.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
@@ -19174,7 +19186,7 @@ do.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Refused (a private <code>.github</code>, a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>retarget</code>, <code>close</code> or <code>note</code> the checks refuse, a <code>create</code> onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
+<td>Refused (a duplicate, bad refs, an unreadable file, <code>--details</code> under the sweep, a <code>retarget</code>, <code>close</code> or <code>note</code> the checks refuse, a <code>create</code> onto an advisory already paired), a partial pair, a failed retarget, close or note, a broken pair or a failed parent read found by <code>sync</code> (not <code>--dry-run</code>), a GitHub API failure, or an authentication failure</td>
 </tr>
 <tr>
 <td>2</td>

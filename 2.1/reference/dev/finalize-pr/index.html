@@ -1468,6 +1468,8 @@
       
         
       
+        
+      
     
     
     
@@ -1520,6 +1522,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.336/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.336
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18158,8 +18188,6 @@
       
         
       
-        
-      
     
     
     
@@ -18220,34 +18248,6 @@
     
   
     Git Workflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../guides/epic-home-visibility-flip/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Epic Home Visibility Flips
   
 
     
@@ -18860,6 +18860,13 @@ which is unsafe when the calling shell's CWD is inside one.</p>
   a watched run's.</li>
 </ul>
 <p>A PR list, <code>--all</code> and <code>--cleanup-only</code> are mutually exclusive.</p>
+<p><code>--all</code> and the interactive form match a worktree's branch only to a
+same-repo PR whose author is trusted (<code>vrg-trusted-authors</code>). A fork PR on
+the same branch name, or a PR by an untrusted author, is never a candidate:
+it is reported on stderr with its metadata only (repo, number, login,
+time), never its title. Several open PRs on one branch are an error naming
+them (exit 1), never the first. The branch sweep's merge evidence is
+judged the same way.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">[</span>,PR…<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--all<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--wait-cd<span class="o">]</span>
@@ -18952,7 +18959,10 @@ names what replaced it:</p>
 <ol>
 <li><strong>Develop PRs only.</strong> A PR whose base is not <code>develop</code>, or whose head is
    a <code>release/*</code> branch, ends as <em>failed: not a develop PR</em> and is left
-   untouched. A release PR goes through <code>vrg-release</code>.</li>
+   untouched. A release PR goes through <code>vrg-release</code>. The head branch is
+   read through the trust layer once, at the start: a PR that is not a
+   same-repo PR with a trusted author on its branch (a fork PR, for one)
+   ends the same way, and its branch is not named.</li>
 <li><strong>Merged.</strong> The PR ends as <em>merged</em>. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.</li>
 <li><strong>Closed</strong> without merging: <em>failed: closed</em>.</li>
@@ -18992,8 +19002,14 @@ clean PR.</p>
 again each time a PR's head changes. <code>vrg-submit-pr</code> ran the same check
 before it turned auto-merge on. A violation always fails, and there is
 no override (issue #4695): it is either a real problem to investigate or
-a bug in the classifier to fix. What it does depends on whether the PR
-has merged:</p>
+a bug in the classifier to fix. Each identity's role comes from the
+trusted-authors configuration, never from its name alone: the human may
+do anything, an agent may not author, edit, close, reopen or merge the
+PR or turn auto-merge on (the user identity may not approve it either),
+and an identity with no role is <strong>untrusted</strong>, with the same limits as
+the audit identity. An untrusted approval counts for nothing: it is
+reported on stderr, metadata only, and is no violation. What it does
+depends on whether the PR has merged:</p>
 <ul>
 <li><strong>Open PR.</strong> Finalize turns the PR's auto-merge off and reports it
   <em>failed: provenance</em>.</li>
@@ -19094,7 +19110,10 @@ can take it.</p>
    the CD report and for the report of a develop that did not validate.</li>
 <li><strong>Delete the merged PRs' branches.</strong> Each merged PR's head branch and
    its <code>.worktrees/</code> worktree are deleted by name, since a squash merge
-   hides the branch from <code>git branch --merged</code>. The branch's PR-workflow
+   hides the branch from <code>git branch --merged</code>. A branch is named only
+   once the trust layer finds the PR itself merged, as a same-repo PR with
+   a trusted author, on that branch; otherwise its local branch and
+   worktree are kept, and the PR is named on the output. The branch's PR-workflow
    relay ref (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>, pushed by
    <code>report-ready</code>) is deleted with it, so a cloud-handoff ref never
    outlives its branch (issue #2369). A branch with no local copy is
@@ -19292,7 +19311,9 @@ lock, fast-forwards <code>develop</code> itself and cuts from the new head, even
 another PR merged in between (see
 <a href="../../../guides/releasing/#the-develop-sync">The develop sync</a>). Short of
 full success, the release is skipped and the run says why. A failed
-release never un-merges a PR: re-run <code>vrg-release</code> alone.</p>
+release never un-merges a PR: finish it with <code>vrg-release --resume</code>
+once it has opened its tracking issue, or re-run <code>vrg-release</code> alone if
+it stopped before that.</p>
 <h2 id="batch-prs-one-pr-closing-several-issues">Batch PRs (one PR closing several issues)<a class="headerlink" href="#batch-prs-one-pr-closing-several-issues" title="Permanent link">&para;</a></h2>
 <p>A PR whose body has more than one <code>Closes</code> line is a <strong>batch PR</strong>: 2 to
 8 issues of one epic on one branch, exactly one commit per issue, each
