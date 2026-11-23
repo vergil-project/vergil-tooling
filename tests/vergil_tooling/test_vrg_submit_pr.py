@@ -753,6 +753,62 @@ class TestTemplateMode:
         assert "already submitted" in combined
         assert "312" in combined
 
+    def test_in_worktree_asks_github_for_the_branch_pr(self, tmp_path: Path) -> None:
+        """Run inside the worktree, submit asks GitHub as the root picker does (#5037)."""
+        _write_workflow_state(tmp_path)
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._published_pr", return_value=None) as pub,
+        ):
+            assert main(["--dry-run"]) == 0
+        pub.assert_called_once_with("feature/x", "h0")
+
+    def test_in_worktree_with_an_open_pr_does_not_resubmit(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A PR opened by hand leaves the state ready; it is in flight (#5037)."""
+        _write_workflow_state(tmp_path)
+        pr = _open_pr(number=313, url="https://x/pull/313")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._published_pr", return_value=pr),
+            patch(_MOD + ".git.run") as run,
+            patch(_MOD + ".github.create_pr") as create_pr,
+        ):
+            assert main([]) == 0
+        run.assert_not_called()
+        create_pr.assert_not_called()
+        out = capsys.readouterr().out
+        assert (
+            "vrg-submit-pr: this worktree's branch already has an open PR #313 "
+            "(https://x/pull/313).\n"
+        ) in out
+        assert "Run vrg-finalize-pr on it" in out
+
+    def test_in_worktree_with_a_merged_pr_is_refused_as_cleanup(self, tmp_path: Path) -> None:
+        """A PR merged at the reported head is cleanup, never pushed again (#5037)."""
+        _write_workflow_state(tmp_path)
+        pr = _open_pr(number=314, url="https://x/pull/314", state="MERGED")
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + "._published_pr", return_value=pr),
+            patch(_MOD + ".git.run") as run,
+            patch(_MOD + ".github.create_pr") as create_pr,
+            pytest.raises(SystemExit) as exc,
+        ):
+            main([])
+        run.assert_not_called()
+        create_pr.assert_not_called()
+        assert str(exc.value) == (
+            "vrg-submit-pr: this worktree's PR #314 has merged at the reported "
+            "head (https://x/pull/314); nothing was submitted.\n"
+            "  This worktree is cleanup, not a submit: run "
+            "`vrg-finalize-pr --cleanup-only` to remove it."
+        )
+
     def test_template_dry_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         _write_workflow_state(tmp_path)
         with (
@@ -1106,10 +1162,13 @@ class TestRootLaunch:
             patch(_MOD + ".submission.read_pr_fields", return_value=fields),
             patch(_MOD + ".os.chdir") as chdir,
             patch(_MOD + ".git.current_branch", return_value="feature/7-foo"),
+            patch(_MOD + "._published_pr", return_value=None) as pub,
         ):
             rc = main(["--dry-run"])
         assert rc == 0
         chdir.assert_called_once_with(wt.path)
+        # The picker asked GitHub; the chosen worktree is not asked again (#5037).
+        pub.assert_called_once_with("feature/7-foo", "h7")
 
     def test_root_no_ready_worktrees_errors_with_reasons(self) -> None:
         wt = self._wt("issue-7-foo", "feature/7-foo")

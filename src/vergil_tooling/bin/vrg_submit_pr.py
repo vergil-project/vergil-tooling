@@ -1310,13 +1310,39 @@ def _prepare(
     )
 
 
+def _held_back(pr: trust.PRRef) -> int:
+    """Say why this worktree's branch is not submitted: GitHub already has its PR.
+
+    An open PR is in flight, so there is nothing to do (exit 0, as for a
+    worktree whose own state records the submit). A PR merged at the
+    reported head has landed, so the worktree is cleanup: the run is
+    refused (issue #5037).
+    """
+    if pr.state == "OPEN":
+        print(
+            f"vrg-submit-pr: this worktree's branch already has an open PR #{pr.number} "
+            f"({pr.url}).\n"
+            "  Nothing to do; the PR is in flight. Run vrg-finalize-pr on it to "
+            "watch it merge and settle develop.",
+        )
+        return 0
+    msg = (
+        f"vrg-submit-pr: this worktree's PR #{pr.number} has merged at the reported "
+        f"head ({pr.url}); nothing was submitted.\n"
+        "  This worktree is cleanup, not a submit: run "
+        "`vrg-finalize-pr --cleanup-only` to remove it."
+    )
+    raise SystemExit(msg)
+
+
 def _run_template_mode(args: argparse.Namespace) -> int:
     root = Path(git.repo_root())
 
     # Location resolution: from the main worktree (repo root), resolve
     # which `.worktrees/` worktree to submit from and move there. The
     # invoking shell is unaffected — chdir applies to this process only.
-    if git.is_main_worktree():
+    picked = git.is_main_worktree()
+    if picked:
         # Batch when --all/--select is given. A single selection falls through
         # to the unchanged single-PR path below (issue #1673). Interactive
         # no-flag multi-select is a deliberate follow-up: the no-flag path
@@ -1358,6 +1384,13 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # the PR head unreported (issue #3815).
     expected_head = fields.get("head_sha", "")
     _require_local_head(branch, expected_head)
+    # The root picker has already asked GitHub (_ready_worktrees); a run from
+    # inside the worktree asks here, so a PR opened by hand is never opened
+    # twice nor a merged one pushed again (issue #5037).
+    if not picked:
+        published = _published_pr(branch, expected_head)
+        if published is not None:
+            return _held_back(published)
     target = _target_branch(args.base, fields.get("base"))
     title = fields["title"]
     notes = fields.get("notes", "")
