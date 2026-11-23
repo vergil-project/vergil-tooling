@@ -233,6 +233,19 @@ _EVENTS_WITH_RENAMES_QUERY = _events_query(
     _RENAME_EVENT_KINDS, f"{_EVENT_TYPES}, RENAMED_TITLE_EVENT"
 )
 
+# A commit's author as GitHub links it to an account: ``user`` is ``null`` when
+# no account carries the commit's author email.
+_COMMIT_QUERY = f"""
+query($owner: String!, $name: String!, $oid: GitObjectID!) {{
+  repository(owner: $owner, name: $name) {{
+    object(oid: $oid) {{
+      __typename
+      ... on Commit {{ authoredDate author {{ user {_ACTOR} }} }}
+    }}
+  }}
+}}
+"""
+
 # What :func:`is_same_repo` reads on a PR: the same names in GraphQL and in
 # ``gh pr list --json``.
 SAME_REPO_FIELDS = "isCrossRepository headRepositoryOwner { login } headRepository { name }"
@@ -305,10 +318,12 @@ class Skipped:
     """Metadata of one untrusted item: never its text.
 
     *kind* is ``issue``, ``pr``, ``comment``, ``review``, ``review-comment``,
-    ``edit`` or ``event``: who did the untrusted thing (the body's author, a
-    comment's author, an editor). *field* names the content concerned
-    (``body``, ``comment <id>``, ``review <id>``, ``review comment <id>``, or a
-    branch-lookup PR's ``author`` or fork ``head``). *login* is bare, ``None`` for a deleted
+    ``edit``, ``event`` or ``commit``: who did the untrusted thing (the body's
+    author, a comment's author, an editor, a commit's author). A ``commit``
+    belongs to no issue or PR: its *number* is 0 and is not shown. *field*
+    names the content concerned (``body``, ``comment <id>``, ``review <id>``,
+    ``review comment <id>``, a branch-lookup PR's ``author`` or fork ``head``,
+    or what a commit carries). *login* is bare, ``None`` for a deleted
     account. *cause* is one of the module's causes.
     """
 
@@ -322,6 +337,9 @@ class Skipped:
 
     def describe(self) -> str:
         """The one-line metadata description every report and error uses."""
+        if self.kind == "commit":
+            who = self.login if self.login is not None else "an author with no GitHub account"
+            return f"{self.repo} commit {who} at {self.at} on {self.field}"
         who = self.login if self.login is not None else "a deleted account"
         return f"{self.repo}#{self.number} {self.kind} {who} at {self.at} on {self.field}"
 
@@ -1033,6 +1051,45 @@ def _latest_close(repo: str, number: int, caller: str) -> IssueEvent:
     if not closes:
         raise TrustReadError(f"{caller} {repo}#{number}", "the item has no close event")
     return closes[-1]
+
+
+# --- commits --------------------------------------------------------------------
+
+
+def require_trusted_commit(
+    repo: str,
+    oid: str,
+    *,
+    field: str,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> Role:
+    """The role of the author of commit *oid* in *repo*; an untrusted author is a stop.
+
+    A GraphQL read of the commit's author as GitHub links it to an account
+    (``author.user``, with ``__typename``). An author no account carries is
+    untrusted, as a deleted account is. Where the author holds no role in
+    *roles*, this raises :class:`UntrustedContentError` (kind ``commit``,
+    *field* naming what the commit carries), metadata only. A failed call, a
+    missing commit or a malformed answer raises :class:`TrustReadError`.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    owner, name = _split_repo(repo)
+    call = f"require_trusted_commit {repo}@{oid[:12]}"
+    data = _graphql(call, _COMMIT_QUERY, owner=owner, name=name, oid=oid)
+    repository = _obj(_get(data, "repository", call, "the answer"), call, "the repository")
+    commit = _obj(_get(repository, "object", call, "the repository"), call, "the commit")
+    if _get(commit, "__typename", call, "the commit") != "Commit":
+        raise TrustReadError(call, "the object is not a commit")
+    at = _text(commit, "authoredDate", call, "the commit")
+    author = _obj(_get(commit, "author", call, "the commit"), call, "the commit's author")
+    identity = _actor(author, "user", call, "the commit's author")
+    judgement = _accepted(identity, org=owner, roles=roles, authors=authors)
+    if judgement.role is None:
+        item = Skipped(repo, 0, "commit", _bare(identity), at, field, str(judgement.cause))
+        raise UntrustedContentError(item, "the commit's author is untrusted")
+    return judgement.role
 
 
 # --- branch lookups -------------------------------------------------------------

@@ -123,21 +123,67 @@ def test_activity_log_skips_are_counts_only_under_actions(
     assert err == "skipped 2 untrusted item(s) (deleted: 1, untrusted: 1)\n"
 
 
-def test_gather_skips_release_tracking_issues(search: Any) -> None:
+CONTAINERS = "vergil-project/vergil-containers"
+_MARKER_BODY = "<!-- vrg-release:progress -->\n- [x] tag\n"
+
+
+def _search_and_reads(
+    monkeypatch: pytest.MonkeyPatch, layer: trust_stubs.FakeItems, *nodes: dict[str, Any]
+) -> FakeSearch:
+    """Answer the close-judging search with *nodes* and every item re-read from *layer*."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    fake = FakeSearch((list(nodes), None, len(nodes)))
+
+    def answer(query: str, **variables: Any) -> dict[str, Any]:
+        return fake(query, **variables) if query == _SEARCH else layer(query, **variables)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", answer)
+    return fake
+
+
+def test_gather_skips_release_tracking_issues(monkeypatch: pytest.MonkeyPatch) -> None:
     # A closed ``release: X.Y.Z`` issue is vrg-release bookkeeping, not work —
     # keep it out of the ledger, whether detected by body marker or by title.
-    search(
+    layer = trust_stubs.FakeItems(
+        {
+            (CONTAINERS, 373): trust_stubs.item(body=_MARKER_BODY),
+            (CONTAINERS, 400): trust_stubs.item(body=""),
+        },
+        strict=True,
+    )
+    _search_and_reads(
+        monkeypatch,
+        layer,
         _closed(1912),
-        _closed(
-            373,
-            "release: 2.1.4",
-            repo="vergil-project/vergil-containers",
-            body="<!-- vrg-release:progress -->\n- [x] tag\n",
-        ),
-        _closed(400, "release: 2.1.5", repo="vergil-project/vergil-containers", body=""),
+        _closed(373, "release: 2.1.4", repo=CONTAINERS, body=_MARKER_BODY),
+        _closed(400, "release: 2.1.5", repo=CONTAINERS, body=""),
     )
     items = activity_log.gather("2026-06-01", org="vergil-project")
     assert items == [ActivityItem(TOOLING, 1912, "labels", "u1912", "2026-06-29")]
+    # Only the release-looking issues are read again, to trust their bodies.
+    assert layer.reads == [(CONTAINERS, 373), (CONTAINERS, 400)]
+
+
+def test_gather_keeps_release_lookalike_whose_reread_body_is_untrusted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The marker counts only in the body the trust layer re-reads; an untrusted
+    # body there makes the issue ordinary work, reported by metadata only.
+    body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
+    layer = trust_stubs.FakeItems(
+        {(CONTAINERS, 373): trust_stubs.item(body=body, author=trust_stubs.OUTSIDER)},
+        strict=True,
+    )
+    _search_and_reads(monkeypatch, layer, _closed(373, "release: 2.1.4", repo=CONTAINERS))
+    items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert [item.number for item in items] == [373]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: {CONTAINERS}#373 issue drive-by at "
+        f"{trust_stubs.CREATED} on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 def test_gather_defaults_org_to_current_repo_owner(search: Any) -> None:

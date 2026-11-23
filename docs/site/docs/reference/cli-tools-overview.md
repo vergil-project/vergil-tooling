@@ -75,7 +75,8 @@ enforcing policy: a subcommand allowlist, read-only forms of `reflog` and
 `symbolic-ref`, denied subcommands (`commit`, `config` and others; use
 `vrg-commit` for commits), a flag deny-list (`push --force`, `branch -D`,
 `rebase -i` without `--autosquash`), the worktree convention, the
-`<type>/<N>-<slug>` branch form for an open, non-epic issue, and the
+`<type>/<N>-<slug>` branch form for an open, non-epic issue opened by a
+trusted author, and the
 report-ready freeze. It protects origin, not the local checkout: `reset`,
 `clean`, a pathspec `checkout` and `rebase -i --autosquash` run only on a
 branch that is neither protected nor frozen, and fail closed when the
@@ -131,7 +132,8 @@ branch mode** (positional `<branch> [<branch> …]`) opens PRs
 **worktree-free** for branches already on origin — the Mac side of the
 cloud→Mac handoff: each branch's ready-state comes from a local
 worktree's `pr-workflow.json` when present, else the relay ref
-`refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
+`refs/vergil/pr-workflow/<branch>`, used only when the author GitHub links
+to its commit is a trusted identity; origin's tip is checked against the
 recorded `head_sha` and the PR opens with `--head` **without pushing**.
 Every mode driven by a ready-state opens the PR only at the `head_sha` the
 latest `report-ready` recorded and refuses rather than pick another head

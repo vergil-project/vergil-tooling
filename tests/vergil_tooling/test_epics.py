@@ -2774,16 +2774,33 @@ def test_standing_kind_of() -> None:
     assert epics.standing_kind_of({"archive", "planning"}) is None
 
 
-def test_is_legitimate_top_level() -> None:
-    assert epics.is_legitimate_top_level({"epic"}, "x", "")
+def test_is_legitimate_top_level(layer: FakeItems) -> None:
+    marker = "<!-- vrg-release:progress -->"
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body=marker)
+    assert epics.is_legitimate_top_level(TASK, {"epic"}, "x", "")
     archive_title = "Archive (ad hoc): t — 2026-Q4"
-    assert epics.is_legitimate_top_level({"archive", "ad-hoc"}, archive_title, "")
-    assert epics.is_legitimate_top_level(set(), "release: 2.1.258", "")
-    assert epics.is_legitimate_top_level(set(), "anything", "<!-- vrg-release:progress -->")
-    assert not epics.is_legitimate_top_level({"bug"}, "fix: thing", "")
-    assert not epics.is_legitimate_top_level(set(), "fix: thing", "plain body")
+    assert epics.is_legitimate_top_level(TASK, {"archive", "ad-hoc"}, archive_title, "")
+    assert epics.is_legitimate_top_level(TASK, set(), "release: 2.1.258", "")
+    assert epics.is_legitimate_top_level(TASK, set(), "anything", marker)
+    assert not epics.is_legitimate_top_level(TASK, {"bug"}, "fix: thing", "")
+    assert not epics.is_legitimate_top_level(TASK, set(), "fix: thing", "plain body")
     # An archive that lost its label is still an archive, never an orphan (#3817).
-    assert epics.is_legitimate_top_level({"ad-hoc"}, archive_title, "")
+    assert epics.is_legitimate_top_level(TASK, {"ad-hoc"}, archive_title, "")
+
+
+def test_untrusted_release_issue_is_not_legitimate_top_level(
+    layer: FakeItems, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A forged release title or marker in an outsider's body does not let it stand alone.
+    body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
+    layer.items[("org/repo-a", 101)] = trust_stubs.item(body=body, author=trust_stubs.OUTSIDER)
+    assert not epics.is_legitimate_top_level(TASK, set(), "release: 2.1.258", body)
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/repo-a#101 issue drive-by at {trust_stubs.CREATED} "
+        "on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 @pytest.mark.parametrize(

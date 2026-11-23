@@ -1157,6 +1157,103 @@ def test_close_judgement_loads_configured_authors(
     assert trust.close_judgement(REPO, 7).role is Role.HUMAN
 
 
+# --- require_trusted_commit -------------------------------------------------------------
+
+_OID = "0123456789abcdef0123456789abcdef01234567"
+
+
+# A commit as GraphQL returns it: its author's linked account (``user``, ``null``
+# when no account carries the author email) and the authored time.
+def _commit(user: Any = HUMAN, *, typename: str = "Commit") -> dict[str, Any]:
+    return {
+        "repository": {
+            "object": {"__typename": typename, "authoredDate": CREATED, "author": {"user": user}}
+        }
+    }
+
+
+def _require_commit(**kwargs: Any) -> Role:
+    return trust.require_trusted_commit(REPO, _OID, field="the relay ref", **kwargs)
+
+
+@pytest.mark.parametrize(("user", "role"), [(HUMAN, Role.HUMAN), (AGENT, Role.AGENTS)])
+def test_require_trusted_commit_trusted_author(answer: Any, user: Any, role: Role) -> None:
+    fake = answer({trust._COMMIT_QUERY: [_commit(user)]})
+    assert _require_commit(authors=AUTHORS) is role
+    assert fake.calls == [(trust._COMMIT_QUERY, {"owner": ORG, "name": "widgets", "oid": _OID})]
+
+
+@pytest.mark.parametrize(
+    ("user", "login", "cause"),
+    [
+        ({"__typename": "User", "login": SPAM_LOGIN}, SPAM_LOGIN, trust.UNTRUSTED),
+        ({"__typename": "User", "login": "the-agent"}, "the-agent", trust.WRONG_TYPE),
+        (DELETED, None, trust.DELETED),
+        ({"__typename": "Bot", "login": "other-automation"}, "other-automation", trust.UNTRUSTED),
+    ],
+)
+def test_require_trusted_commit_untrusted_is_a_stop(
+    answer: Any, user: Any, login: str | None, cause: str
+) -> None:
+    answer({trust._COMMIT_QUERY: [_commit(user)]})
+    with pytest.raises(UntrustedContentError) as info:
+        _require_commit(authors=AUTHORS)
+    assert info.value.item == trust.Skipped(
+        REPO, 0, "commit", login, CREATED, "the relay ref", cause
+    )
+    who = login if login is not None else "an author with no GitHub account"
+    assert str(info.value) == (
+        f"stopped before any write: the commit's author is untrusted: {REPO} commit {who} "
+        f"at {CREATED} on the relay ref ({cause}). The human decides next."
+    )
+
+
+def test_require_trusted_commit_roles_parameter_narrows(answer: Any) -> None:
+    answer({trust._COMMIT_QUERY: [_commit(AGENT)]})
+    with pytest.raises(UntrustedContentError) as info:
+        _require_commit(roles=frozenset({Role.HUMAN}), authors=AUTHORS)
+    assert info.value.item.cause == trust.NOT_ACCEPTED
+
+
+@pytest.mark.parametrize(
+    ("data", "detail"),
+    [
+        ({"repository": {"object": None}}, "the commit is missing or not an object"),
+        (_commit(typename="Tree"), "the object is not a commit"),
+        ({"repository": {"object": {"__typename": "Commit", "author": {}}}}, "no authoredDate"),
+        (
+            {"repository": {"object": {"__typename": "Commit", "authoredDate": CREATED}}},
+            "the commit has no author",
+        ),
+        (_commit({"login": "the-human"}), "user has no __typename"),
+    ],
+)
+def test_require_trusted_commit_malformed_raises(
+    answer: Any, data: dict[str, Any], detail: str
+) -> None:
+    answer({trust._COMMIT_QUERY: [data]})
+    with pytest.raises(TrustReadError, match=detail) as info:
+        _require_commit(authors=AUTHORS)
+    assert info.value.call == f"require_trusted_commit {REPO}@{_OID[:12]}"
+
+
+def test_require_trusted_commit_api_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(_query: str, **_variables: object) -> object:
+        raise vergil_tooling.lib.github.GitHubAPIError(1, "gh api graphql", stderr="HTTP 502")
+
+    monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fail)
+    with pytest.raises(TrustReadError, match="the GraphQL call failed: HTTP 502"):
+        _require_commit(authors=AUTHORS)
+
+
+def test_require_trusted_commit_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._COMMIT_QUERY: [_commit()]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert _require_commit() is Role.HUMAN
+
+
 # --- is_same_repo and prs_for_branch --------------------------------------------------
 
 
@@ -1528,6 +1625,7 @@ def test_worst_case_nodes_counts_nesting() -> None:
         trust._COMMENTS_QUERY,
         trust._COMMENT_EDITS_QUERY,
         trust._EVENTS_QUERY,
+        trust._COMMIT_QUERY,
         *trust._BRANCH_QUERIES.values(),
         trust._REVIEWS_QUERY,
         trust._REVIEW_EDITS_QUERY,

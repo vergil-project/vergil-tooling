@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_submit_pr import (
     NO_FINALIZE_REMOVED,
     NO_INSTALL_REMOVED,
@@ -49,7 +50,16 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.bin.vrg_submit_pr import (
     _chain_finalize as _real_chain_finalize,
 )
-from vergil_tooling.lib import auto_merge, epics, github, pr_provenance, progress, retry, worktrees
+from vergil_tooling.lib import (
+    auto_merge,
+    epics,
+    github,
+    pr_provenance,
+    progress,
+    retry,
+    trust,
+    worktrees,
+)
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_body import build_pr_body
@@ -2502,6 +2512,139 @@ def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
 def test_task_linkage_noop_when_ref_unresolvable() -> None:
     with patch(f"{_MOD}.github.current_repo", return_value=""):
         assert _task_linkage("#42", "Ref") == "Ref"
+
+
+def _linkage_through_layer(layer: trust_stubs.FakeItems, monkeypatch: pytest.MonkeyPatch) -> str:
+    """:func:`_task_linkage` for org/repo#42, with no native parent, through the real layer."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+
+    def graphql(query: str, **variables: Any) -> object:
+        if query in (trust._ITEM_QUERY, trust._EVENTS_QUERY):
+            return layer(query, **variables)
+        assert query == epics._PARENT_QUERY, "only the parent lookup is answered here"
+        return {"node": {"parent": None}}
+
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=graphql),
+        patch(f"{_MOD}.epics.is_epic", return_value=True) as is_epic,
+    ):
+        linkage = _task_linkage("#42", "Ref")
+    if linkage == "Ref":
+        is_epic.assert_not_called()
+    return linkage
+
+
+def test_submit_linkage_reads_trusted_parent_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    layer = trust_stubs.FakeItems(
+        {("org/repo", 42): trust_stubs.item(body="Parent: org/.github#75\n")}, strict=True
+    )
+    assert _linkage_through_layer(layer, monkeypatch) == "Closes"
+
+
+@pytest.mark.parametrize(
+    ("author", "editor", "kind", "login", "cause", "at"),
+    [
+        (trust_stubs.OUTSIDER, None, "issue", "drive-by", "untrusted", trust_stubs.CREATED),
+        (
+            trust_stubs.HUMAN,
+            trust_stubs.OUTSIDER,
+            "edit",
+            "drive-by",
+            "untrusted",
+            trust_stubs.EDITED,
+        ),
+        (trust_stubs.IMPOSTOR, None, "issue", "vergil-user", "wrong-type", trust_stubs.CREATED),
+    ],
+)
+def test_submit_linkage_ignores_untrusted_parent_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    author: dict[str, str],
+    editor: dict[str, str] | None,
+    kind: str,
+    login: str,
+    cause: str,
+    at: str,
+) -> None:
+    # A forged Parent: line in a body an outsider wrote or edited never upgrades to Closes.
+    layer = trust_stubs.FakeItems(
+        {
+            ("org/repo", 42): trust_stubs.item(
+                body=f"{trust_stubs.SPAM_TEXT}\nParent: org/.github#75\n",
+                author=author,
+                editor=editor,
+            )
+        },
+        strict=True,
+    )
+    assert _linkage_through_layer(layer, monkeypatch) == "Ref"
+    err = capsys.readouterr().err
+    assert (
+        err == f"skipped untrusted content: org/repo#42 {kind} {login} at {at} on body ({cause})\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.TrustReadError("read_issue org/repo#42", "the GraphQL call failed: HTTP 502"),
+        TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+        trust.UntrustedContentError(
+            trust.Skipped("org/repo", 42, "issue", "drive-by", "t", "body", "untrusted"),
+            "the issue body is untrusted",
+        ),
+    ],
+)
+def test_trust_failure_before_any_pr_is_one_line(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    # A trust-layer failure in the per-issue checks is one line, never a traceback.
+    _write_workflow_state(tmp_path)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=str(tmp_path)),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.commit_sha", return_value="abc123"),
+        patch(_MOD + "._task_linkage", side_effect=error),
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit) as exited,
+    ):
+        main([])
+    assert exited.value.code == 1
+    create.assert_not_called()
+    assert capsys.readouterr().err == f"vrg-submit-pr: {error}\n"
+
+
+def test_relay_untrusted_payload_opens_no_pr(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    stop = trust.UntrustedContentError(
+        trust.Skipped("org/repo", 0, "commit", "drive-by", "t", "the relay ref", "untrusted"),
+        "the commit's author is untrusted",
+    )
+    transport = MagicMock()
+    transport.read.side_effect = stop
+    with (
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+        patch(_MOD + ".github.create_pr") as create,
+        pytest.raises(SystemExit) as exited,
+    ):
+        main(["feature/a"])
+    assert exited.value.code == 1
+    create.assert_not_called()
+    err = capsys.readouterr().err
+    assert err == f"vrg-submit-pr: {stop}\n"
+    assert "org/repo commit drive-by at t on the relay ref (untrusted)" in err
 
 
 # -- _planning_close (a docs task's PR also closes its planning issue) --------

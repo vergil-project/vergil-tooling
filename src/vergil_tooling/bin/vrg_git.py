@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-from vergil_tooling.lib import branch_names, epics, github, retry
+from vergil_tooling.lib import branch_names, epics, github, retry, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import (
     WORKFLOWS_PATH,
@@ -31,6 +31,7 @@ from vergil_tooling.lib.git import (
     unknown_workflow_refusal_note,
 )
 from vergil_tooling.lib.pr_workflow import freeze
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 _ALLOWED_SIMPLE: set[str] = {
     # Read-only inspection commands. These only read history, objects, or
@@ -1043,9 +1044,13 @@ def _check_issue_is_open_task(branch: str) -> str | None:
     rather than at report-ready or submit, after it is built. Any other branch
     name is not this convention's and is left alone (no lookup).
 
-    One ``gh issue view`` reads state and labels together, so the guard costs a
-    single call per creation. Fail closed: a failed or malformed read refuses
-    with the reason and never passes as "a task".
+    The task must also be opened by a trusted author (epic
+    vergil-project/.github#1467, spec §5.3): an outsider-opened issue is a
+    stop, refused with the trust layer's metadata-only message. One ``gh issue
+    view`` reads state and labels together; only an open task is then read
+    through the trust layer (:func:`_check_trusted_author`). Fail closed: a
+    failed or malformed read refuses with the reason and never passes as "a
+    task".
     """
     parsed = branch_names.parse_issue_branch(branch)
     if parsed is None:
@@ -1067,7 +1072,32 @@ def _check_issue_is_open_task(branch: str) -> str | None:
             "a branch carries an open task's work. Reopen the issue, or create a "
             "new task and use its number."
         )
-    return None
+    return _check_trusted_author(branch, number)
+
+
+def _check_trusted_author(branch: str, number: str) -> str | None:
+    """Refuse *branch* when issue #*number* was not opened by a trusted author.
+
+    Only the author decides it, as for any tool pointed at an item: a trusted
+    task with untrusted comments is a task. The refusal is the trust layer's
+    stop message, metadata only. A read the layer cannot complete, or no
+    trusted-authors configuration to judge by, refuses too (fail closed).
+    """
+    try:
+        repo = github.current_repo()
+        content = trust.read_issue(repo, int(number))
+        opened = trust.outsider_opened(content)
+    except _ISSUE_READ_ERRORS as exc:
+        return _issue_read_refusal(branch, number, str(exc).strip() or type(exc).__name__)
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        return (
+            f"cannot create {branch}: could not confirm who opened issue #{number} "
+            f"({exc}). A task's branch needs an issue opened by a trusted author."
+        )
+    if opened is None:
+        return None
+    stop = trust.UntrustedContentError(opened, "the issue was opened by an untrusted author")
+    return f"cannot create {branch}: {stop}"
 
 
 def _as_label_list(value: object) -> list[dict[str, object]]:

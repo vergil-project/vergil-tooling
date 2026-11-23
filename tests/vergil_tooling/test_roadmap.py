@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import epics, roadmap
 from vergil_tooling.lib.roadmap import EpicSummary
 
@@ -164,12 +165,23 @@ def test_gather_skips_release_tracking_issue() -> None:
             "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
         },
     ]
+    layer = trust_stubs.FakeItems(
+        {
+            ("vergil-project/.github", 373): trust_stubs.item(
+                body="<!-- vrg-release:progress -->\n- [x] tag\n"
+            )
+        },
+        strict=True,
+    )
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
         result = roadmap.gather("vergil-project")
     assert [e.number for e in result] == [40]
+    assert layer.reads == [("vergil-project/.github", 373)]
 
 
 def test_gather_returns_empty_on_non_list() -> None:

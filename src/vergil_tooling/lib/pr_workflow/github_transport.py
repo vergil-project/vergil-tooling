@@ -15,6 +15,11 @@ tree, so the push is a pure ref write. That freeze-neutrality is load-bearing:
 ``report-ready`` arms the post-report freeze (epic #146), and a normal commit
 would advance the feature branch out from under it (design
 2026-06-24-cloud-pr-handoff, Deliverable B).
+
+``read`` acts on the payload only when its commit's author is a trusted
+identity (epic vergil-project/.github#1467): the trust layer judges the author
+GitHub links to the fetched commit (:func:`trust.require_trusted_commit`), and
+an untrusted one is a stop, never a ready-state.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from __future__ import annotations
 import contextlib
 import sys
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github, trust
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.pr_workflow.transport import Transport
 
@@ -71,13 +76,24 @@ class GitHubTransport(Transport):
         return bool(git.read_output("ls-remote", self.remote, self.ref))
 
     def read(self) -> WorkflowState | None:
-        """Fetch the relay ref and parse its payload; None if the ref is absent."""
+        """Fetch the relay ref and parse its payload; None if the ref is absent.
+
+        The payload is parsed only once the fetched commit's author is judged
+        trusted, in the repo of the current directory's ``origin``: an
+        untrusted author raises :class:`trust.UntrustedContentError` and an
+        unreadable one :class:`trust.TrustReadError`, both metadata only.
+        """
         if not self._remote_ref_exists():
             return None
         # Fetch into FETCH_HEAD only — a read that never writes a local ref and
-        # never touches HEAD/index/worktree.
+        # never touches HEAD/index/worktree. The commit is pinned at once, so
+        # the payload parsed is the one whose author was judged.
         git.read_output("fetch", self.remote, self.ref)
-        return WorkflowState.from_json(git.read_output("show", f"FETCH_HEAD:{_FILE}"))
+        commit = git.read_output("rev-parse", "FETCH_HEAD^{commit}")
+        trust.require_trusted_commit(
+            github.current_repo(), commit, field=f"the relay ref {self.ref}"
+        )
+        return WorkflowState.from_json(git.read_output("show", f"{commit}:{_FILE}"))
 
     def write(self, state: WorkflowState) -> None:
         """Build the single-file commit out-of-band and force-push it to the ref.
