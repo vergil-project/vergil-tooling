@@ -154,8 +154,9 @@ To wire the token up once:
   line that sources `conan.env`, so `conan` run by hand in an interactive bash
   sees the token. The tooling does not depend on that line.
 
-Without any token, `vrg-validate` skips `conan audit scan .` with a notice and
-runs the rest of the AUDIT stage.
+Without any token, `vrg-validate` fails the AUDIT stage: it does not run
+`conan audit scan .`, prints an error naming the token, and still runs the rest
+of the stage. A missing token is never a silent pass.
 
 ## Testing: CTest Runner, GoogleTest Default
 

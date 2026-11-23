@@ -14,8 +14,8 @@ Precedence, first match wins:
 2. ``~/.config/vergil/conan.env`` — the file ``vrg-vm`` writes into agent VMs.
 3. ``conan_audit_token_path`` in ``~/.config/vergil/identities.toml`` — the
    host-side bare-token file the VM copy is made from.
-4. Nothing: no token is injected, and ``vrg-validate`` skips ``conan audit
-   scan`` with a notice (#2895).
+4. Nothing: no token is injected, and ``vrg-validate`` fails ``conan audit
+   scan`` with an error naming the token (#4999).
 
 A source that exists but cannot be read, is malformed, or holds an empty token
 raises :class:`ConanTokenError`. It never falls through to a lower source,

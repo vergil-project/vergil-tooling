@@ -298,7 +298,7 @@ def _inject_conan_audit_token(lang: str) -> tuple[str, list[str]]:
         return "", []
     resolved = conan_token.resolve_conan_audit_token(os.environ)
     if resolved is None:
-        return "no audit token found (vrg-validate will skip `conan audit scan`)", []
+        return "no audit token found (vrg-validate will fail `conan audit scan`)", []
     os.environ[conan_token.CONAN_AUDIT_TOKEN_ENV] = resolved.value
     return (
         f"audit token from {resolved.source}",
