@@ -22,6 +22,8 @@ from vergil_tooling.lib.trusted_authors import TrustedAuthors
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tests.vergil_tooling.conftest import FakeApp
+
 _MOD = "vergil_tooling.bin.vrg_release_record"
 _REPO = "o/r"
 _TASK = f"{_REPO}#5"
@@ -166,6 +168,13 @@ class _FakeGitHub:
         self.closing: dict[str, object] | None = None
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
+        if query == vrg_release_record._REPO_NAME_QUERY:  # noqa: SLF001
+            # GitHub finds the repo in any case and reports its own spelling.
+            if self.fail is not None and self.fail in query:
+                raise github.GitHubAPIError(1, ("gh", "api", "graphql"), stderr="HTTP 502")
+            assert f"{variables['owner']}/{variables['name']}".lower() == _REPO
+            return {"repository": {"nameWithOwner": _REPO}}
+        # Every later read uses the spelling GitHub reported.
         assert variables["owner"] == "o"
         assert variables["name"] == "r"
         assert variables["number"] == 5
@@ -192,7 +201,7 @@ class _FakeGitHub:
 
 
 def _run(
-    fake: _FakeGitHub, origin: _Origin, capsys: pytest.CaptureFixture[str]
+    fake: _FakeGitHub, origin: _Origin, capsys: pytest.CaptureFixture[str], task: str = _TASK
 ) -> tuple[int, dict[str, Any] | None, str]:
     with (
         patch(f"{_MOD}.github.graphql", side_effect=fake.graphql),
@@ -200,7 +209,7 @@ def _run(
         patch(f"{_MOD}.load_trusted_authors", return_value=_AUTHORS),
         patch(f"{_MOD}._remote_url", return_value=f"file://{origin.path}"),
     ):
-        rc = main(["check", _TASK])
+        rc = main(["check", task])
     out = capsys.readouterr()
     return rc, (json.loads(out.out) if out.out else None), out.err
 
@@ -225,6 +234,75 @@ def test_check_pass(origin: _Origin, capsys: pytest.CaptureFixture[str]) -> None
         "ancestry": "pass",
         "warnings": [],
     }
+
+
+def test_check_matches_a_differently_cased_task_ref(
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #4949: owner and name match in any case, and the output spells them as GitHub does.
+    merged = origin.commit("feat: the change (#7)")
+    origin.tag("v2.1.2")
+    upper_marker = _record("2.1.2").replace(marker(_REPO, "2.1.2"), marker("O/R", "2.1.2"))
+    fake = _FakeGitHub([_comment(upper_marker)], [_closing_pr(7, merged)])
+    rc, out, _ = _run(fake, origin, capsys, task="O/R#5")
+    assert rc == 0
+    assert out == {
+        "task": _TASK,
+        "verdict": "pass",
+        "record": {
+            "version": "2.1.2",
+            "tag": "v2.1.2",
+            "url": "https://github.com/o/r/releases/tag/v2.1.2",
+        },
+        "ancestry": "pass",
+        "warnings": [],
+    }
+
+
+def test_check_differently_cased_owner_mints_the_owners_app_token(
+    origin: _Origin, capsys: pytest.CaptureFixture[str], fake_app: FakeApp
+) -> None:
+    # #4949: in App mode the installation is found for the owner in any case
+    # (#5053), so every read runs under the task owner's installation token.
+    fake_app.installations = {"o": "101", "cwd-org": "202"}
+    merged = origin.commit("feat: the change (#7)")
+    origin.tag("v2.1.2")
+    fake = _FakeGitHub([_comment(_record("2.1.2"))], [_closing_pr(7, merged)])
+    owners: list[str] = []
+
+    def graphql(query: str, **variables: object) -> dict[str, object]:
+        owners.append(fake_app.token_owner())
+        return fake.graphql(query, **variables)
+
+    with (
+        patch(f"{_MOD}.github.graphql", side_effect=graphql),
+        patch("vergil_tooling.lib.release.records.github.graphql", side_effect=graphql),
+        patch(f"{_MOD}.load_trusted_authors", return_value=_AUTHORS),
+        patch(f"{_MOD}._remote_url", return_value=f"file://{origin.path}"),
+    ):
+        rc = main(["check", "O/R#5"])
+    out = capsys.readouterr()
+    assert rc == 0, out.err
+    assert json.loads(out.out)["verdict"] == "pass"
+    assert owners
+    assert set(owners) == {"o"}
+
+
+@pytest.mark.parametrize("answer", [{"repository": None}, {"repository": {"nameWithOwner": "o/x"}}])
+def test_check_unresolved_repository_exits_1(
+    capsys: pytest.CaptureFixture[str], answer: dict[str, object]
+) -> None:
+    with (
+        patch(f"{_MOD}.github.graphql", return_value=answer) as m_graphql,
+        patch(f"{_MOD}.load_trusted_authors", return_value=_AUTHORS),
+    ):
+        rc = main(["check", _TASK])
+    out = capsys.readouterr()
+    assert rc == 1
+    assert out.out == ""
+    assert "cannot read the repository o/r: no matching nameWithOwner" in out.err
+    # Nothing is read for a record once the repository cannot be resolved.
+    m_graphql.assert_called_once()
 
 
 def test_check_none_when_no_record_exits_4(
@@ -483,7 +561,9 @@ def test_check_missing_tag_fails(origin: _Origin, capsys: pytest.CaptureFixture[
     assert out["warnings"] == ["o/r has no tag v2.1.2, so the record names no release"]
 
 
-@pytest.mark.parametrize("failing", ["comments(", "closedByPullRequestsReferences"])
+@pytest.mark.parametrize(
+    "failing", ["nameWithOwner }", "comments(", "closedByPullRequestsReferences"]
+)
 def test_check_read_failure_exits_1(
     origin: _Origin, capsys: pytest.CaptureFixture[str], failing: str
 ) -> None:

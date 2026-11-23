@@ -26,7 +26,9 @@ It prints one JSON object::
      "record": {"version": "X.Y.Z", "tag": "vX.Y.Z", "url": "<release URL>"} | null,
      "ancestry": "pass" | "fail" | null, "warnings": ["..."]}
 
-and exits 0 for ``pass``, 3 for ``fail`` and 4 for ``none`` (no counting
+with the task's repo spelled as GitHub spells it: owner and name are
+matched in any case, as GitHub matches them, everywhere in the check. It
+exits 0 for ``pass``, 3 for ``fail`` and 4 for ``none`` (no counting
 record). Every read fails loudly (spec §6): a failed or incomplete GitHub or
 git read is an error, printed on stderr with no JSON, and exits 1; it is
 never read as "no record" or "no closing PR".
@@ -97,6 +99,12 @@ query($owner: String!, $name: String!, $number: Int!) {{
 }}
 """
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# The task's repo as GitHub spells it, whatever case the task ref was typed in.
+_REPO_NAME_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) { nameWithOwner }
+}
+"""
 
 
 @cli_main
@@ -180,9 +188,13 @@ def check(task: str) -> CheckResult:
     if match is None:
         msg = f"task {task!r} is not <owner>/<repo>#<N>"
         raise ValueError(msg)
-    repo, number = match.group("repo"), int(match.group("number"))
-    with github.target_org(repo.split("/", 1)[0]):
+    typed, number = match.group("repo"), int(match.group("number"))
+    with github.target_org(typed.split("/", 1)[0]):
         authors = load_trusted_authors()
+        # GitHub matches owner and name in any case; from here on the check
+        # and its output use the spelling GitHub reports (#4949).
+        repo = _canonical_repo(typed)
+        task = f"{repo}#{number}"
         version, warnings = _newest_record(record_comments(task, authors=authors), task, repo)
         if version is None:
             return CheckResult(task, "none", None, None, tuple(warnings))
@@ -194,6 +206,18 @@ def check(task: str) -> CheckResult:
         warnings.extend(ancestry_warnings)
     verdict: Verdict = "pass" if ancestry == "pass" else "fail"
     return CheckResult(task, verdict, record, ancestry, tuple(warnings))
+
+
+def _canonical_repo(repo: str) -> str:
+    """*repo* (``<owner>/<name>``, in any case) as GitHub spells it, its ``nameWithOwner``."""
+    owner, name = repo.split("/", 1)
+    where = f"the repository {repo}"
+    data = github.graphql(_REPO_NAME_QUERY, owner=owner, name=name)
+    repository = data.get("repository")
+    found = repository.get("nameWithOwner") if isinstance(repository, dict) else None
+    if not isinstance(found, str) or found.lower() != repo.lower():
+        raise RecordReadError(where, f"no matching nameWithOwner in {data!r}")
+    return found
 
 
 def _version_key(version: str) -> tuple[int, ...]:
@@ -216,7 +240,7 @@ def _newest_record(
             found = _MARKER_RE.match(line.strip())
             if found is None:
                 continue
-            if found.group("repo") != repo:
+            if found.group("repo").lower() != repo.lower():
                 warnings.append(
                     f"a record marker for {found.group('repo')} v{found.group('version')} "
                     f"is on {task}, which is in {repo}; ignored"
