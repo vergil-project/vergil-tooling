@@ -19792,7 +19792,9 @@ the <code>automation</code> identity; agents may run only its <code>--dry-run</c
 <p><code>vrg-package</code> calls <code>gh</code> only: it lists and downloads releases, and
 verifies their attestations, when it builds the package index.
 <code>vrg-pr-review-comments</code> calls <code>gh</code> only too: it mints its token for the
-<code>--repo</code> owner, so it never reads the <code>origin</code> remote.</p>
+<code>--repo</code> owner, so it never reads the <code>origin</code> remote.
+<code>vrg-checkpoint</code> calls <code>gh</code> only as well: it mints its token for the
+owner of the issue it names.</p>
 <p>These tools call <code>git</code> only: <code>vrg-commit</code>, <code>vrg-container-cache</code>,
 <code>vrg-container-run</code>, <code>vrg-reword</code>, <code>vrg-scorecard</code>, <code>vrg-validate</code>,
 <code>vrg-version</code> and <code>vrg-vm</code>. <code>vrg-vm</code> also runs <code>git config</code> inside

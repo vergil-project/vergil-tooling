@@ -14921,6 +14921,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19598,6 +19609,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-link" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21857,6 +21879,113 @@ listing's bodies and writes nothing.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-checkpoint">vrg-checkpoint<a class="headerlink" href="#vrg-checkpoint" title="Permanent link">&para;</a></h3>
+<p>Keep a workflow's <strong>stage checklist</strong> in a tracking issue's body, so a fresh
+session can find the stage a multi-session workflow stopped at. Each
+workflow's stage list is defined once in the tool, and the block is
+generated from it. <code>epic-create</code> is the first workflow; its stages, in
+order, are <code>bootstrap</code>, <code>brainstorm</code>, <code>spec-pushback</code>, <code>spec-review</code>,
+<code>plan</code>, <code>plan-pushback</code>, <code>alignment</code>, <code>file-tasks</code> and <code>docs-pr</code>.</p>
+<p>The block is a GitHub task list between two markers, one block per
+workflow:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>&lt;!-- vrg-checkpoint:epic-create --&gt;
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">- [x]</span> bootstrap
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">- [ ]</span> brainstorm
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>...
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>&lt;!-- /vrg-checkpoint:epic-create --&gt;
+</code></pre></div>
+<p>The parse is strict. Every line between the markers must be exactly
+<code>- [ ] &lt;stage&gt;</code> or <code>- [x] &lt;stage&gt;</code> (a box ticked in the web UI, which may
+write <code>[X]</code>, counts as done). A blank line, prose, any text after a stage
+name, a second block for the same workflow, or a marker without its partner
+makes the block <strong>malformed</strong>. Per-stage detail belongs in progress
+comments, not in the block.</p>
+<p><code>--workflow NAME</code> is required on every subcommand, so one body can carry the
+blocks of several workflows, each rewritten only by its own operations. The
+issue is a fully qualified <code>OWNER/REPO#N</code>.</p>
+<ul>
+<li><code>init REF --workflow NAME [--tick STAGE]…</code> appends the block for the
+  workflow's current stage list after a blank line, all unticked, or with the
+  stages named by <code>--tick</code> ticked. The ticked stages must be the first stages
+  of the list, in any order. It refuses a body that already holds a block, and
+  exits 6 if that block is malformed.</li>
+<li><code>status REF --workflow NAME [--json]</code> prints the stages, their ticks and the
+  <strong>next stage</strong>, the first unticked one. On skew it prints how the block
+  differs from the current list (added and removed stages, and whether the
+  common stages are reordered).</li>
+<li><code>tick REF --workflow NAME STAGE</code> ticks one stage. It refuses a stage that is
+  not in the block, a stage with an earlier one unticked (stages are linear),
+  and a block with skew. A stage already ticked succeeds and writes nothing,
+  so a re-entry can repeat a tick safely.</li>
+<li><code>reset REF --workflow NAME</code> removes every closed block of the workflow,
+  from its begin marker to its end marker (a malformed or duplicate block
+  included), and the blank line before each, leaving the rest of the body as
+  it was. With no block it succeeds and writes nothing. A begin marker with no
+  end marker (or an end marker with no begin) is refused with exit 6, since
+  where that block starts or ends is unknown.</li>
+</ul>
+<p>A write rewrites only the block: every other byte of the body is kept, and
+the block takes the line ending the body already uses (GitHub's web editor
+saves <code>\r\n</code>). A write that would not change the body is skipped.</p>
+<p>Every operation reads the body through the trust layer, and counts it only
+when its author and every editor are trusted. A box a trusted human ticks in
+the web UI is a trusted edit; a body an outsider edited (a ticked box
+included) is never parsed or written: it is a stop, named by its metadata
+only (<code>stopped before any write: the issue body is untrusted: &lt;ref&gt;
+&lt;issue|edit&gt; &lt;login&gt; at &lt;time&gt; on body (&lt;cause&gt;). The human decides
+next.</code>), with exit 3. Every read and write runs under the issue owner's App
+token.</p>
+<p><code>status --json</code> prints:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"issue"</span><span class="p">:</span><span class="w"> </span><span class="s2">"OWNER/REPO#N"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"workflow"</span><span class="p">:</span><span class="w"> </span><span class="s2">"epic-create"</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ok"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"stages"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bootstrap"</span><span class="p">,</span><span class="w"> </span><span class="nt">"done"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}],</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"next"</span><span class="p">:</span><span class="w"> </span><span class="s2">"brainstorm"</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"skew"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>state</code> is <code>ok</code>, <code>missing</code>, <code>skew</code> or <code>malformed</code>, and the command exits with
+that state's code. <code>stages</code> is the block's stages in block order, and <code>[]</code>
+for <code>missing</code> and <code>malformed</code>. <code>next</code> is the first unticked stage, and
+<code>null</code> when every stage is ticked or the state is not <code>ok</code>. <code>skew</code> is <code>null</code>
+unless the state is <code>skew</code>, when it is <code>{"recorded": [...], "current":
+[...], "added": [...], "removed": [...], "reordered": bool}</code>: <code>added</code> in
+the current list's order, <code>removed</code> in the block's.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_checkpoint</code> (stage lists, format and parser: <code>lib/checkpoint.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>init</code>, <code>status</code>, <code>tick</code>, <code>reset</code>, each with <code>REF</code> and <code>--workflow NAME</code> (required); <code>init</code>: <code>--tick STAGE</code> (repeatable); <code>status</code>: <code>--json</code>; <code>tick</code>: <code>STAGE</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the issue's org; trusted authors configured</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with <code>status</code></td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on <code>init</code>, a <code>--tick</code> that is not the first stages, a refused tick); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-epic-link">vrg-epic-link<a class="headerlink" href="#vrg-epic-link" title="Permanent link">&para;</a></h3>
 <p>Link a task under an epic as a native GitHub sub-issue, reopening a closed
 epic first. Used when creating a task under an epic and to backfill
@@ -22072,9 +22201,9 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 <li><code>defer --reason TEXT --revisit-when TEXT [--date YYYY-MM-DD]</code> — move the
   item into its queue home's deferred epic and post the deferral record:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Revisit when: &lt;conditions&gt;
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
 </code></pre></div>
 <p><code>--date</code> stamps an original deferral date instead of today. The item is
   linked before the record is posted, and a planning item's <code>in-progress</code>
@@ -22108,8 +22237,8 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   epic. A brainstorm never gates its epic's work, so moving it suspends
   nothing. The parent is replaced in one step, then the hand-off is recorded
   with a comment on the epic, for the retrospective's §5, and one on the item:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Follow-on brainstorm handed to planning: &lt;item-ref&gt; (now under &lt;planning-epic-ref&gt;)
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Handed to planning from: &lt;epic-ref&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Follow-on brainstorm handed to planning: &lt;item-ref&gt; (now under &lt;planning-epic-ref&gt;)
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>Handed to planning from: &lt;epic-ref&gt;
 </code></pre></div>
 <p>If a record fails after the move, the command fails loudly and prints every
   comment still to post by hand.</p>
@@ -22127,11 +22256,11 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   the task count (S 1–9, M 10–19, L 20–39, XL 40+); <code>--confidence</code> defaults
   to <code>med</code> and <code>--reason</code> is one line. It posts the dated sizing comment
   first, as the record:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Sized &lt;YYYY-MM-DD&gt;: epic-size &lt;X&gt;, about &lt;N&gt; tasks.
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Epic-size: &lt;X&gt;
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Estimated-tasks: &lt;N&gt;
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>Confidence: &lt;high|med|low&gt;
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>Reason: &lt;one line&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Sized &lt;YYYY-MM-DD&gt;: epic-size &lt;X&gt;, about &lt;N&gt; tasks.
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Epic-size: &lt;X&gt;
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>Estimated-tasks: &lt;N&gt;
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>Confidence: &lt;high|med|low&gt;
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Reason: &lt;one line&gt;
 </code></pre></div>
 <p>then, in one edit, adds the <code>epic-size:&lt;X&gt;</code> label and removes any other
   <code>epic-size:*</code> label. It neither moves nor closes the item, and prints
@@ -22236,7 +22365,7 @@ each. A split retargets an item's one advisory
 before the original closes. A split of an item naming several advisories
 is refused before any change, because which advisory goes to which task
 can't be inferred:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-intake-route: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt; names several advisories (&lt;GHSA-id&gt;, &lt;GHSA-id&gt;); retarget each by hand to the tasks that fix it, keeping every other issue it tracks (vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …], then vrg-security-record retarget &lt;GHSA-id&gt; --from '&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;' --to &lt;task&gt; [--to …]), then split
 </code></pre></div>
 <p>See <a href="../../guides/security-records/#when-the-issue-moves">Security Records</a>.</p>
 <h3 id="vrg-security-record">vrg-security-record<a class="headerlink" href="#vrg-security-record" title="Permanent link">&para;</a></h3>
@@ -22871,8 +23000,8 @@ any change to <code>vergil.toml</code>, and an empty change are <code>code</code
 is <code>README.md</code> and <code>CHANGELOG.md</code>, plus the repository's own paths from
 <code>vergil.toml</code> as committed at the merge base (never the working tree's
 copy):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[merge-review]</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[merge-review]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
 </code></pre></div>
 <p>An entry ending in <code>/</code> covers everything below it; any other entry is that
 one file. Markdown is not documentation by its extension: list only paths
@@ -23135,7 +23264,7 @@ comments (every edit, not only the latest), their renames of
 trusted items, and their closes and reopens. Edits, renames and closes come
 first, under <strong>Possible tampering</strong>, then the rest, each newest first, one
 line per item:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>- &lt;time&gt; &lt;kind&gt; &lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; by &lt;login&gt; (&lt;cause&gt;) &lt;url&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>- &lt;time&gt; &lt;kind&gt; &lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; by &lt;login&gt; (&lt;cause&gt;) &lt;url&gt;
 </code></pre></div>
 <p>The cause is the trust layer's: <code>untrusted</code>, <code>deleted</code>, or <code>wrong-type</code> (a
 login that matches a role on an account of the wrong type, so it looks
@@ -23261,21 +23390,21 @@ cut from, whose age says nothing about the work on it (issue #3828).
 LAST MODIFIED is still shown. A detached worktree whose branch cannot be
 recovered also shows AHEAD 0, because there is no branch to count, and
 keeps its LAST COMMIT.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>Development
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>Other / unknown
-<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
-<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>Development
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>Other / unknown
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <p><strong>Open PRs on origin with no local worktree.</strong> The section follows the
 worktree sections. Many PRs never touch the local checkout: those that
@@ -23287,11 +23416,11 @@ head branch is a linked worktree's branch. A PR from a fork is never
 matched by branch name, since a fork's branch can share a local name; its
 BRANCH shows as <code>&lt;owner&gt;:&lt;branch&gt;</code>. A VM that shares the file system
 already shows its PRs through its worktrees.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Open PRs on origin with no local worktree
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Open PRs on origin with no local worktree
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
 </code></pre></div>
 <ul>
 <li><strong>Rows</strong> come in PR-number order. TYPE is as in Pending release
@@ -23323,12 +23452,12 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 0 lifecycle PRs, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 0 lifecycle PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
