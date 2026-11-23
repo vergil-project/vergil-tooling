@@ -18,7 +18,9 @@ In order, it:
 5. reads the reply **once**: ``--response-text``, else the agent's draft from
    the request's draft ref (no draft is a refusal);
 6. refuses a reply that is not plain text (printable ASCII plus newline, no
-   marker prefix) or is blank;
+   marker prefix) or is blank, and a reply to a protected-change or
+   merge-review exemption request that does not carry exactly one line
+   ``Decision: approve`` or ``Decision: refuse``;
 7. prints the reply exactly as it will be posted, with its byte length and
    SHA-256, and asks for confirmation;
 8. on yes, reads the issue again and refuses, posting nothing, if its trusted
@@ -44,8 +46,10 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import confirm, github, identity_mode, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref, human_post
+from vergil_tooling.lib.rulings.approvals import parse_decision
 from vergil_tooling.lib.rulings.exchange import FatalCheck, open_request, read_reply
 from vergil_tooling.lib.rulings.identity import human_login
+from vergil_tooling.lib.rulings.marker import parse_marker
 from vergil_tooling.lib.rulings.plain_text import check_plain_text
 from vergil_tooling.lib.rulings.post import (
     PostNotLanded,
@@ -60,6 +64,8 @@ from vergil_tooling.lib.trusted_authors import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from vergil_tooling.lib.rulings.approvals import RequestKind
 
 _PROG = "vrg-ruling-reply"
 
@@ -164,6 +170,30 @@ class _Issue:
             )
             raise RulingError(msg)
 
+    def request_kind(self, stream: list[comments.IssueComment]) -> RequestKind | None:
+        """The open request's kind, or ``None`` for an ordinary ruling request.
+
+        Called only after :meth:`check_turn`, which has found the request in
+        ``stream`` with a well-formed request marker.
+        """
+        request = next(comment for comment in stream if comment.id == self.request_id)
+        marker = parse_marker(request, self.agent)
+        return None if marker is None else marker.type
+
+
+def _check_decision(reply: str, kind: RequestKind | None) -> None:
+    """Refuse a reply to a protected-change or exemption request without one decision line."""
+    if kind is None:
+        return
+    try:
+        parse_decision(reply)
+    except RulingError as exc:
+        msg = (
+            f"a reply to a {kind} request must carry exactly one line 'Decision: approve'"
+            f" or 'Decision: refuse' ({exc}); nothing was posted"
+        )
+        raise RulingError(msg) from exc
+
 
 def _read_reply_once(ctx: _Issue, response_text: str | None) -> str:
     """The reply to post: ``--response-text``, else the request's draft, read once."""
@@ -199,6 +229,7 @@ def _reply(
     shown_stream, all_ids = ctx.fetch()
     ctx.check_turn(shown_stream, all_ids)
     reply = _read_reply_once(ctx, response_text)
+    _check_decision(reply, ctx.request_kind(shown_stream))
     human_post.show(reply, "the reply")
     if not confirm.confirm(f"Post this reply as {human}?", assume_yes=False):
         print(f"{_PROG}: declined; nothing was posted and the draft is kept", file=sys.stderr)

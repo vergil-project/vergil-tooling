@@ -7,6 +7,16 @@ One round on a task issue is a **request** (posted here), the human's
 - ``request --issue --items`` posts a request from a request items file and
   prints its comment ID. It refuses while the issue has an open exchange,
   naming that request's ID so a resumed run can pick it up.
+- ``request --issue --kind protected-change`` and ``request --issue --kind
+  merge-review-exemption --reason`` post one of the two requests whose reply
+  carries a structured decision (epic .github#1384, :mod:`.approvals`). Each
+  computes its own inputs from the clone it runs in, from ``HEAD`` and its
+  merge base with :data:`BASE_REF`: the first lists the protected files the
+  change touches with their blobs at ``HEAD`` (the protected set read at
+  :data:`BASE_REF`) and links their diff; the second records the change
+  fingerprint. Neither takes a blob or a fingerprint. Each prints the
+  request's comment ID, then (on stderr) the human's two
+  ``vrg-ruling-reply`` commands, one per decision.
 - ``draft --issue --request --items`` builds the human's reply from a reply
   items file, pushes it to the request's draft ref on the issue's repo
   (``refs/vergil/ruling-draft/<issue>/<request ID>``) and prints the human's
@@ -41,13 +51,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, identity_mode, trust
+from vergil_tooling.lib import git, github, identity_mode, trust
+from vergil_tooling.lib.change_fingerprint import FingerprintError, change_fingerprint
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.protected_paths import ProtectedPathsError, changed_protected
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
+from vergil_tooling.lib.rulings.approvals import (
+    DECISION_LINES,
+    REQUEST_KINDS,
+    render_exemption_request,
+    render_protected_change_request,
+)
 from vergil_tooling.lib.rulings.exchange import (
     FatalCheck,
     check_respond,
@@ -81,6 +100,9 @@ from vergil_tooling.lib.trusted_authors import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from vergil_tooling.lib.protected_paths import ProtectedChange
+    from vergil_tooling.lib.rulings.approvals import RequestKind
+
 _PROG = "vrg-ruling"
 
 EXIT_OK = 0
@@ -88,6 +110,10 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_NO_REPLY = 3
 EXIT_FATAL = 4
+
+#: The base a typed request's change is taken against, and the ref its
+#: protected set is read at: the clone's ``origin/develop``, as last fetched.
+BASE_REF = "origin/develop"
 
 
 class _Context:
@@ -112,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         ctx = _Context(authors, agent, repo, issue)
         with github.target_org(repo.split("/", 1)[0]):
             if args.command == "request":
+                if args.kind is not None:
+                    return _typed_request(ctx, args.kind, args.reason)
                 return _request(ctx, Path(args.items))
             if args.command == "read":
                 return _read(ctx, args.request, as_json=args.json)
@@ -159,6 +187,88 @@ def _check_body(body: str, marker: Marker, ctx: _Context, kind: str) -> None:
 def _request(ctx: _Context, items_path: Path) -> int:
     body = render_request(load_request_items(items_path))
     _check_body(body, Marker("request", None, None), ctx, "request")
+    print(_post_request(ctx, body))
+    return EXIT_OK
+
+
+def _typed_request(ctx: _Context, kind: RequestKind, reason: str | None) -> int:
+    """Post a protected-change or exemption request, its inputs computed from ``HEAD``."""
+    if kind == "merge-review-exemption":
+        if reason is None:
+            # parse_args requires it; checked again here so nothing posts without it.
+            msg = "--kind merge-review-exemption needs --reason"
+            raise RulingError(msg)
+        head, _merge_base, repo_root = _change_range()
+        body = render_exemption_request(reason, _fingerprint(repo_root, head))
+    else:
+        head, merge_base, repo_root = _change_range()
+        body = render_protected_change_request(
+            _protected_changes(repo_root, head), _diff_url(repo_root, merge_base, head)
+        )
+    _check_body(body, Marker("request", None, None, kind), ctx, f"{kind} request")
+    comment_id = _post_request(ctx, body)
+    print(comment_id)
+    print(
+        f"{_PROG}: posted {kind} request {comment_id} on {ctx.where}; the human replies"
+        " from their own shell with one of:",
+        file=sys.stderr,
+    )
+    for line in DECISION_LINES:
+        print(
+            f"  {draft_ref.reply_command(ctx.repo, ctx.issue, comment_id)}"
+            f" --response-text '{line}'",
+            file=sys.stderr,
+        )
+    return EXIT_OK
+
+
+def _change_range() -> tuple[str, str, Path]:
+    """``HEAD``'s commit, its merge base with :data:`BASE_REF`, and the clone's root."""
+    try:
+        repo_root = git.repo_root()
+        head = git.commit_sha("HEAD")
+        merge_base = git.merge_base(BASE_REF, head)
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        msg = (
+            f"cannot take the change from HEAD and its merge base with {BASE_REF}"
+            f" in this clone: {exc}; nothing was posted"
+        )
+        raise RulingError(msg) from exc
+    return head, merge_base, repo_root
+
+
+def _protected_changes(repo_root: Path, head: str) -> list[ProtectedChange]:
+    try:
+        return changed_protected(repo_root, BASE_REF, head, BASE_REF)
+    except ProtectedPathsError as exc:
+        msg = f"cannot list the protected files the change touches: {exc}; nothing was posted"
+        raise RulingError(msg) from exc
+
+
+def _fingerprint(repo_root: Path, head: str) -> str:
+    try:
+        return change_fingerprint(repo_root, BASE_REF, head)
+    except FingerprintError as exc:
+        msg = f"cannot compute the change fingerprint: {exc}; nothing was posted"
+        raise RulingError(msg) from exc
+
+
+def _diff_url(repo_root: Path, merge_base: str, head: str) -> str:
+    """The GitHub compare link from the merge base to ``HEAD``, on ``origin``'s repo."""
+    try:
+        url = git.remote_url("origin", repo_root)
+    except subprocess.CalledProcessError as exc:
+        msg = f"cannot read this clone's origin to link the diff: {exc}; nothing was posted"
+        raise RulingError(msg) from exc
+    code_repo = github.github_remote_repo(url)
+    if code_repo is None:
+        msg = "this clone's origin is not a GitHub repo, so the diff cannot be linked"
+        raise RulingError(msg)
+    return f"https://github.com/{code_repo}/compare/{merge_base}...{head}"
+
+
+def _post_request(ctx: _Context, body: str) -> int:
+    """Post the checked request ``body`` once, unless the issue has an open exchange."""
     stream, _ids = _stream(ctx)
     pending = open_request(stream, ctx.agent)
     if pending is not None:
@@ -181,8 +291,7 @@ def _request(ctx: _Context, items_path: Path) -> int:
             " the re-run is refused and names it as the open request"
         )
         raise RulingError(msg) from exc
-    print(comment_id)
-    return EXIT_OK
+    return comment_id
 
 
 def _read(ctx: _Context, request_id: int, *, as_json: bool) -> int:
@@ -343,9 +452,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    request = sub.add_parser("request", help="Post a request from an items file")
+    request = sub.add_parser(
+        "request",
+        help="Post a request from an items file, or a protected-change or exemption request",
+    )
     request.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
-    request.add_argument("--items", required=True, help="The request items file (JSON)")
+    what = request.add_mutually_exclusive_group(required=True)
+    what.add_argument("--items", help="The request items file (JSON)")
+    what.add_argument(
+        "--kind",
+        choices=tuple(REQUEST_KINDS),
+        help=(
+            "Post a request whose reply carries one Decision line, its inputs computed"
+            f" from HEAD and its merge base with {BASE_REF}: protected-change lists the"
+            " protected files the change touches with their blobs and links the diff;"
+            " merge-review-exemption records the change fingerprint"
+        ),
+    )
+    request.add_argument(
+        "--reason",
+        help=(
+            "Why merge review is skipped (one line of plain text);"
+            " --kind merge-review-exemption only"
+        ),
+    )
 
     read = sub.add_parser("read", help="Read and check the human's reply to a request")
     read.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
@@ -383,7 +513,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     respond.add_argument("--reply", required=True, type=_comment_id, help="The reply's comment ID")
     respond.add_argument("--items", required=True, help="The response items file (JSON)")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "request":
+        if args.kind == "merge-review-exemption" and args.reason is None:
+            request.error("--kind merge-review-exemption needs --reason")
+        if args.kind != "merge-review-exemption" and args.reason is not None:
+            request.error("--reason is for --kind merge-review-exemption only")
+    return args
 
 
 if __name__ == "__main__":

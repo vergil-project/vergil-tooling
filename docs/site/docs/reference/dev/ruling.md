@@ -18,6 +18,8 @@ for the human, which the human posts with
 
 ```text
 vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
+vrg-ruling request --issue 'OWNER/REPO#N' --kind protected-change
+vrg-ruling request --issue 'OWNER/REPO#N' --kind merge-review-exemption --reason TEXT
 vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
 vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
 vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
@@ -82,7 +84,9 @@ ASCII (U+0020 to U+007E) that does not contain the marker prefix
 A request and a response end with a blank line and their hidden marker,
 `<!-- vrg-ruling kind=request -->` or
 `<!-- vrg-ruling kind=response request=<ID> reply=<ID> -->`. A reply carries
-no marker.
+no marker. A protected-change or exemption request (see
+[below](#protected-change-and-exemption-requests)) names its kind in its
+marker with a `type` attribute; an ordinary request carries none.
 
 A refusal names the item by its ID, or by its position when the ID itself is
 bad. It never echoes a refused value: extra keys are counted, not named, and
@@ -114,6 +118,40 @@ landed is reported by its ID; otherwise the error says it did not land
 (re-running is safe) or that the outcome cannot be told. A re-run settles the
 last case, because it is refused and names the open request if the post
 landed.
+
+### Protected-change and exemption requests
+
+`request --kind` posts one of the two requests whose reply carries a
+structured decision: a **protected-change approval** or a **merge-review
+exemption**. It takes no items file, and it computes its own inputs from the
+clone it runs in: the change from `HEAD`'s merge base with `origin/develop`
+(as last fetched; fetch first) to `HEAD`. No blob or fingerprint is ever
+passed in.
+
+| Kind | What it records |
+|---|---|
+| `protected-change` | Every protected file the change touches (the protected set read at `origin/develop`, a rename counting both paths), one `Protected: <blob> <path>` line each, the blob being the file's git object ID at `HEAD` or `deleted`; then one `Diff: <url>` line, the GitHub compare link from the merge base to `HEAD` on `origin`'s repo |
+| `merge-review-exemption` | One `Reason: <text>` line, from `--reason` (one line of plain text), and one `Fingerprint: <sha256>` line, the change fingerprint |
+
+Each body ends with the line telling the human how to reply, a blank line,
+and the typed marker, `<!-- vrg-ruling kind=request type=protected-change -->`
+or `<!-- vrg-ruling kind=request type=merge-review-exemption -->`.
+
+It refuses, posting nothing, when the change touches no protected file
+(`protected-change`), the change is empty (`merge-review-exemption`),
+`HEAD` has no merge base with `origin/develop`, the protected-path registry
+cannot be read, or `origin` is not a GitHub repo. Otherwise it posts as
+`request` does, under the same open-request rule, prints the comment ID on
+stdout, and prints the human's two commands on stderr, one per decision:
+
+```text
+vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID --response-text 'Decision: approve'
+vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID --response-text 'Decision: refuse'
+```
+
+The diff link resolves once `HEAD` is on GitHub. Once the human has replied,
+the agent reads the reply and closes the turn with `respond` before any
+other comment, as for every ruling, so the issue is free for its next one.
 
 ## draft
 

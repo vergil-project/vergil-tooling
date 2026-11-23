@@ -660,3 +660,64 @@ def test_missing_token_on_the_draft_delete_reaches_the_cli_boundary(
     assert "token" in cli.stderr.lower()
     assert "is posted, but deleting" not in cli.stderr
     assert gh.posted == ["R1.1: fix\n"]
+
+
+# --- the decision line (epic .github#1384, Task 6a) --------------------------------
+
+
+def typed_request(cid: int, kind: str) -> IssueComment:
+    marker = render_marker(Marker("request", None, None, kind))  # type: ignore[arg-type]
+    return IssueComment(cid, AGENT, f"Request text.\n\n{marker}", False)
+
+
+@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Looks fine to me\n",
+        "approve",
+        "Decision: Approve",
+        "Decision: approve\nDecision: refuse",
+        "Decision: maybe",
+    ],
+)
+def test_ruling_reply_refuses_missing_decision_for_new_kinds(
+    cli: Cli, gh: FakeGh, kind: str, reply: str
+) -> None:
+    gh.comments = [typed_request(41, kind)]
+    assert cli(*ARGS, "--response-text", reply) == 1
+    assert f"a reply to a {kind} request must carry exactly one line" in cli.stderr
+    assert "nothing was posted" in cli.stderr
+    assert cli.prompts == []
+    assert gh.posted == []
+
+
+@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
+@pytest.mark.parametrize("reply", ["Decision: approve", "Checked the diff.\nDecision: refuse\n"])
+def test_ruling_reply_posts_one_decision_for_new_kinds(
+    cli: Cli, gh: FakeGh, kind: str, reply: str
+) -> None:
+    gh.comments = [typed_request(41, kind)]
+    cli.answer("y")
+    assert cli(*ARGS, "--response-text", reply) == 0
+    assert gh.posted == [reply]
+
+
+def test_ruling_reply_checks_the_drafted_decision(
+    cli: Cli, gh: FakeGh, draft: Callable[[str], None]
+) -> None:
+    gh.comments = [typed_request(41, "protected-change")]
+    draft("A1: approve\n")
+    assert cli(*ARGS) == 1
+    assert "Decision: approve" in cli.stderr
+    assert gh.posted == []
+    draft("Decision: approve\n")
+    cli.answer("y")
+    assert cli(*ARGS) == 0
+    assert gh.posted == ["Decision: approve\n"]
+
+
+def test_ordinary_request_needs_no_decision_line(cli: Cli, gh: FakeGh) -> None:
+    cli.answer("y")
+    assert cli(*ARGS, "--response-text", "R1.1: fix") == 0
+    assert gh.posted == ["R1.1: fix"]
