@@ -259,6 +259,20 @@ def _inherits_version(crate_data: dict[str, Any]) -> bool:
     return isinstance(version, dict) and version.get("workspace") is True
 
 
+def _bumped_crates(
+    repo_root: Path, data: dict[str, Any], members: dict[Path, dict[str, Any]]
+) -> dict[Path, dict[str, Any]]:
+    """The crates of *members* whose version is the one a bump writes, by directory.
+
+    The root package alone when it holds its own version, else every member
+    inheriting ``[workspace.package].version``.
+    """
+    if cargo_version_table(data) == ("package",):
+        root = repo_root.resolve()
+        return {root: members[root]}
+    return {path: crate for path, crate in members.items() if _inherits_version(crate)}
+
+
 def _check_member_requirements(repo_root: Path, data: dict[str, Any], new: str) -> None:
     """Fail when *new* would break a versioned path dependency on a bumped crate.
 
@@ -272,10 +286,7 @@ def _check_member_requirements(repo_root: Path, data: dict[str, Any], new: str) 
     """
     root = repo_root.resolve()
     members = _workspace_members(repo_root, data)
-    if cargo_version_table(data) == ("package",):
-        bumped = {root}
-    else:
-        bumped = {path for path, crate in members.items() if _inherits_version(crate)}
+    bumped = set(_bumped_crates(repo_root, data, members))
     entries: list[tuple[str, Path, str, str, dict[str, Any]]] = []
     workspace = data.get("workspace")
     workspace_deps = workspace.get("dependencies") if isinstance(workspace, dict) else None
@@ -319,6 +330,97 @@ def _check_cargo_bump(repo_root: Path, cargo_toml: Path, old: str, new: str) -> 
     text = cargo_toml.read_text()
     _rewrite_cargo_version(text, old, new)
     _check_member_requirements(repo_root, tomllib.loads(text), new)
+
+
+# A ``[[package]]`` entry's ``version`` line in ``Cargo.lock``, and one entry
+# of a ``dependencies`` array: ``"name"`` or ``"name version"``, with an
+# optional ``(source)`` when the name and version are ambiguous.
+_CARGO_LOCK_VERSION_RE = re.compile(r'^version = "(?P<version>[^"]*)"\s*$')
+_CARGO_LOCK_DEPENDENCY_RE = re.compile(r'^(?P<lead>\s*")(?P<name>[^" ]+) (?P<version>[^" ]+)"')
+
+
+def _rewrite_cargo_lock_versions(text: str, names: frozenset[str], old: str, new: str) -> str:
+    """*text*, a ``Cargo.lock``, with the workspace crates *names* moved from *old* to *new*.
+
+    Only a ``[[package]]`` entry with no ``source`` (a workspace crate, never
+    a registry or git one) named in *names* at *old* is changed, along with
+    each ``"name old"`` reference to it in a ``dependencies`` array. Raises
+    :class:`CargoVersionError` when the lockfile does not parse, or when the
+    edit does not leave it reading *new* for each of those crates.
+    """
+    try:
+        packages = tomllib.loads(text).get("package", [])
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"cannot parse Cargo.lock: {exc}"
+        raise CargoVersionError(msg) from exc
+    targets = {
+        p["name"]
+        for p in packages
+        if p.get("name") in names and p.get("version") == old and "source" not in p
+    }
+    if not targets:
+        return text
+    lines = text.splitlines(keepends=True)
+    blocks: list[list[int]] = []
+    for index, line in enumerate(lines):
+        if line.strip() == "[[package]]":
+            blocks.append([])
+        elif blocks:
+            blocks[-1].append(index)
+    for block in blocks:
+        fields = {
+            key.strip(): value.strip()
+            for key, _, value in (lines[i].partition("=") for i in block)
+            if value and not key.startswith((" ", "\t"))
+        }
+        if fields.get("name", "").strip('"') not in targets or "source" in fields:
+            continue
+        for i in block:
+            if _CARGO_LOCK_VERSION_RE.match(lines[i].rstrip("\r\n")):
+                lines[i] = lines[i].replace(f'"{old}"', f'"{new}"', 1)
+                break
+    for index, line in enumerate(lines):
+        m = _CARGO_LOCK_DEPENDENCY_RE.match(line)
+        if m is not None and m["name"] in targets and m["version"] == old:
+            start, end = m.span("version")
+            lines[index] = line[:start] + new + line[end:]
+    rewritten = "".join(lines)
+    after = {
+        p["name"]: p.get("version")
+        for p in tomllib.loads(rewritten).get("package", [])
+        if p.get("name") in targets and "source" not in p
+    }
+    stale = sorted(name for name in targets if after.get(name) != new)
+    if stale:
+        msg = f"cannot set {', '.join(stale)} to {new} in Cargo.lock: no plain version line"
+        raise CargoVersionError(msg)
+    return rewritten
+
+
+def _write_cargo_lock_versions(repo_root: Path, old: str, new: str) -> None:
+    """Move the bumped workspace crates' own ``Cargo.lock`` entries to *new*.
+
+    It runs before the lock refresh, so ``Cargo.lock`` already matches the
+    bumped ``Cargo.toml`` when ``vrg-container-run`` builds the dev image:
+    the image's ``cargo fetch --locked`` warmup then runs, rather than
+    logging cargo's stale-lockfile error and skipping
+    (vergil-project/vergil-tooling#4593). ``cargo update --workspace`` still
+    runs after it and stays the lockfile's authority. With no ``Cargo.lock``
+    or no ``Cargo.toml``, nothing is written: the lock refresh creates it.
+    """
+    lockfile = repo_root / _LOCKFILES["rust"]
+    cargo_toml = repo_root / _DEFAULT_VERSION_FILES["rust"]
+    if not lockfile.is_file() or not cargo_toml.is_file():
+        return
+    data = tomllib.loads(cargo_toml.read_text())
+    crates = _bumped_crates(repo_root, data, _workspace_members(repo_root, data))
+    # Every bumped crate has a [package] table (it holds or inherits the
+    # version), and Cargo requires its name.
+    names = frozenset(str(crate["package"]["name"]) for crate in crates.values())
+    text = lockfile.read_text()
+    rewritten = _rewrite_cargo_lock_versions(text, names, old, new)
+    if rewritten != text:
+        lockfile.write_text(rewritten)
 
 
 _JSON_DECODER = json.JSONDecoder()
@@ -915,6 +1017,8 @@ def _write_bump(repo_root: Path, language: str | None, old_version: str, new_ver
         if secondary.is_file():
             _write_version(secondary, fmt, old_version, new_version)
 
+    if language == "rust":
+        _write_cargo_lock_versions(repo_root, old_version, new_version)
     if language is not None:
         _run_lockfile_maintenance(repo_root, language)
 
