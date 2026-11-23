@@ -473,6 +473,71 @@ def test_headings_render_the_bare_version(repo: Path) -> None:
     assert "initial feature" not in notes
 
 
+_PARSE_ERROR_WARNING = "skipped due to parse error"
+
+
+def _github_back_merge(root: Path, version: str, pr: int) -> None:
+    """Merge main back into develop through a PR, with GitHub's merge-commit subject."""
+    branch = f"release/post-{version}"
+    _git(root, "switch", "-q", "-c", branch, "develop")
+    _git(root, "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into " + branch, "main")
+    _commit(root, f"chore(release): bump version to {version}")
+    _git(root, "switch", "-q", "develop")
+    message = f"Merge pull request #{pr} from org/{branch}"
+    _git(root, "merge", "-q", "--no-ff", "-m", message, branch)
+
+
+def test_merge_commits_are_skipped_without_a_parse_warning(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A merge commit's git- or GitHub-written subject is skipped quietly (#4592).
+
+    Its changes are the merged commits, which are listed on their own.
+    """
+    _commit(repo, "feat: initial feature")
+    _git(repo, "branch", "main")
+    _cut_release(repo, "1.0.0")
+    _prepare(repo, "1.0.0")
+    _publish(repo, "1.0.0", "release/1.0.0")
+    _github_back_merge(repo, "1.0.1", 12)
+    _git(repo, "switch", "-q", "-c", "deps/update-1.0.1", "develop")
+    _commit(repo, "chore(deps): cargo update")
+    _git(repo, "switch", "-q", "develop")
+    message = "Merge pull request #13 from org/deps/update-1.0.1"
+    _git(repo, "merge", "-q", "--no-ff", "-m", message, "deps/update-1.0.1")
+    _commit(repo, "fix: next release fix")
+    _cut_release(repo, "1.0.1")
+    capsys.readouterr()
+
+    changelog, notes = _prepare(repo, "1.0.1")
+
+    assert _PARSE_ERROR_WARNING not in capsys.readouterr().err
+    for text in (changelog, notes):
+        assert "Merge" not in text
+        assert "cargo update" in text
+        assert "next release fix" in text
+        assert "bump version" not in text
+
+
+def test_a_hand_written_unconventional_commit_still_warns(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only merge subjects are skipped quietly: any other unparsed commit still warns."""
+    _commit(repo, "feat: initial feature")
+    _git(repo, "branch", "main")
+    _commit(repo, "Merge the two config loaders")
+    _commit(repo, "Add a column to the status table")
+    _cut_release(repo, "1.0.0")
+    capsys.readouterr()
+
+    _, notes = _prepare(repo, "1.0.0")
+
+    err = capsys.readouterr().err
+    # Each of the changelog and the release notes warns once, for both commits.
+    assert err.count("2 commit(s) were " + _PARSE_ERROR_WARNING) == 2
+    assert "config loaders" not in notes
+
+
 def test_previous_release_tag_is_the_highest_release_below_version(repo: Path) -> None:
     _commit(repo, "feat: x")
     for tag in ("v1.9.0", "v1.10.0", "v1.10", "v2.0.0", "develop-v1.11.0", "v1.10.0-rc1"):

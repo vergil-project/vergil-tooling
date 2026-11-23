@@ -33,7 +33,18 @@ trim = true
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
+# A merge commit's subject is one git or GitHub wrote ("Merge pull request #N
+# from ...", "Merge branch 'x'"), never a conventional one, and its changes are
+# the commits it merges, which are in the range and listed on their own. Left
+# as it is, git-cliff fails to parse it and warns that it skipped the commit
+# (vergil-project/vergil-tooling#4592). The preprocessor gives such a subject a
+# `merge` type, and the first parser skips it on purpose, without a warning. A
+# hand-written subject that is not conventional still warns.
+commit_preprocessors = [
+  { pattern = "^(Merge (pull request #[0-9]+ from|branch|branches|remote-tracking branch|tag|commit) )", replace = "merge: $1" },
+]
 commit_parsers = [
+  { message = "^merge: Merge ", skip = true },
   { message = "^feat[(:!]", group = "Features" },
   { message = "^fix[(:!]", group = "Bug fixes" },
   { message = "^docs[(:!]", group = "Documentation" },
