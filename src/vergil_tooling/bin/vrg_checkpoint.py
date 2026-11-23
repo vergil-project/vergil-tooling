@@ -18,6 +18,14 @@ parse.
 - ``reset <ref> --workflow <name>`` removes every closed block of the
   workflow, malformed or duplicate ones included, and the blank line before
   each. With no block it succeeds and writes nothing.
+- ``reconcile <ref> --workflow <name> [--tick <stage>]…`` rewrites a skewed
+  block to the workflow's current stage list: a matching stage keeps its
+  tick, a removed stage is dropped, and a new stage is unticked unless
+  ``--tick`` names it (the human says it is done). It refuses a block with no
+  skew, and a ``--tick`` of a stage that is not new. It prints one line per
+  change, then posts them in a comment on the issue whose first line is
+  ``vrg-checkpoint: reconciled <workflow>``. A comment that fails after the
+  write exits 1 with the comment's text, to post by hand.
 
 Every operation reads the body through the trust layer
 (:func:`vergil_tooling.lib.issue_body.read_body`): a body whose author or an
@@ -27,7 +35,8 @@ only the block, and is skipped when the body would not change.
 
 Exit codes: 0 success; 1 failure or refusal; 2 bad arguments; 3 untrusted
 body; 4 block missing; 5 skew (the block's stages are not the workflow's
-current list); 6 malformed block. Nothing is written on any exit but 0.
+current list); 6 malformed block. Nothing is written on any exit but 0, save
+a ``reconcile`` whose comment failed after its write.
 """
 
 from __future__ import annotations
@@ -293,7 +302,66 @@ def _reset(ref: epics.IssueRef, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-_COMMANDS = {"init": _init, "status": _status, "tick": _tick, "reset": _reset}
+# --- reconcile ----------------------------------------------------------------
+
+
+def _change_lines(changes: Sequence[str]) -> str:
+    """The change lines, one Markdown list item each, for stdout and the comment alike."""
+    return "\n".join(f"- {change}" for change in changes)
+
+
+def _reconcile_comment(workflow: str, changes: Sequence[str]) -> str:
+    return f"{_PROG}: reconciled {workflow}\n\n{_change_lines(changes)}\n"
+
+
+def _reconcile(ref: epics.IssueRef, args: argparse.Namespace) -> int:
+    workflow: str = args.workflow
+    body = _read(ref)
+    try:
+        new, changes = checkpoint.reconcile(body, workflow, args.tick or [])
+    except checkpoint.Missing as exc:
+        raise _StopError(EXIT_MISSING, str(exc)) from exc
+    except checkpoint.Malformed as exc:
+        raise _StopError(EXIT_MALFORMED, f"malformed block: {exc}") from exc
+    except ValueError as exc:
+        raise _StopError(EXIT_FAILED, str(exc)) from exc
+    comment = _reconcile_comment(workflow, changes)
+    try:
+        _write(ref, body, new)
+    except _WriteFailedError:
+        print(
+            f"{_PROG}: {ref.slug}: if status shows the block reconciled, "
+            f"post this comment by hand:\n{comment}",
+            end="",
+            file=sys.stderr,
+        )
+        raise
+    pairs = checkpoint.parse(new, workflow)
+    print(f"{ref.slug}: reconciled the {workflow} block:\n{_change_lines(changes)}")
+    print(_next_line(pairs))
+    try:
+        issue_body.post_comment(ref.owner, ref.repo, ref.number, comment)
+    except github.GitHubAPIError as exc:
+        # A missing token included: the block is already written, so the
+        # comment text must reach the human whatever stopped the post.
+        print(
+            f"{_PROG}: {ref.slug}: the block was written, but the comment recording "
+            f"it may not have been posted ({exc}); check the issue's comments and, "
+            f"if it is missing, post this comment by hand:\n{comment}",
+            end="",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
+    return EXIT_OK
+
+
+_COMMANDS = {
+    "init": _init,
+    "status": _status,
+    "tick": _tick,
+    "reset": _reset,
+    "reconcile": _reconcile,
+}
 
 
 # --- arguments ----------------------------------------------------------------
@@ -338,6 +406,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     tick = command("tick", "tick one stage")
     tick.add_argument("stage", help="the stage to tick")
     command("reset", "remove the workflow's block")
+    reconcile = command(
+        "reconcile", "rewrite a skewed block to the current stage list, keeping matching ticks"
+    )
+    reconcile.add_argument(
+        "--tick",
+        action="append",
+        metavar="STAGE",
+        help="tick this new stage: the human says it is done (repeatable; new stages only)",
+    )
     return parser.parse_args(argv)
 
 

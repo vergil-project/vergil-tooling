@@ -5,7 +5,8 @@ The commands that rewrite one marked region of an issue body
 only through the trust layer (:func:`read_body`), split into lines that keep
 their endings (:func:`split_lines`), so a ``\\r\\n`` body (GitHub's web editor
 saves those) keeps every byte outside the region, and written back whole
-(:func:`write_body`).
+(:func:`write_body`). A command that records its edit in the issue's log
+posts the record with :func:`post_comment`.
 """
 
 from __future__ import annotations
@@ -67,3 +68,14 @@ def read_body(owner: str, repo: str, number: int, *, authors: TrustedAuthors | N
 def write_body(owner: str, repo: str, number: int, body: str) -> None:
     """Replace the body of issue *owner*/*repo*#*number* with *body*."""
     github.write_json("PATCH", _issue_endpoint(owner, repo, number), {"body": body})
+
+
+def post_comment(owner: str, repo: str, number: int, body: str) -> None:
+    """Post *body* as a comment on issue *owner*/*repo*#*number*, exactly once.
+
+    A comment is a create: a failure may hide one that landed, so the POST is
+    never retried (:func:`vergil_tooling.lib.github.post_json_once`), and a
+    failure raises :class:`~vergil_tooling.lib.github.GitHubAPIError` for the
+    caller to report.
+    """
+    github.post_json_once(f"{_issue_endpoint(owner, repo, number)}/comments", {"body": body})

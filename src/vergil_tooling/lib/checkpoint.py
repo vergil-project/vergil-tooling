@@ -252,6 +252,67 @@ def tick(body: str, workflow: str, stage: str) -> str:
     return "".join(lines)
 
 
+def reconcile(body: str, workflow: str, ticks: Iterable[str]) -> tuple[str, list[str]]:
+    """*body* with its skewed block rewritten to *workflow*'s current list, and the changes.
+
+    After skew (spec §4.4), the block is rewritten to the current stage list:
+
+    - a stage whose name matches keeps its tick (``kept ticked: <stage>``); a
+      stage recorded more than once counts as ticked only when every copy is
+      (``unticked: <stage> (recorded <n> times, ...)`` otherwise);
+    - a removed stage is dropped (``dropped: <stage> (was ticked|unticked)``);
+    - a new stage is unticked (``new, unticked: <stage>``), unless *ticks*
+      names it (``new, ticked: <stage>``): the human said it is done;
+    - a change of order is reported once, last
+      (``reordered: the stages now follow the current list``).
+
+    A matching unticked stage is no change and gets no line. The changes come
+    in the current list's order, then the dropped stages in the block's order.
+
+    Raises :class:`Missing` or :class:`Malformed` as :func:`parse` does, and
+    :class:`ValueError` for a block with no skew (nothing to reconcile) or a
+    stage in *ticks* that is not new, before anything is changed.
+    """
+    pairs = parse(body, workflow)
+    found = skew(pairs, workflow)
+    if found is None:
+        msg = f"the {workflow} block matches its current stage list; nothing to reconcile"
+        raise ValueError(msg)
+    named = list(dict.fromkeys(ticks))
+    not_new = [stage for stage in named if stage not in found.added]
+    if not_new:
+        new = ", ".join(found.added) if found.added else "(none)"
+        msg = f"--tick may name only new stages: {', '.join(not_new)}; new stages: {new}"
+        raise ValueError(msg)
+    recorded: dict[str, list[bool]] = {}
+    for name, done in pairs:
+        recorded.setdefault(name, []).append(done)
+    checked: list[str] = []
+    changes: list[str] = []
+    for stage in found.current:
+        if stage in found.added:
+            done = stage in named
+            changes.append(f"new, {'ticked' if done else 'unticked'}: {stage}")
+        else:
+            copies = recorded[stage]
+            done = all(copies)
+            if done:
+                changes.append(f"kept ticked: {stage}")
+            elif any(copies):
+                changes.append(
+                    f"unticked: {stage} (recorded {len(copies)} times, not ticked in every one)"
+                )
+        if done:
+            checked.append(stage)
+    changes.extend(
+        f"dropped: {stage} (was {'ticked' if any(recorded[stage]) else 'unticked'})"
+        for stage in found.removed
+    )
+    if found.reordered:
+        changes.append("reordered: the stages now follow the current list")
+    return upsert(body, render(workflow, checked), workflow), changes
+
+
 def remove(body: str, workflow: str) -> str:
     """*body* without any closed *workflow* block, nor the blank line before each.
 
