@@ -30,8 +30,10 @@ The main modules under `src/vergil_tooling/lib/`:
   and report each untrusted one as metadata only, or, where the content
   is load-bearing, stop. A read it cannot complete fails loudly, never
   as "trusted" or "nothing found", and a batch run stops the one item,
-  not the run. `trusted_authors.py` loads the configuration and
-  `trust_publish.py` publishes and checks its GitHub Actions copies.
+  not the run. `trusted_authors.py` loads the configuration,
+  `trust_publish.py` publishes and checks its GitHub Actions copies, and
+  `app_secrets.py` checks that the automation App's secrets reach each
+  repo from its `automation` environment, with no repo- or org-level copy.
   The guard test, `tests/vergil_tooling/test_trust_guard.py`, scans the
   package and fails on any content read outside `trust.py` unless
   `tests/vergil_tooling/trust_guard_exemptions.toml` lists it with a

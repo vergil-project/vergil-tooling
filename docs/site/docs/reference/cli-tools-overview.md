@@ -1577,13 +1577,36 @@ every listed org:
 - `render` prints the values the configuration implies, in that same shape,
   with no GitHub call, for comparison with the audit's values.
 
+`app-secrets` checks that the automation App's Actions secrets,
+`APP_CLIENT_ID` and `APP_PRIVATE_KEY`, reach each repo that runs an
+unattended job of epic vergil-project/.github#1494. With `--org ORG`, or
+without it for every listed org, it checks each repo of the org that is not
+archived and has a `.github/workflows/` file named `cd.yml`,
+`epic-rollup.yml`, `epic-sweep.yml` or `ops.yml`. Each `--repo OWNER/NAME`
+(repeatable, not with `--org`) is checked whatever its workflows.
+
+The App secrets live only in each repo's `automation` environment, never as
+repository or organization secrets (epic vergil-project/.github#1384; see
+[GitHub checks — the automation environment](config-audit.md#github-checks-the-automation-environment)).
+So the check reads the `automation` environment's secrets and prints
+`<owner>/<repo>: APP_CLIENT_ID=<source> APP_PRIVATE_KEY=<source>` per repo,
+the source being `environment` or `MISSING`, with `(no automation
+environment)` after it when the repo has none, which misses both. Then it
+prints a `FINDING:` line for each missing secret, and one for each
+repository or organization secret named `APP_CLIENT_ID` or
+`APP_PRIVATE_KEY` that the repo can see, since the layout forbids those
+copies. A copy never counts as the secret being present. It reads secret
+names only, never a value: the secrets APIs return none, and each read
+keeps only the `name` field. Like `check`, it runs as the org's automation
+App or the human, and refuses the agent modes.
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`; Actions copies: `lib/trust_publish.py`) |
-| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`); `publish [--org ORG]`; `check [--org ORG] [--values-out PATH]`; `render [--org ORG]` |
-| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set (not needed by `check --org`). `publish`: an org admin's `gh` credential. `check`: read-only Variables permission at organization and repository level |
-| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops `publish` and `check` with the failing call named |
-| Exit codes | 0 success; 1 not configured or invalid, `publish` refused or failed, or `check` findings; 2 bad arguments, or `check` could not run (refused identity, API error, no configuration) |
+| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`; Actions copies: `lib/trust_publish.py`; App secrets: `lib/app_secrets.py`) |
+| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`); `publish [--org ORG]`; `check [--org ORG] [--values-out PATH]`; `render [--org ORG]`; `app-secrets [--org ORG \| --repo OWNER/NAME ...]` |
+| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set (not needed by `check --org`, `app-secrets --org` or `app-secrets --repo`). `publish`: an org admin's `gh` credential. `check`: read-only Variables permission at organization and repository level. `app-secrets`: read-only Secrets, Environments and Actions permission on each repo, and Metadata to list the org's repos |
+| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops `publish`, `check` and `app-secrets` with the failing call named; `app-secrets` never reports a failed read as present or missing. Its one read of absence is an HTTP 404 on the `automation` environment's secrets, read only after the repo's own secrets list has succeeded: the repo has no `automation` environment |
+| Exit codes | 0 success; 1 not configured or invalid, `publish` refused or failed, `check` findings, or `app-secrets` findings (a secret missing from the `automation` environment, or a forbidden repository or organization copy); 2 bad arguments, or `check` or `app-secrets` could not run (refused identity, API error, no configuration) |
 | Status | Active |
 
 ### vrg-ruling
