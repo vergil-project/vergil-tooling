@@ -1198,6 +1198,14 @@ def test_close_judgement_loads_configured_authors(
     assert trust.close_judgement(REPO, 7).role is Role.HUMAN
 
 
+def test_require_trusted_reopen_loads_configured_authors(
+    answer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answer({trust._EVENTS_QUERY: [_timeline([_event("ReopenedEvent")])]})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert trust.require_trusted_reopen(REPO, 7) is Role.HUMAN
+
+
 # --- require_trusted_commit -------------------------------------------------------------
 
 _OID = "0123456789abcdef0123456789abcdef01234567"

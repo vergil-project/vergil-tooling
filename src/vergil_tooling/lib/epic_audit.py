@@ -289,11 +289,12 @@ def _closes_trusted(
 
     A close by an untrusted actor is not a close (spec §5.2): it is a stop on
     the epic, added to *stops* and naming the child's close, as is a close
-    that cannot be read.
+    that cannot be read. A child open again since the roadmap counted it
+    makes the epic no drift, with no stop.
     """
     for child in children:
         if child.state != "CLOSED":
-            continue
+            return False
         try:
             with github.target_org(child.ref.owner):
                 trust.require_trusted_close(_slug(child.ref), child.ref.number, authors=authors)

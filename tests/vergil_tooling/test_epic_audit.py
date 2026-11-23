@@ -3424,3 +3424,37 @@ def test_proxy_link_drift_untrusted_proxy_body_is_per_item_stop() -> None:
         (320, "untrusted"),
         (322, trust.READ_FAILURE),
     ]
+
+
+def test_epic_drift_child_open_again_is_no_drift_and_no_stop() -> None:
+    # The roadmap counted every child closed, but one is open again when the
+    # closes are judged: the epic is not drift, and nothing is stopped.
+    stops = trust.BatchStops()
+    children = [
+        epics.ChildState(epics.IssueRef("org", "tool", 41), "OPEN"),
+        epics.ChildState(epics.IssueRef("org", "tool", 42), "CLOSED"),
+    ]
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=_all_closed(4)),
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.github.graphql", side_effect=AssertionError("no read")),
+    ):
+        assert _epic_drift("org", stops) == []
+    assert stops.stopped == ()
+
+
+def test_closed_epic_open_child_unreadable_events_is_per_item_stop() -> None:
+    stops = trust.BatchStops()
+    kid = epics.IssueRef("org", "lab", 462)
+    with (
+        patch("vergil_tooling.lib.epic_docs.list_epics", return_value=[_record(19)]),
+        patch(
+            "vergil_tooling.lib.epics.child_states", return_value=[epics.ChildState(kid, "OPEN")]
+        ),
+        patch("vergil_tooling.lib.github.graphql", return_value={"repository": None}),
+    ):
+        result = epic_audit.closed_epic_open_child("org", stops=stops, authors=trust_stubs.AUTHORS)
+    assert result == []
+    assert stops.stopped == (
+        trust.Skipped("org/lab", 462, "event", None, "", "reopen", trust.READ_FAILURE),
+    )

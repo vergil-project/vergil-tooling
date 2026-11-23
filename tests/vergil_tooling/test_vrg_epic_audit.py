@@ -1514,3 +1514,34 @@ def test_close_stop_under_actions_is_counted_only(
     assert rc == 1
     assert err == "stopped 1 item(s) (untrusted: 1)\n"
     assert "drive-by" not in err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        trust.UntrustedContentError(
+            trust.Skipped(
+                "logical-minds-foundry/.github", 320, "issue", "drive-by", "t", "body", "untrusted"
+            ),
+            "the issue body is untrusted",
+        ),
+        trust.TrustReadError("read_issue logical-minds-foundry/.github#320", "truncated"),
+    ],
+    ids=["untrusted", "unreadable"],
+)
+def test_vrg_epic_audit_epic_untrusted_proxy_body_exits_1(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A proxy body the trust layer does not trust gives no link: the listing
+    # stops, metadata only, with no JSON.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_children", side_effect=error),
+    ):
+        rc = main(["--epic", _PROXY.slug])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-epic-audit: {error}\n"

@@ -240,6 +240,15 @@ def test_proxies_of_unreadable_primary_raises() -> None:
         proxies.proxies_of(PRIMARY)
 
 
+def test_proxies_of_non_object_view_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.proxies.epic_size.trusted_logins", return_value=TRUSTED),
+        pytest.raises(ProxyLinkError, match="unexpected"),
+    ):
+        proxies.proxies_of(PRIMARY)
+
+
 # --- is_proxy_ref ---------------------------------------------------------------
 
 
