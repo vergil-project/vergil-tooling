@@ -275,8 +275,9 @@ def wait_for_merge(
     """Block until *pr* merges or cannot merge; see the module docstring.
 
     *conflict_settle* is how long a conflict must be reported at one head
-    before the wait ends with reason ``conflict``. The deadline, the grace period and *poll_interval* are checked before the
-    PR is read: a malformed value raises :class:`ValueError`.
+    before the wait ends with reason ``conflict``. The deadline, the grace
+    period and *poll_interval* are checked before the PR is read: a
+    malformed value raises :class:`ValueError`.
     """
     deadline = finalize_watch.deadline_secs()
     grace = github.orphan_grace_secs() if orphan_grace is None else orphan_grace
