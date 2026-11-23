@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
 ```
 
 The decorator is the command boundary for the known GitHub authentication
-failures. When `main` lets one escape, it prints a single `<prog>: <message>`
+failures and the trust layer's failures. When `main` lets one escape, it prints a single `<prog>: <message>`
 report on stderr and exits with status `1` instead of a traceback:
 
 | Exception | Message |
@@ -107,6 +107,9 @@ report on stderr and exits with status `1` instead of a traceback:
 | `github.AppAuthError` | `github.app_auth_message()` |
 | `github.NoInstallationError` | `github.no_installation_message()` |
 | `github.MissingGitHubTokenError` | `github.missing_token_message()` |
+| `trust.UntrustedContentError` | the stop's metadata-only message; under GitHub Actions only its cause |
+| `trust.TrustReadError` | the read failure's message (the call and gh's last error line) |
+| `trusted_authors.TrustedAuthorsNotConfiguredError` | the missing-configuration message |
 
 `<prog>` is the command name, derived from the module file name, so it is
 correct under an installed script, `python -m`, and in-process tests. Every

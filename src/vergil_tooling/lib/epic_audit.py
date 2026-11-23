@@ -158,7 +158,7 @@ def _open_task_drift(entry: Any, pr_repo: str, ref: str) -> TaskDrift | None:
     # open as vrg-release bookkeeping — not drift. Skip it so the audit does
     # not flag release issues as slipped tasks. See issue #1984.
     if release.is_release_tracking_issue(
-        title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
+        task_repo, task, title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
     ):
         return None
     # A queue (intake/planning/deferred) item is never a PR-tracked task: its parent
@@ -754,7 +754,7 @@ def orphan_drift(org: str, *, issues: list[OpenIssue] | None = None) -> list[Orp
         issues = open_issues(org)
     orphans: list[Orphan] = []
     for issue in issues:
-        if epics.is_legitimate_top_level(set(issue.labels), issue.title, issue.body):
+        if epics.is_legitimate_top_level(issue.ref, set(issue.labels), issue.title, issue.body):
             continue
         if issue.native_parent is not None:
             continue

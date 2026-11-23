@@ -11,14 +11,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, trust
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 # Functions decorated in this module get their program name from this file.
 _PROG = "test-cli"
+
+_STOP = trust.Skipped(
+    "org/repo", 7, "issue", "drive-by", "2026-11-01T09:30:00Z", "body", "untrusted"
+)
 
 
 def _raising(exc: BaseException) -> Callable[[list[str] | None], int]:
@@ -103,6 +108,30 @@ class TestCliMain:
         # not confirmed, naming it, rather than a traceback (#3820).
         err = _exit_message(exc, capsys)
         assert err == f"{_PROG}: {exc}\n"
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            trust.TrustReadError("read_issue org/repo#7", "the GraphQL call failed: HTTP 502"),
+            TrustedAuthorsNotConfiguredError("trusted authors are not configured"),
+            trust.UntrustedContentError(_STOP, "the issue body is untrusted"),
+        ],
+        ids=["read-failure", "not-configured", "stop"],
+    )
+    def test_trust_error_is_a_clean_message(
+        self, exc: Exception, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        assert _exit_message(exc, capsys) == f"{_PROG}: {exc}\n"
+
+    def test_untrusted_stop_names_only_its_cause_under_actions(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Actions logs are public: the outsider's login stays out of them.
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        err = _exit_message(trust.UntrustedContentError(_STOP, "the body is untrusted"), capsys)
+        assert err == f"{_PROG}: stopped before any write on untrusted content (untrusted)\n"
+        assert "drive-by" not in err
 
     def test_other_exceptions_propagate_unchanged(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = RuntimeError("boom")

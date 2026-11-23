@@ -135,6 +135,7 @@ from vergil_tooling.lib import (
     pr_create,
     pr_provenance,
     progress,
+    trust,
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -191,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-submit-pr --release: {refusal}", file=sys.stderr)
             return 1
 
+    # A trust-layer failure before any PR opens (an untrusted relay payload or
+    # body, a trust read that cannot complete, no trusted-authors configuration)
+    # escapes to cli_main, which ends the run with its one-line message.
     if args.branches:
         # Relay path: branches identify the submit. It opens PRs worktree-free
         # (from the branch's relayed ready-state), then finalizes them locally
@@ -538,13 +542,16 @@ class _SubmitFailedError(Exception):
 
 # The failures that end one PR's submit without stopping the others: a refusal
 # from this module's checks (SystemExit with its message), a failed git or gh
-# call, a malformed GitHub payload, a provenance check with no trusted-authors
-# configuration to classify by, and auto-merge that could not be turned on.
+# call, a malformed GitHub payload, a trust-layer failure (an untrusted or
+# unreadable item, or no trusted-authors configuration to classify by), and
+# auto-merge that could not be turned on.
 _PER_PR_ERRORS = (
     SystemExit,
     subprocess.CalledProcessError,
     ValueError,
     TrustedAuthorsNotConfiguredError,
+    trust.UntrustedContentError,
+    trust.TrustReadError,
     auto_merge.AutoMergeError,
     _SubmitFailedError,
 )

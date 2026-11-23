@@ -1360,16 +1360,17 @@ def queue_refusal_message(ref: str, kind: str) -> str:
     return f"--issue ({ref}) is in the {kind} queue; {tail}"
 
 
-def is_legitimate_top_level(labels: set[str], title: str, body: str) -> bool:
-    """True iff an issue may stand without an epic parent.
+def is_legitimate_top_level(ref: IssueRef, labels: set[str], title: str, body: str) -> bool:
+    """True iff the issue *ref* may stand without an epic parent.
 
     The legitimate top-level kinds are epics (``epic``, including the standing
     epics), per-quarter archives (:func:`is_archive`), and release tracking issues
-    (:func:`release.is_release_tracking_issue`). Everything else needs a parent.
+    (:func:`release.is_release_tracking_issue`, which counts a title or marker
+    only from a trusted body). Everything else needs a parent.
     """
     if "epic" in labels or is_archive(labels, title):
         return True
-    return release.is_release_tracking_issue(title, body)
+    return release.is_release_tracking_issue(_repo_slug(ref), ref.number, title=title, body=body)
 
 
 def is_stamped_archive_title(title: str) -> bool:

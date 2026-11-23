@@ -39,7 +39,9 @@ kind or has an epic parent.** The legitimate top-level kinds are:
 - **archives** (`archive` label) — the per-quarter buckets of closed standing-epic
   children;
 - **release tracking issues** (`release: X.Y.Z`), which `vrg-release` creates
-  top-level for the length of a release.
+  top-level for the length of a release. The title or progress marker counts
+  only when the issue's body is trusted; a look-alike from an untrusted
+  author is reported and treated as an ordinary issue.
 
 There is no opt-out and no "unlinked" state. An issue's parent tells you where
 it stands:

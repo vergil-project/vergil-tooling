@@ -105,6 +105,19 @@ def closed_timeline(actor: Any = HUMAN) -> dict[str, Any]:
     }
 
 
+def commit_author(user: Any = HUMAN, *, at: str = CREATED) -> dict[str, Any]:
+    """The commit query's answer: a commit whose author GitHub links to *user*.
+
+    A ``None`` *user* is an author email no GitHub user account carries (a
+    bot or App email included).
+    """
+    return {
+        "repository": {
+            "object": {"__typename": "Commit", "authoredDate": at, "author": {"user": user}}
+        }
+    }
+
+
 class FakeItems:
     """A ``github.graphql`` stand-in answering the layer's item and events queries per issue.
 

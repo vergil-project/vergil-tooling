@@ -5,7 +5,10 @@
 ``cd <repo>``, and the identity token's org must follow the ``-C`` repo. These
 tests run against real git repositories: only the forwarded git command, the
 issue read (``gh``) and, for the freeze, the state-file read are stubbed, so
-every cwd-derived lookup the checks make really runs.
+every cwd-derived lookup the checks make really runs. The issue's author is
+judged by the real trust layer, its GraphQL answered by
+:class:`~tests.vergil_tooling.trust_stubs.FakeItems` and its repo lookup
+recorded with the directory it ran in.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_git
 from vergil_tooling.bin.vrg_git import _split_dash_c, main
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
 
 if TYPE_CHECKING:
@@ -80,6 +85,7 @@ class Outcome:
     forwarded_env: dict[str, str] | None
     issue_read_cwds: list[Path]
     freeze_roots: list[Path]
+    repo_lookup_cwds: list[Path]
 
 
 class _Spy:
@@ -105,10 +111,15 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         spy = _Spy(["git", *rest])
         issue_read_cwds: list[Path] = []
         freeze_roots: list[Path] = []
+        repo_lookup_cwds: list[Path] = []
 
         def _read_json(*_args: str) -> dict[str, object]:
             issue_read_cwds.append(Path.cwd().resolve())
             return _OPEN_TASK
+
+        def _current_repo() -> str:
+            repo_lookup_cwds.append(Path.cwd().resolve())
+            return "orga/repo"
 
         def _check_worktree(root: Path, *, action: str) -> FreezeCheck:
             freeze_roots.append(root.resolve())
@@ -120,6 +131,9 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         with (
             patch.object(vrg_git.subprocess, "run", spy),
             patch.object(vrg_git.github, "read_json", _read_json),
+            patch.object(vrg_git.github, "current_repo", _current_repo),
+            patch.object(vrg_git.github, "graphql", trust_stubs.FakeItems()),
+            patch.object(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS),
             patch.object(vrg_git.freeze, "check_worktree", _check_worktree),
             patch.dict(
                 vrg_git.github._token_cache,
@@ -138,6 +152,7 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             forwarded_env=spy.forwarded_env,
             issue_read_cwds=issue_read_cwds,
             freeze_roots=freeze_roots,
+            repo_lookup_cwds=repo_lookup_cwds,
         )
 
     yield _run
@@ -239,6 +254,7 @@ def test_dash_c_gives_the_same_answer_as_cd(
     else:
         assert via_dash_c.forwarded_cwd is None
     assert via_dash_c.issue_read_cwds == via_cd.issue_read_cwds
+    assert via_dash_c.repo_lookup_cwds == via_cd.repo_lookup_cwds
 
 
 _CWD_DEPENDENT = {
@@ -274,6 +290,8 @@ def test_issue_read_runs_in_the_dash_c_repo(layout: Layout, run_vrg_git: Any) ->
     )
     assert out.rc == 0
     assert out.issue_read_cwds == [layout.repo]
+    # The author is read from the -C repo's issue too.
+    assert out.repo_lookup_cwds == [layout.repo]
 
 
 def test_freeze_check_reads_the_dash_c_worktree(

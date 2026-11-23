@@ -212,7 +212,10 @@ vrg-submit-pr feature/123-x feature/124-y
 For each branch, the tool:
 
 1. resolves the ready-state from a local worktree's `pr-workflow.json`
-   when one exists, else fetches it from the relay ref;
+   when one exists, else fetches it from the relay ref. The relay payload
+   is used only when the author GitHub links to its commit is the trusted
+   human; any other author (an agent or bot email included) stops the
+   run with nothing opened, naming the login only;
 2. verifies the tip of `origin/<branch>` matches the recorded `head_sha`
    (a mismatch fails loudly: the metadata is for a different commit);
 3. opens the PR with `--head <branch>` and **does not push**, since the
@@ -272,8 +275,14 @@ says why it is gone:
 ### Linkage Keywords
 
 `Ref`, or `Closes`, which submit auto-selects for a managed task (an
-issue with an `epic`-labelled parent) so it closes on merge. `Fixes` and
-`Resolves` are rejected.
+issue with an `epic`-labelled parent) so it closes on merge. The parent is
+the native one, else the `Parent:` line of the issue's body when the trust
+layer trusts that body; an untrusted body is reported on stderr and gives
+no parent. `Fixes` and `Resolves` are rejected.
+
+A trust-layer failure before any PR opens (an untrusted relay payload, a
+read the layer cannot complete, or no trusted-authors configuration) ends
+the run with a one-line error and nothing opened.
 
 ## Examples
 

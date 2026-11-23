@@ -7,6 +7,10 @@ traceback. It replaces the import-time ``sys.excepthook`` that
 each command's entry point, and importing a library module no longer
 mutates interpreter-global state.
 
+It does the same for the trust layer's failures (an untrusted-content stop,
+a trust read failure, a missing trusted-authors configuration), whose
+messages are metadata only.
+
 A command that already catches one of these errors inside ``main`` (to add
 command-specific context) keeps its own message and exit code; the decorator
 only sees what ``main`` lets escape.
@@ -15,6 +19,7 @@ only sees what ``main`` lets escape.
 from __future__ import annotations
 
 import functools
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -74,5 +79,30 @@ def _auth_error_message(prog: str, exc: Exception) -> str | None:
     from vergil_tooling.lib import epics
 
     if isinstance(exc, (epics.EpicHomeError, epics.StandingEpicNotVisibleError)):
+        return f"{prog}: {exc}"
+    return _trust_error_message(prog, exc)
+
+
+def _trust_error_message(prog: str, exc: Exception) -> str | None:
+    """The clean message for a trust-layer failure, or ``None`` for anything else.
+
+    A stop on untrusted content, a read the trust layer could not complete,
+    and a missing trusted-authors configuration each carry a one-line,
+    metadata-only message (epic vergil-project/.github#1467), so a command
+    that lets one escape exits with it rather than a traceback. Under GitHub
+    Actions, whose logs are public, a stop names only its cause, never the
+    login (spec §5.3).
+    """
+    from vergil_tooling.lib import trust
+    from vergil_tooling.lib.trusted_authors import (
+        GITHUB_ACTIONS_ENV,
+        TrustedAuthorsNotConfiguredError,
+    )
+
+    if isinstance(exc, trust.UntrustedContentError):
+        if os.environ.get(GITHUB_ACTIONS_ENV) == "true":
+            return f"{prog}: stopped before any write on untrusted content ({exc.item.cause})"
+        return f"{prog}: {exc}"
+    if isinstance(exc, (trust.TrustReadError, TrustedAuthorsNotConfiguredError)):
         return f"{prog}: {exc}"
     return None

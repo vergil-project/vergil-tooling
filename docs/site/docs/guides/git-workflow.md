@@ -73,8 +73,11 @@ not checked.
 
 At creation, `vrg-git` also reads issue `<N>` from the current repo. It
 refuses the branch when the issue is closed, or is an epic or archive
-(an umbrella is never closed by a PR). It also refuses when the issue
-cannot be read, so check `vrg-gh issue view <N>` works and retry.
+(an umbrella is never closed by a PR), or was not opened by a trusted
+author (the trust layer's check; the refusal names the author's login
+and when the issue was opened, never its text). It also refuses when the
+issue or its author cannot be read, or no trusted-authors configuration
+is present, so check `vrg-gh issue view <N>` works and retry.
 
 The `release/*` and `promotion/*` prefixes are created by automated
 workflows and are exempt from the issue-number rule.

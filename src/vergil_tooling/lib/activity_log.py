@@ -62,7 +62,7 @@ def gather(since: str, *, org: str | None = None, repo: str | None = None) -> li
     for hit in hits:
         # Release tracking issues (release: X.Y.Z) are vrg-release bookkeeping,
         # not epic/task work — keep them out of the ledger. See issue #1984.
-        if release.is_release_tracking_issue(title=hit.title, body=hit.body):
+        if release.is_release_tracking_issue(hit.repo, hit.number, title=hit.title, body=hit.body):
             continue
         if hit.closed_at is None:
             # judge_close always sets it; never date an issue by a guess.

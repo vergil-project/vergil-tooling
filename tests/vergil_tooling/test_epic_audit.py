@@ -164,9 +164,23 @@ def test_task_drift_skips_release_tracking_issue() -> None:
             "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
         }
 
-    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+    layer = trust_stubs.FakeItems(
+        {
+            ("vergil-project/vergil-containers", 373): trust_stubs.item(
+                body="<!-- vrg-release:progress -->\n- [x] tag\n"
+            )
+        },
+        strict=True,
+    )
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         result = epic_audit.task_drift("2026-06-01", today=_TODAY, org="vergil-project")
     assert result == []
+    # The release signals count only once the layer trusts the body.
+    assert layer.reads == [("vergil-project/vergil-containers", 373)]
 
 
 def test_task_drift_resolves_cross_repo_ref() -> None:
@@ -1240,9 +1254,42 @@ def test_orphan_drift_skips_release_tracking_issue() -> None:
             body="<!-- vrg-release:progress -->\n- [ ] tag\n",
         )
     ]
-    with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes) as qh:
+    layer = trust_stubs.FakeItems(
+        {("org/tool", 9): trust_stubs.item(body="<!-- vrg-release:progress -->\n- [ ] tag\n")},
+        strict=True,
+    )
+    with (
+        patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes) as qh,
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
         assert epic_audit.orphan_drift("org", issues=issues) == []
     qh.assert_not_called()
+
+
+def test_orphan_drift_untrusted_release_issue_is_an_orphan(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A forged release title and marker from an outsider never hide the issue from the sweep.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
+    issues = [_issue("org/tool", 9, title="release: 2.1.258", body=body)]
+    layer = trust_stubs.FakeItems(
+        {("org/tool", 9): trust_stubs.item(body=body, author=trust_stubs.OUTSIDER)}, strict=True
+    )
+    with (
+        patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes),
+        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
+        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+    ):
+        orphans = epic_audit.orphan_drift("org", issues=issues)
+    assert [o.ref for o in orphans] == [epics.IssueRef("org", "tool", 9)]
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/tool#9 issue drive-by at {trust_stubs.CREATED} "
+        "on body (untrusted)\n"
+    )
+    assert "SPAM-MARKER-TEXT" not in err
 
 
 def test_orphan_drift_skips_archives_and_epics() -> None:

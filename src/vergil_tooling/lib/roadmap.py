@@ -75,11 +75,11 @@ def gather(org: str | None = None) -> list[EpicSummary]:
         # it should not reach here — but skip it explicitly so a stray label can
         # never leak release bookkeeping into the roadmap (or epic-drift, which
         # reads this same gather). See issue #1984.
+        number = int(epic["number"])
         if release.is_release_tracking_issue(
-            title=str(epic.get("title") or ""), body=str(epic.get("body") or "")
+            home, number, title=str(epic.get("title") or ""), body=str(epic.get("body") or "")
         ):
             continue
-        number = int(epic["number"])
         children = epics.child_states(epics.IssueRef(home_owner, home_repo, number))
         repos = tuple(sorted({f"{c.ref.owner}/{c.ref.repo}" for c in children}))
         closed = sum(1 for c in children if c.state == "CLOSED")
