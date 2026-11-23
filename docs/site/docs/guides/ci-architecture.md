@@ -609,7 +609,7 @@ chosen, and why.
 **`dev-ts-node`**
 :   Base: `base` (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at `/opt/node/<major>` (never built from
-    source). Includes Node.js, npm, Prettier and license-checker.
+    source). Includes Node.js, npm and Prettier.
     TypeScript, ESLint, typescript-eslint, `@eslint/js`, Vitest and
     `@vitest/coverage-v8` are not in the image: each repository declares
     them as devDependencies, and the gates run them from its
