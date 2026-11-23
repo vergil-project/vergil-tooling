@@ -35,6 +35,7 @@ from vergil_tooling.lib.release.supersede import (
     load_superseded,
 )
 from vergil_tooling.lib.release.tracking import create_tracking_issue
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -538,10 +539,10 @@ def test_supersede_absorbs_issues_and_records_supersedes() -> None:
         c.state = new
 
     with (
-        patch(_RECORDS + ".read_comments", return_value=[]),
+        patch(_RECORDS + ".record_comments", return_value=()),
         patch(_RECORDS + "._merge_commit", return_value="a" * 40),
         patch(_RECORDS + "._release_date", return_value="2026-11-22"),
-        patch(_RECORDS + "._humans", return_value=("human",)),
+        patch(_RECORDS + "._authors", return_value=TrustedAuthors(("human",), ())),
         patch(_RECORDS + "._post", side_effect=lambda ref, body: posted.__setitem__(ref, body)),
         patch(_RECORDS + ".write_state", side_effect=write),
     ):

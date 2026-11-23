@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.pending_release import (
     ChangeKind,
     PendingRelease,
@@ -27,7 +27,11 @@ from vergil_tooling.lib.pending_release import (
     trusted_closing_refs,
 )
 from vergil_tooling.lib.release.state import IssueEntry
-from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import (
+    OrgConfig,
+    TrustedAuthors,
+    TrustedAuthorsNotConfiguredError,
+)
 
 _URL = "https://github.com/o/r.git"
 _MAIN = "a" * 40
@@ -725,11 +729,20 @@ def test_head_that_is_not_a_full_sha_raises() -> None:
 
 # --- gather_release_contents: the issue list ------------------------------------
 
-_TRUSTED = TrustedAuthors(human=("human",), agents=("agent",))
+_TRUSTED = TrustedAuthors(
+    human=("human",), agents=("agent",), orgs={"o": OrgConfig("o-automation")}
+)
+_CREATED = "2026-11-01T09:30:00Z"
+_EDITED = "2026-11-02T10:00:00Z"
+# Each test login's account type, as GraphQL returns it.
+_TYPES = {"human": "User", "agent": "Bot", "o-automation": "Bot", "mallory": "User"}
 
 
-def _actor(login: str | None) -> dict[str, str] | None:
-    return None if login is None else {"login": login}
+def _actor(who: str | dict[str, str] | None) -> dict[str, str] | None:
+    """A ``{ __typename login }`` actor; a dict is passed through for an odd account."""
+    if who is None or isinstance(who, dict):
+        return who
+    return {"__typename": _TYPES[who], "login": who}
 
 
 def _issue_node(number: int, repo: str = "o/r") -> dict[str, Any]:
@@ -746,10 +759,10 @@ def _feature_pr(
     *closes: int | tuple[str, int],
     branch: str | None = None,
     body: str | None = None,
-    author: str | None = "human",
+    author: str | dict[str, str] | None = "human",
     editor: str | None = None,
     edits: tuple[str | None, ...] = (),
-    connected: tuple[tuple[str | None, int], ...] = (),
+    connected: tuple[tuple[str | dict[str, str] | None, int], ...] = (),
     closing_total: int | None = None,
 ) -> dict[str, Any]:
     """A PR node with the issue-list fields; each of *closes* is in the body by default."""
@@ -764,9 +777,11 @@ def _feature_pr(
             "body": body,
             "author": _actor(author),
             "editor": _actor(editor),
+            "createdAt": _CREATED,
+            "lastEditedAt": None if editor is None else _EDITED,
             "userContentEdits": {
-                "totalCount": len(edits),
-                "nodes": [{"editor": _actor(e)} for e in edits],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                "nodes": [{"editedAt": _EDITED, "editor": _actor(e)} for e in edits],
             },
             "closingIssuesReferences": {
                 "totalCount": len(refs) if closing_total is None else closing_total,
@@ -778,7 +793,12 @@ def _feature_pr(
                 "filteredCount": len(connected),
                 "totalCount": len(connected) + _UNFILTERED,
                 "nodes": [
-                    {"actor": _actor(actor), "subject": _issue_node(issue), "source": {}}
+                    {
+                        "actor": _actor(actor),
+                        "createdAt": _EDITED,
+                        "subject": _issue_node(issue),
+                        "source": {},
+                    }
                     for actor, issue in connected
                 ],
             },
@@ -823,12 +843,12 @@ def test_issue_list_query_reads_closing_refs_and_history() -> None:
     _, _, graphql = _contents(_linear([s1]), {s1: _assoc(_feature_pr(1, 10))})
     query = graphql.queries[0]
     assert "closingIssuesReferences(first: 20, userLinkedOnly: false)" in query
-    assert "userContentEdits(first: 100)" in query
+    assert trust.BODY_FIELDS in query
     assert "timelineItems(itemTypes: [CONNECTED_EVENT], first: 100)" in query
     timeline = query[query.index("timelineItems(") : query.index("... on ConnectedEvent")]
     assert "filteredCount" in timeline
     assert "totalCount" not in timeline
-    assert "author { login }" in query
+    assert "actor { __typename login } createdAt" in query
 
 
 def test_pending_release_query_reads_no_closing_refs() -> None:
@@ -969,7 +989,6 @@ def test_issue_list_empty_is_valid(capsys: pytest.CaptureFixture[str]) -> None:
     ("connection", "count", "message"),
     [
         ("closingIssuesReferences", "totalCount", "closingIssuesReferences of #1 truncated"),
-        ("userContentEdits", "totalCount", "userContentEdits of #1 truncated"),
         ("timelineItems", "filteredCount", "connected events of #1 truncated"),
     ],
 )
@@ -992,7 +1011,7 @@ def test_closing_refs_malformed_node_raises() -> None:
     s1 = _sha(1)
     node = _feature_pr(1, 10)
     node["body"] = None
-    with pytest.raises(PendingReleaseError, match="body of #1 is not a string"):
+    with pytest.raises(PendingReleaseError, match="the pr body has no usable body"):
         _contents(_linear([s1]), {s1: _assoc(node)})
 
 
@@ -1015,7 +1034,73 @@ def test_trusted_closing_refs_ignores_pr_on_a_connected_side() -> None:
     events[0]["source"] = {}
     events.append({"actor": _actor("mallory"), "subject": {}, "source": None})
     cast("dict[str, Any]", node["timelineItems"])["filteredCount"] = 2
-    assert trusted_closing_refs(node, {"human"}) == ((10,), [])
+    assert trusted_closing_refs(node, repo="o/r", authors=_TRUSTED) == ((10,), [])
+
+
+def _refs(node: dict[str, Any], **kwargs: Any) -> tuple[tuple[int, ...], list[trust.Skipped]]:
+    return trusted_closing_refs(node, repo="o/r", authors=_TRUSTED, **kwargs)
+
+
+def test_closing_refs_exclude_automation_by_default() -> None:
+    """#1440's parameters: human and agents only, never the org's automation App."""
+    by_body = _feature_pr(1, 10, author="o-automation")
+    issues, skipped = _refs(by_body)
+    assert issues == ()
+    assert skipped == [
+        trust.Skipped("o/r", 1, "pr", "o-automation", _CREATED, "body", trust.NOT_ACCEPTED)
+    ]
+    by_hand = _feature_pr(2, 11, body="No closing line.", connected=(("o-automation", 11),))
+    issues, skipped = _refs(by_hand)
+    assert issues == ()
+    assert [(s.kind, s.login, s.field, s.cause) for s in skipped] == [
+        ("event", "o-automation", "link to #11", trust.NOT_ACCEPTED)
+    ]
+    assert _refs(by_body, roles=trust.ALL_ROLES) == ((10,), [])
+    assert _refs(by_hand, roles=trust.ALL_ROLES) == ((11,), [])
+
+
+def test_closing_refs_reject_user_named_like_app() -> None:
+    """A role match with the wrong account type is never trusted (spec §5.1)."""
+    impostor = {"__typename": "User", "login": "agent"}
+    issues, skipped = _refs(_feature_pr(1, 10, author=impostor))
+    assert issues == ()
+    assert [(s.login, s.cause) for s in skipped] == [("agent", trust.WRONG_TYPE)]
+    linked = _feature_pr(2, 11, body="No closing line.", connected=((impostor, 11),))
+    assert _refs(linked)[0] == ()
+
+
+def test_closing_refs_never_parse_an_untrusted_body(capsys: pytest.CaptureFixture[str]) -> None:
+    s1 = _sha(1)
+    body = "Closes #10\nSPAM-MARKER-TEXT [here](https://example.invalid/a)"
+    nodes = {s1: _assoc(_feature_pr(1, 10, body=body, author="mallory"))}
+    _, issues, _ = _contents(_linear([s1]), nodes)
+    assert issues == ()
+    err = capsys.readouterr().err
+    assert "#1: closing reference #10 not counted: its body's history includes untrusted" in err
+    assert "mallory (untrusted)" in err
+    assert "SPAM-MARKER-TEXT" not in err
+
+
+def test_trusted_closing_refs_unpaged_raises() -> None:
+    """A body edit history with a next page is incomplete: a read failure, never trusted."""
+    node = _feature_pr(1, 10)
+    node["userContentEdits"]["pageInfo"] = {"hasNextPage": True, "endCursor": "more"}
+    with pytest.raises(trust.TrustReadError, match="edits of the body are not read in full"):
+        _refs(node)
+    s1 = _sha(1)
+    with pytest.raises(PendingReleaseError, match="edits of the body are not read in full"):
+        _contents(_linear([s1]), {s1: _assoc(node)})
+
+
+def test_trusted_closing_refs_missing_typename_raises() -> None:
+    node = _feature_pr(1, 10, body="No closing line.", connected=(({"login": "human"}, 10),))
+    with pytest.raises(trust.TrustReadError, match="has no __typename"):
+        _refs(node)
+
+
+def test_trusted_closing_refs_refuse_a_pr_of_another_repo() -> None:
+    with pytest.raises(PendingReleaseError, match="PR #1 is in o/r, not x/y"):
+        trusted_closing_refs(_feature_pr(1, 10), repo="x/y", authors=_TRUSTED)
 
 
 # --- gather_issue_list: a range pinned at both ends (#4878) -------------------

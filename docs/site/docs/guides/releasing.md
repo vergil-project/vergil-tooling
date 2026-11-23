@@ -1187,13 +1187,16 @@ Only a trusted closing reference counts:
 - one a closing line in the PR body names (`Closes`, `Close` or
   `Closed`, the keywords the fleet's linkage rules sanction), while
   every identity in the body's history (its author, its last editor
-  and every earlier editor) is a trusted author (`human` or `agents`
-  of `vrg-trusted-authors`); or
-- one linked to the PR by hand, when every identity that linked it is
-  a trusted author.
+  and every earlier editor) holds the `human` or `agents` role, as the
+  trust layer judges it (a login of `vrg-trusted-authors` with the
+  account type of its role; an org's automation App does not count); or
+- one linked to the PR by hand, when every identity that linked it
+  holds one of those roles.
 
-Any other closing reference contributes no issue, and `preflight`
-names it, with its PR and the reason, in a `WARNING:` line. A release
+A PR body with any other identity in its history is never parsed. Any
+other closing reference contributes no issue, and `preflight` names it,
+with its PR and the reason (the untrusted identities by login and
+cause), in a `WARNING:` line. A release
 whose PRs close no issues has an empty list, which is valid. The
 trusted authors failing to load, or any of the reads failing or coming
 back truncated, refuses the release like any other incomplete
@@ -1225,10 +1228,12 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 - A release that supersedes another adds a `- Supersedes: vX.Y.Z` line
   to the record on each issue it absorbed from it (see
   [Superseding a release](#superseding-a-release)).
-- A record counts only when its comment's author and last editor are
-  both `human` logins of `vrg-trusted-authors`. A record marker in a
-  comment by any other identity, or last edited by one, never counts:
-  the stage names it in a `warning:` line and ignores it.
+- A record counts only when its comment's author and last editor both
+  hold the `human` role: a `human` login of `vrg-trusted-authors` whose
+  account is a GitHub user, as the trust layer judges it. Any other
+  comment, an agent's included, is never read for a record: the stage
+  reports it on stderr, by issue, login, time and comment only (counts
+  by cause under GitHub Actions), and ignores it.
 - Before posting on an issue, the stage reads all its comments, every
   page, for a counting record, and records the issue as posted in the
   state block once it has found or posted one. A run interrupted partway
@@ -1249,28 +1254,32 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
 The state block is trusted only while the tracking issue is the human's.
 Every time `vrg-release` reads the state block, and again in the read
 before each write of it, it first locks the issue if it is not locked
-(an issue inherited from an older run included), then reads, in one
-paginated GraphQL query, every identity on the issue, and checks them
-against the `human` logins of
-[`vrg-trusted-authors`](../reference/cli-tools-overview.md#vrg-trusted-authors):
+(an issue inherited from an older run included), then reads every
+identity on the issue through the trust layer, every page, and accepts
+only the `human` role: a `human` login of
+[`vrg-trusted-authors`](../reference/cli-tools-overview.md#vrg-trusted-authors)
+whose account is a GitHub user.
 
 - **The identities that can change the state:** the issue's author,
   the body's last editor and every editor in its edit history, and
-  every actor that closed or reopened the issue. Each must be a `human`
-  login. Any other identity, an agent or a deleted account (`ghost`)
-  included, stops the run before it writes anything, with an error
-  starting `suspected security breach on tracking issue #<N>:` that
-  names the identity and what it did. The failure is not commented on
+  every actor that closed or reopened the issue. Each must hold the
+  `human` role. Any other identity, an agent, a deleted account (`ghost`)
+  or an account of the wrong type (an App named like the human) included,
+  stops the run before it writes anything, with an error starting
+  `suspected security breach on tracking issue #<N>:` that names the
+  identity, what it did and why it holds no role (`untrusted`,
+  `not-accepted`, `deleted` or `wrong-type`). The failure is not commented on
   the issue. Inspect the issue's edit history and events, but do not
   try to clean it up: GitHub keeps the editor of a body edit even once
   its revision is deleted, and keeps the issue's close and reopen
   events, so the issue can never pass the check again and the release
   can never be resumed. Replace the release instead, as
   [A breached tracking issue](#a-breached-tracking-issue) says.
-- **Other traces** cannot change the state: a comment, a
-  cross-reference, a mention, a subscription, or a label added or
-  removed by another identity. Each is printed as a warning, once per
-  run, and the run carries on.
+- **Other traces** cannot change the state: a comment or an edit of
+  one, a cross-reference, a mention, a subscription, or a label added or
+  removed by another identity. Each is printed as a warning naming the
+  identity and what it did, never its text, once per run, and the run
+  carries on.
 
 A failed read of the trusted authors or of the issue's identities, or
 a response that cannot be read in full, stops the run with the call

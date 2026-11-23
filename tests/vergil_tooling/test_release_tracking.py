@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import trust
 from vergil_tooling.lib.pending_release import (
     ChangeKind,
     PendingChange,
@@ -20,6 +21,7 @@ from vergil_tooling.lib.release import checklist, guard, state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
+    _human_logins,
     _truncate_for_comment,
     _write_issue_body,
     close_tracking_issue,
@@ -52,21 +54,19 @@ def _ctx_with_issue() -> ReleaseContext:
     return ctx
 
 
-_HUMAN_ONLY = guard.IssueIdentities(author="human", editors=("human",), state_actors=(), traces=())
+_AUTHORS = TrustedAuthors(human=("human",), agents=("agent",))
+_AGENT_EDIT = guard.TrackingIssueBreach("agent", "edited the body", number=42)
 
 
 @pytest.fixture(autouse=True)
 def guard_calls() -> Any:
     """The tracking issue's guard, passing by default: locked, and human-only identities."""
     with (
-        patch(
-            _MOD + ".trusted_authors.load_trusted_authors",
-            return_value=TrustedAuthors(human=("human",), agents=("agent",)),
-        ),
+        patch(_MOD + ".trusted_authors.load_trusted_authors", return_value=_AUTHORS),
         patch(_MOD + ".guard.ensure_locked") as locked,
-        patch(_MOD + ".guard.read_identities", return_value=_HUMAN_ONLY) as identities,
+        patch(_MOD + ".guard.check_tracking_issue", return_value=[]) as check,
     ):
-        yield {"ensure_locked": locked, "read_identities": identities}
+        yield {"ensure_locked": locked, "check_tracking_issue": check}
 
 
 def test_read_issue_body_queries_gh() -> None:
@@ -378,15 +378,13 @@ def test_read_state_locks_then_checks_the_identities(guard_calls: dict[str, Magi
     with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)):
         assert read_state(ctx) == block
     guard_calls["ensure_locked"].assert_called_once_with("owner/repo", 42)
-    guard_calls["read_identities"].assert_called_once_with("owner/repo", 42)
+    guard_calls["check_tracking_issue"].assert_called_once_with("owner/repo", 42, authors=_AUTHORS)
 
 
 def test_read_state_stops_before_any_write(guard_calls: dict[str, MagicMock]) -> None:
     ctx = _ctx_with_issue()
     body, _ = _state_body()
-    guard_calls["read_identities"].return_value = dataclasses.replace(
-        _HUMAN_ONLY, editors=("human", "agent")
-    )
+    guard_calls["check_tracking_issue"].side_effect = _AGENT_EDIT
     read, run = _gh_calls(body)
     with (
         patch(_MOD + ".github.read_output", read),
@@ -412,9 +410,7 @@ def test_write_state_stops_on_edit_between_read_and_write(
     with patch(_MOD + ".github.read_output", read), patch(_MOD + ".github.run", run):
         assert read_state(ctx) == block
         # An agent edits the body after the guarded read.
-        guard_calls["read_identities"].return_value = dataclasses.replace(
-            _HUMAN_ONLY, editors=("human", "agent")
-        )
+        guard_calls["check_tracking_issue"].side_effect = _AGENT_EDIT
         new = dataclasses.replace(block, done=("prepare",))
         with pytest.raises(guard.TrackingIssueBreach, match="agent edited the body"):
             write_state(ctx, new)
@@ -431,7 +427,7 @@ def test_write_state_runs_the_guard(guard_calls: dict[str, MagicMock]) -> None:
     ):
         write_state(ctx, block)
     guard_calls["ensure_locked"].assert_called_once_with("owner/repo", 42)
-    guard_calls["read_identities"].assert_called_once_with("owner/repo", 42)
+    guard_calls["check_tracking_issue"].assert_called_once_with("owner/repo", 42, authors=_AUTHORS)
     write.assert_called_once()
 
 
@@ -440,13 +436,15 @@ def test_read_state_warns_once_per_run(
 ) -> None:
     ctx = _ctx_with_issue()
     body, _ = _state_body()
-    guard_calls["read_identities"].return_value = dataclasses.replace(
-        _HUMAN_ONLY, traces=(("agent", "commented"), ("human", "commented"))
-    )
+    guard_calls["check_tracking_issue"].return_value = ["agent commented"]
     with patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)):
         read_state(ctx)
         read_state(ctx)
     assert capsys.readouterr().err == "warning: tracking issue #42: agent commented\n"
+
+
+def test_human_logins_are_the_configured_humans() -> None:
+    assert _human_logins() == ("human",)
 
 
 @pytest.mark.parametrize(
@@ -465,21 +463,24 @@ def test_read_state_trusted_authors_failure_raises(
     ):
         read_state(ctx)
     assert info.value.command == "vrg-trusted-authors"
-    guard_calls["read_identities"].assert_not_called()
+    guard_calls["check_tracking_issue"].assert_not_called()
     assert ctx.state is None
 
 
 def test_read_state_identity_read_failure_raises(guard_calls: dict[str, MagicMock]) -> None:
     ctx = _ctx_with_issue()
     body, _ = _state_body()
-    guard_calls["read_identities"].side_effect = subprocess.CalledProcessError(
-        1, ["gh"], stderr="HTTP 502"
+    guard_calls["check_tracking_issue"].side_effect = trust.TrustReadError(
+        "read_issue owner/repo#42", "the GraphQL call failed: HTTP 502"
     )
     with (
         patch(_MOD + ".github.read_output", return_value=_issue_json("release: 2.1.0", body)),
-        pytest.raises(subprocess.CalledProcessError),
+        pytest.raises(ReleaseError, match="Cannot read who changed tracking issue #42") as info,
     ):
         read_state(ctx)
+    assert info.value.command == "check_tracking_issue"
+    assert info.value.detail is not None
+    assert "HTTP 502" in info.value.detail
     assert ctx.state is None
 
 

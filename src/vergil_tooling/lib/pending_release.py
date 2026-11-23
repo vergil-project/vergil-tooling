@@ -41,18 +41,19 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, trust
 from vergil_tooling.lib.linkage import LINKAGE_RE
 from vergil_tooling.lib.process_errors import failure_message
 from vergil_tooling.lib.release.state import IssueEntry
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
-    bare_login,
     load_trusted_authors,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
+
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # The release branch; ``vrg-release`` hardcodes it too (spec §6).
 RELEASE_BRANCH = "main"
@@ -76,10 +77,10 @@ _GRAPHQL_CHUNK = 50
 # truncated answer and an error.
 _PR_LIMIT = 5
 _LABEL_LIMIT = 20
-# The connections a release's issue list reads per PR: its closing references,
-# its body's edit history and the issues linked to it by hand.
+# The connections a release's issue list reads per PR: its closing references
+# and the issues linked to it by hand. Its body's edit history is read through
+# trust.BODY_FIELDS, which pages it.
 _CLOSING_LIMIT = 20
-_EDIT_LIMIT = 100
 _CONNECTED_LIMIT = 100
 
 # The integration branch a release is cut from, and the head-branch prefix of
@@ -370,10 +371,7 @@ _LINKED_ISSUE = "... on Issue { number repository { nameWithOwner } }"
 # ``vrg-release-record check`` asks for too.
 CLOSING_FIELDS = f"""
           repository {{ nameWithOwner }}
-          body
-          author {{ login }}
-          editor {{ login }}
-          userContentEdits(first: {_EDIT_LIMIT}) {{ totalCount nodes {{ editor {{ login }} }} }}
+          {trust.BODY_FIELDS}
           closingIssuesReferences(first: {_CLOSING_LIMIT}, userLinkedOnly: false) {{
             totalCount nodes {{ number repository {{ nameWithOwner }} }}
           }}
@@ -381,7 +379,8 @@ CLOSING_FIELDS = f"""
             filteredCount
             nodes {{
               ... on ConnectedEvent {{
-                actor {{ login }} subject {{ {_LINKED_ISSUE} }} source {{ {_LINKED_ISSUE} }}
+                actor {{ __typename login }} createdAt
+                subject {{ {_LINKED_ISSUE} }} source {{ {_LINKED_ISSUE} }}
               }}
             }}
           }}"""
@@ -554,16 +553,13 @@ def _gather(
 # How a login that is absent (a deleted account) is named in a warning.
 _NO_LOGIN = "(no login)"
 
-
-def _login(actor: object) -> str:
-    """The bare login of a GraphQL actor, or ``""`` for none (a deleted account)."""
-    if actor is None:
-        return ""
-    return bare_login(_str(_obj(actor, "actor")["login"], "actor login"))
+# The roles whose closing references a release counts (spec §6.1 of epic
+# vergil-project/.github#1467: #1440's own parameters).
+CLOSING_ROLES: frozenset[trust.Role] = frozenset({trust.Role.HUMAN, trust.Role.AGENTS})
 
 
-def _names(logins: Iterable[str]) -> str:
-    return ", ".join(sorted({login or _NO_LOGIN for login in logins}))
+def _names(skipped: Iterable[trust.Skipped]) -> str:
+    return ", ".join(sorted({f"{item.login or _NO_LOGIN} ({item.cause})" for item in skipped}))
 
 
 def _linked_issue(side: object, what: str) -> tuple[str, int] | None:
@@ -578,65 +574,90 @@ def _linked_issue(side: object, what: str) -> tuple[str, int] | None:
 
 
 def trusted_closing_refs(
-    pr: Mapping[str, object], trusted: Collection[str]
-) -> tuple[tuple[int, ...], list[str]]:
-    """The issue numbers PR node *pr* closes by a trusted reference, and a warning for each other.
+    pr: Mapping[str, object],
+    *,
+    repo: str,
+    roles: frozenset[trust.Role] = CLOSING_ROLES,
+    authors: TrustedAuthors,
+) -> tuple[tuple[int, ...], list[trust.Skipped]]:
+    """The issue numbers PR node *pr* of *repo* closes by a trusted reference, and the skips.
 
-    *pr* is a PR's GraphQL node with the fields of ``CLOSING_FIELDS``;
-    *trusted* holds bare logins. A closing reference counts only when it is
-    in the PR's own repo and either a sanctioned closing line in the body
-    names it (:data:`~vergil_tooling.lib.linkage.LINKAGE_RE`'s close family)
-    while every identity in the body's history (its author, its last editor
-    and every editor in ``userContentEdits``) is trusted, or it was linked by
-    hand and every actor that linked it is trusted. Any other reference
-    contributes no issue and is named in a warning (spec §4.1 of epic
+    *pr* is a PR's GraphQL node with the fields of ``CLOSING_FIELDS``. A
+    closing reference counts only when it is in *repo* and either a
+    sanctioned closing line in the body names it
+    (:data:`~vergil_tooling.lib.linkage.LINKAGE_RE`'s close family) while the
+    trust layer trusts the body (its author, its last editor and every editor
+    in ``userContentEdits`` hold a role in *roles*:
+    :func:`~vergil_tooling.lib.trust.judge_body`), or it was linked by hand
+    and every actor that linked it holds a role in *roles*. An untrusted body
+    is never parsed. The second value holds a
+    :class:`~vergil_tooling.lib.trust.Skipped` record for an untrusted body
+    (field ``body``) and for each untrusted hand link (kind ``event``, field
+    ``link to #<N>``), metadata only (spec §4.1 of epic
     vergil-project/.github#1440).
 
-    Raises :class:`PendingReleaseError` when a connection is truncated, and
-    :class:`TypeError` or :class:`KeyError` on a malformed node.
+    Raises :class:`PendingReleaseError` when a connection is truncated or *pr*
+    is not in *repo*, :class:`~vergil_tooling.lib.trust.TrustReadError` when
+    an identity's fields are missing or the body's edit history is not read
+    in full, and :class:`TypeError` or :class:`KeyError` on a malformed node.
     """
-    return _closing_refs(pr, trusted)
+    issues, skipped, _ = _closing_refs(pr, repo=repo, roles=roles, authors=authors)
+    return issues, skipped
 
 
 def _closing_refs(
-    pr: Mapping[str, object], trusted: Collection[str]
-) -> tuple[tuple[int, ...], list[str]]:
-    """The body of :func:`trusted_closing_refs`, which :func:`_issue_list` calls."""
+    pr: Mapping[str, object],
+    *,
+    repo: str,
+    roles: frozenset[trust.Role],
+    authors: TrustedAuthors,
+) -> tuple[tuple[int, ...], list[trust.Skipped], list[str]]:
+    """:func:`trusted_closing_refs`, and a warning for each reference it does not count."""
     number = _int(pr["number"], "PR number")
-    repo = _str(_obj(pr["repository"], f"repository of #{number}")["nameWithOwner"], "PR repo")
+    pr_repo = _str(_obj(pr["repository"], f"repository of #{number}")["nameWithOwner"], "PR repo")
+    if pr_repo.lower() != repo.lower():
+        raise _error(f"PR #{number} is in {pr_repo}, not {repo}")
     refs = _complete_nodes(
         _obj(pr["closingIssuesReferences"], "closingIssuesReferences"),
         f"closingIssuesReferences of #{number}",
-    )
-    edits = _complete_nodes(
-        _obj(pr["userContentEdits"], "userContentEdits"), f"userContentEdits of #{number}"
     )
     events = _complete_nodes(
         _obj(pr["timelineItems"], "timelineItems"),
         f"connected events of #{number}",
         count="filteredCount",
     )
+    org = repo.partition("/")[0]
+    call = f"trusted_closing_refs {repo}#{number}"
 
-    history = [_login(pr["author"]), *(_login(edit["editor"]) for edit in edits)]
-    if pr["editor"] is not None:
-        history.append(_login(pr["editor"]))
-    untrusted_body = [login for login in history if login not in trusted]
+    _, body_skip = trust.judge_body(
+        pr, repo=repo, number=number, kind="pr", roles=roles, authors=authors
+    )
+    named: set[int] = set()
+    if body_skip is None:
+        named = {
+            int(match["number"])
+            for match in LINKAGE_RE.finditer(_str(pr["body"], f"body of #{number}"))
+            if match["keyword"].lower() != "ref"
+            and (match["repo"] is None or match["repo"].lower() == repo.lower())
+        }
 
-    body = _str(pr["body"], f"body of #{number}")
-    named = {
-        int(match["number"])
-        for match in LINKAGE_RE.finditer(body)
-        if match["keyword"].lower() != "ref"
-        and (match["repo"] is None or match["repo"].lower() == repo.lower())
-    }
-
-    linked_by: dict[int, list[str]] = {}
+    # Each issue linked by hand: every actor that linked it, and the untrusted ones.
+    linked_by: dict[int, list[trust.Skipped | None]] = {}
     for event in events:
-        actor = _login(event["actor"])
+        actor = trust.identity(event["actor"], call=call, what="a connected event")
+        judgement = trust.judge_identity(actor, org=org, roles=roles, authors=authors)
         for side in ("subject", "source"):
             linked = _linked_issue(event[side], f"connected event {side} of #{number}")
-            if linked is not None and linked[0].lower() == repo.lower():
-                linked_by.setdefault(linked[1], []).append(actor)
+            if linked is None or linked[0].lower() != repo.lower():
+                continue
+            skip = None
+            if judgement.role is None:
+                login = None if actor.login is None else trust.normalise_login(actor.login)
+                at = _str(event["createdAt"], f"connected event time of #{number}")
+                skip = trust.Skipped(
+                    repo, number, "event", login, at, f"link to #{linked[1]}", str(judgement.cause)
+                )
+            linked_by.setdefault(linked[1], []).append(skip)
 
     counted: set[int] = set()
     warnings: list[str] = []
@@ -648,28 +669,32 @@ def _closing_refs(
                 f"#{number}: closing reference {ref_repo}#{issue} is in another repo; ignored"
             )
             continue
-        from_body = issue in named and not untrusted_body
         linkers = linked_by.get(issue, [])
-        by_hand = bool(linkers) and all(login in trusted for login in linkers)
-        if from_body or by_hand:
+        untrusted = [skip for skip in linkers if skip is not None]
+        if issue in named or (linkers and not untrusted):
             counted.add(issue)
             continue
         reasons = []
-        if issue in named:
-            reasons.append(f"its body's history includes untrusted {_names(untrusted_body)}")
-        if linkers:
-            untrusted = [login for login in linkers if login not in trusted]
+        if body_skip is not None:
+            reasons.append(f"its body's history includes untrusted {_names([body_skip])}")
+        if untrusted:
             reasons.append(f"it was linked by hand by untrusted {_names(untrusted)}")
         if not reasons:
             reasons.append("no closing line in the body names it and no one linked it by hand")
         warnings.append(f"#{number}: closing reference #{issue} not counted: {'; '.join(reasons)}")
-    return tuple(sorted(counted)), warnings
+    skipped = [] if body_skip is None else [body_skip]
+    skipped += [skip for skips in linked_by.values() for skip in skips if skip is not None]
+    return tuple(sorted(counted)), skipped, warnings
 
 
 def _issue_list(
-    repo: str, prs: Iterable[_PullRequest | None], trusted: Collection[str]
+    repo: str, prs: Iterable[_PullRequest | None], authors: TrustedAuthors
 ) -> tuple[tuple[IssueEntry, ...], list[str]]:
-    """Each issue the ``feature/`` PRs among *prs* close, by number, with every closing PR."""
+    """Each issue the ``feature/`` PRs among *prs* close, by number, with every closing PR.
+
+    The second value holds a warning for each closing reference that does not
+    count, naming each untrusted identity by login and cause only.
+    """
     features = {
         pr.number: pr
         for pr in prs
@@ -678,7 +703,9 @@ def _issue_list(
     closed_by: dict[int, set[int]] = {}
     warnings: list[str] = []
     for number in sorted(features):
-        issues, found = _closing_refs(features[number].node, trusted)
+        issues, _, found = _closing_refs(
+            features[number].node, repo=repo, roles=CLOSING_ROLES, authors=authors
+        )
         warnings.extend(found)
         for issue in issues:
             closed_by.setdefault(issue, set()).add(number)
@@ -689,13 +716,12 @@ def _issue_list(
     return entries, warnings
 
 
-def _trusted_logins() -> frozenset[str]:
-    """Every ``human`` and ``agents`` login; a failed load is an error, never an empty set."""
+def _trusted_authors() -> TrustedAuthors:
+    """The ``vrg-trusted-authors`` configuration; a failed load is an error, never empty."""
     try:
-        authors = load_trusted_authors()
+        return load_trusted_authors()
     except (TrustedAuthorsNotConfiguredError, ValueError, OSError) as exc:
         raise _error(f"could not load the trusted authors: {exc}") from exc
-    return frozenset((*authors.human, *authors.agents))
 
 
 def _process_reason(exc: subprocess.CalledProcessError) -> str:
@@ -708,6 +734,7 @@ def _process_reason(exc: subprocess.CalledProcessError) -> str:
 # Every exception a remote lookup can raise that :func:`lookup_failure_reason`
 # names. Anything else is a bug and propagates.
 LOOKUP_ERRORS = (
+    trust.TrustReadError,
     github.AppAuthError,
     github.NoInstallationError,
     subprocess.CalledProcessError,
@@ -778,10 +805,10 @@ def gather_release_contents(
     Read-only. Raises :class:`PendingReleaseError` when the trusted authors
     cannot be loaded or any lookup fails or is incomplete.
     """
-    trusted = _trusted_logins()
+    authors = _trusted_authors()
     try:
         pending, repo, prs = _gather(_RELEASE_INTEGRATION, remote, cut, closing=True)
-        issues, warnings = _issue_list(repo, prs.values(), trusted)
+        issues, warnings = _issue_list(repo, prs.values(), authors)
     except PendingReleaseError:
         raise
     except LOOKUP_ERRORS as exc:
@@ -808,7 +835,7 @@ def gather_issue_list(*, base: str, head: str, remote: str = "origin") -> tuple[
     for what, sha in (("base", base), ("head", head)):
         if not _SHA_RE.match(sha):
             raise _error(f"the {what} of the issue-list range is not a full SHA: {sha!r}")
-    trusted = _trusted_logins()
+    authors = _trusted_authors()
     try:
         repo = github.github_remote_repo(git.remote_url(remote))
         if repo is None:
@@ -817,7 +844,7 @@ def gather_issue_list(*, base: str, head: str, remote: str = "origin") -> tuple[
         chain = first_parent_chain(commits, head)
         shas = [cast("str", commit["sha"]) for commit in chain]
         prs = _prs_by_sha(repo, shas, _RELEASE_INTEGRATION, closing=True)
-        issues, warnings = _issue_list(repo, prs.values(), trusted)
+        issues, warnings = _issue_list(repo, prs.values(), authors)
     except PendingReleaseError:
         raise
     except LOOKUP_ERRORS as exc:

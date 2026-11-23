@@ -19,7 +19,10 @@ from vergil_tooling.lib.trust import (
     Skipped,
     TrustReadError,
     UntrustedContentError,
+    identity,
+    judge_body,
     judge_comments,
+    judge_identity,
     read_issue,
     report_skipped,
     role_of,
@@ -622,6 +625,79 @@ def test_judge_comments_missing_field_raises() -> None:
 def test_comment_fields_name_every_needed_field() -> None:
     for field in ("id", "fullDatabaseId", "__typename", "editedAt", "lastEditedAt", "hasNextPage"):
         assert field in trust.COMMENT_FIELDS
+
+
+# --- judge_body and judge_identity -------------------------------------------------
+
+
+def _body_node(**overrides: Any) -> dict[str, Any]:
+    node = _item(typename="PullRequest", **overrides)["repository"]["issueOrPullRequest"]
+    del node["comments"]
+    return node
+
+
+def test_judge_body_trusts_a_trusted_body() -> None:
+    node = _body_node(editor=AGENT, edited=True, edits=_edits([AGENT]))
+    assert judge_body(node, repo=REPO, number=7, kind="pr", authors=AUTHORS) == (Role.HUMAN, None)
+
+
+def test_judge_body_reports_an_outsider_edit_metadata_only() -> None:
+    node = _body_node(body=SPAM, editor=HUMAN, edited=True, edits=_edits([OUTSIDER, HUMAN]))
+    role, skipped = judge_body(node, repo=REPO, number=7, kind="pr", authors=AUTHORS)
+    assert role is None
+    assert skipped == Skipped(REPO, 7, "edit", "drive-by", EDITED, "body", trust.UNTRUSTED)
+    assert "SPAM-MARKER-TEXT" not in skipped.describe()
+
+
+def test_judge_body_roles_and_last_editor_rule() -> None:
+    node = _body_node(editor=HUMAN, edited=True, edits=_edits([AGENT, HUMAN]))
+    human = frozenset({Role.HUMAN})
+    role, skipped = judge_body(node, repo=REPO, number=7, kind="pr", roles=human, authors=AUTHORS)
+    assert role is None
+    assert skipped is not None
+    assert (skipped.login, skipped.cause) == ("the-agent", trust.NOT_ACCEPTED)
+    kept = judge_body(
+        node, repo=REPO, number=7, kind="pr", roles=human, editors="last", authors=AUTHORS
+    )
+    assert kept == (Role.HUMAN, None)
+
+
+def test_judge_body_unpaged_edits_raises() -> None:
+    node = _body_node(edits=_edits([HUMAN], cursor="more"))
+    with pytest.raises(TrustReadError, match="edits of the body are not read in full"):
+        judge_body(node, repo=REPO, number=7, kind="pr", authors=AUTHORS)
+
+
+def test_judge_body_missing_typename_raises() -> None:
+    node = _body_node(author={"login": "the-human"})
+    with pytest.raises(TrustReadError, match="has no __typename") as info:
+        judge_body(node, repo=REPO, number=7, kind="pr", authors=AUTHORS)
+    assert info.value.call == f"judge_body {REPO}#7"
+
+
+def test_body_fields_name_every_needed_field() -> None:
+    for field in ("__typename", "body", "createdAt", "editedAt", "lastEditedAt", "hasNextPage"):
+        assert field in trust.BODY_FIELDS
+
+
+def test_judge_identity_narrows_roles() -> None:
+    human = frozenset({Role.HUMAN})
+    agent = Identity("app/the-agent", "Bot")
+    assert judge_identity(agent, org=ORG, authors=AUTHORS) == Judgement(Role.AGENTS, None)
+    assert judge_identity(agent, org=ORG, roles=human, authors=AUTHORS) == Judgement(
+        None, trust.NOT_ACCEPTED
+    )
+    impostor = Identity("the-human", "Bot")
+    assert judge_identity(impostor, org=ORG, roles=human, authors=AUTHORS) == Judgement(
+        None, trust.WRONG_TYPE
+    )
+
+
+def test_identity_parses_an_actor() -> None:
+    assert identity(HUMAN, call="c", what="an actor") == Identity("the-human", "User")
+    assert identity(None, call="c", what="an actor") == Identity(None, None)
+    with pytest.raises(TrustReadError, match="has no __typename"):
+        identity({"login": "the-human"}, call="c", what="an actor")
 
 
 # --- errors and reports -----------------------------------------------------------

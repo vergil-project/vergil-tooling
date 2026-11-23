@@ -28,12 +28,16 @@ vrg-release-record check OWNER/REPO#N
 
 ## What it does
 
-1. Reads every comment on the task, page by page.
+1. Reads every comment on the task, page by page, through the trust
+   layer.
 2. Finds the records of the task's repo. A record counts only when its
-   comment's author and, if it was edited, its last editor are `human`
-   logins of `vrg-trusted-authors`. A record marker on a comment by any
-   other identity, or last edited by one, never counts and is named in a
-   warning. A record marker of another repo is ignored with a warning.
+   comment's author and, if it was edited, its last editor hold the
+   `human` role: a `human` login of `vrg-trusted-authors` whose account
+   is a GitHub user. Any other comment, an agent's included, is never
+   read for a record: it is reported on stderr by login, time and
+   comment only (counts by cause under GitHub Actions), and is not in
+   `warnings`. A record marker of another repo is ignored with a
+   warning.
 3. Uses the newest counting record, by version (`v2.1.10` is newer than
    `v2.1.9`). Each other counting record is named in a warning. With no
    counting record, the verdict is `none`.
@@ -77,7 +81,7 @@ One JSON object on stdout:
 | `verdict` | `pass`, `fail` or `none` |
 | `record` | The record used: its version, its tag and the tag's GitHub Release URL; `null` for `none` |
 | `ancestry` | `pass` or `fail`; `null` for `none` |
-| `warnings` | Every record that does not count, every other counting record, every closing PR that does not count, and why the ancestry check failed |
+| `warnings` | Every record marker of another repo, every other counting record, every closing PR that does not count, and why the ancestry check failed |
 
 ## Exit codes
 
