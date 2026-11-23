@@ -892,7 +892,10 @@ skipped. What it leaves behind depends on where it failed:
 If a fix task for the same version and failure kind is already open,
 for example after `vrg-release --resume` re-runs an update whose
 updater failed on a transient error, no second task is filed: the new failure is added
-as a comment on the open task, which is linked as above.
+as a comment on the open task, which is linked as above. Only an open
+task whose body the trust layer trusts is reused: a look-alike task
+opened or edited by an identity with no trusted role is reported on
+stderr, metadata only, and never adopted.
 
 Either way `vrg-release` exits 1, and the failure counts once in its
 summary: the `update-deps` stage fails, and `publish-status` repeats it
@@ -952,6 +955,13 @@ labelled `dependency-update`. For each one:
   preflight refuses, naming each PR and why it blocks. A fix task
   closed without being completed means the update did not land; whether
   to close the PR or fix it is a human decision.
+
+Only trusted content counts toward the gate. The `Fix task:` link is
+read only from a PR body the trust layer trusts, so a PR whose body an
+untrusted identity wrote or edited has no fix task and blocks. A
+completed close clears the gate only when a trusted identity closed the
+fix task: a close by anyone else stops the release before any PR is
+touched, naming who closed it, and the human decides.
 
 Clear a blocking PR by landing its fix task, merging the PR, or closing
 it deliberately. For an urgent release, `--allow-pending-deps` lets the
@@ -1048,6 +1058,10 @@ its recovery:
 - An issue with no state block was opened by older `vrg-release`
   tooling, which `--resume` cannot finish. Finish that release by hand,
   then close the issue.
+
+Only an issue whose body the trust layer trusts counts: a
+`release: X.Y.Z` issue opened or edited by an identity with no trusted
+role is reported on stderr, metadata only, and never blocks the start.
 
 The one exception is `vrg-release --supersede X.Y.Z`, whose check
 passes over release `X.Y.Z`'s own tracking issue, and only it (see

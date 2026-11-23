@@ -18,7 +18,7 @@ the dev-tree override venv.
 | [vrg-git](cli-tools-overview.md#vrg-git) | Policy-enforcing `git` wrapper for agent sessions |
 | [vrg-gh](cli-tools-overview.md#vrg-gh) | Identity-aware `gh` wrapper with a per-identity allowlist |
 | [vrg-whoami](cli-tools-overview.md#vrg-whoami) | Print the resolved identity role or platform |
-| [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh` |
+| [vrg-hook-guard](cli-tools-overview.md#vrg-hook-guard) | Claude Code hook that blocks raw `git` and `gh`, and agents' raw content reads |
 | [vrg-trusted-authors](cli-tools-overview.md#vrg-trusted-authors) | Print the GitHub identities whose issues and comments automation may trust, and the Vergil orgs |
 | [vrg-resolve-tracking-issue](cli-tools-overview.md#vrg-resolve-tracking-issue) | Print a merge commit's tracking issue |
 | [vrg-vm](cli-tools-overview.md#vrg-vm) | Manage the identity agent VMs |
@@ -101,4 +101,4 @@ Run inside dev containers launched by `vrg-container-run`.
 
 | Hook | Purpose |
 | ---- | ------- |
-| [Claude Code Hook Guard](hooks/pre-commit.md) | `PreToolUse` guard that blocks raw `git` and `gh`; also documents the `vrg-commit` branch checks |
+| [Claude Code Hook Guard](hooks/pre-commit.md) | `PreToolUse` guard that blocks raw `git` and `gh`, and agents' raw issue and PR content reads; also documents the `vrg-commit` branch checks |

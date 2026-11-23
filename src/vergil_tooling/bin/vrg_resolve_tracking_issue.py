@@ -17,7 +17,8 @@ PR discovery uses three strategies in order:
 
 The ``--pr`` flag bypasses commit parsing entirely.
 
-Consumed by the ``version-bump-pr`` composite action in vergil-actions.
+No workflow calls it: its former caller, vergil-actions' ``version-bump-pr``
+composite action, has been removed, so it is a manual tool.
 """
 
 from __future__ import annotations

@@ -318,7 +318,10 @@ the first of its common checks. See the
 ### Hook guard
 
 `.claude/hooks/guard.sh` blocks raw `git` and `gh` commands in Claude
-Code agent sessions. It delegates to `vrg-hook-guard` when
+Code agent sessions, and agents' raw `vrg-gh` reads of issue and PR
+content (see
+[Raw content reads](../reference/hooks/pre-commit.md#raw-content-reads)).
+It delegates to `vrg-hook-guard` when
 vergil-tooling is installed and otherwise falls back to a `jq`-based
 hard deny. `vrg-github-repo-init` writes it, executable, from the
 packaged template

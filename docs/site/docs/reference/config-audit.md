@@ -167,6 +167,16 @@ red**, so a non-conforming repo cannot silently persist.
 `vrg-release` also runs `audit` before it releases, so a repo whose
 configuration has drifted cannot release until it is reconciled.
 
+In the org's own `.github` repository only, the same workflow's
+`trusted-authors-check` job runs
+[`vrg-trusted-authors check`](cli-tools-overview.md#vrg-trusted-authors)
+for the whole org, as the automation App: a missing, invalid or not
+`all`-visible `VRG_TRUSTED_AUTHORS` or `VRG_AUTOMATION_APP`, or a
+repository-level variable of either name, turns that run red. It uploads
+the values it read as the `trusted-authors-values` artifact, which the
+morning review compares with `vrg-trusted-authors render` (see
+[Trusted authors](../guides/account-setup.md#trusted-authors)).
+
 ### Settings the identity cannot read
 
 Several GitHub reads need the `administration=read` repository

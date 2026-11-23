@@ -112,7 +112,9 @@ repository that has a `vergil.toml`.
 
 `.claude/hooks/guard.sh`, wired in `.claude/settings.json`, calls
 `vrg-hook-guard`. It blocks raw `git` and `gh` commands and lets
-`vrg-git`, `vrg-gh` and the other `vrg-*` tools through. See the
+`vrg-git`, `vrg-gh` and the other `vrg-*` tools through, but refuses an
+agent's raw `vrg-gh` read of issue or PR content, naming `vrg-issue-read`.
+See the
 [Claude Code Hook Guard reference](../reference/hooks/pre-commit.md).
 
 ### vrg-git

@@ -341,7 +341,10 @@ The project layer allowlists all VRG tools via a single wildcard
 and wires the Claude Code hook guard (`guard.sh`) as a `PreToolUse`
 hook on every `Bash` tool invocation. The hook guard delegates to
 `vrg-hook-guard`, which uses regex matching to block raw `git` and
-`gh` commands while allowing `vrg-git`/`vrg-gh` wrappers through.
+`gh` commands while allowing `vrg-git`/`vrg-gh` wrappers through. For
+an agent identity it also refuses raw `vrg-gh` reads of issue and PR
+content and names `vrg-issue-read` in their place (see
+[Raw content reads](../reference/hooks/pre-commit.md#raw-content-reads)).
 
 This configuration applies to everyone who clones the repo — no
 per-developer setup needed.
@@ -525,7 +528,12 @@ The innermost layer. A `PreToolUse` hook wired in
 `.claude/settings.json` that delegates to `vrg-hook-guard`,
 blocking all raw `git` and `gh` commands via regex matching.
 With layers 1-3 in place, agents cannot reach this layer
-through normal operation.
+through normal operation for raw `git` and `gh`. It is also the
+layer that refuses an agent's raw `vrg-gh` read of issue or PR
+content (a body, comments or reviews), which layers 1 and 2 allow,
+and names `vrg-issue-read`, the trusted read command, in its place.
+That blocklist guards against accidents; the trust layer is what
+keeps untrusted content from driving behaviour.
 
 ### Layer Interaction Matrix
 
@@ -537,6 +545,7 @@ through normal operation.
 | `vrg-gh pr merge` | allowed | rejected | blocked | n/a | **API rejected** (no merge permission) |
 | `gh pr create` | denied | n/a | blocked | n/a | PR created (if layers bypassed) |
 | `gh pr merge` (raw) | denied | n/a | blocked | n/a | **API rejected** (no merge permission) |
+| `vrg-gh issue view <N> --comments` (agent) | allowed | allowed | n/a | blocked, naming `vrg-issue-read` | read allowed (if layers bypassed) |
 | `rm -rf .` | prompts human | n/a | n/a | n/a | n/a |
 | `vrg-git reset --hard` | allowed | rejected on a protected or frozen branch | n/a | n/a | n/a |
 

@@ -139,6 +139,38 @@ call.
   (fixed by
   [vergil-claude-plugin#719](https://github.com/vergil-project/vergil-claude-plugin/pull/719)).
 
+### 4. Anyone can write content that agents and automation read
+
+On a public repository any GitHub account can open an issue, comment,
+edit its own text or open a pull request from a fork. Agents and
+automation read issues, comments, reviews and PRs to decide what to do,
+so that content is input to them. This is documented GitHub behaviour.
+
+- **Seam:** GitHub's open contribution model and Vergil's tools and
+  skills, which act on what they read.
+- **Risk:** content written by an identity with no role steers an
+  agent or a mechanized workflow.
+- **Current mitigation:** the trust rule. Content counts only when an
+  identity with a role wrote it and every editor holds one (the human,
+  the agent Apps, and each org's automation App in its own org; see
+  [Trusted authors](account-setup.md#trusted-authors)). Every
+  behaviour-driving read goes through the trust layer, which reports
+  the rest as metadata only, or stops where the content is
+  load-bearing; a guard test fails on any read outside it (see
+  [Package Architecture](../reference/package-architecture.md#shared-libraries)).
+  Skills read through `vrg-issue-read`, the hook guard refuses agents'
+  raw content reads as a guard against accidents, and the morning
+  review lists untrusted activity from the outsider report
+  (`vrg-epic-audit --untrusted`).
+- **Desired fix:** none beyond the trust rule: the repositories stay
+  public with issues on, so outside content keeps arriving, and the
+  rule is what keeps it from steering anything.
+- **Comparison criterion:** can an alternative restrict who may write
+  issues and comments on a public project?
+- **Status:** open, while the epic's live validation is outstanding.
+- **Tracking:**
+  [vergil-project/.github#1467](https://github.com/vergil-project/.github/issues/1467).
+
 ## Related
 
 - [Permission Model](permission-model.md): the enforcement layers and
