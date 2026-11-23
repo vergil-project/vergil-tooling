@@ -18334,6 +18334,9 @@ which is the complete list of entry points. The
 <li><strong><code>security_records.py</code></strong>: <code>vrg-security-record</code>, including the
   security-records pass of <code>vrg-security-record sync</code> (previewed by the
   read-only <code>vrg-epic-audit</code>).</li>
+<li><strong><code>outsider_report.py</code></strong>: the outsider report of <code>vrg-epic-audit
+  --untrusted</code>, the untrusted activity in a listed org's repos, built on the
+  trust layer (<code>trust.py</code>).</li>
 <li><strong><code>release/</code></strong>: the mechanized release workflow behind <code>vrg-release</code>:
   preflight, prepare, merge, bump, confirm, finalize, handoff, the
   orchestrator, the package-index wait, and the <code>update-deps</code> stage.

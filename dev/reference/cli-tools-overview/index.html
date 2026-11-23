@@ -22721,8 +22721,8 @@ and the ones it would leave open), the ad-hoc and queue-epic drains that
 <code>--close</code> would run, and the
 security-records pass of <code>vrg-security-record sync</code> (<code>--close</code> does not run
 it).</p>
-<p>The org comes from the current repo's <code>origin</code> remote (there is no <code>--org</code>
-flag), and the home audited is that org's <code>.github</code>.</p>
+<p>The org comes from the current repo's <code>origin</code> remote (<code>--org</code> applies to
+<code>--untrusted</code> only), and the home audited is that org's <code>.github</code>.</p>
 <p>Every read and write runs under the audited org's token, wherever the
 command is run from.</p>
 <p><code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
@@ -22737,6 +22737,29 @@ it names must exist, be a proxy and carry a <code>Primary:</code> line naming it
 proxy, its primary must carry the matching <code>Proxy:</code> comment. A link that
 disagrees, cannot be parsed or cannot be read exits 1, with the problems on
 stderr and no JSON, so the retrospective gate stops on it.</p>
+<p><code>--untrusted --since ISO [--org ORG]</code> is the <strong>outsider report</strong>, another
+separate read-only mode, which <code>hoshin start</code> runs. Across the repos of every
+org listed in the Vergil configuration (an <code>[orgs.&lt;org&gt;]</code> stanza), or of
+<code>--org</code> alone, it lists what untrusted accounts did at or after <code>--since</code>:
+issues and PRs they opened, their comments, reviews and inline review
+comments, their edits to trusted bodies and comments, their renames of
+trusted items, and their closes and reopens. Edits, renames and closes come
+first, under <strong>Possible tampering</strong>, then the rest, each newest first, one
+line per item:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>- &lt;time&gt; &lt;kind&gt; &lt;owner&gt;/&lt;repo&gt;#&lt;n&gt; by &lt;login&gt; (&lt;cause&gt;) &lt;url&gt;
+</code></pre></div>
+<p>The cause is the trust layer's: <code>untrusted</code>, <code>deleted</code>, or <code>wrong-type</code> (a
+login that matches a role on an account of the wrong type, so it looks
+trusted but is not). Each line carries metadata and a link only, never the
+untrusted text. Every trust decision is the trust layer's. The items read
+are the org's issues and PRs that GitHub's search finds updated since
+<code>--since</code>, issues and PRs searched separately; each one's comments, reviews
+and close events are then read in full, a few GraphQL calls per item. <code>--since</code> is an
+ISO 8601 date (midnight UTC) or a time with a zone. A read failure, or a
+window in which one search would match more than the 1,000 results GitHub
+returns, exits 1 with nothing on stdout: narrow <code>--since</code>. Under GitHub
+Actions it prints counts by kind only. It writes nothing on GitHub, and each
+org is read under its own App token.</p>
 <p><code>--close</code> applies the fixes, in order:</p>
 <ol>
 <li>Close the drifted tasks and rolled-up epics. Then close each open proxy
@@ -22767,19 +22790,19 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_epic_audit</code> (checks and passes: <code>lib/epic_audit.py</code>; security pass: <code>lib/security_records.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_epic_audit</code> (checks and passes: <code>lib/epic_audit.py</code>; security pass: <code>lib/security_records.py</code>; outsider report: <code>lib/outsider_report.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--window-days N</code> (positive; default 30), <code>--epic REF</code>, <code>--close</code></td>
+<td><code>--window-days N</code> (positive; default 30), <code>--epic REF</code>, <code>--close</code>, <code>--untrusted --since ISO [--org ORG]</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The read-only report's security-records preview needs Repository security advisories: Read; <code>--close</code> needs no advisories access</td>
+<td>Run inside a repo in the target org; GitHub App credentials for that org. <code>--close</code> needs a human identity or <code>VRG_EPIC_SWEEP=1</code>. The read-only report's security-records preview needs Repository security advisories: Read; <code>--close</code> needs no advisories access. <code>--untrusted</code> runs anywhere: it needs the Vergil configuration and App credentials for each listed org it reads</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1</td>
+<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, or an org with no <code>.github</code> home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1. With <code>--untrusted</code>, an <code>--org</code> with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22848,21 +22871,21 @@ cut from, whose age says nothing about the work on it (issue #3828).
 LAST MODIFIED is still shown. A detached worktree whose branch cannot be
 recovered also shows AHEAD 0, because there is no branch to count, and
 keeps its LAST COMMIT.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Main checkout (integration branch: develop)
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>Development
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>Other / unknown
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
-<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
-<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Main checkout (integration branch: develop)
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>CHECKOUT               BRANCH   DIRTY  LAST COMMIT  STATUS
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>mq-gateway-replay-lab  develop  -      23d ago      ok
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>Development
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>WORKTREE                      BRANCH                          PR  STATE  WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>issue-315-deps-security-bump  feature/315-deps-security-bump  -   no-pr  ready     1      -      1h ago       1h ago
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>Other / unknown
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>WORKTREE         BRANCH      PR  STATE     WORKFLOW  AHEAD  DIRTY  LAST COMMIT  LAST MODIFIED
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>tmp-wheel-build  (detached)  -   detached  -         0      -      82d ago      82d ago
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>  note: tmp-wheel-build (detached): detached HEAD — no branch checked out; check out a branch to resume work
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>3 worktrees: main checkout (ok), 1 development, 0 release and dependency machinery, 1 other / unknown.
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>Development: 0 active, 0 needs-attention, 1 stalled (no-pr), 0 cruft (removable). 1 PR prepared.
 </code></pre></div>
 <p><strong>Open PRs on origin with no local worktree.</strong> The section follows the
 worktree sections. Many PRs never touch the local checkout: those that
@@ -22874,11 +22897,11 @@ head branch is a linked worktree's branch. A PR from a fork is never
 matched by branch name, since a fork's branch can share a local name; its
 BRANCH shows as <code>&lt;owner&gt;:&lt;branch&gt;</code>. A VM that shares the file system
 already shows its PRs through its worktrees.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Open PRs on origin with no local worktree
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Open PRs on origin with no local worktree
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>PR    BRANCH                    BASE     TYPE       AUTHOR                     CI       OPENED  TITLE
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>#935  lifecycle/rust-add-1.100  develop  lifecycle  vergil-project-automation  success  6h ago  feat(versions): add rust 1.100
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>#936  lifecycle/rust-drop-1.98  develop  lifecycle  vergil-project-automation  pending  6h ago  feat(versions): drop rust 1.98 (EOL 2026-10-01)
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>2 open PRs with no local worktree: 0 automation PRs, 2 lifecycle PRs, 0 dependency updates, 0 release PRs, 0 other PRs.
 </code></pre></div>
 <ul>
 <li><strong>Rows</strong> come in PR-number order. TYPE is as in Pending release
@@ -22911,12 +22934,12 @@ read from the remote without fetching: the current refs and tags, the
 first-parent commits from the GitHub compare API, and each commit's
 merged PR into the integration branch, by commit SHA (so a batch PR
 rebase-merged as several commits is one row).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Pending release (develop → main): latest release v2.1.303, main moved 4h ago; rolling tag v2.1 → v2.1.303
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>PR     BRANCH                      TYPE     MERGED  TITLE
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>#4251  release/post-2.1.303        release  4h ago  chore(release): back-merge 2.1.303 and bump to 2.1.304
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>#4258  deps/update-2.1.304         deps     4h ago  chore(deps): dependency update for 2.1.304
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>#4252  feature/4249-refuse-ubuntu  feat     1h ago  feat(validate): refuse ubuntu-latest runner labels
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>3 changes pending release: 1 dependency update, 1 release back-merge, 0 automation PRs, 1 other PR.
 </code></pre></div>
 <ul>
 <li><strong>Release line.</strong> It follows the section heading on the same line,
