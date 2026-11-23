@@ -13,13 +13,16 @@ from vergil_tooling.bin import vrg_merge_review_close
 from vergil_tooling.lib import github, identity_mode, trust
 from vergil_tooling.lib.change_fingerprint import change_fingerprint, commit_fingerprint
 from vergil_tooling.lib.identity_mode import IdentityMode
+from vergil_tooling.lib.merge_review import record as record_module
 from vergil_tooling.lib.merge_review.record import (
     NOT_ELIGIBLE_REASONS,
     RECORD_PREFIX,
     Record,
     RecordError,
+    batch_member_change,
     check_outcome,
     closing_body,
+    covered_change,
     parse_record,
     records,
     render_record,
@@ -505,4 +508,84 @@ def test_close_batch_refuses_without_the_previous_issues_commit(
     _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
     assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
     assert "previous issue #6" in capsys.readouterr().err
+    assert poster.posted == []
+
+
+def test_close_batch_refuses_a_merge_commit(
+    repo: Path, poster: Poster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _batch(repo)
+    _git(repo, "checkout", "-q", "-b", "side", "HEAD~1")
+    _commit(repo, "side.txt", "side\n", "a side line")
+    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "merge", "-q", "--no-edit", "--no-ff", "side")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
+    assert "is a merge commit" in capsys.readouterr().err
+    assert poster.posted == []
+
+
+def test_close_refuses_an_unreadable_batch_marker(
+    repo: Path, poster: Poster, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _commit(repo, "a.txt", "one\nTWO\nthree\n", "the change")
+    batch_marker.write_markers(repo, ["#6", "#7"], base_sha=_git(repo, "rev-parse", "HEAD"))
+    batch_marker.marker_path(repo, "#7").write_text("not json")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
+    assert "not valid JSON" in capsys.readouterr().err
+    assert poster.posted == []
+
+
+def test_batch_member_change_refuses_an_unreadable_range(repo: Path) -> None:
+    marker = batch_marker.Marker(issues=["#6", "#7"], base_sha="0" * 40)
+    with pytest.raises(RecordError, match="cannot read the commits"):
+        batch_member_change(repo, marker, "#7", _git(repo, "rev-parse", "HEAD"))
+
+
+def test_batch_member_change_refuses_unparsable_git_output(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(record_module.git, "read_output", lambda *_args: "garbage")
+    marker = batch_marker.Marker(issues=["#6", "#7"], base_sha="0" * 40)
+    with pytest.raises(RecordError, match="cannot parse the git rev-list line"):
+        batch_member_change(repo, marker, "#7", "HEAD")
+
+
+def test_covered_change_refuses_outside_a_repo(tmp_path: Path) -> None:
+    with pytest.raises(RecordError, match="cannot read HEAD"):
+        covered_change(tmp_path, 7, main_root=tmp_path)
+
+
+def test_close_posts_past_another_agent_comment(
+    repo: Path, poster: Poster, items: trust_stubs.FakeItems
+) -> None:
+    _commit(repo, "a.txt", "one\nTWO\nthree\n", "the change")
+    items.items[KEY] = trust_stubs.item(nodes=[trust_stubs.comment(5, "an older note", AGENT)])
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 0
+    assert len(poster.posted) == 1
+
+
+def test_close_reports_a_git_failure(
+    repo: Path, poster: Poster, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom() -> str:
+        raise subprocess.CalledProcessError(128, ["git", "status"])
+
+    monkeypatch.setattr(vrg_merge_review_close.git, "working_tree_status", boom)
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
+    assert "git failed (exit 128): git status" in capsys.readouterr().err
+    assert poster.posted == []
+
+
+def test_close_leaves_a_missing_token_to_the_cli_boundary(
+    repo: Path, poster: Poster, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _commit(repo, "a.txt", "one\nTWO\nthree\n", "the change")
+
+    def no_token(*_args: Any, **_kwargs: Any) -> Any:
+        raise github.MissingGitHubTokenError(4, ("gh", "api"), "", "set GH_TOKEN")
+
+    monkeypatch.setattr(github, "graphql", no_token)
+    with pytest.raises(SystemExit) as exc:
+        _close(repo, f"{ELIGIBLE}\n{ITEMS}")
+    assert exc.value.code == 1
     assert poster.posted == []
