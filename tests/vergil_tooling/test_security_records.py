@@ -3171,3 +3171,16 @@ def test_records_pass_trust_errors_are_one_line_failures(
     assert records_pass("org", apply=True, prog="prog") == 1
     err = capsys.readouterr().err
     assert err == f"prog: security records pass failed: {error}\n"
+
+
+def test_body_skip_finds_the_body_record_among_others() -> None:
+    comment = trust.Skipped("org/tool", 12, "comment", "drive-by", "t", "comment 1", "untrusted")
+    body = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
+    content = trust.IssueContent(None, None, None, (), (comment, body))
+    assert security_records._body_skip(content, "org/tool", 12) is body
+
+
+def test_body_skip_without_a_record_fails_loudly() -> None:
+    content = trust.IssueContent(None, None, None, (), ())
+    with pytest.raises(trust.TrustReadError, match="an untrusted body has no skip record"):
+        security_records._body_skip(content, "org/tool", 12)
