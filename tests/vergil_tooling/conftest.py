@@ -93,6 +93,18 @@ def _hermetic_conan_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv(conan_token.CONAN_AUDIT_TOKEN_ENV, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_gh_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the host's gh version check in every library gh call.
+
+    :func:`github.require_gh` reads the gh on PATH and a cache under
+    ``~/.cache`` (#5046); no test may depend on the host's gh or write a
+    developer's cache. Tests mock the gh calls themselves. ``test_github_gh_version``
+    captures the real check at import, before this fixture patches the module.
+    """
+    monkeypatch.setattr(github, "require_gh", lambda: None)
+
+
 FIXTURE_WINDOW = Path(__file__).parent / "fixtures" / "versions" / "window.json"
 
 

@@ -1,4 +1,4 @@
-"""The minimum gh version vrg-gh needs, and the check that enforces it.
+"""The minimum gh version vergil-tooling needs, and the check that enforces it.
 
 vrg-gh relies on gh features that an old install lacks. The newest of them
 sets the minimum: ``run job-log`` (issue #4597) calls ``gh api
@@ -8,11 +8,13 @@ made ``gh api`` neutralize terminal escape sequences in non-JSON output
 https://github.com/cli/cli/security/advisories/GHSA-3m3g-3wcr-px46). Every
 other gh feature vrg-gh forwards to is older. A gh older than the minimum
 would fail with gh's own unknown-flag error, so :func:`require_minimum`
-refuses first, naming the version required (issue #4613).
+refuses first, naming the version required (issue #4613). vrg-gh calls it
+itself; every other direct gh call in vergil-tooling reaches it through
+:func:`vergil_tooling.lib.github.require_gh` (issue #5046).
 
 The check never skips. It reads gh's version with ``gh --version`` and
-caches the answer per gh binary, so it adds no gh call to every vrg-gh
-invocation: the cache entry is keyed on the resolved binary's path, size
+caches the answer per gh binary, so it adds no gh call to every checked
+gh call: the cache entry is keyed on the resolved binary's path, size
 and modification time, so an upgrade or reinstall of gh (a new binary, or
 the same path rewritten) is re-probed. The cache holds the version, never a
 verdict, so raising :data:`MIN_GH_VERSION` takes effect at once. An
@@ -97,7 +99,7 @@ def _write_cache(path: Path, key: dict[str, object], version: str) -> None:
             raise
     except OSError as exc:
         print(
-            f"vrg-gh: warning: cannot cache the gh version in {path}: {exc}; "
+            f"warning: cannot cache the gh version in {path}: {exc}; "
             "gh will be probed again on the next call",
             file=sys.stderr,
         )
@@ -136,7 +138,7 @@ def installed_version(*, cache: Path | None = None) -> tuple[str, str]:
     """
     gh = shutil.which("gh")
     if gh is None:
-        msg = f"gh is not on PATH; vrg-gh needs gh {MIN_GH_VERSION} or newer"
+        msg = f"gh is not on PATH; vergil-tooling needs gh {MIN_GH_VERSION} or newer"
         raise GhVersionError(msg)
     path = cache if cache is not None else cache_path()
     key = _binary_key(gh)
@@ -163,7 +165,7 @@ def require_minimum(*, cache: Path | None = None) -> None:
         raise GhVersionError(msg) from exc
     if too_old:
         msg = (
-            f"gh {version} ({gh}) is too old; vrg-gh needs gh {MIN_GH_VERSION} or newer "
+            f"gh {version} ({gh}) is too old; vergil-tooling needs gh {MIN_GH_VERSION} or newer "
             "(for 'gh api --allow-escape-sequences'). Upgrade gh, for example with "
             "'vrg-host upgrade gh' on the macOS host."
         )

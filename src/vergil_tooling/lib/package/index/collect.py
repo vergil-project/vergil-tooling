@@ -26,7 +26,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from vergil_tooling.lib import retry
+from vergil_tooling.lib import gh_version, github, retry
 from vergil_tooling.lib.package import PackageError
 from vergil_tooling.lib.package.index import retention
 from vergil_tooling.lib.package.repo_setup import Run, local_run
@@ -150,8 +150,16 @@ def _invoke(run: Run, *argv: str) -> subprocess.CompletedProcess[str]:
     other failure — a missing release, a failed attestation — is raised at
     once, never retried. Local tools
     (``dpkg-deb``, ``rpm``, ``rpmkeys``) are never retried.
+
+    A ``gh`` call first checks gh's version (:func:`github.require_gh`,
+    #5046); an unusable gh is a :class:`PackageError` naming the version
+    required.
     """
     if argv[0] == "gh":
+        try:
+            github.require_gh()
+        except gh_version.GhVersionError as exc:
+            raise PackageError(str(exc)) from exc
         return retry.call_with_retry(lambda: run(*argv), retryable=retry.is_retryable_read)
     return run(*argv)
 
