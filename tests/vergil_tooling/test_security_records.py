@@ -1832,13 +1832,53 @@ def _records_pass(
     issue_list: list[SecurityIssue],
     *,
     apply: bool = True,
+    unlabelled: tuple[IssueRef, ...] = (),
 ) -> tuple[int, MagicMock]:
     write = MagicMock()
     monkeypatch.setattr(security_records, "security_issues", lambda _org: issue_list)
     monkeypatch.setattr(security_records, "advisory_home", lambda _org: HOME)
     monkeypatch.setattr(security_records, "list_advisories", lambda _home: advisories)
     monkeypatch.setattr(github, "write_json", write)
-    return records_pass("org", apply=apply, prog="prog"), write
+    rc = records_pass("org", apply=apply, prog="prog", unlabelled=unlabelled)
+    return rc, write
+
+
+@pytest.mark.parametrize("apply", [True, False])
+def test_records_pass_reports_an_unlabelled_advisory_line(
+    monkeypatch: pytest.MonkeyPatch,
+    parents: Parents,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    apply: bool,
+) -> None:
+    # Spec 6.3 of .github#1331 (#4996): an issue with a Security advisory:
+    # line but no security label is a broken pair even when no advisory
+    # tracks it. It is named by ref alone, never by the GHSA ID it carries.
+    second = IssueRef("org", "tool", 3)
+    rc, write = _records_pass(monkeypatch, [], [], apply=apply, unlabelled=(second, C))
+    assert rc == (1 if apply else 0)
+    write.assert_not_called()
+    out = capsys.readouterr().out
+    assert "0 advisory states" in out
+    assert "2 broken pairs, 0 held, 0 errors." in out
+    lines = [line for line in out.splitlines() if line.startswith("- broken:")]
+    assert lines == [
+        f"- broken: {C.slug}: Security advisory: line but no security label",
+        f"- broken: {second.slug}: Security advisory: line but no security label",
+    ]
+    assert "GHSA" not in out
+
+
+def test_records_pass_checks_unlabelled_lines_with_no_security_issue(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No security issue and no .github would otherwise end the pass at "none".
+    monkeypatch.setattr(github, "repo_exists", MagicMock(return_value=False))
+    rc, _ = _records_pass(monkeypatch, [], [], apply=False, unlabelled=(C,))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "none." not in out
+    assert f"- broken: {C.slug}: Security advisory: line but no security label" in out
 
 
 @pytest.mark.parametrize("apply", [True, False])

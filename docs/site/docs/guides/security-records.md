@@ -512,7 +512,9 @@ of them until the plan exists.
   - **A `Security advisory:` line on an issue without the `security`
     label**, with no advisory tracking the issue, is a broken pair. The
     queue reports it in the item's note (`broken pair: …`, saying to
-    have the human check the pair) and does not hold the item.
+    have the human check the pair) and does not hold the item. The
+    read-only `vrg-epic-audit` reports it too, on a `- broken:` line
+    naming the open issue alone.
   - **`Security advisory:` lines count only from a trusted body**: one
     whose author and every editor the trust layer trusts. `vrg-queue
     planning` stops an item whose body it does not trust and leaves it
@@ -630,7 +632,9 @@ hand:
   tracks;
 - `vrg-security-record sync --dry-run` (or the read-only
   `vrg-epic-audit`, which prints the same preview) reports what would sync
-  and every broken pair and held advisory.
+  and every broken pair and held advisory. `vrg-epic-audit` also reports
+  each open issue with a `Security advisory:` line but no `security`
+  label, which `sync` does not look for.
 
 `sync` reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.

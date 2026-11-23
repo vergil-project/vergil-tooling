@@ -245,8 +245,15 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     issues = epic_audit.open_issues(org)
     parents = epic_audit.body_only_parents(org, stops=stops, authors=authors, issues=issues)
     # Read-only preview of the security-records pass (the reads of
-    # vrg-security-record sync, no state writes). --close never runs it.
-    security_rc = security_records.records_pass(org, apply=False, prog="vrg-epic-audit")
+    # vrg-security-record sync, no state writes). --close never runs it. An open
+    # issue with a Security advisory: line but no security label is reported
+    # with its broken pairs, by ref alone (spec 6.3 of .github#1331; #4996).
+    unlabelled = epic_audit.unlabelled_advisory_lines(
+        org, stops=stops, authors=authors, issues=issues
+    )
+    security_rc = security_records.records_pass(
+        org, apply=False, prog="vrg-epic-audit", unlabelled=unlabelled
+    )
     print(
         epic_audit.render(
             tasks,

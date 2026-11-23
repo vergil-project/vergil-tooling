@@ -685,6 +685,7 @@ def _derivations() -> dict[str, MagicMock]:
         "retired_label_drift": MagicMock(return_value=[_RETIRED]),
         "body_only_parents": MagicMock(return_value=BodyParents(pairs=(_BODY_ONLY,))),
         "misplaced_archives": MagicMock(return_value=[_MISPLACED]),
+        "unlabelled_advisory_lines": MagicMock(return_value=[]),
     }
 
 
@@ -1018,6 +1019,35 @@ def test_summary_line_pluralizes_two_broken_pairs(capsys: pytest.CaptureFixture[
         "Security records (preview): 0 advisory states would sync, 2 broken pairs, "
         "0 held, 0 errors." in out
     )
+
+
+def test_report_names_an_untracked_unlabelled_advisory_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec 6.3 of .github#1331 (#4996): an open issue with a Security advisory:
+    # line but no security label is a broken pair even when no advisory tracks
+    # it. The audit's one open-issue enumeration feeds the check, which shares
+    # the run's stops and configuration; the line names the issue alone.
+    ref = IssueRef("org", "tool", 5)
+    issues = [epic_audit.OpenIssue(ref, "feat: a task", "x", frozenset(), None)]
+    with (
+        patch(f"{_MOD}.epic_audit.open_issues", return_value=issues),
+        patch(f"{_MOD}.epic_audit.body_only_parents", return_value=BodyParents()) as parents,
+        patch(f"{_MOD}.epic_audit.orphan_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.unlabelled_advisory_lines", return_value=[ref]) as unlabelled,
+    ):
+        rc = _run_report(issues=[], advisories=[], write=MagicMock())
+    assert rc == 0
+    assert unlabelled.call_args.args == ("org",)
+    assert unlabelled.call_args.kwargs["issues"] is issues
+    assert unlabelled.call_args.kwargs["stops"] is parents.call_args.kwargs["stops"]
+    assert unlabelled.call_args.kwargs["authors"] is AUTHORS
+    out = capsys.readouterr().out
+    assert (
+        "Security records (preview): 0 advisory states would sync, 1 broken pair, "
+        "0 held, 0 errors." in out
+    )
+    assert "- broken: org/tool#5: Security advisory: line but no security label" in out
 
 
 def test_report_only_mode_fails_loud_when_the_read_fails(

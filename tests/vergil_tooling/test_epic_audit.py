@@ -3252,6 +3252,97 @@ def test_body_only_parents_unreadable_body_is_held_and_stops() -> None:
     )
 
 
+# -- unlabelled Security advisory: lines (spec 6.3 of .github#1331; #4996) ----
+
+_ADVISORY_LINE = "Security advisory: org/.github GHSA-abcd-2345-wxyz\n"
+
+
+def _judged_unlabelled(
+    issues: list[epic_audit.OpenIssue],
+    *,
+    stops: trust.BatchStops | None = None,
+    items: dict[tuple[str, int], Any] | None = None,
+) -> tuple[list[epics.IssueRef], MagicMock]:
+    """unlabelled_advisory_lines of *issues*, each body read through the real trust layer.
+
+    Each issue's trusted body is its listed body, by the trusted human, unless
+    *items* gives that issue's item answer. Also returns the graphql spy.
+    """
+    answers = {(f"{i.ref.owner}/{i.ref.repo}", i.ref.number): trust_stubs.item(body=i.body)
+               for i in issues}  # fmt: skip
+    answers.update(items or {})
+    graphql = MagicMock(side_effect=trust_stubs.FakeItems(answers))
+    with patch("vergil_tooling.lib.github.graphql", graphql):
+        found = epic_audit.unlabelled_advisory_lines(
+            "org",
+            stops=trust.BatchStops() if stops is None else stops,
+            authors=trust_stubs.AUTHORS,
+            issues=issues,
+        )
+    return found, graphql
+
+
+def test_unlabelled_advisory_lines_reports_only_unlabelled_issues_with_a_line() -> None:
+    issues = [
+        _issue("org/tool", 5, body=f"intro\n{_ADVISORY_LINE}"),  # broken pair
+        _issue("org/tool", 6, labels=("security",), body=_ADVISORY_LINE),  # a real pair
+        _issue("org/tool", 7, body="mentions Security advisory: in passing\n"),  # no exact line
+        _issue("org/tool", 8),
+    ]
+    found, graphql = _judged_unlabelled(issues)
+    assert found == [epics.IssueRef("org", "tool", 5)]
+    # Only the candidate is read again through the trust layer.
+    assert graphql.call_count == 1
+
+
+def test_unlabelled_advisory_lines_takes_the_line_from_the_trusted_body() -> None:
+    # The listed body only picks the candidate: a trusted body without the
+    # line is no broken pair.
+    issues = [_issue("org/tool", 5, body=_ADVISORY_LINE)]
+    items = {("org/tool", 5): trust_stubs.item(body="no line here\n")}
+    found, _ = _judged_unlabelled(issues, items=items)
+    assert found == []
+
+
+def test_unlabelled_advisory_lines_never_trusts_an_outsider_body(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    issues = [_issue("org/tool", 5, body=_ADVISORY_LINE)]
+    items = {("org/tool", 5): trust_stubs.item(body=_ADVISORY_LINE, author=trust_stubs.OUTSIDER)}
+    found, _ = _judged_unlabelled(issues, items=items)
+    assert found == []
+    err = capsys.readouterr().err
+    assert err == (
+        f"skipped untrusted content: org/tool#5 issue drive-by at {trust_stubs.CREATED}"
+        " on body (untrusted)\n"
+    )
+    assert "GHSA" not in err
+
+
+def test_unlabelled_advisory_lines_enumerates_the_open_issues_by_default() -> None:
+    with patch("vergil_tooling.lib.epic_audit.open_issues", return_value=[_issue("org/tool", 5)]):
+        found = epic_audit.unlabelled_advisory_lines(
+            "org", stops=trust.BatchStops(), authors=trust_stubs.AUTHORS
+        )
+    assert found == []
+
+
+def test_unlabelled_advisory_lines_unreadable_body_stops_that_issue() -> None:
+    issues = [
+        _issue("org/tool", 5, body=_ADVISORY_LINE),
+        _issue("org/tool", 6, body=_ADVISORY_LINE),
+    ]
+    stops = trust.BatchStops()
+    found, _ = _judged_unlabelled(
+        issues, stops=stops, items={("org/tool", 5): {"repository": None}}
+    )
+    assert found == [epics.IssueRef("org", "tool", 6)]
+    assert stops.stopped == (
+        trust.Skipped("org/tool", 5, "issue", None, "", "body", trust.READ_FAILURE),
+    )
+
+
 def _all_closed(*numbers: int) -> list[roadmap.EpicSummary]:
     return [
         roadmap.EpicSummary(n, f"Epic {n}", "2026-06-01", None, (), 2, 2, f"u{n}") for n in numbers
