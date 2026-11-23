@@ -26,6 +26,7 @@ TITLE = "ops: docs / docs-refresh failing"
 RUN = "https://github.com/acme/docs/actions/runs/7"
 TODAY = date(2026, 11, 23)
 CREATED = "2026-11-01T09:30:00Z"
+EDITED = "2026-11-02T10:00:00Z"
 
 AUTHORS = TrustedAuthors(
     human=("human",), agents=("vergil-user",), orgs={ORG: OrgConfig("acme-automation")}
@@ -44,13 +45,13 @@ def _page(nodes: list[Any]) -> dict[str, Any]:
     return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
 
 
-def _content(author: Any, body: str) -> dict[str, Any]:
+def _content(author: Any, body: str, editor: Any = None) -> dict[str, Any]:
     return {
         "author": author,
-        "editor": None,
+        "editor": editor,
         "body": body,
         "createdAt": CREATED,
-        "lastEditedAt": None,
+        "lastEditedAt": None if editor is None else EDITED,
         "userContentEdits": _page([]),
     }
 
@@ -83,9 +84,13 @@ class FakeGitHub:
         labels: tuple[str, ...] = ("ops-report",),
         body: str = f"{ops_report.MARKER_FAILURE}\n\n- job: `docs-refresh`\n",
         comments: list[tuple[Any, str]] | None = None,
+        editor: Any = None,
+        renamer: Any = None,
     ) -> None:
         self.issues[number] = {
             "author": author,
+            "editor": editor,
+            "renamer": renamer,
             "title": title,
             "state": state,
             "labels": labels,
@@ -129,8 +134,18 @@ class FakeGitHub:
             "state": issue["state"],
             "repository": {"nameWithOwner": REPO},
             "labels": _page([{"name": name} for name in issue["labels"]]),
-            **_content(issue["author"], issue["body"]),
-            "timelineItems": _page([]),
+            **_content(issue["author"], issue["body"], issue["editor"]),
+            "timelineItems": _page(
+                []
+                if issue["renamer"] is None
+                else [
+                    {
+                        "__typename": "RenamedTitleEvent",
+                        "actor": issue["renamer"],
+                        "createdAt": EDITED,
+                    }
+                ]
+            ),
         }
 
     def _item(self, number: int) -> dict[str, Any]:
@@ -144,7 +159,7 @@ class FakeGitHub:
             "repository": {
                 "issueOrPullRequest": {
                     "__typename": "Issue",
-                    **_content(issue["author"], issue["body"]),
+                    **_content(issue["author"], issue["body"], issue["editor"]),
                     "comments": _page(nodes),
                 }
             }
@@ -329,6 +344,29 @@ def test_previous_occurrence_none(gh: FakeGitHub) -> None:
     assert ops_report.previous_occurrence(REPO, JOB) is None
 
 
+def test_skipped_open_reports_names_app_issue_edited_by_another(gh: FakeGitHub) -> None:
+    gh.add(6, editor=HUMAN)
+    gh.add(7, editor=OUTSIDER)
+    gh.add(8, renamer=OUTSIDER)
+    gh.add(9)
+    gh.add(10, editor=APP)
+    assert ops_report.skipped_open_reports(REPO, JOB) == [6, 7, 8]
+    assert ops_report.find_open_reports(REPO, JOB) == [9, 10]
+
+
+def test_skipped_open_reports_never_names_outsider_issue(gh: FakeGitHub) -> None:
+    gh.add(3, author=OUTSIDER)
+    gh.add(4, author=OUTSIDER, editor=OUTSIDER)
+    gh.add(5, author=IMPOSTOR, editor=OUTSIDER)
+    gh.add(11, author=HUMAN, editor=OUTSIDER)
+    assert ops_report.skipped_open_reports(REPO, JOB) == []
+
+
+def test_skipped_open_reports_ignores_closed(gh: FakeGitHub) -> None:
+    gh.add(6, state="CLOSED", editor=OUTSIDER)
+    assert ops_report.skipped_open_reports(REPO, JOB) == []
+
+
 # --- latest_state ---------------------------------------------------------------
 
 
@@ -402,6 +440,52 @@ def test_report_failure_ignores_outsider_open_issue(gh: FakeGitHub, links: Links
     gh.add(3, author=OUTSIDER)
     assert _report("failure") == "created"
     assert gh.comments == []
+
+
+SECRET = "edited text that must never be copied"
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled"])
+def test_report_create_names_skipped_edited_issue_by_number_only(
+    gh: FakeGitHub, links: Links, result: ops_report.Result
+) -> None:
+    gh.add(6, editor=OUTSIDER, body=f"{ops_report.MARKER_RECOVERED}\n\n{SECRET}")
+    gh.add(7, renamer=OUTSIDER)
+    gh.add(41, state="CLOSED")
+    assert _report(result) == "created"
+    [created] = gh.created
+    body = created["body"]
+    assert "- skipped (edited by someone other than the App): #6\n" in body
+    assert "- skipped (edited by someone other than the App): #7\n" in body
+    assert body.endswith("- previous occurrence: #41\n")
+    assert SECRET not in body
+    assert ops_report.MARKER_RECOVERED not in body
+    # The edited issues stay as they were: no comment, no close, no read of their text.
+    assert gh.comments == []
+    assert gh.item_reads == []
+    assert gh.issues[6]["state"] == gh.issues[7]["state"] == "OPEN"
+    _no_close(gh)
+
+
+def test_report_create_never_names_outsider_issue(gh: FakeGitHub, links: Links) -> None:
+    gh.add(3, author=OUTSIDER, editor=OUTSIDER, body=SECRET)
+    gh.add(4, author=HUMAN, editor=OUTSIDER)
+    assert _report("failure") == "created"
+    body = gh.created[0]["body"]
+    assert "skipped" not in body
+    assert "#3" not in body
+    assert "#4" not in body
+    assert SECRET not in body
+
+
+def test_report_comment_does_not_name_skipped_issue(gh: FakeGitHub, links: Links) -> None:
+    gh.add(6, editor=OUTSIDER)
+    gh.add(9)
+    links.parents[9] = OPS_EPIC
+    assert _report("failure") == "commented"
+    [(number, body)] = gh.comments
+    assert number == 9
+    assert "skipped" not in body
 
 
 def test_report_failure_open_comments(gh: FakeGitHub, links: Links) -> None:
