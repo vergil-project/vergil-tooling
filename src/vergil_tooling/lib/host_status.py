@@ -40,6 +40,13 @@ The row additionally lists every level that is behind (see
 that is not newer than the installed version is ignored; several offers in one
 level report the highest.
 
+Minimum (issue #4613): a manifest entry may declare a ``minimum``, the oldest
+version Vergil's own tools work with (``gh``, for ``vrg-gh``). It is an axis
+like the auxiliary checks: an installed version below it leaves the version
+state as it is (so ``upgrade`` still sees ``behind``) and raises the severity
+to ERROR, pinned or not. The row shows ``minimum <v>: satisfied`` or
+``UNSATISFIED``.
+
 One further state is not a version state but a probe outcome:
 ``probe-error`` — a probe answered but its output was unreadable, or the
 dependency's manifest entry cannot be probed (ERROR). It is classified per
@@ -129,17 +136,21 @@ def classify(
 ) -> tuple[str, int]:
     """Return ``(version_state, severity)`` for *dep*.
 
-    Severity is the worst of the version-state severity and the auxiliary
-    checks (any unsatisfied check is ``ERROR``).
+    Severity is the worst of the version-state severity, the auxiliary
+    checks (any unsatisfied check is ``ERROR``) and the manifest's
+    ``minimum`` (an installed version below it is ``ERROR``, see
+    :func:`below_minimum`).
 
     Raises:
         ValueError: *dep* has an active pin with an unsupported constraint, or
-            its installed and latest versions differ and cannot be ordered
-            (``host_versions.IncomparableVersionError``).
+            its installed version cannot be ordered against its latest or its
+            minimum (``host_versions.IncomparableVersionError``).
     """
     check_sev = ERROR if any(not ok for _, ok in check_results) else OK
     if installed is None:
         return "missing", max(ERROR, check_sev)
+    if below_minimum(dep, installed):
+        check_sev = ERROR
     edge = leading_edge(installed, latest)  # the highest offer, for a multi-level probe
     if dep.pin is not None and dep.pin.state == "active":
         held = pin_satisfied(installed, dep.pin.constraint)
@@ -153,6 +164,21 @@ def classify(
     if _behind(installed, str(edge)):
         return "behind", max(WARN, check_sev)
     return "current", max(OK, check_sev)
+
+
+def below_minimum(dep: HostDependency, installed: str) -> bool:
+    """Return whether *installed* is older than *dep*'s manifest ``minimum``.
+
+    A dependency with no ``minimum`` is never below it. The minimum is a
+    floor Vergil's own tools need (``gh`` for ``vrg-gh``, issue #4613), so
+    it holds whatever the latest or a pin says.
+
+    Raises:
+        host_versions.IncomparableVersionError: the two versions cannot be ordered.
+    """
+    if dep.minimum is None:
+        return False
+    return host_versions.compare(installed, dep.minimum) < 0
 
 
 def pin_satisfied(installed: str, constraint: str) -> bool:
@@ -337,6 +363,9 @@ def render(reports: Sequence[Report], *, today: datetime.date | None = None) -> 
                 f"          pin under evaluation (not holding): {r.dep.pin.constraint} "
                 f"({r.dep.pin.reason}); tracking issue: {r.dep.pin.tracking_issue or 'none'}"
             )
+        if r.dep.minimum is not None and r.installed is not None and r.state != PROBE_ERROR:
+            met = "UNSATISFIED" if below_minimum(r.dep, r.installed) else "satisfied"
+            lines.append(f"          minimum {r.dep.minimum}: {met}")
         for name, ok in r.check_results:
             lines.append(f"          check {name}: {'satisfied' if ok else 'UNSATISFIED'}")
     worst = worst_severity(reports)

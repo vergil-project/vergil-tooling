@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from importlib import resources
 from typing import Any
 
+from vergil_tooling.lib import host_versions
+
 _MANIFEST_FILE = "host_dependencies.toml"
 
 _METHODS = frozenset({"brew-formula", "brew-cask", "uv-tool", "custom"})
@@ -40,7 +42,9 @@ _PIN_STATES = frozenset({"active", "under-evaluation", "freed"})
 _CUSTOM_PROBES = frozenset({"installed_version", "latest_version", "latest_versions", "upgrade"})
 _OVERRIDE_PROBES = frozenset({"installed_version"})
 
-_DEP_KEYS = frozenset({"name", "why", "method", "upgrade", "latest", "probes", "check", "pin"})
+_DEP_KEYS = frozenset(
+    {"name", "why", "method", "upgrade", "latest", "minimum", "probes", "check", "pin"}
+)
 _CHECK_KEYS = frozenset({"name", "probe", "remediation"})
 _PIN_KEYS = frozenset(
     {
@@ -93,6 +97,8 @@ class HostDependency:
     probes: dict[str, list[str]]
     checks: tuple[AuxCheck, ...]
     pin: HostPin | None
+    # The oldest installed version Vergil supports (a bare version), or None.
+    minimum: str | None = None
 
 
 def _read_manifest_text() -> str:
@@ -191,6 +197,17 @@ def _parse_check(raw: Any, where: str) -> AuxCheck:
     return AuxCheck(name=name, probe=probe, remediation=remediation)
 
 
+def _parse_minimum(raw: dict[str, Any], where: str) -> str | None:
+    """The entry's ``minimum`` as a bare comparable version, or ``None`` when absent."""
+    value = _opt_str(raw, "minimum", None, where)
+    if value is None:
+        return None
+    try:
+        return host_versions.parse_bare(value)
+    except host_versions.UnrecognizedVersionError as exc:
+        raise ManifestError(f"{where}: minimum {value!r} is not a bare version") from exc
+
+
 def _parse_dep(raw: Any, index: int) -> HostDependency:
     if not isinstance(raw, dict):
         raise ManifestError(f"dependency #{index}: must be a table")
@@ -235,6 +252,7 @@ def _parse_dep(raw: Any, index: int) -> HostDependency:
         probes=probes,
         checks=checks,
         pin=_parse_pin(raw["pin"], where) if "pin" in raw else None,
+        minimum=_parse_minimum(raw, where),
     )
 
 

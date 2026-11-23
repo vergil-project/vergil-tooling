@@ -67,6 +67,7 @@ Each dependency is classified on two axes, its **version state** and its
 | `missing` | Not installed (or not installed by the manifest's method) | ERROR |
 | `probe-error` | A probe answered but its output could not be read, two versions could not be ordered, or the entry could not be probed | ERROR |
 | any state + an unsatisfied auxiliary check | The tool is present but a health check fails | ERROR |
+| any state + below its [minimum](#minimum-versions) | The installed version is older than the oldest one Vergil's tools support, pinned or not | ERROR |
 
 #### Update levels (macOS)
 
@@ -115,7 +116,7 @@ an unreadable version is an error, never a false `current` or `missing`.
 | --- | --- |
 | `0` | Everything OK (including tracked-debt pins and info-only rows) |
 | `1` | At least one warning (drift, latest unknown, a pin needing attention) |
-| `2` | At least one error (missing, probe error, unsatisfied check), a failed `--fix` remediation, or an unreadable manifest or pins file |
+| `2` | At least one error (missing, probe error, unsatisfied check, below its minimum), a failed `--fix` remediation, or an unreadable manifest or pins file |
 
 **`--fix`** runs, before the report, the remediation of each unsatisfied
 auxiliary check on every *installed* dependency (a missing dependency is skipped
@@ -402,6 +403,19 @@ remediation that `status --fix` runs. An unsatisfied check is an ERROR.
 If the interpreter is externally managed (PEP 668), `pip` refuses the install.
 `vrg-host` reports that as a failed remediation rather than working around it;
 install NumPy into that interpreter yourself.
+
+### Minimum versions
+
+An entry may declare a `minimum`, a bare version: the oldest installed version
+Vergil's own tools work with. An installed version below it is an ERROR in
+`status`, whatever the latest or a pin says, and the row shows
+`minimum <v>: satisfied` or `minimum <v>: UNSATISFIED`. The version state is
+left as it is, so `upgrade` still upgrades a dependency that is behind; an
+upgrade that leaves it below the minimum is an ERROR.
+
+| Dependency | Minimum | Why |
+| --- | --- | --- |
+| `gh` | 2.97.0 | `vrg-gh run job-log` passes `gh api --allow-escape-sequences`, which gh [v2.97.0](https://github.com/cli/cli/releases/tag/v2.97.0) added ([GHSA-3m3g-3wcr-px46](https://github.com/cli/cli/security/advisories/GHSA-3m3g-3wcr-px46)). `vrg-gh` itself refuses an older gh. |
 
 ## Pinning host dependencies
 

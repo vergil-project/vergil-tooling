@@ -9,7 +9,13 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import gh_version, github, identity_mode
+
+
+@pytest.fixture(autouse=True)
+def _gh_is_new_enough(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass the minimum-gh check; tests/vergil_tooling/test_gh_version.py covers it."""
+    monkeypatch.setattr("vergil_tooling.bin.vrg_gh.gh_version.require_minimum", lambda: None)
 
 
 def _completed(
@@ -1526,3 +1532,49 @@ class TestRunJobLog:
     def test_listed_in_wrapper_help(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["--help"]) == 0
         assert "run job-log" in capsys.readouterr().out
+
+
+# -- minimum gh version (#4613) ----------------------------------------------
+
+
+class TestMinimumGhVersion:
+    """An old gh is refused before gh runs or a token is minted."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["issue", "view", "1"],
+            ["run", "job-log", "--repo", "o/r", "--job", "1"],
+            ["pr", "view", "--help"],
+        ],
+    )
+    def test_old_gh_is_refused(
+        self,
+        argv: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        def too_old() -> None:
+            msg = "gh 2.96.0 (/usr/bin/gh) is too old; vrg-gh needs gh 2.97.0 or newer"
+            raise gh_version.GhVersionError(msg)
+
+        monkeypatch.setattr("vergil_tooling.bin.vrg_gh.gh_version.require_minimum", too_old)
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mint,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            assert main(argv) == 1
+        mock_run.assert_not_called()
+        mint.assert_not_called()
+        assert "vrg-gh: gh 2.96.0 (/usr/bin/gh) is too old" in capsys.readouterr().err
+
+    def test_commands_that_never_run_gh_are_not_checked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The wrapper's own help and refusals never reach gh, so never the check.
+        def boom() -> None:
+            raise AssertionError("checked gh for a command that never runs it")
+
+        monkeypatch.setattr("vergil_tooling.bin.vrg_gh.gh_version.require_minimum", boom)
+        assert main(["--help"]) == 0
+        assert main(["auth", "status"]) == 1

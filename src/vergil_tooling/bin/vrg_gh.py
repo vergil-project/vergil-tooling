@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, identity_mode, retry
+from vergil_tooling.lib import gh_version, github, identity_mode, retry
 from vergil_tooling.lib.cli import cli_main
 
 if TYPE_CHECKING:
@@ -809,8 +809,16 @@ def _unchanged(text: str) -> str:
 def _run_gh(argv: list[str], owner: str | None, *, clean: Callable[[str], str] = _unchanged) -> int:
     """Execute ``gh`` with *owner*'s installation token (cwd detection when None).
 
-    *clean* is applied to gh's output before it is replayed.
+    *clean* is applied to gh's output before it is replayed. gh must be at
+    least :data:`gh_version.MIN_GH_VERSION`, checked before any token is
+    minted: an older gh is refused here with the version it needs, never
+    left to fail with its own unknown-flag error (#4613).
     """
+    try:
+        gh_version.require_minimum()
+    except gh_version.GhVersionError as exc:
+        print(f"vrg-gh: {exc}", file=sys.stderr)
+        return 1
     try:
         token = github.get_installation_token(org=owner, require_installation=owner is not None)
     except github.NoInstallationError as exc:

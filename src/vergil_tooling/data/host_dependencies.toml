@@ -60,12 +60,19 @@ method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
 
+# gh: `minimum` is the oldest gh vrg-gh supports, and must equal
+# vergil_tooling.lib.gh_version.MIN_GH_VERSION (a test holds them together).
+# vrg-gh's `run job-log` passes `gh api --allow-escape-sequences`, added in
+# gh v2.97.0 (https://github.com/cli/cli/releases/tag/v2.97.0, GHSA-3m3g-3wcr-px46).
+# vrg-gh refuses an older gh itself; `vrg-host status` reports it as an ERROR
+# (#4613).
 [[dependency]]
 name = "gh"
 why = "GitHub CLI; underpins vrg-gh and all PR/issue workflows."
 method = "brew-formula"
 upgrade = "auto"
 latest = "probe"
+minimum = "2.97.0"
 
 # git: vergil-tooling runs `git` host-side throughout (lib/git.py: vrg-git,
 # vrg-commit, vrg-submit-pr, vrg-finalize-pr, vrg-release, worktrees). On the

@@ -117,12 +117,23 @@ for every identity, with terminal control sequences stripped (see
 [`run job-log`](../guides/permission-model.md#run-job-log)). `vrg-gh --help`
 lists the allowlist.
 
+`vrg-gh` needs gh 2.97.0 or newer, the release that added `gh api
+--allow-escape-sequences`, which `run job-log` uses
+([gh v2.97.0](https://github.com/cli/cli/releases/tag/v2.97.0)). Before
+running gh it checks the version and refuses an older or unreadable one,
+naming the version required, rather than letting gh fail with its own
+unknown-flag error. The version is read with `gh --version` once per gh
+binary and cached in `$XDG_CACHE_HOME/vergil/gh-version.json` (default
+`~/.cache`), keyed on the binary's path, size and modification time, so an
+upgrade of gh is seen at once. `vrg-host status` reports a gh below the
+minimum as an ERROR (see [Minimum versions](dev/host.md#minimum-versions)).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_gh` |
 | Args | `<subcommand> <action> [args...]`, forwarded to `gh` |
-| Preconditions | `gh` on PATH; identity resolved via `vrg-whoami` |
-| Failure mode | A refused command prints the reason on stderr |
+| Preconditions | `gh` 2.97.0 or newer on PATH; identity resolved via `vrg-whoami` |
+| Failure mode | A refused command, or a gh that is missing, too old or of unreadable version, prints the reason on stderr |
 | Exit codes | 0 success; 1 refusal; 2 no subcommand or bad `run job-log` arguments; otherwise gh's exit code |
 | Status | Active |
 
