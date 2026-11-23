@@ -1674,8 +1674,8 @@ and the ones it would leave open), the ad-hoc and queue-epic drains that
 security-records pass of `vrg-security-record sync` (`--close` does not run
 it).
 
-The org comes from the current repo's `origin` remote (there is no `--org`
-flag), and the home audited is that org's `.github`.
+The org comes from the current repo's `origin` remote (`--org` applies to
+`--untrusted` only), and the home audited is that org's `.github`.
 
 Every read and write runs under the audited org's token, wherever the
 command is run from.
@@ -1692,6 +1692,33 @@ it names must exist, be a proxy and carry a `Primary:` line naming it; on a
 proxy, its primary must carry the matching `Proxy:` comment. A link that
 disagrees, cannot be parsed or cannot be read exits 1, with the problems on
 stderr and no JSON, so the retrospective gate stops on it.
+
+`--untrusted --since ISO [--org ORG]` is the **outsider report**, another
+separate read-only mode, which `hoshin start` runs. Across the repos of every
+org listed in the Vergil configuration (an `[orgs.<org>]` stanza), or of
+`--org` alone, it lists what untrusted accounts did at or after `--since`:
+issues and PRs they opened, their comments, reviews and inline review
+comments, their edits to trusted bodies and comments, their renames of
+trusted items, and their closes and reopens. Edits, renames and closes come
+first, under **Possible tampering**, then the rest, each newest first, one
+line per item:
+
+```text
+- <time> <kind> <owner>/<repo>#<n> by <login> (<cause>) <url>
+```
+
+The cause is the trust layer's: `untrusted`, `deleted`, or `wrong-type` (a
+login that matches a role on an account of the wrong type, so it looks
+trusted but is not). Each line carries metadata and a link only, never the
+untrusted text. Every trust decision is the trust layer's. The items read
+are the org's issues and PRs that GitHub's search finds updated since
+`--since`, issues and PRs searched separately; each one's comments, reviews
+and close events are then read in full, a few GraphQL calls per item. `--since` is an
+ISO 8601 date (midnight UTC) or a time with a zone. A read failure, or a
+window in which one search would match more than the 1,000 results GitHub
+returns, exits 1 with nothing on stdout: narrow `--since`. Under GitHub
+Actions it prints counts by kind only. It writes nothing on GitHub, and each
+org is read under its own App token.
 
 `--close` applies the fixes, in order:
 
@@ -1717,10 +1744,10 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`) |
-| Args | `--window-days N` (positive; default 30), `--epic REF`, `--close` |
-| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access |
-| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1 |
+| Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`; outsider report: `lib/outsider_report.py`) |
+| Args | `--window-days N` (positive; default 30), `--epic REF`, `--close`, `--untrusted --since ISO [--org ORG]` |
+| Preconditions | Run inside a repo in the target org; GitHub App credentials for that org. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access. `--untrusted` runs anywhere: it needs the Vergil configuration and App credentials for each listed org it reads |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, or an org with no `.github` home exits 1. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, or error, 2 bad arguments |
 | Status | Active |
 

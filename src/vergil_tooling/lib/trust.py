@@ -21,7 +21,9 @@ untrusted (cause ``deleted``), never a read failure.
 its editors (every editor, or the last one, by the reader's
 :data:`EditorRule`) hold a role the reader accepts. Readers return the trusted
 items and a :class:`Skipped` record for each untrusted one; where the content
-is load-bearing they raise :class:`UntrustedContentError` instead. Reviews and
+is load-bearing they raise :class:`UntrustedContentError` instead; for a
+report, :func:`read_issue_edits` also lists every untrusted edit of trusted
+content, and ``read_events(renames=True)`` every rename. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`). A close
 or reopen is trusted when its actor is (:func:`read_events`,
 :func:`close_judgement`, :func:`require_trusted_close`). A PR found by its
@@ -200,28 +202,36 @@ _EVENT_TYPES = ", ".join(
         "SUBSCRIBED_EVENT",
     )
 )
-_EVENT_FRAGMENTS = " ".join(
-    f"... on {typename} {{ actor {_ACTOR} createdAt }}" for typename in _EVENT_KINDS
-)
+# With ``renames=True``, read_events also reads every title rename (the
+# outsider report lists each untrusted one); no other caller sees the kind.
+_RENAME_EVENT_KINDS = {**_EVENT_KINDS, "RenamedTitleEvent": "renamed"}
 
 
-def _timeline_selection() -> str:
+def _timeline_selection(kinds: Mapping[str, str], types: str) -> str:
+    fragments = " ".join(f"... on {typename} {{ actor {_ACTOR} createdAt }}" for typename in kinds)
     return (
-        f"timelineItems(first: {_PAGE}, after: $after, itemTypes: [{_EVENT_TYPES}])"
-        f" {{ {_PAGE_INFO} nodes {{ __typename {_EVENT_FRAGMENTS} }} }}"
+        f"timelineItems(first: {_PAGE}, after: $after, itemTypes: [{types}])"
+        f" {{ {_PAGE_INFO} nodes {{ __typename {fragments} }} }}"
     )
 
 
-_EVENTS_QUERY = f"""
+def _events_query(kinds: Mapping[str, str], types: str) -> str:
+    return f"""
 query($owner: String!, $name: String!, $number: Int!, $after: String) {{
   repository(owner: $owner, name: $name) {{
     issueOrPullRequest(number: $number) {{
       __typename
-      {_on_issue_and_pr(_timeline_selection())}
+      {_on_issue_and_pr(_timeline_selection(kinds, types))}
     }}
   }}
 }}
 """
+
+
+_EVENTS_QUERY = _events_query(_EVENT_KINDS, _EVENT_TYPES)
+_EVENTS_WITH_RENAMES_QUERY = _events_query(
+    _RENAME_EVENT_KINDS, f"{_EVENT_TYPES}, RENAMED_TITLE_EVENT"
+)
 
 # What :func:`is_same_repo` reads on a PR: the same names in GraphQL and in
 # ``gh pr list --json``.
@@ -794,6 +804,58 @@ def read_issue(
     """
     if authors is None:
         authors = load_trusted_authors()
+    kind, body, comments = _read_item(repo, number)
+    return _issue_content(
+        repo,
+        number,
+        kind,
+        body,
+        comments,
+        roles=roles,
+        editors=editors,
+        require_body=require_body,
+        authors=authors,
+    )
+
+
+def read_issue_edits(
+    repo: str,
+    number: int,
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors | None = None,
+) -> tuple[IssueContent, tuple[Skipped, ...]]:
+    """:func:`read_issue`, and every untrusted edit of the item's trusted content.
+
+    The one read :func:`read_issue` makes (author and every editor). Where
+    that judges a body or comment by its first untrusted editor only, this
+    also lists each untrusted edit (kind ``edit``) of a body or comment whose
+    author holds a role in *roles*, newest and oldest alike, for a report of
+    possible tampering. Edits of content an untrusted account wrote are not
+    listed: that content is untrusted already.
+    """
+    if authors is None:
+        authors = load_trusted_authors()
+    kind, body, comments = _read_item(repo, number)
+    content = _issue_content(
+        repo, number, kind, body, comments, roles=roles, editors="every", authors=authors
+    )
+    org = _split_repo(repo)[0]
+    edits: dict[Skipped, None] = {}
+    pieces = [(body, "body")] + [(c.content, f"comment {c.database_id}") for c in comments]
+    for piece, field in pieces:
+        if _accepted(piece.author, org=org, roles=roles, authors=authors).role is None:
+            continue
+        history = ([] if piece.last_edit is None else [piece.last_edit]) + piece.edits
+        for identity, at in history:
+            cause = _accepted(identity, org=org, roles=roles, authors=authors).cause
+            if cause is not None:
+                edits[Skipped(repo, number, "edit", _bare(identity), at, field, cause)] = None
+    return content, tuple(edits)
+
+
+def _read_item(repo: str, number: int) -> tuple[str, _Content, list[_Comment]]:
+    """An issue's or PR's kind, body and comments, every page of each read."""
     owner, name = _split_repo(repo)
     call = f"read_issue {repo}#{number}"
     where = {"owner": owner, "name": name, "number": number}
@@ -817,7 +879,21 @@ def read_issue(
         comments += [_comment(node, call) for node in nodes]
     for comment in comments:
         _read_all_edits(comment, call, _COMMENT_EDITS_QUERY)
+    return kind, body, comments
 
+
+def _issue_content(
+    repo: str,
+    number: int,
+    kind: str,
+    body: _Content,
+    comments: Sequence[_Comment],
+    *,
+    roles: frozenset[Role],
+    editors: EditorRule,
+    authors: TrustedAuthors,
+    require_body: bool = False,
+) -> IssueContent:
     body_role, author_role, body_skip = _judge(
         body,
         repo=repo,
@@ -861,10 +937,10 @@ def outsider_opened(content: IssueContent) -> Skipped | None:
 # --- events -------------------------------------------------------------------
 
 
-def _event(node: object, call: str) -> IssueEvent:
+def _event(node: object, call: str, kinds: Mapping[str, str] = _EVENT_KINDS) -> IssueEvent:
     event = _obj(node, call, "a timeline event")
     typename = _get(event, "__typename", call, "a timeline event")
-    kind = _EVENT_KINDS.get(typename) if isinstance(typename, str) else None
+    kind = kinds.get(typename) if isinstance(typename, str) else None
     if kind is None:
         raise TrustReadError(call, "a timeline event is of a type that was not asked for")
     what = f"a {kind} event"
@@ -873,28 +949,34 @@ def _event(node: object, call: str) -> IssueEvent:
     )
 
 
-def read_events(repo: str, number: int) -> tuple[IssueEvent, ...]:
+def read_events(repo: str, number: int, *, renames: bool = False) -> tuple[IssueEvent, ...]:
     """The close, reopen and trace events of *repo*#*number*, oldest first.
 
     A GraphQL read of the issue's or PR's ``timelineItems``, type-filtered to
     the kinds :class:`IssueEvent` names, followed page by page until
-    ``hasNextPage`` is false. A failed call, a malformed page or a next page
+    ``hasNextPage`` is false. ``renames=True`` also reads every title rename,
+    as kind ``renamed``. A failed call, a malformed page or a next page
     with no cursor raises :class:`TrustReadError`.
     """
     owner, name = _split_repo(repo)
     call = f"read_events {repo}#{number}"
+    query, kinds = (
+        (_EVENTS_WITH_RENAMES_QUERY, _RENAME_EVENT_KINDS)
+        if renames
+        else (_EVENTS_QUERY, _EVENT_KINDS)
+    )
     events: list[IssueEvent] = []
     cursor: str | None = None
     while True:
         variables: dict[str, object] = {"owner": owner, "name": name, "number": number}
         if cursor is not None:
             variables["after"] = cursor
-        item = _item(_graphql(call, _EVENTS_QUERY, **variables), call)
+        item = _item(_graphql(call, query, **variables), call)
         _kind_of(item, call)
         nodes, cursor = _connection(
             _get(item, "timelineItems", call, "the item"), call, "the timeline"
         )
-        events += [_event(node, call) for node in nodes]
+        events += [_event(node, call, kinds) for node in nodes]
         if cursor is None:
             return tuple(events)
 

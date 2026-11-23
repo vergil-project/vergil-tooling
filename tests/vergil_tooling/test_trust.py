@@ -936,6 +936,44 @@ def _reviews(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
 # --- read_events and close_judgement ---------------------------------------------------
 
 
+def test_read_issue_edits_lists_every_untrusted_edit(
+    fake: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body_edits = _edits([HUMAN, OUTSIDER, DELETED])
+    spam = _comment("9", OUTSIDER, SPAM, editor=OUTSIDER, edited=True, edits=_edits([OUTSIDER]))
+    edited = _comment("8", AGENT, editor=HUMAN, edited=True, edits=_edits([HUMAN, OUTSIDER]))
+    fake(_item(editor=HUMAN, edited=True, edits=body_edits, comments=[edited, spam]))
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    content, edits = trust.read_issue_edits(REPO, 7)
+    # read_issue's judgement: the body's first untrusted editor, the spam comment.
+    assert [(s.kind, s.field) for s in content.skipped] == [
+        ("edit", "body"),
+        ("edit", "comment 8"),
+        ("comment", "comment 9"),
+    ]
+    # Every untrusted edit of trusted content; none of the outsider's own.
+    assert [(s.field, s.login, s.cause) for s in edits] == [
+        ("body", "drive-by", trust.UNTRUSTED),
+        ("body", None, trust.DELETED),
+        ("comment 8", "drive-by", trust.UNTRUSTED),
+    ]
+    assert all(s.kind == "edit" and s.at == EDITED for s in edits)
+
+
+def test_read_events_with_renames(answer: Any) -> None:
+    calls = answer(
+        {
+            trust._EVENTS_WITH_RENAMES_QUERY: [
+                _timeline([_event("RenamedTitleEvent", OUTSIDER), _event("ClosedEvent")])
+            ]
+        }
+    ).calls
+    events = trust.read_events(REPO, 7, renames=True)
+    assert [e.kind for e in events] == ["renamed", "closed"]
+    assert "SUBSCRIBED_EVENT, RENAMED_TITLE_EVENT]" in calls[0][0]
+    assert "RENAMED_TITLE_EVENT" not in trust._EVENTS_QUERY
+
+
 def test_read_events_reads_every_kind_in_order(answer: Any) -> None:
     kinds = [
         ("ClosedEvent", "closed"),
