@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import subprocess
@@ -460,7 +461,20 @@ def _store_result(
         block["fix_status"] = [{"id": i, "status": s} for i, s in fix_status.items()]
     path = directory / f"result-{step}.md"
     path.write_text(f"```merge-review-result\n{json.dumps(block)}\n```\n\nProse.\n")
+    _capture(path, step, request["request_id"])
     return str(path)
+
+
+def _capture(result: Path, step: str, request_id: str) -> None:
+    """Write the capture record the plugin's hook would write beside *result*."""
+    record = {
+        "schema": "merge-review-capture/1",
+        "step": step,
+        "request_id": request_id,
+        "result_sha256": hashlib.sha256(result.read_bytes()).hexdigest(),
+        "agent_id": "agent-1",
+    }
+    (result.parent / f"capture-{step}.json").write_text(json.dumps(record))
 
 
 def _fix(repo: Path, text: str = "x = 3\n") -> None:
@@ -1523,10 +1537,56 @@ def test_check_refuses_stop_item_ids(repo: Path, capsys: Cap, ruled: bool, stop_
 def test_check_refuses_invalid_earlier_result(repo: Path, capsys: Cap) -> None:
     review_head, result = _reviewed(repo, capsys, [_finding("R1")])
     Path(result).write_text("No block here.\n")
+    request = json.loads((_merge_review_dir(repo) / "request-review.json").read_text())
+    _capture(Path(result), "review", request["request_id"])
     code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
     assert code == 1
     assert "the review result" in err
     assert "fails the result check: rule 1 (shape)" in err
+
+
+def test_check_refuses_earlier_result_edited_after_capture(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    # Still a valid result, but not the bytes the hook captured.
+    path = Path(result)
+    path.write_text(path.read_text().replace("Prose.", "Tidied prose."))
+    code, out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert out == ""
+    assert "the review result" in err
+    assert "fails the result check: rule 10 (capture)" in err
+    assert "the result was changed after the capture" in err
+    assert not (_merge_review_dir(repo) / "request-check.json").exists()
+
+
+def test_check_refuses_earlier_result_without_capture(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    (_merge_review_dir(repo) / "capture-review.json").unlink()
+    code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert "rule 10 (capture): the result has no capture record" in err
+    assert not (_merge_review_dir(repo) / "request-check.json").exists()
+
+
+def test_check_refuses_capture_of_another_request(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    _capture(Path(result), "review", "0" * 32)
+    code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert "rule 10 (capture): the capture record's request_id is not the request's" in err
+    assert "0" * 32 not in err
+
+
+def test_check_refuses_malformed_earlier_request_before_capture(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    stored = _merge_review_dir(repo) / "request-review.json"
+    request = json.loads(stored.read_text())
+    request["request_id"] = "not-an-id"
+    stored.write_text(json.dumps(request))
+    code, _out, err = _run(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert "fails the result check: the request: request_id must be 32 lowercase hex" in err
+    assert "not-an-id" not in err
 
 
 @pytest.mark.parametrize(
@@ -1636,6 +1696,18 @@ def test_check_2_refuses_a_defect_still_not_fixed(repo: Path, capsys: Cap) -> No
     code, _out, err = _run(argv, capsys)
     assert code == 1
     assert "earlier defect R2 named by neither" in err
+
+
+def test_check_2_refuses_check_result_edited_after_capture(repo: Path, capsys: Cap) -> None:
+    check_head, results = _checked(repo, capsys)
+    path = Path(results[1])
+    path.write_bytes(path.read_bytes() + b"\n")
+    argv = _check_argv(repo, check_head, results, step="check-2", fix=("R2", "C1"))
+    code, _out, err = _run(argv, capsys)
+    assert code == 1
+    assert "the check result" in err
+    assert "fails the result check: rule 10 (capture)" in err
+    assert not (_merge_review_dir(repo) / "request-check-2.json").exists()
 
 
 def test_check_2_refuses_the_review_head_as_fix_base(repo: Path, capsys: Cap) -> None:
