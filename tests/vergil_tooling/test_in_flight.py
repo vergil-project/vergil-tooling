@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib import (
-    epics,
     github,
     in_flight,
     live_branches,
@@ -511,6 +510,10 @@ def test_in_flight_local_branch_failure_raises(tmp_path: Path) -> None:
         ({"repository": None}, "cannot read its open PRs"),
         (_page([{"number": 90}]), "cannot read its open PRs: 'author'"),
         (_page(["row"]), "cannot read its open PRs"),
+        (
+            {"repository": {"pullRequests": {"pageInfo": {}, "nodes": None}}},
+            "unexpected pullRequests nodes: None",
+        ),
         (
             {"repository": {"pullRequests": {"pageInfo": {"hasNextPage": True}, "nodes": []}}},
             "cannot read its open PRs",

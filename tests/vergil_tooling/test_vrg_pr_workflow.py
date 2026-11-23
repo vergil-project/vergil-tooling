@@ -983,6 +983,17 @@ def test_batch_check_refuses_a_body_it_cannot_judge(
     github_pr["closing"].assert_not_called()
 
 
+def test_batch_check_never_reads_a_missing_body_as_empty(
+    github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pr_is(github_pr, "a" * 40)
+    github_pr["read_issue"].return_value = trust.IssueContent(
+        body=None, body_role=None, author_role=None, comments=(), skipped=()
+    )
+    assert _run("batch-check", "--pr", _PR) == 1
+    assert f"cannot read the body of PR {_PR}: no trusted body" in capsys.readouterr().err
+
+
 def test_batch_check_refuses_a_failed_closing_refs_read(
     github_pr: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
 ) -> None:
