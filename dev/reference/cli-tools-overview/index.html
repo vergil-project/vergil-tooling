@@ -24285,6 +24285,14 @@ for every check and where it runs. Every pipeline run, pass or fail,
 writes <code>.vergil/vrg-validate-last.json</code>: the commit at the start, the exit
 code, whether the run was full (no <code>--check</code>) and the tree clean at the
 start, and each stage's status. <code>vrg-merge-review-request</code> reads it.</p>
+<p><code>--markdown FILE...</code> is the ad-hoc markdown lint: it runs no stage and
+writes no run record, and markdownlints only the given files exactly as
+the common stage would, against the bundled config. A file the common
+stage does not lint (outside its scope, under a <code>[markdownlint].ignore</code>
+path, or gitignored) is named and skipped, so the result never disagrees
+with the gate. <code>--fix</code> lets markdownlint fix what it can. A bare
+<code>markdownlint &lt;file&gt;</code> uses markdownlint's defaults instead, line length
+included, so it flags lines the gate passes.</p>
 <table>
 <thead>
 <tr>
@@ -24299,7 +24307,7 @@ start, and each stage's status. <code>vrg-merge-review-request</code> reads it.<
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>)</td>
+<td><code>--check {common,lint,typecheck,build,test,audit,semgrep,trivy,docs,custom}</code>, <code>--all-versions</code> (Python only; alone or with <code>--check test</code>), <code>--markdown [--fix] FILE...</code> (alone)</td>
 </tr>
 <tr>
 <td>Preconditions</td>

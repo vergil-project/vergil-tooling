@@ -18546,6 +18546,12 @@ config that is now gone.</p>
    over every discovered file.</li>
 </ol>
 <p>This runs inside the dev container where <code>markdownlint</code> is on PATH.</p>
+<p>To lint a few files while working, run
+<code>vrg-container-run -- vrg-validate --markdown [--fix] &lt;file&gt;...</code>. It
+lints each given file the gate lints against the same bundled config,
+and names and skips any file the gate does not lint, so its result
+matches the gate's. A bare <code>markdownlint &lt;file&gt;</code> does not: it falls back
+to markdownlint's defaults, MD013 included.</p>
 <h2 id="links-to-other-vergil-docs-sites">Links to other Vergil docs sites<a class="headerlink" href="#links-to-other-vergil-docs-sites" title="Permanent link">&para;</a></h2>
 <p>Right after markdownlint, the common checks run docs-links over the same
 markdown, less <code>epics/archive/</code>. The <code>[markdownlint].ignore</code> paths do
