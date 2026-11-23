@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19194,8 +19224,9 @@ wherever it is stored. Until you do, the workflows that depend on it
 (ops, upstream refresh, epic roll-up and sweep, release tagging,
 package-index dispatch) will fail.</p>
 <h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
-<p>The release workflow forwards per-ecosystem secrets to <code>cd-release</code>
-(see <a href="../ci-architecture/#cd-release-publishing-secrets">CI Architecture</a>):</p>
+<p>The release workflow passes the publishing secrets to <code>cd-release</code>
+through <code>secrets: inherit</code>
+(see <a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CI Architecture</a>):</p>
 <table>
 <thead>
 <tr>

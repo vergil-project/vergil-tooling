@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18437,7 +18467,7 @@ access, and the task's repo, through a temporary bare fetch.</p>
 <tbody>
 <tr>
 <td><code>OWNER/REPO#N</code></td>
-<td>The task issue whose record is checked. Type <code>OWNER/REPO</code> as GitHub spells it: a record's repo is matched exactly, case included, so a ref in another case finds no record and the verdict is <code>none</code></td>
+<td>The task issue whose record is checked. <code>OWNER/REPO</code> may be typed in any case: it is matched case-insensitively everywhere in the check, as GitHub matches it, and the output spells it as GitHub does</td>
 </tr>
 </tbody>
 </table>
@@ -18495,7 +18525,7 @@ or no counting closing PR to check at all.</p>
 <tbody>
 <tr>
 <td><code>task</code></td>
-<td>The task checked</td>
+<td>The task checked, its <code>OWNER/REPO</code> spelled as GitHub spells it, whatever case it was typed in</td>
 </tr>
 <tr>
 <td><code>verdict</code></td>

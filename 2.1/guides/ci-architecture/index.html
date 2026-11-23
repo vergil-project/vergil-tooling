@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18276,10 +18306,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cd-release-publishing-secrets" class="md-nav__link">
+  <a href="#cd-and-ops-reusable-workflow-secrets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CD: release-publishing secrets
+        CD and ops: reusable-workflow secrets
       
     </span>
   </a>
@@ -18657,10 +18687,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cd-release-publishing-secrets" class="md-nav__link">
+  <a href="#cd-and-ops-reusable-workflow-secrets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CD: release-publishing secrets
+        CD and ops: reusable-workflow secrets
       
     </span>
   </a>
@@ -19134,7 +19164,7 @@ hard error with exit code 1.</p>
 <p>For semgrep, write the suppression as a <code>nosemgrep</code> comment that names the
 <strong>exact rule ID</strong>, and put the justification and a tracking reference in the
 same comment, after the rule ID:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit -- reusable workflow needs the release token; reviewed in #123</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">subprocess</span><span class="o">.</span><span class="n">call</span><span class="p">(</span><span class="n">CMD</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456</span>
 </code></pre></div>
 <p>Semgrep also accepts the comment on the line <strong>above</strong> the finding:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># nosemgrep: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true -- fixed command string, no user input; see #456</span>
@@ -19161,69 +19191,91 @@ an npm advisory with no fix: each entry names the advisory, an expiry, a
 tracking issue and a reason, and the audit log lists every exception it
 applied (see
 <a href="../validation-matrix/#typescript-audit-exceptions">TypeScript audit exceptions</a>).</p>
-<h3 id="cd-release-publishing-secrets">CD: release-publishing secrets<a class="headerlink" href="#cd-release-publishing-secrets" title="Permanent link">&para;</a></h3>
-<p>The release-publishing workflow generated into a consuming repo's
-<code>cd.yml</code> (by <code>repo_init</code>) forwards <strong>explicit, least-privilege secrets</strong>
-to the reusable <code>cd-release</code> workflow per ecosystem — never a blanket
-<code>secrets: inherit</code> (epic
-<a href="https://github.com/vergil-project/.github/issues/189">vergil-project/.github#189</a>).
-The map lives in <code>_cd_release_secrets()</code>
-(<code>src/vergil_tooling/lib/repo_init.py</code>). Every release forwards the
-automation App's <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code>: <code>cd-release</code>
-pushes the release tags with the App's installation token, and fails
-at "Require the automation App secrets" without them. After those
-come exactly what each publisher reads:</p>
+<h3 id="cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets<a class="headerlink" href="#cd-and-ops-reusable-workflow-secrets" title="Permanent link">&para;</a></h3>
+<p>Every secret a workflow reads that can write or act, the org automation
+App's <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> first, lives only in each
+repo's <code>automation</code> environment
+(<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>;
+see <a href="../../reference/config-audit/#github-checks-the-automation-environment">the automation environment</a>).
+Environment secrets reach a job in a cross-repo reusable workflow only
+when the caller passes <code>secrets: inherit</code>: an explicit secrets map
+leaves the callee an empty value (proven by the probe in
+<a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>),
+and a job that calls a reusable workflow cannot declare an environment.
+So the callers of the vergil-actions workflows that read those secrets
+pass <code>secrets: inherit</code>, and every other caller passes an explicit,
+least-privilege secrets map. This narrows the least-privilege rule of
+epic <a href="https://github.com/vergil-project/.github/issues/189">vergil-project/.github#189</a>
+on purpose, and only for these callers: the over-sharing is small once
+no org- or repo-level secret can write or act, and the called workflows
+are protected paths.</p>
+<p>The allowed workflows are <code>INHERIT_ALLOWED</code> in
+<code>src/vergil_tooling/lib/secrets_inherit.py</code>:</p>
 <table>
 <thead>
 <tr>
-<th>Ecosystem</th>
-<th>Secrets forwarded</th>
+<th>Workflow</th>
+<th>Reads</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>python</td>
-<td>App secrets only (PyPI OIDC trusted publishing)</td>
+<td><code>cd-release.yml</code></td>
+<td>The App keys (release tags, package-index dispatch), the publisher's token (<code>CARGO_REGISTRY_TOKEN</code>), and a <code>[package]</code> repo's <code>package-signing</code> environment</td>
 </tr>
 <tr>
-<td>go</td>
-<td>App secrets only (no publish token)</td>
+<td><code>cd-docs.yml</code>, <code>cd-docs-refresh.yml</code></td>
+<td>The App keys, to report a docs failure</td>
 </tr>
 <tr>
-<td>rust</td>
-<td>App secrets and <code>CARGO_REGISTRY_TOKEN</code></td>
+<td><code>publish-index.yml</code></td>
+<td>The App keys and the <code>index-signing</code> environment</td>
+</tr>
+<tr>
+<td><code>ops-github-config.yml</code>, <code>ops-upstream-refresh.yml</code></td>
+<td>The App keys</td>
+</tr>
+<tr>
+<td><code>ops-epic-rollup.yml</code>, <code>ops-epic-sweep.yml</code></td>
+<td>The App keys</td>
+</tr>
+<tr>
+<td><code>ops-agent-audit.yml</code></td>
+<td>The App keys</td>
 </tr>
 </tbody>
 </table>
-<p>A language whose publisher needs no secret (python, go, or any
-non-publishing language) gets a <code>secrets:</code> block naming only the two
-App secrets, never <code>secrets: inherit</code>.
-References to our own <code>vergil-actions@v2.1</code> reusable workflows are
-unaffected — they are trusted first-party refs.</p>
-<p><strong>Exception: repos with <code>[package]</code>.</strong> A repo whose <code>vergil.toml</code> has a
-<code>[package]</code> section MUST call <code>cd-release</code> with <code>secrets: inherit</code>,
-suppressed inline:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span><span class="w">  </span><span class="c1"># nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit</span>
-</code></pre></div>
-<p>Its <code>package-sign</code> job reads <code>PACKAGE_SIGNING_KEY</code> and
-<code>PACKAGE_SIGNING_PASSPHRASE</code> from the caller's <code>package-signing</code>
-environment. Environment secrets reach a job in a cross-repo reusable
-workflow only through <code>inherit</code>: an explicit secrets map leaves
-<code>package-sign</code> with an empty key (proven by the probe in
-<a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>).
-The callee is first-party, so the blanket form is an accepted, reviewed
-exception. <code>vrg-github-repo-init</code> generates this caller for <code>[package]</code> repos
-(<a href="https://github.com/vergil-project/vergil-tooling/issues/3144">vergil-project/vergil-tooling#3144</a>).
+<p>Each must be called from <code>vergil-project/vergil-actions</code> (at any ref), or
+as a local <code>./.github/workflows/</code> path, the way vergil-actions calls its
+own; a workflow of the same name in any other repository is refused.
+<code>vrg-validate</code>'s common <code>secrets-inherit</code> check refuses <code>secrets: inherit</code>
+on any other <code>uses:</code> (see
+<a href="../validation-matrix/#common-checks">the common checks</a>). It replaces
+semgrep's registry <code>secrets-inherit</code> rule, which is excluded fleet-wide
+(<code>DEFAULT_EXCLUDED_RULES</code> in <code>src/vergil_tooling/lib/semgrep.py</code>), so
+there is one definition of the rule and an allowed caller needs no
+<code>nosemgrep</code>.</p>
+<p>The workflows <code>vrg-github-repo-init</code> generates follow it: the <code>cd.yml</code>
+<code>docs</code> and <code>release</code> jobs, the <code>ops.yml</code> <code>github-config</code> job and the
+<code>epic-rollup.yml</code> caller all pass <code>secrets: inherit</code>, whatever the
+language and whether or not the repo has <code>[package]</code>. They supersede the
+explicit App-key maps of
+<a href="https://github.com/vergil-project/vergil-tooling/issues/4747">vergil-project/vergil-tooling#4747</a>
+and epic
+<a href="https://github.com/vergil-project/.github/issues/1494">vergil-project/.github#1494</a>.
 See the <a href="../../reference/package-config/#cd">CD section of the package config reference</a>
-for the full caller.</p>
+for a <code>[package]</code> repo's caller.</p>
 <h3 id="version-resolution">Version resolution<a class="headerlink" href="#version-resolution" title="Permanent link">&para;</a></h3>
 <p>The matrix is <strong>not</strong> embedded in the workflow or passed as an input. The
 supported versions of each language live in one place: the version manifest in
 <a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>, which
 publishes them as <code>docker/versions/window.json</code> at every Vergil ref (the
 <em>version window</em>). The lifecycle job in vergil-containers adds versions to the
-window and drops them from it as they enter and leave support; consuming repos
-do not edit anything when the window moves.</p>
+window and drops them from it as they enter and leave support (it is turned off
+until <a href="https://github.com/vergil-project/.github/issues/1128">vergil-project/.github#1128</a>
+restores it; see
+<a href="../../standards/development/runtime-version-support-policy/#the-lifecycle-job">The lifecycle job</a>);
+consuming repos do not edit anything when the window moves.</p>
 <p>One resolver (<code>src/vergil_tooling/lib/versions/resolve.py</code>) turns a repo's
 <code>vergil.toml</code> and the window into the versions it builds. It reads the window at
 the repo's <code>[dependencies].vergil</code> ref (for example <code>v2.1</code>), so a window change
@@ -19430,7 +19482,7 @@ chosen, and why.</p>
 <p><strong><code>dev-ts-node</code></strong>
 :   Base: <code>base</code> (Ubuntu 24.04), with the major's pinned nodejs.org
     prebuilt tarball at <code>/opt/node/&lt;major&gt;</code> (never built from
-    source). Includes Node.js, npm, Prettier and license-checker.
+    source). Includes Node.js, npm and Prettier.
     TypeScript, ESLint, typescript-eslint, <code>@eslint/js</code>, Vitest and
     <code>@vitest/coverage-v8</code> are not in the image: each repository declares
     them as devDependencies, and the gates run them from its
@@ -19449,14 +19501,14 @@ with two families there is no single default, so a C++ repo must pin
 <code>[ci].versions</code>. Only a <code>library</code> can pin more than one
 entry; an app builds exactly one.</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. A language image needs its parent image and the
 pinned toolchain build args from <code>docker/versions/matrix.json</code>, so build an
 individual image family through the same entry point:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>docker/build.sh<span class="w"> </span>python<span class="w">                 </span><span class="c1"># builds base and its parents first</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker/build.sh<span class="w"> </span>--pull-parents<span class="w"> </span>python<span class="w">  </span><span class="c1"># pulls the parents from GHCR instead</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker/build.sh<span class="w"> </span>python<span class="w">                 </span><span class="c1"># builds base and its parents first</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>docker/build.sh<span class="w"> </span>--pull-parents<span class="w"> </span>python<span class="w">  </span><span class="c1"># pulls the parents from GHCR instead</span>
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> (<code>dev-</code>) or
@@ -19476,8 +19528,8 @@ treated as a property of the <strong>language</strong>, not the repo, which is w
 image cache sound. A repo that genuinely needs an Ubuntu package its language image
 does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
 declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[container]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — trust model, the names-only surface, cache-key
 behaviour, and the fail-closed error — lives in
@@ -19504,9 +19556,9 @@ Two things matter for the CI/container model here:</p>
 <p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
 consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
 <code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[container]</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[container]</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span>
 </code></pre></div>
 <p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
 for baked npm libraries, the trust model, and the cache-key behaviour — lives in

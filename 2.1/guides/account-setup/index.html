@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19183,16 +19213,23 @@ App, the App that runs its fully mechanized workflows.</p>
 <li>An invalid stanza makes every <code>vrg-vm</code> command fail loudly when it loads
   <code>identities.toml</code>.</li>
 </ul>
-<p>The stanza is used first by <code>issue-implement</code>, which starts work on an issue
-only when a trusted author opened it, and by <code>epic-create</code>'s design-review
-rounds. <code>vrg-queue planning</code>, <code>vrg-queue deferred</code> and a bare <code>vrg-queue</code>,
-which reads both of those queues, need it too: only trusted authors' sizing
-comments set an item's
-<a href="../../standards/github-issues/#epic-size">epic size</a>, and with no stanza
-those views fail rather than guess.
-It seeds the system-wide rule for every tool and skill that reads issues,
-planned in
-<a href="https://github.com/vergil-project/.github/issues/579">vergil-project/.github#579</a>.</p>
+<p><strong>Publish before the first release that reads it.</strong> Every tool that acts
+on GitHub content reads the configuration. Add the org's <code>[orgs.&lt;org&gt;]</code>
+stanza before installing the first vergil-tooling release that reads it;
+right after installing it, run <code>vrg-trusted-authors publish</code> for the org,
+so its GitHub Actions jobs find <code>VRG_TRUSTED_AUTHORS</code> when they first run
+that release, and <code>vrg-vm update --all</code> to deliver the file to the VMs.
+A job that runs before the variable is published stops loudly rather than
+guess, and is re-run once it is.</p>
+<p>The configuration drives the system-wide trust rule (epic
+<a href="https://github.com/vergil-project/.github/issues/1467">vergil-project/.github#1467</a>):
+every tool and skill acts only on GitHub content that a trusted identity
+wrote, judged by the trust layer, and reports the rest as metadata only.
+Skills read issue and PR content through
+<a href="../../reference/cli-tools-overview/#vrg-issue-read"><code>vrg-issue-read</code></a>, and
+<code>vrg-epic-audit --untrusted</code> lists the untrusted activity in an org's
+repos for the morning review. With no configuration, every reader fails
+rather than guess.</p>
 <h2 id="verification-checklist">Verification checklist<a class="headerlink" href="#verification-checklist" title="Permanent link">&para;</a></h2>
 <p>After both Apps are registered, installed, and configured:</p>
 <ul>

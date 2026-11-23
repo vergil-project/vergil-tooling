@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18712,7 +18742,7 @@ PRs and acts on the newest one:</p>
 <tbody>
 <tr>
 <td>The PR merged</td>
-<td>The update for this version is already done. It prints the PR's URL and exits 0 without updating anything</td>
+<td>The update for this version is already done. It prints the PR's URL and, without updating anything, deletes the branch on origin and locally, then exits 0</td>
 </tr>
 <tr>
 <td>The PR was closed without merging</td>
@@ -18733,12 +18763,14 @@ tip is not the head of its newest PR. That means the branch name was
 reused after the PR finished, so the branch holds commits that no PR
 covers. If a stale branch cannot be deleted, <code>preflight</code> refuses and
 names the branch to delete by hand.</p>
-<p>After it merges its own PR, the <code>merge</code> stage deletes the
-<code>deps/update-&lt;version&gt;</code> branch on origin. GitHub's delete-on-merge
-setting usually deletes it first, and the stage then reports that it is
-already gone. If the delete fails, the stage prints a warning with the
-command to run by hand. The run still succeeds, because the update has
-merged.</p>
+<p>Once its PR is confirmed merged, by the <code>merge</code> stage or as found
+above, the <code>finalize</code> stage removes the worktree and deletes the
+<code>deps/update-&lt;version&gt;</code> branch on origin and locally. GitHub's
+delete-on-merge setting usually deletes it on origin first, and the
+stage then reports that it is already gone. A PR that did not merge
+keeps its branch. If a deletion fails, the run fails, naming the branch
+and the command to delete it by hand; a re-run finds the PR merged and
+tries the deletion again.</p>
 <h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -18766,7 +18798,7 @@ merged.</p>
 </tr>
 <tr>
 <td><code>merge</code></td>
-<td>Waits for the PR's checks and merges it, if validation passed, then deletes its branch on origin (see <a href="../release/#waiting-for-green">Waiting for green</a>)</td>
+<td>Waits for the PR's checks and merges it, if validation passed (see <a href="../release/#waiting-for-green">Waiting for green</a>)</td>
 </tr>
 <tr>
 <td><code>fix-task</code></td>
@@ -18774,7 +18806,7 @@ merged.</p>
 </tr>
 <tr>
 <td><code>finalize</code></td>
-<td>Prints the held-back report and removes the worktree and local branch</td>
+<td>Prints the held-back report and removes the worktree and local branch; once the PR is confirmed merged, also deletes its branch on origin, and fails if a deletion fails</td>
 </tr>
 <tr>
 <td><code>status</code></td>

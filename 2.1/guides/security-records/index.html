@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19236,7 +19266,9 @@ of them until the plan exists.</p>
   - <strong>A <code>Security advisory:</code> line on an issue without the <code>security</code>
     label</strong>, with no advisory tracking the issue, is a broken pair. The
     queue reports it in the item's note (<code>broken pair: …</code>, saying to
-    have the human check the pair) and does not hold the item.
+    have the human check the pair) and does not hold the item. The
+    read-only <code>vrg-epic-audit</code> reports it too, on a <code>- broken:</code> line
+    naming the open issue alone.
   - <strong><code>Security advisory:</code> lines count only from a trusted body</strong>: one
     whose author and every editor the trust layer trusts. <code>vrg-queue
     planning</code> stops an item whose body it does not trust and leaves it
@@ -19343,7 +19375,9 @@ hand:</p>
   tracks;</li>
 <li><code>vrg-security-record sync --dry-run</code> (or the read-only
   <code>vrg-epic-audit</code>, which prints the same preview) reports what would sync
-  and every broken pair and held advisory.</li>
+  and every broken pair and held advisory. <code>vrg-epic-audit</code> also reports
+  each open issue with a <code>Security advisory:</code> line but no <code>security</code>
+  label, which <code>sync</code> does not look for.</li>
 </ul>
 <p><code>sync</code> reports a broken pair and never repairs it, so a human repairs
 each one it reports, by hand.</p>

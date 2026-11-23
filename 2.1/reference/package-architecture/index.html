@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18402,6 +18432,26 @@ which is the complete list of entry points. The
 <ul>
 <li><strong><code>git.py</code></strong>: git subprocess wrappers.</li>
 <li><strong><code>github.py</code></strong>: <code>gh</code> CLI subprocess wrappers.</li>
+<li><strong><code>trust.py</code></strong>: the trust layer, the one place a behaviour-driving read
+  of GitHub content happens (a body, comments, reviews, edit history,
+  event actors, closing references, or a PR found by its head branch).
+  An identity holds the <code>human</code>, <code>agents</code> or <code>automation</code> role, or none
+  (<a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>); a body
+  or comment is trusted when its author and its editors hold a role; a
+  close or reopen when its actor does. Readers return the trusted items
+  and report each untrusted one as metadata only, or, where the content
+  is load-bearing, stop. A read it cannot complete fails loudly, never
+  as "trusted" or "nothing found", and a batch run stops the one item,
+  not the run. <code>trusted_authors.py</code> loads the configuration and
+  <code>trust_publish.py</code> publishes and checks its GitHub Actions copies.
+  The guard test, <code>tests/vergil_tooling/test_trust_guard.py</code>, scans the
+  package and fails on any content read outside <code>trust.py</code> unless
+  <code>tests/vergil_tooling/trust_guard_exemptions.toml</code> lists it with a
+  reason: a query built at runtime with its fields declared
+  (<code>[[registered]]</code>), content acted on only through the layer's answer
+  (<code>[[judged]]</code>), a display-only read (<code>[[exempt]]</code>), or a read a tracked
+  task moves onto the layer (<code>[[pending]]</code>). Adding an entry is a
+  reviewed change.</li>
 <li><strong><code>config.py</code></strong>: parse and validate <code>vergil.toml</code>.</li>
 <li><strong><code>identity_mode.py</code></strong>: the identity resolver behind
   <a href="../cli-tools-overview/#vrg-whoami"><code>vrg-whoami</code></a>; <code>platform_env.py</code>

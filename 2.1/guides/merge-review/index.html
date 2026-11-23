@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18692,6 +18722,20 @@ is no second field that could disagree with them.</p>
 risk. The eligibility line is the only thing from merge review that goes
 into <code>report-ready</code>'s notes, and merge review never hands off with an item
 still open.</p>
+<p><code>vrg-merge-review-close</code> posts the closing comment and adds its <strong>record
+line</strong>, right below the eligibility line (below the <code>Branch as reviewed:</code>
+line on a fix to an open PR):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Merge review record: head=&lt;sha&gt; fingerprint=&lt;hex&gt; outcome=&lt;eligible | not-eligible (&lt;reason&gt;)&gt;
+</code></pre></div>
+<p>It names the head the run judged, the
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py">change fingerprint</a>
+of the change it covers and the outcome, all computed by the command, so a
+clean rebase keeps the record while any change to the branch's own lines
+needs a new review. For one issue of a batch before handoff the change is
+that issue's own, from the previous issue's commit; otherwise it is the
+branch's change since its merge base with <code>origin/develop</code>. The record is
+machine-readable: it counts only when the agent login posted it, unedited,
+and a run that stopped, is waiting, or ended fatal or in error has none.</p>
 <h2 id="the-protocol">The protocol<a class="headerlink" href="#the-protocol" title="Permanent link">&para;</a></h2>
 <p>The request and the result follow the
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">agent-to-agent review protocol</a>
@@ -18733,6 +18777,10 @@ schemas and the result check. In short:</p>
 <td>Checks a stored result against its request and prints a summary of counts, security count and fix statuses.</td>
 </tr>
 <tr>
+<td><a href="../../reference/cli-tools-overview/#vrg-merge-review-close"><code>vrg-merge-review-close</code></a></td>
+<td>Posts the closing comment, adding the record line with the head and change fingerprint it computes from the worktree.</td>
+</tr>
+<tr>
 <td><a href="../../reference/cli-tools-overview/#vrg-change-class"><code>vrg-change-class</code></a></td>
 <td>Prints a branch's change class, <code>docs-only</code> or <code>code</code>, for humans and debugging.</td>
 </tr>
@@ -18769,8 +18817,8 @@ deletion, rename or type change, any change to <code>vergil.toml</code>, an empt
 change, and any doubt.</p>
 <p>The allow-list is <code>README.md</code> and <code>CHANGELOG.md</code>, plus the repository's own
 paths from <code>vergil.toml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[merge-review]</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[merge-review]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">docs-paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"docs/guides/"</span><span class="p">,</span><span class="w"> </span><span class="s2">"NOTICE.md"</span><span class="p">]</span>
 </code></pre></div>
 <ul>
 <li>An entry ending in <code>/</code> covers everything below it; any other entry is that

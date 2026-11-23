@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15502,6 +15532,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#protected-change-and-exemption-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protected-change and exemption requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18486,6 +18533,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#protected-change-and-exemption-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protected-change and exemption requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18591,10 +18655,12 @@ for the human, which the human posts with
 <a href="../scope-change/"><code>vrg-scope-change</code></a>.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-ruling request --issue 'OWNER/REPO#N' --kind protected-change
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-ruling request --issue 'OWNER/REPO#N' --kind merge-review-exemption --reason TEXT
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
 </code></pre></div>
 <p><code>--issue</code> is the task issue as <code>owner/repo#N</code>. <code>--request</code> and <code>--reply</code> are
 comment IDs, positive integers with no leading zero.</p>
@@ -18717,7 +18783,9 @@ ASCII (U+0020 to U+007E) that does not contain the marker prefix
 <p>A request and a response end with a blank line and their hidden marker,
 <code>&lt;!-- vrg-ruling kind=request --&gt;</code> or
 <code>&lt;!-- vrg-ruling kind=response request=&lt;ID&gt; reply=&lt;ID&gt; --&gt;</code>. A reply carries
-no marker.</p>
+no marker. A protected-change or exemption request (see
+<a href="#protected-change-and-exemption-requests">below</a>) names its kind in its
+marker with a <code>type</code> attribute; an ordinary request carries none.</p>
 <p>A refusal names the item by its ID, or by its position when the ID itself is
 bad. It never echoes a refused value: extra keys are counted, not named, and
 a plain-text refusal gives the character's code point and offset, not the
@@ -18741,10 +18809,50 @@ landed is reported by its ID; otherwise the error says it did not land
 (re-running is safe) or that the outcome cannot be told. A re-run settles the
 last case, because it is refused and names the open request if the post
 landed.</p>
+<h3 id="protected-change-and-exemption-requests">Protected-change and exemption requests<a class="headerlink" href="#protected-change-and-exemption-requests" title="Permanent link">&para;</a></h3>
+<p><code>request --kind</code> posts one of the two requests whose reply carries a
+structured decision: a <strong>protected-change approval</strong> or a <strong>merge-review
+exemption</strong>. It takes no items file, and it computes its own inputs from the
+clone it runs in: the change from <code>HEAD</code>'s merge base with <code>origin/develop</code>
+(as last fetched; fetch first) to <code>HEAD</code>. No blob or fingerprint is ever
+passed in.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>What it records</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>protected-change</code></td>
+<td>Every protected file the change touches (the protected set read at <code>origin/develop</code>, a rename counting both paths), one <code>Protected: &lt;blob&gt; &lt;path&gt;</code> line each, the blob being the file's git object ID at <code>HEAD</code> or <code>deleted</code>; then one <code>Diff: &lt;url&gt;</code> line, the GitHub compare link from the merge base to <code>HEAD</code> on <code>origin</code>'s repo</td>
+</tr>
+<tr>
+<td><code>merge-review-exemption</code></td>
+<td>One <code>Reason: &lt;text&gt;</code> line, from <code>--reason</code> (one line of plain text), and one <code>Fingerprint: &lt;sha256&gt;</code> line, the change fingerprint</td>
+</tr>
+</tbody>
+</table>
+<p>Each body ends with the line telling the human how to reply, a blank line,
+and the typed marker, <code>&lt;!-- vrg-ruling kind=request type=protected-change --&gt;</code>
+or <code>&lt;!-- vrg-ruling kind=request type=merge-review-exemption --&gt;</code>.</p>
+<p>It refuses, posting nothing, when the change touches no protected file
+(<code>protected-change</code>), the change is empty (<code>merge-review-exemption</code>),
+<code>HEAD</code> has no merge base with <code>origin/develop</code>, the protected-path registry
+cannot be read, or <code>origin</code> is not a GitHub repo. Otherwise it posts as
+<code>request</code> does, under the same open-request rule, prints the comment ID on
+stdout, and prints the human's two commands on stderr, one per decision:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID --response-text 'Decision: approve'
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID --response-text 'Decision: refuse'
+</code></pre></div>
+<p>The diff link resolves once <code>HEAD</code> is on GitHub. Once the human has replied,
+the agent reads the reply and closes the turn with <code>respond</code> before any
+other comment, as for every ruling, so the issue is free for its next one.</p>
 <h2 id="draft">draft<a class="headerlink" href="#draft" title="Permanent link">&para;</a></h2>
 <p>Builds the human's reply from a reply items file, pushes it to the request's
 draft ref, and prints the human's command on stdout:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID
 </code></pre></div>
 <p>The issue ref is single-quoted so the command pastes into any shell:
 unquoted, the <code>#</code> is a glob operator in zsh with <code>EXTENDED_GLOB</code> set. The
@@ -18761,7 +18869,7 @@ public anyway, with security items by ID and decision only.</p>
 <h2 id="draft-scope">draft-scope<a class="headerlink" href="#draft-scope" title="Permanent link">&para;</a></h2>
 <p>Pushes a scope change drafted for the human to the issue's scope draft ref,
 and prints the human's command on stdout:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-scope-change --issue 'OWNER/REPO#N'
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-scope-change --issue 'OWNER/REPO#N'
 </code></pre></div>
 <p><code>--text-file</code> holds the scope change's text alone, without the
 <code>Scope change</code> header that <code>vrg-scope-change</code> adds. It may run over several
@@ -18821,7 +18929,7 @@ anyway.</p>
 reply's comment ID is only on stderr.</p>
 <h3 id="-json">--json<a class="headerlink" href="#-json" title="Permanent link">&para;</a></h3>
 <p>With <code>--json</code>, stdout on a valid reply (exit 0) is exactly one JSON object:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456789</span><span class="p">,</span><span class="w"> </span><span class="nt">"reply"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456790</span><span class="p">,</span><span class="w"> </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"F1: fix it\nF2: defer"</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span><span class="nt">"request"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456789</span><span class="p">,</span><span class="w"> </span><span class="nt">"reply"</span><span class="p">:</span><span class="w"> </span><span class="mi">4123456790</span><span class="p">,</span><span class="w"> </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"F1: fix it\nF2: defer"</span><span class="p">}</span>
 </code></pre></div>
 <table>
 <thead>

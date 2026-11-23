@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15494,6 +15524,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#minimum-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum versions
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18596,6 +18637,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#minimum-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimum versions
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -18830,6 +18882,11 @@ warning on stderr, and every Homebrew dependency reports <code>latest-unknown</c
 <td>The tool is present but a health check fails</td>
 <td>ERROR</td>
 </tr>
+<tr>
+<td>any state + below its <a href="#minimum-versions">minimum</a></td>
+<td>The installed version is older than the oldest one Vergil's tools support, pinned or not</td>
+<td>ERROR</td>
+</tr>
 </tbody>
 </table>
 <h4 id="update-levels-macos">Update levels (macOS)<a class="headerlink" href="#update-levels-macos" title="Permanent link">&para;</a></h4>
@@ -18884,7 +18941,7 @@ an unreadable version is an error, never a false <code>current</code> or <code>m
 </tr>
 <tr>
 <td><code>2</code></td>
-<td>At least one error (missing, probe error, unsatisfied check), a failed <code>--fix</code> remediation, or an unreadable manifest or pins file</td>
+<td>At least one error (missing, probe error, unsatisfied check, below its minimum), a failed <code>--fix</code> remediation, or an unreadable manifest or pins file</td>
 </tr>
 </tbody>
 </table>
@@ -19330,6 +19387,29 @@ remediation that <code>status --fix</code> runs. An unsatisfied check is an ERRO
 <p>If the interpreter is externally managed (PEP 668), <code>pip</code> refuses the install.
 <code>vrg-host</code> reports that as a failed remediation rather than working around it;
 install NumPy into that interpreter yourself.</p>
+<h3 id="minimum-versions">Minimum versions<a class="headerlink" href="#minimum-versions" title="Permanent link">&para;</a></h3>
+<p>An entry may declare a <code>minimum</code>, a bare version: the oldest installed version
+Vergil's own tools work with. An installed version below it is an ERROR in
+<code>status</code>, whatever the latest or a pin says, and the row shows
+<code>minimum &lt;v&gt;: satisfied</code> or <code>minimum &lt;v&gt;: UNSATISFIED</code>. The version state is
+left as it is, so <code>upgrade</code> still upgrades a dependency that is behind; an
+upgrade that leaves it below the minimum is an ERROR.</p>
+<table>
+<thead>
+<tr>
+<th>Dependency</th>
+<th>Minimum</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gh</code></td>
+<td>2.97.0</td>
+<td><code>vrg-gh run job-log</code> passes <code>gh api --allow-escape-sequences</code>, which gh <a href="https://github.com/cli/cli/releases/tag/v2.97.0">v2.97.0</a> added (<a href="https://github.com/cli/cli/security/advisories/GHSA-3m3g-3wcr-px46">GHSA-3m3g-3wcr-px46</a>). <code>vrg-gh</code>, and every other <code>vrg-*</code> tool that runs gh, refuses an older gh.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="pinning-host-dependencies">Pinning host dependencies<a class="headerlink" href="#pinning-host-dependencies" title="Permanent link">&para;</a></h2>
 <p>The default for every host dependency is <strong>unpinned</strong>: float on the leading
 edge. <code>vrg-host</code> adopts the org-wide pinning doctrine of epic

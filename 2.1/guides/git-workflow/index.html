@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18902,8 +18932,8 @@ mechanisms. Both exist; they complement each other.</p>
 <tbody>
 <tr>
 <td><strong>Claude Code hook guard</strong></td>
-<td><code>.claude/hooks/guard.sh</code> checked into each repo; wired via <code>.claude/settings.json</code> as a <code>PreToolUse</code> hook on the <code>Bash</code> matcher. Delegates to <code>vrg-hook-guard</code> (regex-based detection of raw <code>git</code>/<code>gh</code> commands). The five branch/context checks live in <code>vrg-commit</code> itself.</td>
-<td>Raw <code>git</code> commands blocked • raw <code>gh</code> commands blocked • <code>vrg-commit</code> additionally checks: detached HEAD, protected branches, branch prefix, issue number</td>
+<td><code>.claude/hooks/guard.sh</code> checked into each repo; wired via <code>.claude/settings.json</code> as a <code>PreToolUse</code> hook on the <code>Bash</code> matcher. Delegates to <code>vrg-hook-guard</code> (regex-based detection of raw <code>git</code>/<code>gh</code> commands, and of agents' raw <code>vrg-gh</code> content reads). The five branch/context checks live in <code>vrg-commit</code> itself.</td>
+<td>Raw <code>git</code> commands blocked • raw <code>gh</code> commands blocked • agents' raw <code>vrg-gh</code> reads of issue and PR content blocked, naming <code>vrg-issue-read</code> • <code>vrg-commit</code> additionally checks: detached HEAD, protected branches, branch prefix, issue number</td>
 </tr>
 <tr>
 <td><strong>Plugin PreToolUse hooks</strong></td>

@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19255,7 +19285,10 @@ the first of its common checks. See the
 <h2 id="step-5-claude-code-hook-guard-and-settings">Step 5: Claude Code hook guard and settings<a class="headerlink" href="#step-5-claude-code-hook-guard-and-settings" title="Permanent link">&para;</a></h2>
 <h3 id="hook-guard">Hook guard<a class="headerlink" href="#hook-guard" title="Permanent link">&para;</a></h3>
 <p><code>.claude/hooks/guard.sh</code> blocks raw <code>git</code> and <code>gh</code> commands in Claude
-Code agent sessions. It delegates to <code>vrg-hook-guard</code> when
+Code agent sessions, and agents' raw <code>vrg-gh</code> reads of issue and PR
+content (see
+<a href="../../reference/hooks/pre-commit/#raw-content-reads">Raw content reads</a>).
+It delegates to <code>vrg-hook-guard</code> when
 vergil-tooling is installed and otherwise falls back to a <code>jq</code>-based
 hard deny. <code>vrg-github-repo-init</code> writes it, executable, from the
 packaged template
@@ -19499,9 +19532,10 @@ never produces.</p>
    <a href="../../reference/package-config/">Package configuration</a>).</li>
 <li>Re-run <code>vrg-github-repo-init --adopt</code> from the repo root. It keeps
    <code>[package]</code> (and any other hand-written table) and regenerates the
-   workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>, and the
-   <code>cd.yml</code> <code>release</code> job switches to <code>secrets: inherit</code>. The GitHub config
-   step then makes <code>package / evidence</code> a required check.</li>
+   workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>. The
+   <code>cd.yml</code> <code>release</code> job already passes <code>secrets: inherit</code>, which carries the
+   signing secrets. The GitHub config step then makes <code>package / evidence</code> a
+   required check.</li>
 <li>Create a <code>package-signing</code> environment, restricted to <code>main</code>, holding
    <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>.</li>
 <li>Make sure the org's GitHub App can dispatch to <code>&lt;org&gt;/packages</code>, which

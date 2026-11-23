@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14921,6 +14951,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-the-automation-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — the automation environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18838,6 +18879,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-the-automation-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — the automation environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#github-checks-the-required-status-check-set" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18899,8 +18951,9 @@ reconciles it. It combines two independent halves:</p>
   <code>.claude/hooks/guard.sh</code>, reusable-workflow pins, <code>.gitignore</code>,
   <code>.github/dependabot.yml</code>, the per-language managed files (such as
   TypeScript's <code>tsconfig.vergil.json</code>), and <code>.github/workflows/ops.yml</code>.</li>
-<li><strong>GitHub API checks</strong> — repo settings, branch rulesets, and the
-  required-status-check set, fetched from the GitHub API.</li>
+<li><strong>GitHub API checks</strong> — repo settings, branch rulesets, the
+  required-status-check set and the <code>automation</code> environment, fetched
+  from the GitHub API.</li>
 </ul>
 <h2 id="the-audit-command">The <code>audit</code> command<a class="headerlink" href="#the-audit-command" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-github-repo-config<span class="w"> </span>audit<span class="w"> </span><span class="o">[</span>--repo<span class="w"> </span>OWNER/REPO<span class="o">]</span><span class="w"> </span><span class="o">[</span>--config<span class="w"> </span>PATH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--in-tree-templates<span class="o">]</span>
@@ -19076,6 +19129,15 @@ non-zero <a href="#update-exit-codes">exit code</a> and <strong>turns the schedu
 red</strong>, so a non-conforming repo cannot silently persist.</p>
 <p><code>vrg-release</code> also runs <code>audit</code> before it releases, so a repo whose
 configuration has drifted cannot release until it is reconciled.</p>
+<p>In the org's own <code>.github</code> repository only, the same workflow's
+<code>trusted-authors-check</code> job runs
+<a href="../cli-tools-overview/#vrg-trusted-authors"><code>vrg-trusted-authors check</code></a>
+for the whole org, as the automation App: a missing, invalid or not
+<code>all</code>-visible <code>VRG_TRUSTED_AUTHORS</code> or <code>VRG_AUTOMATION_APP</code>, or a
+repository-level variable of either name, turns that run red. It uploads
+the values it read as the <code>trusted-authors-values</code> artifact, which the
+morning review compares with <code>vrg-trusted-authors render</code> (see
+<a href="../../guides/account-setup/#trusted-authors">Trusted authors</a>).</p>
 <h3 id="settings-the-identity-cannot-read">Settings the identity cannot read<a class="headerlink" href="#settings-the-identity-cannot-read" title="Permanent link">&para;</a></h3>
 <p>Several GitHub reads need the <code>administration=read</code> repository
 permission: <code>vulnerability-alerts</code>, the three <code>actions/permissions</code>
@@ -19551,6 +19613,20 @@ order:</p>
 <td>the org automation App (<code>Integration</code>, its App ID) and the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
 </tr>
 <tr>
+<td><code>Main updates</code></td>
+<td>branch</td>
+<td><code>refs/heads/main</code></td>
+<td><code>update</code></td>
+<td>the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5)</td>
+</tr>
+<tr>
+<td><code>Agent audit markers</code></td>
+<td>branch</td>
+<td><code>refs/heads/vergil/agent-audit/*</code></td>
+<td><code>update</code>, <code>creation</code>, <code>deletion</code></td>
+<td>the repository Admin role (<code>RepositoryRole</code>, <code>actor_id</code> 5) and the org automation App (<code>Integration</code>, its App ID)</td>
+</tr>
+<tr>
 <td><code>CI gates (develop)</code></td>
 <td>branch</td>
 <td><code>refs/heads/develop</code></td>
@@ -19614,6 +19690,21 @@ order:</p>
   never from the API, and looks the ID up with <code>GET /apps/{slug}</code>. An org
   with no stanza, a missing configuration or a failed lookup fails the run
   (exit 2).</li>
+<li><strong>Main updates</strong> lets only the human admin update <code>main</code>. A pull
+  request's merge updates its base branch, and GitHub's <code>update</code> rule
+  allows that only to a bypass actor, so no other identity can merge into
+  <code>main</code>, whatever pull-request permission it holds. A GitHub App's
+  permissions cover a whole repository, never one branch, so this is what
+  keeps an agent that may merge its own PRs into <code>develop</code> out of <code>main</code>
+  (<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>,
+  spec §4.1). The org automation App is not a bypass actor: <code>vrg-release</code>
+  refuses every agent identity, so the human merges every release PR. The
+  ruleset has no <code>creation</code> rule, so repo init can still create <code>main</code>.</li>
+<li><strong>Agent audit markers</strong> keeps the <code>vergil/agent-audit/</code> marker branches,
+  which record where the daily agent audit has checked up to, out of reach
+  of the identity being audited. Only the human admin (whose repo init
+  creates them) and the org automation App (which runs the audit) can
+  create, move or delete one.</li>
 <li><strong>Bypass actors are not compared under an App token that is not the
   automation identity</strong>, such as an agent App's token or a CI
   <code>GITHUB_TOKEN</code>. Such a token cannot read a ruleset's bypass list, so in
@@ -19639,6 +19730,70 @@ order:</p>
   branch, <code>gh api repos/{owner}/{repo}/rulesets</code>, or this audit). The error is
   still raised. To diagnose a refusal, or to probe whether a ruleset blocks a
   write, use <code>git push</code>, which prints the rule.</li>
+</ul>
+<h2 id="github-checks-the-automation-environment">GitHub checks — the automation environment<a class="headerlink" href="#github-checks-the-automation-environment" title="Permanent link">&para;</a></h2>
+<p>Every repo gets an <code>automation</code> deployment environment, declared by
+<code>desired_automation_environment()</code> in <code>lib/github_config.py</code>
+(<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>).
+Every secret a workflow reads that can write or act, the org automation
+App's <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> first, lives only in this
+environment, never at org or repo level, and every job that needs one
+declares <code>environment: automation</code>. The environment's deployment branch
+policy admits only <code>develop</code> and <code>main</code> (releases run on <code>main</code>), so a
+workflow running on any other branch, such as an agent's feature branch,
+runs without those secrets.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Desired</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deployment branch policy</td>
+<td>custom branch policies (not "all branches", not "protected branches")</td>
+</tr>
+<tr>
+<td>Custom branch policies</td>
+<td>exactly <code>develop</code> and <code>main</code></td>
+</tr>
+<tr>
+<td>Custom tag policies</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Required reviewers</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Wait timer</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Each field is compared on its own</strong>, as
+  <code>environments.automation.&lt;field&gt;</code>. A missing environment is one item,
+  <code>environments.automation: expected='present', actual='missing'</code>. A
+  policy such as <code>*</code> shows up as drift on <code>custom_branches</code>. Other
+  environments in the repo are not read or compared.</li>
+<li><strong>Reads need <code>actions=read</code>.</strong> GitHub's
+  <a href="https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps">permissions required for GitHub Apps</a>
+  lists the environment read and its <code>deployment-branch-policies</code>
+  listing under Actions (read). A permission-gap 403 on the environment
+  is reported as <code>environments.automation</code> not checked; one on the
+  listing as <code>environments.automation.custom_branches</code> and
+  <code>.custom_tags</code> not checked. A 404 is a missing environment. Any other
+  error, a malformed answer or a protection rule of a type the audit does
+  not know fails the audit rather than read as converged.</li>
+<li><strong><code>update</code> writes it whole</strong>, which needs Administration write: a
+  <code>PUT</code> of the environment (no reviewers, no wait timer, custom branch
+  policies), then a <code>POST</code> of each missing branch policy before a
+  <code>DELETE</code> of each stray one, so the policy set never passes through
+  empty. <code>repo-init</code> creates it the same way.</li>
+<li>A <code>docs-single-branch</code> repo gets the same policy: one naming a branch
+  the repo does not have admits nothing.</li>
 </ul>
 <h2 id="github-checks-the-required-status-check-set">GitHub checks — the required-status-check set<a class="headerlink" href="#github-checks-the-required-status-check-set" title="Permanent link">&para;</a></h2>
 <p>The GitHub half compares the repo's live branch-protection configuration

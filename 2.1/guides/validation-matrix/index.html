@@ -1474,6 +1474,8 @@
       
         
       
+        
+      
     
     
     
@@ -1526,6 +1528,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18990,7 +19020,9 @@ today.</p>
 repository that has a <code>vergil.toml</code>.</p>
 <p><code>.claude/hooks/guard.sh</code>, wired in <code>.claude/settings.json</code>, calls
 <code>vrg-hook-guard</code>. It blocks raw <code>git</code> and <code>gh</code> commands and lets
-<code>vrg-git</code>, <code>vrg-gh</code> and the other <code>vrg-*</code> tools through. See the
+<code>vrg-git</code>, <code>vrg-gh</code> and the other <code>vrg-*</code> tools through, but refuses an
+agent's raw <code>vrg-gh</code> read of issue or PR content, naming <code>vrg-issue-read</code>.
+See the
 <a href="../../reference/hooks/pre-commit/">Claude Code Hook Guard reference</a>.</p>
 <h3 id="vrg-git">vrg-git<a class="headerlink" href="#vrg-git" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> every <code>vrg-git</code> command.</p>
@@ -19089,7 +19121,8 @@ dev images come from
    name the org does not publish (anything but the versioned sites and
    the unversioned <code>docs</code> and <code>packages</code>) fails too. The check reads the
    same markdown as markdownlint, less <code>epics/archive/</code>, against the
-   fixed lists of sites in vergil-tooling (no network), and names each
+   fixed lists of sites in vergil-tooling (no network) plus the checked
+   repository's own site when it publishes docs, and names each
    hit by path and line, with its <code>/latest/</code> form or its site name. See
    <a href="../../reference/lint/markdown-standards/#links-to-other-vergil-docs-sites">Links to other Vergil docs sites</a>.</li>
 <li>shellcheck on shell scripts under <code>scripts/</code> and on every <code>*.sh</code>
@@ -19102,6 +19135,15 @@ dev images come from
    file (a <code>runs-on</code>, a matrix value, a <code>with:</code> input) may be
    <code>ubuntu-latest</code>. Pin GitHub-hosted runners to <code>ubuntu-24.04</code>; the
    check names each hit by path and line.</li>
+<li>secrets-inherit: a job in a <code>.github/workflows/*.yml</code> or <code>*.yaml</code>
+   file may pass <code>secrets: inherit</code> only to a vergil-actions workflow that
+   reads the <code>automation</code> environment's secrets (<code>cd-release.yml</code>,
+   <code>cd-docs.yml</code>, <code>cd-docs-refresh.yml</code>, <code>publish-index.yml</code>,
+   <code>ops-github-config.yml</code>, <code>ops-upstream-refresh.yml</code>,
+   <code>ops-epic-rollup.yml</code>, <code>ops-epic-sweep.yml</code>, <code>ops-agent-audit.yml</code>).
+   Every other caller passes an explicit secrets map; the check names each
+   refused <code>inherit</code> by path and line. See
+   <a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>.</li>
 <li>ansible-lint, when the repository has Ansible content.</li>
 </ol>
 <p>The first failing check stops the run. In CI the common checks run once,

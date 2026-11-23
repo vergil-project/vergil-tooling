@@ -1476,6 +1476,8 @@
       
         
       
+        
+      
     
     
     
@@ -1528,6 +1530,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.339/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.339
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18689,8 +18719,9 @@ environment, never on its command line, and is never printed.</p>
   line that sources <code>conan.env</code>, so <code>conan</code> run by hand in an interactive bash
   sees the token. The tooling does not depend on that line.</li>
 </ul>
-<p>Without any token, <code>vrg-validate</code> skips <code>conan audit scan .</code> with a notice and
-runs the rest of the AUDIT stage.</p>
+<p>Without any token, <code>vrg-validate</code> fails the AUDIT stage: it does not run
+<code>conan audit scan .</code>, prints an error naming the token, and still runs the rest
+of the stage. A missing token is never a silent pass.</p>
 <h2 id="testing-ctest-runner-googletest-default">Testing: CTest Runner, GoogleTest Default<a class="headerlink" href="#testing-ctest-runner-googletest-default" title="Permanent link">&para;</a></h2>
 <p><strong>CTest is the mandated test runner.</strong> Every C++ repository exposes its tests
 through CTest, and the validation pipeline invokes them with
