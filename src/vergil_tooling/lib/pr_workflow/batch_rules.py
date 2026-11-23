@@ -170,18 +170,18 @@ def _outsider(issue: epics.IssueRef, authors: TrustedAuthors) -> trust.Skipped |
 
 
 def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuthors) -> None:
-    """The per-issue refusals: a task, not queued, trusted author, not operational."""
+    """The per-issue refusals: a task, buildable parent, trusted author, not operational."""
     kind = _read(f"the labels of {ref}", "task", lambda: epics.non_task_kind(issue))
     if kind is not None:
         raise BatchRuleError("task", epics.non_task_refusal_message("--issue", ref, kind))
 
     queue = _read(
         f"the parent of {ref}",
-        "not queued",
+        "buildable parent",
         lambda: epics.unbuildable_parent_kind(issue.slug, default_repo=repo),
     )
     if queue is not None:
-        raise BatchRuleError("not queued", epics.queue_refusal_message(ref, queue))
+        raise BatchRuleError("buildable parent", epics.queue_refusal_message(ref, queue))
 
     opened = _read(f"the author of {ref}", "trusted author", lambda: _outsider(issue, authors))
     if opened is not None:
@@ -264,9 +264,10 @@ def check_hard_rules(issues: list[str], *, repo: str) -> None:
     *issues* are canonical refs (``#N`` or ``owner/repo#N``) in batch order;
     *repo* is the PR's ``owner/name``. The rules (spec §5.1): 2 to 8 issues,
     none listed twice, each in *repo*, each a task (not an epic or archive)
-    and not a queue item, each opened by a trusted author, none operational,
-    none Blocked-by an open deployment task, and one shared parent that is a
-    finite epic or the repo's ad-hoc epic. Raises :class:`BatchRuleError` at
+    under a buildable parent (not a queue item or an ops issue), each opened
+    by a trusted author, none operational, none Blocked-by an open
+    deployment task, and one shared parent that is a finite epic or the
+    repo's ad-hoc epic. Raises :class:`BatchRuleError` at
     the first rule broken, and on any read that fails.
     """
     parsed = _parse_refs(issues, repo)

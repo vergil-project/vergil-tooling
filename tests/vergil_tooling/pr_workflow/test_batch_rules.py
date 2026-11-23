@@ -231,7 +231,8 @@ def test_hard_rules_refuse_non_task_issue(world: FakeGitHub, kind: str) -> None:
 
 def test_hard_rules_refuse_queue_item(world: FakeGitHub) -> None:
     world.issues[_ref(10)].native_parent = INTAKE_EPIC
-    message = _refused(["#10", "#11"], "not queued")
+    message = _refused(["#10", "#11"], "buildable parent")
+    assert message.startswith("batch refused (buildable parent): ")
     assert epics.queue_refusal_message("#10", "intake") in message
 
 
@@ -239,7 +240,8 @@ def test_hard_rules_refuse_ops_issue(world: FakeGitHub) -> None:
     ops_epic = IssueRef("acme", ".github", 3)
     world.issues[ops_epic] = Issue(labels={"epic", "operations"}, native_parent=None)
     world.issues[_ref(11)].native_parent = ops_epic
-    message = _refused(["#10", "#11"], "not queued")
+    message = _refused(["#10", "#11"], "buildable parent")
+    assert message.startswith("batch refused (buildable parent): ")
     assert epics.queue_refusal_message("#11", "operations") in message
 
 
@@ -303,7 +305,7 @@ def test_hard_rules_refuse_when_trusted_authors_fails(
     ("what", "rule", "named"),
     [
         ("labels", "task", "the labels of #10"),
-        ("parent", "not queued", "the parent of #10"),
+        ("parent", "buildable parent", "the parent of #10"),
         ("author", "trusted author", "the author of #10"),
         ("blockers", "no open deployment blocker", "the Blocked-by lines of #10"),
     ],
