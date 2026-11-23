@@ -2,10 +2,11 @@
 
 ``vrg-release-record check <owner>/<repo>#<N>`` is the one reader of the
 records ``vrg-release`` posts (:mod:`vergil_tooling.lib.release.records`). It
-reads every comment on the task, page by page, and finds the records of the
-task's repo that count: a record counts only when its comment's author and
-last editor are ``human`` logins of ``vrg-trusted-authors``. A record marker
-on any other identity's comment is a warning and is otherwise ignored.
+reads every comment on the task, page by page, through the trust layer
+(:func:`~vergil_tooling.lib.release.records.record_comments`), and finds the
+records of the task's repo that count: a record counts only when its
+comment's author and last editor hold the ``human`` role. Every other
+comment is reported on stderr, metadata only, and never read for a record.
 
 The newest counting record (the highest ``X.Y.Z``) is the one used; any
 other counting record is a warning. The check then confirms the record
@@ -52,19 +53,18 @@ from vergil_tooling.lib.pending_release import (
 )
 from vergil_tooling.lib.release.records import (
     RecordReadError,
-    counting_record,
-    read_comments,
+    record_comments,
 )
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
-    bare_login,
     load_trusted_authors,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Sequence
 
-    from vergil_tooling.lib.release.records import Comment
+    from vergil_tooling.lib.trust import TrustedComment
+    from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 EXIT_PASS = 0
 EXIT_ERROR = 1
@@ -183,14 +183,12 @@ def check(task: str) -> CheckResult:
     repo, number = match.group("repo"), int(match.group("number"))
     with github.target_org(repo.split("/", 1)[0]):
         authors = load_trusted_authors()
-        humans = authors.human
-        version, warnings = _newest_record(read_comments(task), task, repo, humans)
+        version, warnings = _newest_record(record_comments(task, authors=authors), task, repo)
         if version is None:
             return CheckResult(task, "none", None, None, tuple(warnings))
         tag = f"v{version}"
         record = Record(version, tag, f"https://github.com/{repo}/releases/tag/{tag}")
-        vouched = frozenset(bare_login(login) for login in (*authors.human, *authors.agents))
-        prs, pr_warnings = _closing_prs(repo, number, vouched)
+        prs, pr_warnings = _closing_prs(repo, number, authors)
         warnings.extend(pr_warnings)
         ancestry, ancestry_warnings = _ancestry(task, repo, tag, prs)
         warnings.extend(ancestry_warnings)
@@ -203,13 +201,13 @@ def _version_key(version: str) -> tuple[int, ...]:
 
 
 def _newest_record(
-    comments: Sequence[Comment], task: str, repo: str, humans: Sequence[str]
+    comments: Sequence[TrustedComment], task: str, repo: str
 ) -> tuple[str | None, list[str]]:
     """The newest version of *repo* with a counting record among *comments*, and warnings.
 
+    *comments* are the ones the record rule trusts (:func:`record_comments`).
     A record of another repo is ignored with a warning (a release records
-    only its own repo's issues); so is each record that does not count
-    (:func:`counting_record`) and each older counting record.
+    only its own repo's issues); so is each older counting record.
     """
     versions: set[str] = set()
     warnings: list[str] = []
@@ -225,12 +223,8 @@ def _newest_record(
                 )
                 continue
             versions.add(found.group("version"))
-    counted: list[str] = []
-    for version in sorted(versions, key=_version_key, reverse=True):
-        record, record_warnings = counting_record(comments, repo, version, humans)
-        warnings.extend(record_warnings)
-        if record is not None:
-            counted.append(version)
+    # Every comment here passes the record rule, so each version found counts.
+    counted = sorted(versions, key=_version_key, reverse=True)
     if not counted:
         return None, warnings
     newest = counted[0]
@@ -242,7 +236,7 @@ def _newest_record(
 
 
 def _closing_prs(
-    repo: str, number: int, vouched: Collection[str]
+    repo: str, number: int, authors: TrustedAuthors
 ) -> tuple[list[tuple[int, str]], list[str]]:
     """``(PR number, merge commit)`` of each merged PR whose closing reference to *number* counts.
 
@@ -279,7 +273,7 @@ def _closing_prs(
                 "another repo, so the ancestry check skips it"
             )
             continue
-        issues, _ = trusted_closing_refs(node, vouched)
+        issues, _ = trusted_closing_refs(node, repo=repo, authors=authors)
         if number not in issues:
             warnings.append(
                 f"closing PR #{pr} of {repo}#{number} does not count: its closing reference "

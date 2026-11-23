@@ -35,7 +35,8 @@ only `vrg-release` writes; see
 [Release tracking artifacts](../../guides/releasing.md#release-tracking-artifacts).
 `prepare` locks the issue, and `vrg-release` trusts the state block only
 while every identity that authored, edited, closed or reopened the issue
-is a `human` login of `vrg-trusted-authors`: any other identity stops
+holds the `human` role (a `human` login of `vrg-trusted-authors` whose
+account is a GitHub user): any other identity stops
 the run before it writes anything, as a suspected security breach; see
 [The lock and the identity rule](../../guides/releasing.md#the-lock-and-the-identity-rule).
 Such a release can never be resumed; it is replaced with
@@ -50,8 +51,9 @@ done; see
 Once every earlier stage has succeeded, `release-records` posts a
 `Released:` record, as the human running the release, on each issue in
 the issue list that has no counting record yet. A record counts only
-when its comment's author and last editor are `human` logins of
-`vrg-trusted-authors`; a resume posts only the missing ones, and
+when its comment's author and last editor hold the `human` role, and
+every other comment is reported on stderr, metadata only; a resume posts
+only the missing ones, and
 `close-tracking` closes the tracking issue only once every record is
 posted; see
 [`Released:` records](../../guides/releasing.md#released-records).

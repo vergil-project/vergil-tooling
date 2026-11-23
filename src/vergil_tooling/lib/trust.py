@@ -111,6 +111,8 @@ COMMENT_FIELDS = (
 """The GraphQL selection on an ``IssueComment`` that :func:`judge_comments` needs."""
 
 _BODY_FIELDS = f"author {_ACTOR} editor {_ACTOR} body createdAt lastEditedAt {_edits_selection()}"
+BODY_FIELDS = _BODY_FIELDS
+"""The GraphQL selection on an ``Issue`` or ``PullRequest`` that :func:`judge_body` needs."""
 
 
 def _on_issue_and_pr(selection: str) -> str:
@@ -430,6 +432,33 @@ def _accepted(
     return judgement
 
 
+def judge_identity(
+    identity: Identity,
+    *,
+    org: str,
+    roles: frozenset[Role] = ALL_ROLES,
+    authors: TrustedAuthors,
+) -> Judgement:
+    """The role *identity* holds among *roles* for content in a repo of *org*, or why none.
+
+    :func:`role_of` for a reader that accepts only *roles*: a trusted role
+    outside them is judged :data:`NOT_ACCEPTED`, so ``role`` is ``None``.
+    """
+    return _accepted(identity, org=org, roles=roles, authors=authors)
+
+
+def identity(actor: object, *, call: str, what: str) -> Identity:
+    """The :class:`Identity` of a GraphQL actor read with ``{ __typename login }``.
+
+    A ``null`` actor is a deleted account. An actor without a usable
+    ``login`` or ``__typename`` raises :class:`TrustReadError`: its type is
+    never guessed.
+    """
+    if actor is None:
+        return Identity(None, None)
+    return _actor({"actor": actor}, "actor", call, what)
+
+
 # --- reading -----------------------------------------------------------------
 
 
@@ -661,6 +690,42 @@ def judge_comments(
     return _judge_parsed(
         parsed, repo=repo, number=number, roles=roles, editors=editors, authors=authors
     )
+
+
+def judge_body(
+    node: Mapping[str, object],
+    *,
+    repo: str,
+    number: int,
+    kind: Literal["issue", "pr"],
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors,
+) -> tuple[Role | None, Skipped | None]:
+    """Judge the body of an issue or PR node a caller fetched with :data:`BODY_FIELDS`.
+
+    Returns the body's role (its author's, when the author and its editors by
+    *editors* hold a role in *roles*) and ``None``; or ``None`` and the
+    :class:`Skipped` record (field ``body``) of the first identity that does
+    not. Raises :class:`TrustReadError` when a field :data:`BODY_FIELDS`
+    names is missing or the body's edit history has a next page: the input
+    must be complete. Callers that can use :func:`read_issue` do.
+    """
+    call = f"judge_body {repo}#{number}"
+    body = _content(node, call, f"the {kind} body")
+    if body.edits_cursor is not None:
+        raise TrustReadError(call, "the edits of the body are not read in full")
+    role, _, skipped = _judge(
+        body,
+        repo=repo,
+        number=number,
+        kind=kind,
+        field="body",
+        roles=roles,
+        editors=editors,
+        authors=authors,
+    )
+    return role, skipped
 
 
 def _split_repo(repo: str) -> tuple[str, str]:

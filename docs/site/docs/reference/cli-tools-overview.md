@@ -431,7 +431,8 @@ pending-release table and the issues its `feature/` PRs close by a
 trusted closing reference. The tracking issue's body carries those
 contents and its state block. The issue is locked, and its state is
 trusted only while every identity that authored, edited, closed or
-reopened it is a `human` login of `vrg-trusted-authors`. Human-only. See the [vrg-release reference](dev/release.md)
+reopened it holds the `human` role (a `human` login of
+`vrg-trusted-authors` whose account is a GitHub user). Human-only. See the [vrg-release reference](dev/release.md)
 and the [Releasing guide](../guides/releasing.md).
 
 | Attribute | Value |
@@ -447,8 +448,8 @@ and the [Releasing guide](../guides/releasing.md).
 
 Read a task's `Released:` record, which `vrg-release` posts, as release
 evidence. `check` reads every comment on the task and uses the newest record
-that counts (its comment's author and last editor are `human` logins of
-`vrg-trusted-authors`); every other record is a warning. It then checks that
+that counts (its comment's author and last editor hold the `human` role);
+every other comment is reported on stderr, metadata only. It then checks that
 the merge commit of each closing PR of the task whose closing reference
 passes the release's trust rule, read from GitHub and never from the record,
 is an ancestor of the record's tag, in a temporary bare fetch of the task's
