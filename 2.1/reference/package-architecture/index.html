@@ -1476,6 +1476,8 @@
       
         
       
+        
+      
     
     
     
@@ -1528,6 +1530,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.340/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.340
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18442,8 +18472,10 @@ which is the complete list of entry points. The
   and report each untrusted one as metadata only, or, where the content
   is load-bearing, stop. A read it cannot complete fails loudly, never
   as "trusted" or "nothing found", and a batch run stops the one item,
-  not the run. <code>trusted_authors.py</code> loads the configuration and
-  <code>trust_publish.py</code> publishes and checks its GitHub Actions copies.
+  not the run. <code>trusted_authors.py</code> loads the configuration,
+  <code>trust_publish.py</code> publishes and checks its GitHub Actions copies, and
+  <code>app_secrets.py</code> checks that the automation App's secrets reach each
+  repo from its <code>automation</code> environment, with no repo- or org-level copy.
   The guard test, <code>tests/vergil_tooling/test_trust_guard.py</code>, scans the
   package and fails on any content read outside <code>trust.py</code> unless
   <code>tests/vergil_tooling/trust_guard_exemptions.toml</code> lists it with a
