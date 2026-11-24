@@ -283,6 +283,155 @@ def test_child_states_reflink_includes_closed_at(layer: FakeItems) -> None:
     assert result[0].closed_at == "2026-05-10T00:00:00Z"
 
 
+# -- native blocked-by relationships (#5094) ----------------------------------
+
+
+def _blocker_node(login: str, name: str, number: int, state: str) -> dict[str, object]:
+    return {"number": number, "state": state, "repository": _repo_node(login, name)}
+
+
+def _blocked_by(*nodes: object, total: int | None = None) -> dict[str, object]:
+    return {"totalCount": len(nodes) if total is None else total, "nodes": list(nodes)}
+
+
+def _child_node(number: int, blocked_by: object) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "OPEN",
+        "title": f"t{number}",
+        "repository": _repo_node("org", "repo-a"),
+        "blockedBy": blocked_by,
+    }
+
+
+def _listing(*children: object) -> dict[str, object]:
+    return {"node": {"subIssues": {"nodes": list(children)}}}
+
+
+def test_child_states_with_blockers_reads_them_in_the_listing_query() -> None:
+    data = _listing(
+        _child_node(
+            101,
+            _blocked_by(
+                _blocker_node("other-org", "lib", 131, "OPEN"),
+                _blocker_node("org", "repo-b", 7, "closed"),
+            ),
+        ),
+        _child_node(102, _blocked_by()),
+    )
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data) as graphql,
+    ):
+        result = epics.child_states_with_blockers(EPIC)
+    # One query lists the children and their blockers.
+    graphql.assert_called_once_with(epics._SUBISSUES_WITH_BLOCKERS_QUERY, id="NODE")
+    assert "blockedBy(first: 100)" in epics._SUBISSUES_WITH_BLOCKERS_QUERY
+    assert "totalCount" in epics._SUBISSUES_WITH_BLOCKERS_QUERY
+    assert result == [
+        ChildState(
+            IssueRef("org", "repo-a", 101),
+            "OPEN",
+            "t101",
+            native_blockers=(
+                epics.BlockerState(IssueRef("other-org", "lib", 131), "OPEN"),
+                epics.BlockerState(IssueRef("org", "repo-b", 7), "CLOSED"),
+            ),
+        ),
+        ChildState(IssueRef("org", "repo-a", 102), "OPEN", "t102", native_blockers=()),
+    ]
+
+
+def test_child_states_with_blockers_reflink_fallback_reads_none(layer: FakeItems) -> None:
+    # A reflink child's blockers were not read: None, never an empty tuple.
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        }
+    ]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, _listing())),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
+    ):
+        result = epics.child_states_with_blockers(EPIC)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+    assert result[0].native_blockers is None
+
+
+@pytest.mark.parametrize(
+    ("blocked_by", "match"),
+    [
+        # A blocker the token cannot see is left out of the nodes but counted.
+        (_blocked_by(_blocker_node("org", "repo-b", 7, "OPEN"), total=2), "only 1 could be read"),
+        (_blocked_by(None), "unreadable native blocker"),
+        (_blocked_by({"number": 7, "state": "OPEN"}), "unreadable native blocker"),
+        (_blocked_by(total=epics.NATIVE_BLOCKERS_LIMIT + 1), "more than the 100"),
+        (None, "no blockedBy list"),
+        ({"nodes": []}, "malformed blockedBy list"),
+        ({"totalCount": 0, "nodes": None}, "malformed blockedBy list"),
+    ],
+)
+def test_child_states_with_blockers_refuses_an_incomplete_list(
+    blocked_by: object, match: str
+) -> None:
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql", return_value=_listing(_child_node(101, blocked_by))
+        ),
+        pytest.raises(epics.NativeBlockersReadError, match=match),
+    ):
+        epics.child_states_with_blockers(EPIC)
+
+
+def test_native_blockers_of_reads_one_task() -> None:
+    data = {
+        "repository": {
+            "issue": {"blockedBy": _blocked_by(_blocker_node("other-org", "lib", 131, "OPEN"))}
+        }
+    }
+    with patch("vergil_tooling.lib.github.graphql", return_value=data) as graphql:
+        result = epics.native_blockers_of(TASK)
+    graphql.assert_called_once_with(
+        epics._NATIVE_BLOCKERS_QUERY, owner="org", repo="repo-a", number=101
+    )
+    assert result == (epics.BlockerState(IssueRef("other-org", "lib", 131), "OPEN"),)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [{"repository": None}, {"repository": {"issue": None}}, {}],
+)
+def test_native_blockers_of_refuses_a_missing_issue(data: object) -> None:
+    with (
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+        pytest.raises(epics.NativeBlockersReadError, match="no issue org/repo-a#101"),
+    ):
+        epics.native_blockers_of(TASK)
+
+
+def test_native_blockers_of_refuses_an_incomplete_list() -> None:
+    data = {"repository": {"issue": {"blockedBy": _blocked_by(total=3)}}}
+    with (
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+        pytest.raises(epics.NativeBlockersReadError, match="3 native blockers but only 0"),
+    ):
+        epics.native_blockers_of(TASK)
+
+
+def test_native_blockers_of_read_failure_raises() -> None:
+    failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=failure),
+        pytest.raises(github.GitHubAPIError, match="502"),
+    ):
+        epics.native_blockers_of(TASK)
+
+
 # -- quarter helpers (issue #2678) -------------------------------------------
 
 
