@@ -12,6 +12,7 @@ marked submitted once the human opens the PR. No turn-taking, no audit.
 from __future__ import annotations
 
 from vergil_tooling.lib.commit_message import find_autoclose
+from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
@@ -80,13 +81,27 @@ def apply_report_ready(
     linkage: str,
     head_sha: str,
     now: str,
+    recorded_by: str | None = None,
 ) -> WorkflowState:
     """Record the PR metadata and mark the workflow ready to submit.
 
     Idempotent: there is no turn-taking to guard, so re-running overwrites the
     metadata. An agent can correct a mistaken title/summary by calling
-    ``report-ready`` again any time before the human submits."""
+    ``report-ready`` again any time before the human submits.
+
+    *recorded_by* is the identity mode (an ``IdentityMode`` value) running this
+    report-ready, a hint that can only make a change more agent-involved
+    (epic vergil-project/.github#1384, Task 9): ``vrg-submit-pr``'s
+    ``--human-only`` skip applies only to a state it records as the human's.
+    An agent's recording is never
+    replaced by the human's: once any identity other than the human has
+    recorded the state, a human re-run keeps that value, so a human prose fix
+    cannot turn an agent-prepared branch into a human-only one. ``None`` leaves
+    the recorded value as it is."""
     _reject_autoclose("report-ready", title=title, summary=summary, notes=notes)
+    human = IdentityMode.HUMAN.value
+    if recorded_by is not None and (state.recorded_by in (None, human) or recorded_by != human):
+        state.recorded_by = recorded_by
     state.pr_metadata = {"title": title, "summary": summary, "notes": notes, "linkage": linkage}
     state.git["head_sha"] = head_sha
     state.status = "ready"

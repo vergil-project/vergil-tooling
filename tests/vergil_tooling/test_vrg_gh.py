@@ -1030,10 +1030,16 @@ class TestAgentDenials:
         err = capsys.readouterr().err
         assert "denied" in err.lower()
 
-    def test_pr_create_no_vrg_submit_pr_mention(self, capsys: pytest.CaptureFixture[str]) -> None:
-        main(["pr", "create"])
+    @pytest.mark.parametrize("sub", ["create", "edit", "merge"])
+    def test_vrg_gh_agent_denial_names_submit(
+        self, sub: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The denial stays, and points the agent at its gated path (epic .github#1384)."""
+        assert main(["pr", sub, "42"]) != 0
         err = capsys.readouterr().err
-        assert "vrg-submit-pr" not in err
+        assert "denied" in err.lower()
+        assert "vrg-pr-workflow report-ready" in err
+        assert "vrg-submit-pr" in err
 
 
 class TestHumanAllowlist:

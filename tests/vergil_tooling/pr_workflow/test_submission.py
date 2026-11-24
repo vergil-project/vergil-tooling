@@ -50,7 +50,18 @@ def test_read_pr_fields_prefers_the_state_file(tmp_path: Path) -> None:
         "linkage": "Ref",
         "base": "develop",
         "head_sha": "h0",
+        "recorded_by": "",
     }
+
+
+def test_read_pr_fields_carries_recorded_by(tmp_path: Path) -> None:
+    """Submit decides agent involvement from it (epic .github#1384, Task 9)."""
+    _write_state(tmp_path, with_metadata=True)
+    state = LocalFileTransport(tmp_path, base="develop").read()
+    assert state is not None
+    state.recorded_by = "user"
+    LocalFileTransport(tmp_path, base="develop").write(state)
+    assert submission.read_pr_fields(tmp_path)["recorded_by"] == "user"
 
 
 def test_read_pr_fields_joins_a_batch_issue_list_in_order(tmp_path: Path) -> None:

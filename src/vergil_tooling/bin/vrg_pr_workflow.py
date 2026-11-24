@@ -27,6 +27,14 @@ replaces the reported commit but an unexpectedly moved origin is refused (#3783)
 reopens the local one, and fails with nothing changed if it cannot, so no
 ``vrg-submit-pr`` can still read the branch as ready at its old head (#3815).
 
+Every ``report-ready`` records who ran it as the state's ``recorded_by``, the
+current identity mode, in the local file and the relay ref alike (epic
+vergil-project/.github#1384, Task 9). It is a hint for ``vrg-submit-pr``, the
+finalize watch and the audit, which can only make a change more agent-involved:
+``vrg-submit-pr`` runs its gates on every submission, and skips them only on
+the human's ``--human-only`` for a state recorded by the human. A human re-run
+never replaces an agent's recording.
+
 A batch PR repeats ``--issue``, in commit order (epic vergil-project/.github#1019).
 Each issue runs the per-issue refusals; then the batch hard rules and the
 one-commit-per-issue check run before anything is pushed, and either failing
@@ -76,7 +84,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import epics, git, github, local_settings, planning_close, trust
+from vergil_tooling.lib import (
+    epics,
+    git,
+    github,
+    identity_mode,
+    local_settings,
+    planning_close,
+    trust,
+)
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
     find_linkage_keyword,
@@ -682,6 +698,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         linkage=linkage,
         head_sha=head_sha,
         now=_now(),
+        recorded_by=identity_mode.current_mode().value,
     )
     _push_branch(branch, lease_sha=lease_sha)
     transport.write(state)

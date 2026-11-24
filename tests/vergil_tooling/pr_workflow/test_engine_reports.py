@@ -136,3 +136,48 @@ def test_reject_autoclose_skips_none_values() -> None:
     from vergil_tooling.lib.pr_workflow.engine import _reject_autoclose  # noqa: PLC2701
 
     _reject_autoclose("test-verb", title=None, summary=None)  # no raise
+
+
+# --- recorded_by (epic vergil-project/.github#1384, Task 9) ---------------------
+
+
+def _report(state: WorkflowState, recorded_by: str | None) -> None:
+    engine.apply_report_ready(
+        state,
+        title="t",
+        summary="s",
+        notes="n",
+        linkage="Ref",
+        head_sha="ccc",
+        now="2026-06-25T01:00:00Z",
+        recorded_by=recorded_by,
+    )
+
+
+@pytest.mark.parametrize("mode", ["human", "user", "audit"])
+def test_report_ready_records_who_recorded_it(mode: str) -> None:
+    state = _fresh()
+    _report(state, mode)
+    assert state.recorded_by == mode
+
+
+def test_human_rerun_keeps_an_agent_recording() -> None:
+    """A human prose fix never turns an agent-prepared branch human-only."""
+    state = _fresh()
+    _report(state, "user")
+    _report(state, "human")
+    assert state.recorded_by == "user"
+
+
+def test_agent_rerun_replaces_a_human_recording() -> None:
+    state = _fresh()
+    _report(state, "human")
+    _report(state, "user")
+    assert state.recorded_by == "user"
+
+
+def test_no_recorded_by_leaves_the_recording_as_it_is() -> None:
+    state = _fresh()
+    _report(state, "user")
+    _report(state, None)
+    assert state.recorded_by == "user"

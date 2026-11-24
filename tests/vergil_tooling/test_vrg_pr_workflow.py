@@ -291,6 +291,7 @@ _SINGLE_KEYS = [
     "branch",
     "base",
     "status",
+    "recorded_by",
     "created_at",
     "updated_at",
     "git",
@@ -394,6 +395,9 @@ def test_report_ready_single_issue_unchanged(
     assert payload["issue"] == "10"
     relayed = relay.return_value.write.call_args.args[0]
     assert relayed.issues is None
+    # Who recorded it, the hermetic default identity, in the file and the relay.
+    assert payload["recorded_by"] == "human"
+    assert relayed.recorded_by == "human"
     assert "issues" not in json.loads(relayed.to_json())
     # A single-issue hand-off never touches batch markers.
     assert read_marker(ready_clone, "#10") == Marker(["#10", "#11"], "c" * 40)
@@ -1113,3 +1117,20 @@ def test_batch_check_refuses_a_base_it_cannot_fetch(
     github_pr["read_json"].return_value = {"baseRefName": "no-such-base", "headRefOid": "a" * 40}
     assert _run("batch-check", "--pr", _PR) == 1
     assert "cannot fetch PR" in capsys.readouterr().err
+
+
+def test_report_ready_records_the_agent_identity_in_file_and_relay(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """report-ready writes recorded_by for submit to judge (epic .github#1384, Task 9)."""
+    _branch(ready_clone, "feat: one thing")
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    with patch("vergil_tooling.bin.vrg_pr_workflow.local_settings.enforce", return_value=0):
+        assert _report("10") == 0
+    payload = json.loads(_state_file(ready_clone).read_text())
+    assert payload["recorded_by"] == "user"
+    assert relay.return_value.write.call_args.args[0].recorded_by == "user"

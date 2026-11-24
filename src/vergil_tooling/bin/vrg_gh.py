@@ -105,10 +105,22 @@ _DENIED_ALWAYS: dict[str, dict[str, str]] = {
 }
 
 _DENIED_AGENT: dict[str, dict[str, str]] = {
+    # The agent opens and merges its own PR only through the gated path:
+    # report-ready records it, vrg-submit-pr runs the gates, opens it and turns
+    # auto-merge on (epic vergil-project/.github#1384). Raw gh stays denied.
     "pr": {
-        "create": "PR creation requires a human maintainer.",
-        "edit": "PR edit requires a human maintainer.",
-        "merge": "PR merge requires a human maintainer.",
+        "create": (
+            "The user agent opens a PR only through the gated path: record it with "
+            "'vrg-pr-workflow report-ready', then run vrg-submit-pr."
+        ),
+        "edit": (
+            "No agent edits a PR with gh; the user agent corrects the PR metadata with "
+            "'vrg-pr-workflow report-ready' before vrg-submit-pr opens the PR."
+        ),
+        "merge": (
+            "The user agent merges its PR only through the gated path: vrg-submit-pr turns "
+            "auto-merge on after 'vrg-pr-workflow report-ready'."
+        ),
     },
     # `issue` has no agent-denied pairs: `close` and `reopen` are both
     # non-destructive and reversible, so both are allowed for the USER agent

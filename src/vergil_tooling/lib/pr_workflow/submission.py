@@ -44,7 +44,13 @@ def _pr_number_from_url(pr_url: str) -> int | None:
 
 def read_pr_fields(worktree_root: Path) -> dict[str, str]:
     """Return the PR submission fields (``issue``/``issues``/``title``/``summary``/
-    ``notes``/``linkage``/``base``/``head_sha``) from the workflow state file.
+    ``notes``/``linkage``/``base``/``head_sha``/``recorded_by``) from the
+    workflow state file.
+
+    ``recorded_by`` is the identity mode that recorded the ready state, or
+    ``""`` when the state records none. It is only a hint: ``vrg-submit-pr``
+    runs its gates whatever it says, and lets the human's ``--human-only``
+    skip them only when it reads ``human``.
 
     ``issues`` is every issue the PR hands off, comma-joined in order
     (``WorkflowState.all_issues``), so it is always present: the one issue of a
@@ -110,6 +116,7 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
         "linkage": meta.get("linkage", "Ref"),
         "base": state.base,
         "head_sha": str(head_sha),
+        "recorded_by": state.recorded_by or "",
     }
 
 
