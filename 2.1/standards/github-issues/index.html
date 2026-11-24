@@ -1482,6 +1482,8 @@
       
         
       
+        
+      
     
     
     
@@ -1534,6 +1536,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.342/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.342
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19846,33 +19876,56 @@ brainstorming and walking away. Every run is tracked in a <strong>planning item<
 (an intake item is first routed to planning), a free-text idea first becomes a
 new planning item, and a bare <code>epic-create</code> summarizes the planning queue and
 asks which one to work on. <code>epic-create</code> is the <strong>outer</strong> orchestrator: it
-runs the whole design pipeline and seeds the epic's bookend tasks (below) at
-defined handoffs:</p>
+runs the whole design pipeline as nine checkpointed <strong>stages</strong>. It creates the
+epic's opening bookend (below) before the design, and its closing bookends with
+the plan's tasks:</p>
 <ol>
-<li><code>superpowers:brainstorming</code> — explore intent, one question at a time
-   (<strong>interactive</strong>).</li>
-<li>Initialize the epic in its <a href="#epic-home-the-orggithub-rule">home</a> and seed the
-   bookend tasks — the docs-first opening task, the documentation-review sweep,
-   and the terminal <strong>retrospective</strong> (see the bookend convention below).
-   <code>vrg-epic-docs set --epic &lt;ref&gt;</code> seeds the epic's
-   <a href="#the-documents-section">Documents section</a>, all three entries <code>pending</code>.</li>
-<li>Write <code>spec.md</code> and commit it.</li>
-<li><strong>Spec pushback rounds</strong>: <code>paad:pushback</code> on the spec (<strong>human-gated
-   rounds</strong>).</li>
-<li>Human review of the spec.</li>
-<li><code>superpowers:writing-plans</code> → <code>plan.md</code> (<strong>automated</strong>: one pass, no
-   gating).</li>
-<li><strong>Plan pushback rounds</strong> (<code>paad:pushback</code> on the plan, with the spec as
-   context), then <strong>alignment rounds</strong> (<code>paad:alignment</code> on the spec and the
-   plan, which may change either). Both are <strong>human-gated rounds</strong>.</li>
-<li>One docs PR (spec + plan) that closes the docs-first task. At its handoff,
-   <code>vrg-epic-docs set --epic &lt;ref&gt; --spec epics/&lt;N&gt;-&lt;slug&gt;/spec.md --plan
-   epics/&lt;N&gt;-&lt;slug&gt;/plan.md</code> turns the spec and plan entries into links.</li>
-<li>File the implementation tasks and link them under the epic.</li>
+<li><code>bootstrap</code> — before any design work, create the epic's skeleton in its
+   <a href="#epic-home-the-orggithub-rule">home</a>: the epic, its docs-first
+   documentation task, and its <a href="#the-documents-section">Documents section</a>
+   (<code>vrg-epic-docs set --epic &lt;ref&gt;</code>, all three entries <code>pending</code>).</li>
+<li><code>brainstorm</code> — <code>superpowers:brainstorming</code> explores intent, one question at
+   a time (<strong>interactive</strong>); then <code>spec.md</code> is committed and the epic body is
+   written from it.</li>
+<li><code>spec-pushback</code> — <strong>spec pushback rounds</strong>: <code>paad:pushback</code> on the spec.</li>
+<li><code>spec-review</code> — human review of the spec.</li>
+<li><code>plan</code> — <code>superpowers:writing-plans</code> → <code>plan.md</code> (<strong>automated</strong>: one pass,
+   no gating).</li>
+<li><code>plan-pushback</code> — <strong>plan pushback rounds</strong>: <code>paad:pushback</code> on the plan,
+   with the spec as context.</li>
+<li><code>alignment</code> — <strong>alignment rounds</strong>: <code>paad:alignment</code> on the spec and the
+   plan, which may change either.</li>
+<li><code>file-tasks</code> — file the plan's tasks, linked under the epic, with the
+   closing bookends: the documentation-review sweep and the terminal
+   <strong>retrospective</strong> (see the bookend convention below). Each task carries a
+   <code>Plan task: &lt;id&gt;</code> key line (<code>doc-review</code> and <code>retrospective</code> for the
+   bookends).</li>
+<li><code>docs-pr</code> — one docs PR (spec + plan) that closes the docs-first task. At
+   its handoff, <code>vrg-epic-docs set --epic &lt;ref&gt; --spec epics/&lt;N&gt;-&lt;slug&gt;/spec.md
+   --plan epics/&lt;N&gt;-&lt;slug&gt;/plan.md</code> turns the spec and plan entries into links.</li>
 </ol>
+<p><strong>The run is checkpointed and resumable.</strong> The stage checklist is a block in
+the planning item's body, written only by
+<a href="../../reference/cli-tools-overview/#vrg-checkpoint"><code>vrg-checkpoint</code></a>. Each
+stage makes its work durable, posts its progress comment and ticks its box as
+its last write, then pauses with the <code>/clear</code> and <code>epic-create &lt;planning item&gt;</code>
+commands ready to paste. A fresh session resumes at the first unticked stage
+with no decision lost and nothing created twice; the <code>Plan task:</code> keys let a
+re-entry into <code>file-tasks</code> file only the tasks still missing. A checklist that
+a tooling release changed under a run (<strong>skew</strong>) is shown to the human and
+rewritten with <code>vrg-checkpoint reconcile</code>, never remapped silently. A run
+<strong>already in flight</strong> when the checklist was introduced is adopted: the stages
+its evidence shows done are proposed, and the human confirms the ticks. An
+early exit from <code>brainstorm</code>, and <code>epic-review planning</code>'s defer or drop of an
+item whose skeleton exists, first <strong>abandons the skeleton</strong>: the epic and its
+documentation task are closed as not planned, the unused docs worktree is
+removed and the checklist is reset, so a revived item starts afresh. The
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/skills/epic-create/SKILL.md#stages"><code>epic-create</code> skill</a>
+holds each stage's evidence and re-entry rules.</p>
 <p>The <strong>interaction doctrine</strong> governs the pipeline: <code>brainstorming</code> is
-interactive, <code>writing-plans</code> is automated, and design review (steps 4 and 7)
-runs in <strong>human-gated rounds</strong>. Each round is a fresh, review-only subagent
+interactive, <code>writing-plans</code> is automated, and design review (the
+<code>spec-pushback</code>, <code>plan-pushback</code> and <code>alignment</code> stages) runs in <strong>human-gated
+rounds</strong>. Each round is a fresh, review-only subagent
 that reviews the whole document. The main session walks the human through the
 round's findings one at a time, records the round as a comment on the planning
 item, and the human decides every finding and whether to run another round.
@@ -19880,8 +19933,9 @@ Brainstorming gates <strong>only</strong> on judgment calls that materially affe
 outcome; minor, obvious corrections are batched into a single end-of-stage
 "correct me if I'm wrong" review rather than gating each one. The goal is to
 front-load analysis so implementation runs near-automated. If the design
-collapses to a single-PR change, it drops onto the target repo's ad-hoc epic
-instead of minting a finite epic. The full doctrine lives in the <code>epic-create</code>
+collapses to a single-PR change, the skeleton is abandoned and the work is
+filed as one task under an existing finite epic or the target repo's ad-hoc
+epic. The full doctrine lives in the <code>epic-create</code>
 skill (<code>vergil-claude-plugin</code>), and the rules for the design-review rounds are
 mode 1 of the
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#2-mode-1-human-gated-design-review">paad review doctrine</a>.
@@ -19922,9 +19976,10 @@ the tasks, pausing and resuming as blockers allow) → <code>epic-retrospective<
      docs PR <strong>closes the epic</strong>.</li>
 <li><strong>Follow-on brainstorm — semi-optional.</strong> Reviewing what shipped and
   brainstorming the follow-on epic(s) is a <strong>forward-looking</strong> concern that <strong>no
-  longer defines the end of an epic</strong>: seed it at creation only when a known
-  enabling chain already exists, otherwise accrue it during implementation or
-  skip it. Its outcomes are recorded in the retrospective. A brainstorm that
+  longer defines the end of an epic</strong>: plan it as a task, filed in
+  <code>file-tasks</code> with the plan's other tasks, only when a known enabling chain
+  already exists when the epic is planned; otherwise accrue it during
+  implementation or skip it. Its outcomes are recorded in the retrospective. A brainstorm that
   is ready before its epic finishes moves to the planning queue with
   <code>vrg-intake-route &lt;ref&gt; planning</code>, which records the hand-off on the epic.</li>
 </ul>
@@ -20213,7 +20268,7 @@ the command line is invalid. The
 details.</p>
 <p><code>vrg-queue adhoc</code> lists the open tasks under every live ad-hoc epic, grouped by
 repo, each with a state: <strong>ready</strong>, <strong>blocked</strong> (an open <code>Blocked-by:</code>
-dependency) or <strong>in-flight</strong> (an open PR, a ready record, a branch, a
+dependency or native blocked-by relationship) or <strong>in-flight</strong> (an open PR, a ready record, a branch, a
 worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare <code>vrg-queue</code> never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
@@ -20730,9 +20785,9 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   defect.)</li>
 <li><strong>Gates epic closure</strong> by staying open — an open operational child holds the
   epic until it succeeds, so rollup is honest.</li>
-<li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them
-  to report each as <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by
-  kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
+<li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them,
+  and the task's native GitHub blocked-by relationships, to report each as
+  <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
   <code>--blocked-by</code> to <code>vrg-issue-create --kind task</code> and it is appended to the task
   body — so an epic driver's plain-task frontier (which open tasks have every
   dependency closed) is machine-derivable, not inferred from plan prose.</li>

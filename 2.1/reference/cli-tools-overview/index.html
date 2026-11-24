@@ -1480,6 +1480,8 @@
       
         
       
+        
+      
     
     
     
@@ -1532,6 +1534,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.342/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.342
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15190,6 +15220,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-state-dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-state-dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15249,6 +15290,17 @@
     <span class="md-ellipsis">
       
         vrg-github-repo-config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-agent-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-agent-audit
       
     </span>
   </a>
@@ -19878,6 +19930,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-state-dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-state-dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19937,6 +20000,17 @@
     <span class="md-ellipsis">
       
         vrg-github-repo-config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-agent-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-agent-audit
       
     </span>
   </a>
@@ -20793,7 +20867,8 @@ the check again when it builds the body (see
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
-directly Blocked-by an open deployment task and opened by a trusted author,
+directly blocked by an open deployment task (through a <code>Blocked-by:</code> line or a
+native GitHub blocked-by relationship) and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
 one commit per issue in the listed order, each subject ending in a space and
@@ -22559,8 +22634,12 @@ repo and oldest first within each. Each line is
 <code>blocked by &lt;refs&gt;</code> when a blocker is open. The kind is <code>validation</code> or
 <code>deployment</code> from the task's label, else <code>task</code>. The state is <strong>in-flight</strong>
 when any in-flight mark holds (it outranks blocked), else <strong>blocked</strong> while any
-<code>Blocked-by:</code> dependency is open, else <strong>ready</strong>; only the open blockers are
-listed.</p>
+blocker is open, else <strong>ready</strong>; only the open blockers are listed. A task's
+blockers are its body <code>Blocked-by:</code> lines and its native GitHub blocked-by
+relationships, a blocker in another repo or org included: the native ones are
+read with the sub-issue listing, in the same query. A native list that cannot
+be read, or gives fewer blockers than GitHub counts (one the token cannot see,
+or more than 100), fails the run with exit 1, never shows the task ready.</p>
 <p>A task's <strong>marks</strong>, in this order, are: <code>open-pr</code> (an open PR closes it, or has
 a <code>feature/&lt;N&gt;-</code> head branch; only a same-repo PR with a trusted author counts,
 and it closes the task only by a closing line of a trusted body or a hand link
@@ -23257,6 +23336,56 @@ makes there, and writes only to the path it prints.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-state-dir">vrg-state-dir<a class="headerlink" href="#vrg-state-dir" title="Permanent link">&para;</a></h3>
+<p>Create and check a task's private state directory,
+<code>build/.vergil-state/&lt;kind&gt;/&lt;N&gt;/</code> in the main clone, as
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories">doctrine §1.5</a>
+requires, and print its absolute path. <code>--kind</code> is <code>operational</code> (the
+security items of <code>issue-validate</code> and <code>issue-deploy</code>), <code>issue-implement</code> or
+<code>upstream-report</code>. <code>build</code> must be a real directory (it is created when
+absent), and each level from <code>.vergil-state</code> down to <code>&lt;N&gt;</code> must be a real
+directory, not a symlink, with mode exactly 700; an absent level is created
+mode 700. A level that fails stops the command before anything is created
+below it. These are the checks
+<a href="#vrg-merge-review-request"><code>vrg-merge-review-request --ensure-dir</code></a> makes,
+through the same code. Before it creates or checks anything, it refuses
+unless the current clone's <code>origin</code> is the <code>--issue</code> repository, naming both
+repositories. The caller runs it before every write it makes there, and
+writes only to the path it prints.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_state_dir</code> (library: <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run in a clone (or worktree) of the <code>--issue</code> repository</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>ERROR: &lt;reason&gt;</code> on stderr, nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 the path was printed, 1 a refusal or error, 2 bad arguments</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-epic-audit">vrg-epic-audit<a class="headerlink" href="#vrg-epic-audit" title="Permanent link">&para;</a></h3>
 <p>Report epic/task drift and invariant violations for an org, as Markdown on
 stdout. It is read-only by default. <strong>Drift</strong> is a task still open although
@@ -23272,7 +23401,10 @@ child, orphans, retired kind labels, body-only <code>Parent:</code> links, and a
 misplaced archive (one with a parent, one without its <code>archive</code> label, or one
 labelled <code>archive</code> whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending (an operational task is
-runnable or blocked by the <code>Blocked-by:</code> lines of its body, which count only
+runnable or blocked by the <code>Blocked-by:</code> lines of its body and its native
+GitHub blocked-by relationships, a blocker in another repo or org included;
+a native list that cannot be read in full fails the audit, never reads as
+runnable. The <code>Blocked-by:</code> lines count only
 from a body the trust layer trusts; a task whose body is untrusted or cannot
 be read in full is <strong>stopped</strong>, not the audit: its epic's line ends
 <code>stopped: &lt;K&gt; (see stderr)</code>, a count only, each stop is named on stderr,
@@ -23865,6 +23997,55 @@ See the <a href="../config-audit/">GitHub Config Audit reference</a>.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="vrg-agent-audit">vrg-agent-audit<a class="headerlink" href="#vrg-agent-audit" title="Permanent link">&para;</a></h3>
+<p>The daily audit of agent merges
+(<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>,
+spec §4.8). It checks every merge into <code>develop</code> and <code>main</code> since the
+audit's markers, the <code>vergil/agent-audit/develop</code> and
+<code>vergil/agent-audit/main</code> branches. For every PR, whoever merged it or
+turned auto-merge on must be the human, or the user agent or the
+automation App on its own PR (into <code>main</code>, the human only), and its
+provenance must be clean. For an agent-involved PR merged into <code>develop</code>,
+its change must be covered by a merge-review record or an approved
+merge-review exemption. It then moves each
+marker to where its audit reached; a read failure stops there, so the next
+run checks the rest again. A missing marker is a finding, never
+re-created. It is a security-signal job: it files no issue and posts
+nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_agent_audit</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/REPO</code> (required); <code>--init</code> creates each missing marker at its branch's tip and audits nothing (repo init and the one-time go-live only)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run in a full-history clone whose <code>origin</code> is the repo; the trusted-authors configuration, naming one human; a token that can move the markers (the admin role or the org automation App)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>One finding per line on stdout; one <code>vrg-agent-audit:</code> diagnostic on stderr when it cannot start</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 clean, 1 any finding or read failure, 2 usage error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
 <h3 id="vrg-dependabot-audit">vrg-dependabot-audit<a class="headerlink" href="#vrg-dependabot-audit" title="Permanent link">&para;</a></h3>
 <p>Fail on any open Dependabot alert, at any severity: the gate for the
 fleet's report-only Dependabot posture. Every repo gets counts by
@@ -23912,7 +24093,7 @@ the managed <code>.gitignore</code> fence, the canonical report-only
 <code>.github/dependabot.yml</code>), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/<code>ops.yml</code> workflows, the docs site, branch structure,
-GitHub config, and Pages. The scaffolded <code>base + &lt;language&gt;</code>
+GitHub config, the agent audit markers, and Pages. The scaffolded <code>base + &lt;language&gt;</code>
 <code>.gitignore</code> fence, canonical <code>dependabot.yml</code> and staggered-cron
 <code>ops.yml</code> make a new repo pass the config audit's checks for those
 files from day one.</p>
@@ -24380,9 +24561,12 @@ to <code>scorecard</code>.</p>
 <h3 id="vrg-vm">vrg-vm<a class="headerlink" href="#vrg-vm" title="Permanent link">&para;</a></h3>
 <p>Create, start, stop, update, rebuild and enter the identity agent VMs,
 Lima on the Mac or off-platform (cloud). Subcommands: <code>create</code>, <code>start</code>,
-<code>stop</code>, <code>restart</code>, <code>update</code>, <code>destroy</code>, <code>destroy-volume</code>, <code>rebuild</code>,
-<code>list</code>, <code>volumes</code>, <code>session</code> (launch a Claude session in the VM) and <code>cp</code>
-(copy files between the host and a VM). <code>vrg-vm update</code> reinstalls
+<code>stop</code>, <code>restart</code>, <code>update</code>, <code>grow-disk</code>, <code>destroy</code>, <code>destroy-volume</code>,
+<code>rebuild</code>, <code>list</code>, <code>volumes</code>, <code>session</code> (launch a Claude session in the
+VM) and <code>cp</code> (copy files between the host and a VM). <code>vrg-vm grow-disk</code>
+grows a Lima VM's disk in place to its configured size and refuses a
+shrink (see <a href="../vm-spec/#growing-a-lima-disk-in-place">VM Spec</a>).
+<code>vrg-vm update</code> reinstalls
 vergil-tooling, copies the host's <code>~/.claude</code> config in and refreshes and
 verifies the plugins in a running VM in place; <code>--all</code> updates every
 configured identity's boxes, and one box's failure does not stop the rest.
@@ -24635,7 +24819,11 @@ the <code>vergil-actions</code> reusable workflows, the custom stage as
 for every check and where it runs. Every pipeline run, pass or fail,
 writes <code>.vergil/vrg-validate-last.json</code>: the commit at the start, the exit
 code, whether the run was full (no <code>--check</code>) and the tree clean at the
-start, and each stage's status. <code>vrg-merge-review-request</code> reads it.</p>
+start, and each stage's status. A stage skipped because the repository
+is not bootstrapped yet also carries a <code>skip</code> object: the reason
+<code>not-bootstrapped</code>, the language and the missing manifests. A run that
+skips no stage records none. <code>vrg-merge-review-request</code> reads it; a
+release from before <code>skip</code> existed refuses a record that carries one.</p>
 <p><code>--markdown FILE...</code> is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as
 the common stage would, against the bundled config. A file the common

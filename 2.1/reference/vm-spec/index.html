@@ -1480,6 +1480,8 @@
       
         
       
+        
+      
     
     
     
@@ -1532,6 +1534,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.342/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.342
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14919,6 +14949,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Fingerprint and NEEDS-REBUILD">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#growing-a-lima-disk-in-place" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Growing a Lima disk in place
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18630,6 +18677,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Fingerprint and NEEDS-REBUILD">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#growing-a-lima-disk-in-place" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Growing a Lima disk in place
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -19070,12 +19134,49 @@ only when set, and declaring or changing it trips <code>NEEDS-REBUILD</code>.</p
 or it came from the base footprint, so a change to the base footprint
 reaches existing dedicated Lima VMs as <code>NEEDS-REBUILD</code>. When the base
 <code>disk</code> went from <code>50GiB</code> to <code>100GiB</code>, every dedicated Lima VM that took
-its size from the base read <code>NEEDS-REBUILD</code>, and <code>vrg-vm rebuild</code>
-brings it up at the new size. The shared base VM carries no
-fingerprint, so it never reads <code>NEEDS-REBUILD</code>; <code>vrg-vm list</code> shows
-the declared size for it, and it reaches that size only when it is
-rebuilt. A VM whose identity, repo or host override sets <code>disk</code> is
-unaffected.</p>
+its size from the base read <code>NEEDS-REBUILD</code>, and <code>vrg-vm rebuild</code> or
+<code>vrg-vm grow-disk</code> brings it up at the new size. The shared base VM
+carries no fingerprint, so it never reads <code>NEEDS-REBUILD</code>, and it
+reaches the new size when it is rebuilt or grown. A VM whose identity,
+repo or host override sets <code>disk</code> is unaffected.</p>
+<p>The <code>DISK</code> column of <code>vrg-vm list</code> shows each Lima VM's actual disk
+size: the <code>disk</code> byte count that <code>limactl list --json</code> reports for the
+instance. A VM not yet created shows its configured size. A VM whose
+disk differs from its configured size shows both, as
+<code>&lt;actual&gt;≠&lt;configured&gt;</code> (for example <code>50GiB≠100GiB</code>), so the base VM
+above reads <code>50GiB≠100GiB</code> until it is rebuilt or grown.</p>
+<h3 id="growing-a-lima-disk-in-place">Growing a Lima disk in place<a class="headerlink" href="#growing-a-lima-disk-in-place" title="Permanent link">&para;</a></h3>
+<p><code>vrg-vm grow-disk [&lt;org&gt;/&lt;repo&gt;] [--name &lt;instance&gt;]</code> grows an existing
+Lima VM's disk to its configured size and keeps the VM and its data. It
+stops the VM, sets the size with <code>limactl edit --disk &lt;GiB&gt;</code>, starts
+the VM again and re-injects its credentials, as <code>restart</code> does. Lima
+(1.1 or later) grows the disk image on that start, and cloud-init's
+growpart and resizefs fill the larger disk as the guest boots. The
+command then checks that Lima reports the configured size, prints the
+root filesystem's size, and leaves the VM running.</p>
+<ul>
+<li><strong>It never shrinks a disk.</strong> A configured size smaller than the disk
+  is refused before the VM is touched, since Lima can grow a disk but
+  not shrink it. A smaller disk needs <code>vrg-vm rebuild</code>.</li>
+<li><strong>A disk already at its configured size</strong> is not touched.</li>
+<li><strong>A dedicated VM's fingerprint</strong> is re-stamped when the disk was its
+  only drift: the stamped fingerprint is the one its spec gives with
+  the disk at its old size. <code>vrg-vm list</code> then reads <code>ok</code> again. A VM
+  that also drifted in another key keeps its stamp and still reads
+  <code>NEEDS-REBUILD</code>, and the command says to rebuild it.</li>
+<li><strong>A dedicated VM already at its configured size</strong> gets the same
+  check, so its disk-only drift clears too: one grown by hand before
+  <code>grow-disk</code> existed, or one whose re-stamp failed after a grow (for
+  example, because it was not reachable over SSH). Its old size is not
+  recorded, so the command tries each whole-GiB size below the current
+  one, since Lima never shrinks a disk; only a stamp that matches the
+  spec with the disk at one of them is re-stamped. The VM must be
+  running for the check: a stopped one is refused with the command to
+  start it.</li>
+<li><strong>Lima VMs only.</strong> An off-platform box is refused: its disks are
+  sized by <code>volume</code> and <code>boot_disk</code>.</li>
+</ul>
+<p>Like every <code>vrg-vm</code> subcommand, it refuses an agent identity.</p>
 <h2 id="vergil-tooling-inside-the-vm">vergil-tooling inside the VM<a class="headerlink" href="#vergil-tooling-inside-the-vm" title="Permanent link">&para;</a></h2>
 <p>Lima and cloud VMs install vergil-tooling with <code>uv tool install</code>, from
 git, into uv's default <code>~/.local/bin</code>, on uv's own managed Python 3.15.

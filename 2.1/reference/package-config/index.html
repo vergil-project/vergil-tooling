@@ -1480,6 +1480,8 @@
       
         
       
+        
+      
     
     
     
@@ -1532,6 +1534,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.342/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.342
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19597,10 +19627,14 @@ fatal before tagging. The caller has two requirements:</p>
 <li><strong><code>secrets: inherit</code></strong> on the <code>cd-release</code> caller. Environment secrets reach
   a job in a cross-repo reusable workflow only with <code>inherit</code>; an explicit
   secrets map leaves <code>package-sign</code> with an empty key (proven by
-  vergil-project/packages#6). <code>vrg-github-repo-init</code> generates it for every
-  repo, since the App keys reach <code>cd-release</code> the same way, and
-  <code>vrg-validate</code>'s <code>secrets-inherit</code> check allows it for <code>cd-release.yml</code>
-  (see <a href="../../guides/ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>):</li>
+  vergil-project/packages#6). <code>vrg-github-repo-init</code> generates it for a
+  <code>vergil-project</code> repo, since the App keys reach <code>cd-release</code> the same way,
+  and <code>vrg-validate</code>'s <code>secrets-inherit</code> check allows it for
+  <code>cd-release.yml</code>. GitHub passes <code>inherit</code> only within the caller's own
+  organization, so in a repo of any other organization repo-init passes the
+  App keys by name instead, and that <code>release</code> job does not carry the
+  package-signing secrets (see
+  <a href="../../guides/ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>):</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="w">  </span><span class="nt">release</span><span class="p">:</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.ref == 'refs/heads/main' &amp;&amp; !github.event.created</span>
@@ -19613,7 +19647,8 @@ fatal before tagging. The caller has two requirements:</p>
 </code></pre></div>
 <p>After the release is tagged, <code>cd-release</code> dispatches to the org's <code>packages</code>
 repository with the org's GitHub App token (<code>APP_CLIENT_ID</code> /
-<code>APP_PRIVATE_KEY</code>, also reached through <code>inherit</code>), which indexes the new
+<code>APP_PRIVATE_KEY</code>, reached through <code>inherit</code>, or by name outside
+<code>vergil-project</code>), which indexes the new
 packages. A dispatch failure is deferred: it does not fail the release.</p>
 <h3 id="the-re-publish-check">The re-publish check<a class="headerlink" href="#the-re-publish-check" title="Permanent link">&para;</a></h3>
 <p>A package's identity is its name, full version (<code>&lt;version&gt;-&lt;revision&gt;</code>),

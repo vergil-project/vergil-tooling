@@ -1480,6 +1480,8 @@
       
         
       
+        
+      
     
     
     
@@ -1532,6 +1534,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.342/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.342
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19257,18 +19287,21 @@ App's <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> first, lives o
 repo's <code>automation</code> environment
 (<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>;
 see <a href="../../reference/config-audit/#github-checks-the-automation-environment">the automation environment</a>).
-Environment secrets reach a job in a cross-repo reusable workflow only
-when the caller passes <code>secrets: inherit</code>: an explicit secrets map
-leaves the callee an empty value (proven by the probe in
-<a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>),
-and a job that calls a reusable workflow cannot declare an environment.
-So the callers of the vergil-actions workflows that read those secrets
-pass <code>secrets: inherit</code>, and every other caller passes an explicit,
+The probe in
+<a href="https://github.com/vergil-project/packages/issues/6">vergil-project/packages#6</a>
+found that an explicit secrets map left a cross-repo callee an empty
+value for an environment secret. A later probe supersedes it: on
+2026-11-24, run 45390389192 of <code>logical-minds-foundry/mq-gateway-replay-lab</code>
+was green with the org-level App keys hidden from that repo, so App keys
+passed by name do reach a reusable workflow in another organization from
+the caller's <code>automation</code> environment. In a <code>vergil-project</code> repo the
+callers of the vergil-actions workflows that read those secrets pass
+<code>secrets: inherit</code>; in a repo of any other organization they pass the
+keys by name (below). Every other caller passes an explicit,
 least-privilege secrets map. This narrows the least-privilege rule of
 epic <a href="https://github.com/vergil-project/.github/issues/189">vergil-project/.github#189</a>
 on purpose, and only for these callers: the over-sharing is small once
-no org- or repo-level secret can write or act, and the called workflows
-are protected paths.</p>
+no org- or repo-level secret can write or act.</p>
 <p>The allowed workflows are <code>INHERIT_ALLOWED</code> in
 <code>src/vergil_tooling/lib/secrets_inherit.py</code>:</p>
 <table>
@@ -19315,11 +19348,21 @@ semgrep's registry <code>secrets-inherit</code> rule, which is excluded fleet-wi
 (<code>DEFAULT_EXCLUDED_RULES</code> in <code>src/vergil_tooling/lib/semgrep.py</code>), so
 there is one definition of the rule and an allowed caller needs no
 <code>nosemgrep</code>.</p>
-<p>The workflows <code>vrg-github-repo-init</code> generates follow it: the <code>cd.yml</code>
-<code>docs</code> and <code>release</code> jobs, the <code>ops.yml</code> <code>github-config</code> job and the
-<code>epic-rollup.yml</code> caller all pass <code>secrets: inherit</code>, whatever the
-language and whether or not the repo has <code>[package]</code>. They supersede the
-explicit App-key maps of
+<p>The workflows <code>vrg-github-repo-init</code> generates follow it. In a
+<code>vergil-project</code> repo, the <code>cd.yml</code> <code>docs</code> and <code>release</code> jobs, the
+<code>ops.yml</code> <code>github-config</code> job and the <code>epic-rollup.yml</code> caller all pass
+<code>secrets: inherit</code>, whatever the language and whether or not the repo
+has <code>[package]</code>. GitHub passes <code>inherit</code> only to a reusable workflow in
+the caller's own organization or enterprise
+(<a href="https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows">Reuse workflows</a>),
+so in a repo of any other organization the same jobs pass the App keys
+by name instead, as <code>APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}</code> and
+<code>APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}</code>, and a rust repo's
+<code>release</code> job adds <code>CARGO_REGISTRY_TOKEN</code> the same way
+(<a href="https://github.com/vergil-project/vergil-tooling/issues/5108">vergil-project/vergil-tooling#5108</a>).
+Those jobs pass no other secret, so outside <code>vergil-project</code> the
+<code>release</code> job does not carry a <code>[package]</code> repo's <code>package-signing</code>
+secrets. The <code>vergil-project</code> callers supersede the explicit App-key maps of
 <a href="https://github.com/vergil-project/vergil-tooling/issues/4747">vergil-project/vergil-tooling#4747</a>
 and epic
 <a href="https://github.com/vergil-project/.github/issues/1494">vergil-project/.github#1494</a>.
