@@ -96,10 +96,10 @@ def test_malformed_marker_is_not_parsed() -> None:
         "<!-- vrg-ruling",
         "<!-- vrg-ruling kind=request type=bogus -->",
         "<!-- vrg-ruling kind=request type= -->",
-        "<!-- vrg-ruling kind=request type=Protected-Change -->",
-        "<!-- vrg-ruling kind=request  type=protected-change -->",
-        "<!-- vrg-ruling type=protected-change kind=request -->",
-        "<!-- vrg-ruling kind=response request=1 reply=2 type=protected-change -->",
+        "<!-- vrg-ruling kind=request type=Merge-Review-Exemption -->",
+        "<!-- vrg-ruling kind=request  type=merge-review-exemption -->",
+        "<!-- vrg-ruling type=merge-review-exemption kind=request -->",
+        "<!-- vrg-ruling kind=response request=1 reply=2 type=merge-review-exemption -->",
     ],
 )
 def test_near_miss_markers_are_malformed(line: str) -> None:
@@ -126,14 +126,22 @@ def test_marker_ignored_unless_by_agent() -> None:
 # --- the request kinds (epic .github#1384, Task 6a) ---------------------------------
 
 
-@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
-def test_typed_request_marker_round_trips(kind: RequestKind) -> None:
-    marker = Marker("request", None, None, kind)
+def test_typed_request_marker_round_trips() -> None:
+    marker = Marker("request", None, None, "merge-review-exemption")
     line = render_marker(marker)
-    assert line == f"<!-- vrg-ruling kind=request type={kind} -->"
+    assert line == "<!-- vrg-ruling kind=request type=merge-review-exemption -->"
     c = _agent(f"text\n\n{line}")
     assert parse_marker(c, AGENT) == marker
     assert malformed_marker(c, AGENT) is False
+
+
+def test_removed_protected_change_type_is_malformed() -> None:
+    """``type=protected-change`` was a request kind; it is now an unknown type."""
+    c = _agent("text\n\n<!-- vrg-ruling kind=request type=protected-change -->")
+    assert parse_marker(c, AGENT) is None
+    assert malformed_marker(c, AGENT) is True
+    with pytest.raises(RulingError, match="type"):
+        render_marker(Marker("request", None, None, cast("RequestKind", "protected-change")))
 
 
 def test_existing_requests_unchanged() -> None:
@@ -144,14 +152,14 @@ def test_existing_requests_unchanged() -> None:
     assert render_marker(Marker("request", None, None)) == "<!-- vrg-ruling kind=request -->"
 
 
-def test_request_kinds_are_the_two() -> None:
-    assert tuple(REQUEST_KINDS) == ("protected-change", "merge-review-exemption")
+def test_request_kinds_are_only_the_exemption() -> None:
+    assert tuple(REQUEST_KINDS) == ("merge-review-exemption",)
 
 
 @pytest.mark.parametrize(
     "marker",
     [
-        Marker("response", 1, 2, "protected-change"),
+        Marker("response", 1, 2, "merge-review-exemption"),
         Marker("request", None, None, cast("RequestKind", "bogus")),
     ],
 )

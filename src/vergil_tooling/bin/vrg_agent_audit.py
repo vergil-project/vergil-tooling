@@ -118,8 +118,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description=(
             "Audit every merge into develop and main since the audit's markers:"
             " the merge and auto-merge actors of every PR, and, on an"
-            " agent-involved PR merged into develop, its protected-change"
-            " approvals and merge-review coverage. Run it in a full-history"
+            " agent-involved PR merged into develop, its merge-review coverage."
+            " Run it in a full-history"
             " clone of the repository. It files no issue and posts nothing."
         ),
         epilog="Exit codes: 0 clean, 1 any finding or read failure, 2 usage error.",

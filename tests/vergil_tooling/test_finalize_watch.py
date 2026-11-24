@@ -741,14 +741,18 @@ def test_new_head_of_a_pr_failed_on_its_checks_failing_the_gates_disarms(
         pr_state(1, headRefOid=HEAD_B),
     )
     fake.failed[url(1)] = ["test / unit"]
-    fake.gate_failures[url(1), HEAD_B] = "protected file .github/workflows/ci.yml unapproved"
+    fake.gate_failures[url(1), HEAD_B] = (
+        "merge review: no merge-review record or approved exemption covers it"
+    )
     fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
 
     results = run([url(1), url(2)])
 
     assert [r.outcome for r in results] == ["failed: gates", "merged"]
     assert results[0].head == HEAD_B
-    assert results[0].detail == "protected file .github/workflows/ci.yml unapproved"
+    assert (
+        results[0].detail == "merge review: no merge-review record or approved exemption covers it"
+    )
     assert fake.disables == [url(1)]
     assert (url(1), HEAD_B, "feature/1-thing") in fake.gate_checks
 
@@ -1436,7 +1440,6 @@ def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         lambda ref, *, authors: [SimpleNamespace(fingerprint=f) for f in state.records],
     )
     monkeypatch.setattr(agent_gates, "verified_approvals", lambda ref, *, authors: [])
-    monkeypatch.setattr(agent_gates, "overrides", lambda ref, *, authors: [])
     real_evaluate = agent_gates.evaluate
 
     def evaluate(repo: Path, *, base: str, head: str, issue_refs: list[str], authors: Any) -> Any:
@@ -1451,7 +1454,7 @@ def _watch_gated(gated: Gated) -> list[PRResult]:
     return watch([url(1)], clone=gated.clone)
 
 
-def test_new_head_touching_workflow_without_approval_disarms(
+def test_new_head_without_merge_review_disarms(
     fake: FakeGitHub, gated: Gated, capsys: pytest.CaptureFixture[str]
 ) -> None:
     first = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
@@ -1463,8 +1466,8 @@ def test_new_head_touching_workflow_without_approval_disarms(
 
     assert result.outcome == "failed: gates"
     assert result.head == second
-    assert f"protected file {WORKFLOW}" in result.detail
-    assert "no approved protected-change approval on o/r#7" in result.detail
+    assert "no merge-review record or approved exemption on o/r#7" in result.detail
+    assert gated.fingerprint() in result.detail
     assert fake.disables == [url(1)]
     assert [head for _base, head, _refs in gated.evaluations] == [first, second]
     assert "GATES NOT PASSED" in capsys.readouterr().err

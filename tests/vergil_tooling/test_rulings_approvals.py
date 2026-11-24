@@ -1,6 +1,6 @@
-"""Tests for the protected-change and exemption requests and their verifier (epic .github#1384).
+"""Tests for the merge-review exemption request and its verifier (epic .github#1384).
 
-Task 6a renders the requests and reads the decision line; Task 6b verifies a
+Task 6a renders the request and reads the decision line; Task 6b verifies a
 past exchange.
 """
 
@@ -12,7 +12,6 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import github, trust
-from vergil_tooling.lib.protected_paths import ProtectedChange
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.approvals import (
     DECISION_LINES,
@@ -20,7 +19,6 @@ from vergil_tooling.lib.rulings.approvals import (
     Approval,
     parse_decision,
     render_exemption_request,
-    render_protected_change_request,
     verified_approvals,
 )
 from vergil_tooling.lib.rulings.comments import IssueComment
@@ -29,63 +27,11 @@ from vergil_tooling.lib.rulings.plain_text import check_plain_text
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 AGENT = "h-vergil-user"
-BLOB = "a" * 40
-BLOB256 = "b" * 64
 FINGERPRINT = "c" * 64
-URL = "https://github.com/o/r/compare/1111...2222"
 
 
 def _marker(body: str) -> Marker | None:
     return parse_marker(IssueComment(1, AGENT, body, False), AGENT)
-
-
-# --- the protected-change request ------------------------------------------------
-
-
-def test_protected_change_request_lists_each_path_and_blob() -> None:
-    changes = [
-        ProtectedChange(".github/workflows/ci.yml", BLOB),
-        ProtectedChange("docs/a file.toml", BLOB256),
-        ProtectedChange("vergil.toml", "deleted"),
-    ]
-    body = render_protected_change_request(changes, URL)
-    lines = body.split("\n")
-    assert lines[0].startswith("Protected-change approval requested.")
-    assert lines[1:-3] == [
-        f"Protected: {BLOB} .github/workflows/ci.yml",
-        f"Protected: {BLOB256} docs/a file.toml",
-        "Protected: deleted vergil.toml",
-        f"Diff: {URL}",
-    ]
-    assert lines[-3:] == [
-        REPLY_INSTRUCTION,
-        "",
-        "<!-- vrg-ruling kind=request type=protected-change -->",
-    ]
-    assert _marker(body) == Marker("request", None, None, "protected-change")
-    check_plain_text(body.rpartition("\n")[0], what="the body")
-
-
-@pytest.mark.parametrize(
-    ("changes", "url", "message"),
-    [
-        ([], URL, "nothing to approve"),
-        ([ProtectedChange("a", BLOB), ProtectedChange("a", BLOB)], URL, "listed twice"),
-        ([ProtectedChange("a", "A" * 40)], URL, "neither a git object ID"),
-        ([ProtectedChange("a", "abc")], URL, "neither a git object ID"),
-        ([ProtectedChange("a\nProtected: x y", BLOB)], URL, "one line"),
-        ([ProtectedChange("café", BLOB)], URL, "not plain text"),
-        ([ProtectedChange(" a", BLOB)], URL, "whitespace"),
-        ([ProtectedChange("", BLOB)], URL, "empty"),
-        ([ProtectedChange("a", BLOB)], "http://example.com/x", "https://"),
-        ([ProtectedChange("a", BLOB)], "", "empty"),
-    ],
-)
-def test_protected_change_request_refuses_bad_input(
-    changes: list[ProtectedChange], url: str, message: str
-) -> None:
-    with pytest.raises(RulingError, match=message):
-        render_protected_change_request(changes, url)
 
 
 # --- the exemption request -------------------------------------------------------
@@ -102,6 +48,8 @@ def test_exemption_request_records_reason_and_fingerprint() -> None:
         "<!-- vrg-ruling kind=request type=merge-review-exemption -->",
     ]
     assert _marker(body) == Marker("request", None, None, "merge-review-exemption")
+    assert "protected-change" not in body
+    check_plain_text(body.rpartition("\n")[0], what="the body")
 
 
 @pytest.mark.parametrize(
@@ -110,6 +58,10 @@ def test_exemption_request_records_reason_and_fingerprint() -> None:
         ("", FINGERPRINT, "empty"),
         ("two\nlines", FINGERPRINT, "one line"),
         ("tab\there", FINGERPRINT, "not plain text"),
+        ("café", FINGERPRINT, "not plain text"),
+        ("   ", FINGERPRINT, "empty"),
+        (" ok", FINGERPRINT, "whitespace"),
+        ("ok ", FINGERPRINT, "whitespace"),
         ("ok", "C" * 64, "SHA-256"),
         ("ok", "c" * 63, "SHA-256"),
         ("ok", "", "SHA-256"),
@@ -177,29 +129,18 @@ OUTSIDER: dict[str, str] = {"__typename": "User", "login": "drive-by"}
 IMPOSTOR: dict[str, str] = {"__typename": "User", "login": "human-vergil-user"}
 KEY = ("o/r", 7)
 REF = "o/r#7"
-CHANGES = [
-    ProtectedChange(".github/workflows/ci.yml", BLOB),
-    ProtectedChange("docs/a file.toml", BLOB256),
-    ProtectedChange("vergil.toml", "deleted"),
-]
-PROTECTED = render_protected_change_request(CHANGES, URL)
 EXEMPTION = render_exemption_request("a one-line typo fix", FINGERPRINT)
 APPROVE = "Looked at the diff.\nDecision: approve"
 REFUSE = "Decision: refuse"
 ORDINARY_REQUEST = "Which way?\n\n<!-- vrg-ruling kind=request -->"
-BLOBS = {".github/workflows/ci.yml": BLOB, "docs/a file.toml": BLOB256, "vergil.toml": "deleted"}
 
 
 def _response(request_id: int, reply_id: int) -> str:
     return f"Done.\n\n<!-- vrg-ruling kind=response request={request_id} reply={reply_id} -->"
 
 
-def _protected(request_id: int) -> Approval:
-    return Approval("protected-change", request_id, "approve", BLOBS, None)
-
-
 def _exemption(request_id: int) -> Approval:
-    return Approval("merge-review-exemption", request_id, "approve", {}, FINGERPRINT)
+    return Approval("merge-review-exemption", request_id, "approve", FINGERPRINT)
 
 
 @pytest.fixture
@@ -214,17 +155,17 @@ def _on_issue(items: trust_stubs.FakeItems, *nodes: dict[str, Any]) -> None:
     items.items[KEY] = trust_stubs.item(nodes=list(nodes))
 
 
-def test_verified_approvals_reads_both_kinds(items: trust_stubs.FakeItems) -> None:
+def test_verified_approvals_reads_every_approved_exemption(items: trust_stubs.FakeItems) -> None:
     _on_issue(
         items,
-        trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
         trust_stubs.comment(11, APPROVE, HUMAN),
         trust_stubs.comment(12, _response(10, 11), AGENT_ACTOR),
         trust_stubs.comment(20, EXEMPTION, AGENT_ACTOR),
         trust_stubs.comment(21, "Decision: approve", HUMAN),
         trust_stubs.comment(22, _response(20, 21), AGENT_ACTOR),
     )
-    assert verified_approvals(REF, authors=AUTHORS) == [_protected(10), _exemption(20)]
+    assert verified_approvals(REF, authors=AUTHORS) == [_exemption(10), _exemption(20)]
 
 
 def test_verified_approvals_reads_the_whole_stream(
@@ -246,7 +187,7 @@ def test_verified_approvals_reads_the_whole_stream(
 def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeItems) -> None:
     _on_issue(
         items,
-        trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
         trust_stubs.comment(11, APPROVE, HUMAN),
         trust_stubs.comment(12, _response(10, 11), AGENT_ACTOR),
         trust_stubs.comment(13, "Merge review: done: eligible; accepted-risk 0", AGENT_ACTOR),
@@ -255,7 +196,7 @@ def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeIte
         trust_stubs.comment(16, "Later note.", HUMAN, editor=HUMAN),
         trust_stubs.comment(17, "An unrelated remark.", OTHER_AGENT),
     )
-    assert verified_approvals(REF, authors=AUTHORS) == [_protected(10)]
+    assert verified_approvals(REF, authors=AUTHORS) == [_exemption(10)]
 
 
 @pytest.mark.parametrize(
@@ -263,28 +204,28 @@ def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeIte
     [
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR, editor=AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR, editor=AGENT_ACTOR),
                 trust_stubs.comment(11, APPROVE, HUMAN),
             ],
             id="request-edited",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, APPROVE, HUMAN, editor=HUMAN),
             ],
             id="reply-edited",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, APPROVE, AGENT_ACTOR),
             ],
             id="reply-by-the-agent",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, APPROVE, OTHER_AGENT),
                 trust_stubs.comment(12, APPROVE, HUMAN),
             ],
@@ -292,28 +233,28 @@ def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeIte
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, OTHER_AGENT),
+                trust_stubs.comment(10, EXEMPTION, OTHER_AGENT),
                 trust_stubs.comment(11, APPROVE, HUMAN),
             ],
             id="request-by-another-agent",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, IMPOSTOR),
+                trust_stubs.comment(10, EXEMPTION, IMPOSTOR),
                 trust_stubs.comment(11, APPROVE, HUMAN),
             ],
             id="request-by-an-impostor",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, HUMAN),
+                trust_stubs.comment(10, EXEMPTION, HUMAN),
                 trust_stubs.comment(11, APPROVE, HUMAN),
             ],
             id="request-by-the-human",
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, REFUSE, HUMAN),
                 trust_stubs.comment(12, APPROVE, HUMAN),
             ],
@@ -321,7 +262,7 @@ def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeIte
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, APPROVE, HUMAN, editor=HUMAN),
                 trust_stubs.comment(12, APPROVE, HUMAN),
             ],
@@ -329,7 +270,7 @@ def test_past_approval_ignores_later_trusted_comments(items: trust_stubs.FakeIte
         ),
         pytest.param(
             [
-                trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+                trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
                 trust_stubs.comment(11, "Approved, café.\nDecision: approve", HUMAN),
             ],
             id="reply-not-plain-text",
@@ -368,7 +309,7 @@ def test_untrusted_comment_between_request_and_reply_is_skipped(
 def test_refuse_decision_is_not_an_approval(items: trust_stubs.FakeItems) -> None:
     _on_issue(
         items,
-        trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
         trust_stubs.comment(11, REFUSE, HUMAN),
         trust_stubs.comment(12, _response(10, 11), AGENT_ACTOR),
         trust_stubs.comment(20, EXEMPTION, AGENT_ACTOR),
@@ -392,7 +333,7 @@ def test_reply_without_one_exact_approve_is_not_an_approval(
 ) -> None:
     _on_issue(
         items,
-        trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
         trust_stubs.comment(11, reply, HUMAN),
     )
     assert verified_approvals(REF, authors=AUTHORS) == []
@@ -407,7 +348,7 @@ def test_unanswered_and_ordinary_requests_are_not_approvals(
         trust_stubs.comment(1, ORDINARY_REQUEST, AGENT_ACTOR),
         trust_stubs.comment(2, "Decision: approve", HUMAN),
         trust_stubs.comment(3, _response(1, 2), AGENT_ACTOR),
-        trust_stubs.comment(10, PROTECTED, AGENT_ACTOR),
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR),
     )
     assert verified_approvals(REF, authors=AUTHORS) == []
 
@@ -416,18 +357,22 @@ def test_unanswered_and_ordinary_requests_are_not_approvals(
     "body",
     [
         # A typed marker on a body that does not hold exactly what the kind records.
-        PROTECTED.replace(f"Protected: {BLOB} ", "Protected: nope "),
-        PROTECTED.replace("Protected: deleted vergil.toml", "Protected: deleted"),
-        PROTECTED.replace(f"Diff: {URL}\n", ""),
-        PROTECTED.replace(f"Diff: {URL}", f"Diff: {URL}\nDiff: {URL}"),
-        PROTECTED.replace("Protected: deleted vergil.toml", f"Protected: {BLOB} docs/a file.toml"),
-        PROTECTED.replace("Protected-change approval requested.", "Please approve."),
-        "Protected-change approval requested.\n\n"
-        "<!-- vrg-ruling kind=request type=protected-change -->",
         EXEMPTION.replace(f"Fingerprint: {FINGERPRINT}", "Fingerprint: abc"),
+        EXEMPTION.replace(f"Fingerprint: {FINGERPRINT}\n", ""),
+        EXEMPTION.replace(
+            f"Fingerprint: {FINGERPRINT}", f"Fingerprint: {FINGERPRINT}\nFingerprint: {FINGERPRINT}"
+        ),
         EXEMPTION.replace("Reason: a one-line typo fix\n", ""),
-        EXEMPTION.replace("type=merge-review-exemption", "type=protected-change"),
-        PROTECTED.replace("type=protected-change", "type=merge-review-exemption"),
+        EXEMPTION.replace("Reason: a one-line typo fix", "Reason: a\nReason: b"),
+        EXEMPTION.replace("Merge-review exemption requested.", "Please exempt."),
+        EXEMPTION.replace(REPLY_INSTRUCTION, "Reply however you like."),
+        "Merge-review exemption requested.\n\n"
+        "<!-- vrg-ruling kind=request type=merge-review-exemption -->",
+        # The exemption text as it read when a protected-change approval existed.
+        EXEMPTION.replace(
+            "fingerprint only.",
+            "fingerprint only; it never waives a protected-change approval.",
+        ),
     ],
 )
 def test_request_body_not_in_its_kinds_form_is_not_an_approval(
@@ -440,6 +385,20 @@ def test_request_body_not_in_its_kinds_form_is_not_an_approval(
     )
     assert verified_approvals(REF, authors=AUTHORS) == []
     assert "request 10" in capsys.readouterr().err
+
+
+def test_removed_protected_change_request_is_not_an_approval(
+    items: trust_stubs.FakeItems,
+) -> None:
+    """A ``type=protected-change`` request is now a malformed marker, never an approval."""
+    legacy = EXEMPTION.replace("type=merge-review-exemption", "type=protected-change")
+    _on_issue(
+        items,
+        trust_stubs.comment(10, legacy, AGENT_ACTOR),
+        trust_stubs.comment(11, APPROVE, HUMAN),
+        trust_stubs.comment(12, _response(10, 11), AGENT_ACTOR),
+    )
+    assert verified_approvals(REF, authors=AUTHORS) == []
 
 
 @pytest.mark.parametrize("answer", [{}, {"repository": None}])

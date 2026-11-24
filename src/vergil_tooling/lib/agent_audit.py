@@ -35,16 +35,12 @@ PR's is a ``no-pr`` finding. For each landing:
    (:func:`~vergil_tooling.lib.pr_provenance.check_pr`) is checked too.
 2. **The gates**, on an agent-involved PR merged into ``develop``
    (:func:`~vergil_tooling.lib.agent_gates.agent_involved`, from the PR's
-   author and every actor GitHub records on its timeline): the protected
-   files and the merge-review coverage of
-   :func:`~vergil_tooling.lib.agent_gates.evaluate`, on the change from the
-   branch tip before the landing to the PR's head, ``refs/pull/<n>/head``
-   (merged branches are deleted), with the protected set read at that
-   pre-landing tip. The task issues are the linkage lines of the PR's body,
-   read through the trust layer; an untrusted body is a finding. A protected
-   file whose blob in the landed commit differs from its blob at the PR's
-   head (a squash onto a ``develop`` that also changed it) is its own
-   ``merge-changed-approved-file`` finding.
+   author and every actor GitHub records on its timeline): the merge-review
+   coverage of :func:`~vergil_tooling.lib.agent_gates.evaluate`, on the
+   change from the branch tip before the landing to the PR's head,
+   ``refs/pull/<n>/head`` (merged branches are deleted). The task issues are
+   the linkage lines of the PR's body, read through the trust layer; an
+   untrusted body is a finding.
 
 A PR done entirely by the human or the automation App is not agent-involved,
 so only the actor check applies to it.
@@ -70,11 +66,6 @@ from typing import TYPE_CHECKING, Any, cast
 from vergil_tooling.lib import agent_gates, git, github, pr_provenance, trust
 from vergil_tooling.lib.github_config import APP_MERGES_RELEASES
 from vergil_tooling.lib.linkage import extract_tracking_refs
-from vergil_tooling.lib.protected_paths import (
-    DELETED,
-    ProtectedPathsError,
-    changed_protected,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -120,7 +111,6 @@ MAIN_MERGE = "main-merge"
 PROVENANCE = "provenance"
 TASK_ISSUE = "task-issue"
 GATES = "gates"
-MERGE_CHANGED_APPROVED_FILE = "merge-changed-approved-file"
 READ_FAILURE = "read-failure"
 
 # Timeline events whose actor is not the one who acted on the PR: GitHub
@@ -298,17 +288,6 @@ def _first_parent(clone: Path, since: str, tip: str) -> list[str]:
 
 def _parent(clone: Path, commit: str) -> str:
     return _git(clone, "rev-parse", "--verify", "--quiet", f"{commit}^1")
-
-
-def _blob_at(clone: Path, commit: str, path: str) -> str:
-    """The blob of *path* in *commit*, or ``deleted`` when the commit has no such file."""
-    out = _git(clone, "ls-tree", "-z", commit, "--", path)
-    for entry in out.split("\0"):
-        meta, _, name = entry.partition("\t")
-        parts = meta.split()
-        if name == path and len(parts) == 3:  # noqa: PLR2004
-            return parts[2]
-    return DELETED
 
 
 # --- GitHub reads -------------------------------------------------------------------
@@ -599,7 +578,7 @@ def _gate_findings(
     landing: Landing,
     authors: TrustedAuthors,
 ) -> list[Finding]:
-    """The gates on an agent-involved landing, and any approved file the merge changed."""
+    """The gates on an agent-involved landing."""
     subject = f"PR #{landing.pr}"
     refs = _task_refs(repo, landing.pr, authors)
     if refs is None:
@@ -619,26 +598,7 @@ def _gate_findings(
     if result.read_failure:
         msg = f"the gates on {repo} PR #{landing.pr} could not be read: {'; '.join(result.reasons)}"
         raise AuditError(msg)
-    found = [Finding(GATES, repo, branch, subject, reason) for reason in result.reasons]
-    try:
-        changes = changed_protected(clone, landing.before, head, landing.before)
-    except ProtectedPathsError as exc:
-        msg = f"cannot read the protected files of {repo} PR #{landing.pr}: {exc}"
-        raise AuditError(msg) from exc
-    for change in changes:
-        merged = _blob_at(clone, landing.end, change.path)
-        if merged != change.blob:
-            found.append(
-                Finding(
-                    MERGE_CHANGED_APPROVED_FILE,
-                    repo,
-                    branch,
-                    subject,
-                    f"{change.path} is {merged} in the merge commit {landing.end[:12]}"
-                    f" but {change.blob} at the PR's head {head[:12]}",
-                )
-            )
-    return found
+    return [Finding(GATES, repo, branch, subject, reason) for reason in result.reasons]
 
 
 def _check_landing(
