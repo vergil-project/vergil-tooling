@@ -160,6 +160,20 @@ def test_ensure_refuses_a_clone_without_origin(repo: Path, capsys: Cap) -> None:
     assert not (repo / "build").exists()
 
 
+def test_ensure_reports_a_git_failure(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: Cap
+) -> None:
+    def fail() -> Path:
+        raise subprocess.CalledProcessError(128, ["git", "rev-parse", "--git-common-dir"])
+
+    monkeypatch.setattr(vrg_state_dir.git, "main_worktree_root", fail)
+    code, out, err = _run(_argv(), capsys)
+    assert code == 1
+    assert out == ""
+    assert "ERROR: git failed (exit 128): git rev-parse --git-common-dir" in err
+    assert not (repo / "build").exists()
+
+
 @pytest.mark.parametrize("issue", ["widget#42", "acme/widget", "#42", "acme/widget#0"])
 def test_ensure_refuses_a_bad_issue_ref(repo: Path, capsys: Cap, issue: str) -> None:
     code, out, err = _run(_argv(issue=issue), capsys)

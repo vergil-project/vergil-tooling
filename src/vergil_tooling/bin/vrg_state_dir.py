@@ -74,3 +74,7 @@ def _parser() -> argparse.ArgumentParser:
         help="create absent levels mode 700, check every level, and print the path",
     )
     return parser
+
+
+if __name__ == "__main__":
+    sys.exit(main())
