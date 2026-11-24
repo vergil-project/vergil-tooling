@@ -338,12 +338,21 @@ root filesystem's size, and leaves the VM running.
 - **It never shrinks a disk.** A configured size smaller than the disk
   is refused before the VM is touched, since Lima can grow a disk but
   not shrink it. A smaller disk needs `vrg-vm rebuild`.
-- **A disk already at its configured size** is left alone.
+- **A disk already at its configured size** is not touched.
 - **A dedicated VM's fingerprint** is re-stamped when the disk was its
   only drift: the stamped fingerprint is the one its spec gives with
   the disk at its old size. `vrg-vm list` then reads `ok` again. A VM
   that also drifted in another key keeps its stamp and still reads
   `NEEDS-REBUILD`, and the command says to rebuild it.
+- **A dedicated VM already at its configured size** gets the same
+  check, so its disk-only drift clears too: one grown by hand before
+  `grow-disk` existed, or one whose re-stamp failed after a grow (for
+  example, because it was not reachable over SSH). Its old size is not
+  recorded, so the command tries each whole-GiB size below the current
+  one, since Lima never shrinks a disk; only a stamp that matches the
+  spec with the disk at one of them is re-stamped. The VM must be
+  running for the check: a stopped one is refused with the command to
+  start it.
 - **Lima VMs only.** An off-platform box is refused: its disks are
   sized by `volume` and `boot_disk`.
 
