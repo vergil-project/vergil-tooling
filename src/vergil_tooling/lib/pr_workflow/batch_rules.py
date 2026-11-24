@@ -49,7 +49,8 @@ _AUTHOR_ROLES = frozenset({trust.Role.HUMAN, trust.Role.AGENTS})
 
 # The errors a GitHub or configuration read can end in. Each is a refusal,
 # never a pass: a GitHubAPIError is a CalledProcessError, GraphQL errors are
-# RuntimeError, a malformed response or configuration is ValueError (JSON
+# RuntimeError (an incomplete native blocked-by list, NativeBlockersReadError,
+# included), a malformed response or configuration is ValueError (JSON
 # decoding included), and a malformed GraphQL node is KeyError or TypeError.
 # A parent or blocker read goes through the trust layer, which ends a failed
 # read in TrustReadError and an untrusted body in UntrustedContentError; both
@@ -199,30 +200,60 @@ def _check_task(ref: str, issue: epics.IssueRef, repo: str, authors: TrustedAuth
             f"{ref} is an operational task (validation/deployment), which is not PR-workable",
         )
 
+    _check_deployment_blockers(ref, issue)
+
+
+_DEPLOYMENT_RULE = "no open deployment blocker"
+
+
+def _check_deployment_blockers(ref: str, issue: epics.IssueRef) -> None:
+    """Refuse *issue* when it is directly blocked by an open deployment task.
+
+    Both kinds of direct link count: a ``Blocked-by:`` line of its trusted
+    body and a native GitHub blocked-by relationship, a blocker in another
+    repo or org included (#5110). A native list that cannot be read in full
+    (:class:`epics.NativeBlockersReadError`) refuses like any failed read.
+    """
     blockers = _read(
-        f"the Blocked-by lines of {ref}",
-        "no open deployment blocker",
-        lambda: epics.blockers_of(issue),
+        f"the Blocked-by lines of {ref}", _DEPLOYMENT_RULE, lambda: epics.blockers_of(issue)
     )
     for blocker in blockers:
-        blocker_kind = _read(
-            f"the labels of {ref}'s blocker {blocker.slug}",
-            "no open deployment blocker",
-            partial(epics.operational_kind, blocker),
-        )
-        if blocker_kind != "deployment":
+        if _blocker_kind(ref, blocker) != "deployment":
             continue
         state = _read(
             f"the state of {ref}'s blocker {blocker.slug}",
-            "no open deployment blocker",
+            _DEPLOYMENT_RULE,
             partial(epics.issue_state, blocker),
         )
         if state != "CLOSED":
             raise BatchRuleError(
-                "no open deployment blocker",
+                _DEPLOYMENT_RULE,
                 f"{ref} is Blocked-by {blocker.slug}, an open deployment task;"
                 " a batch lands all at once, so deploy it first",
             )
+    native = _read(
+        f"the native blocked-by links of {ref}",
+        _DEPLOYMENT_RULE,
+        partial(epics.native_blockers_of, issue),
+    )
+    for link in native:
+        if link.state == "CLOSED":
+            continue
+        if _blocker_kind(ref, link.ref) == "deployment":
+            raise BatchRuleError(
+                _DEPLOYMENT_RULE,
+                f"{ref} is natively blocked by {link.ref.slug}, an open deployment task;"
+                " a batch lands all at once, so deploy it first",
+            )
+
+
+def _blocker_kind(ref: str, blocker: epics.IssueRef) -> str | None:
+    """*blocker*'s operational kind, a failed read refusing *ref*'s batch."""
+    return _read(
+        f"the labels of {ref}'s blocker {blocker.slug}",
+        _DEPLOYMENT_RULE,
+        partial(epics.operational_kind, blocker),
+    )
 
 
 def _check_shared_parent(issues: list[str], parsed: list[epics.IssueRef]) -> None:
@@ -265,9 +296,10 @@ def check_hard_rules(issues: list[str], *, repo: str) -> None:
     *repo* is the PR's ``owner/name``. The rules (spec §5.1): 2 to 8 issues,
     none listed twice, each in *repo*, each a task (not an epic or archive)
     under a buildable parent (not a queue item or an ops issue), each opened
-    by a trusted author, none operational, none Blocked-by an open
-    deployment task, and one shared parent that is a finite epic or the
-    repo's ad-hoc epic. Raises :class:`BatchRuleError` at
+    by a trusted author, none operational, none directly blocked by an open
+    deployment task (a ``Blocked-by:`` line or a native link), and one
+    shared parent that is a finite epic or the repo's ad-hoc epic. Raises
+    :class:`BatchRuleError` at
     the first rule broken, and on any read that fails.
     """
     parsed = _parse_refs(issues, repo)
