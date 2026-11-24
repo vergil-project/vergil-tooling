@@ -313,10 +313,16 @@ reaches existing dedicated Lima VMs as `NEEDS-REBUILD`. When the base
 `disk` went from `50GiB` to `100GiB`, every dedicated Lima VM that took
 its size from the base read `NEEDS-REBUILD`, and `vrg-vm rebuild`
 brings it up at the new size. The shared base VM carries no
-fingerprint, so it never reads `NEEDS-REBUILD`; `vrg-vm list` shows
-the declared size for it, and it reaches that size only when it is
-rebuilt. A VM whose identity, repo or host override sets `disk` is
-unaffected.
+fingerprint, so it never reads `NEEDS-REBUILD`, and it reaches the new
+size only when it is rebuilt. A VM whose identity, repo or host
+override sets `disk` is unaffected.
+
+The `DISK` column of `vrg-vm list` shows each Lima VM's actual disk
+size: the `disk` byte count that `limactl list --json` reports for the
+instance. A VM not yet created shows its configured size. A VM whose
+disk differs from its configured size shows both, as
+`<actual>≠<configured>` (for example `50GiB≠100GiB`), so the base VM
+above reads `50GiB≠100GiB` until it is rebuilt.
 
 ## vergil-tooling inside the VM
 
