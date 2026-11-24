@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.345] - 2026-11-24
+
+### Bug fixes
+
+- allow the agent's own merge close in provenance and list CD runs with its token (#5144)
+
 ## [2.1.344] - 2026-11-24
 
 ### Bug fixes
