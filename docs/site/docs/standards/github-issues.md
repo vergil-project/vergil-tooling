@@ -1160,9 +1160,9 @@ Shared rules (both kinds):
   defect.)
 - **Gates epic closure** by staying open — an open operational child holds the
   epic until it succeeds, so rollup is honest.
-- **Records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads them
-  to report each as *runnable* (dependencies closed) or *blocked*, tagged by
-  kind. The same `Blocked-by:` reflink works on a **plain task** too — pass
+- **Records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads them,
+  and the task's native GitHub blocked-by relationships, to report each as
+  *runnable* (dependencies closed) or *blocked*, tagged by kind. The same `Blocked-by:` reflink works on a **plain task** too — pass
   `--blocked-by` to `vrg-issue-create --kind task` and it is appended to the task
   body — so an epic driver's plain-task frontier (which open tasks have every
   dependency closed) is machine-derivable, not inferred from plan prose.

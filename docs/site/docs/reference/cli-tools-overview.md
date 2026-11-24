@@ -1948,7 +1948,10 @@ child, orphans, retired kind labels, body-only `Parent:` links, and a
 misplaced archive (one with a parent, one without its `archive` label, or one
 labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending (an operational task is
-runnable or blocked by the `Blocked-by:` lines of its body, which count only
+runnable or blocked by the `Blocked-by:` lines of its body and its native
+GitHub blocked-by relationships, a blocker in another repo or org included;
+a native list that cannot be read in full fails the audit, never reads as
+runnable. The `Blocked-by:` lines count only
 from a body the trust layer trusts; a task whose body is untrusted or cannot
 be read in full is **stopped**, not the audit: its epic's line ends
 `stopped: <K> (see stderr)`, a count only, each stop is named on stderr,
