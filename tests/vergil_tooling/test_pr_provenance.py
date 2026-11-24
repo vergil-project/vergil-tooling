@@ -615,3 +615,67 @@ def test_untrusted_rules_unchanged(action: str) -> None:
         [Action("stranger", Role.UNTRUSTED, action, actor)], author=actor
     )
     assert [v.action for v in result.violations] == [action]
+
+
+# --- pr_actors: the agent-involvement evidence (epic .github#1384, Task 11) ------------
+
+
+def test_pr_actors_lists_every_acting_identity() -> None:
+    """The author, every review's author whatever its state, every timeline actor or user."""
+    reviews: list[dict[str, object]] = [
+        {"state": "COMMENTED", "user": _bot("a-vergil-user")},
+        {"state": "APPROVED", "user": _user("stranger")},
+        {"state": "CHANGES_REQUESTED", "user": None},
+    ]
+    timeline: list[dict[str, object]] = [
+        {"event": "labeled", "actor": _bot("a-vergil-audit")},
+        {"event": "reviewed", "user": _user("bob")},
+        {"event": "committed", "author": {"name": "Some One"}},
+        {"event": "head_ref_force_pushed", "actor": _user("alice")},
+    ]
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([reviews], [timeline], []),
+    ):
+        actors = pr_provenance.pr_actors("9")
+    assert actors == (
+        trust.Identity("alice", "User"),
+        trust.Identity("a-vergil-user[bot]", "Bot"),
+        trust.Identity("stranger", "User"),
+        trust.Identity(None, None),
+        trust.Identity("a-vergil-audit[bot]", "Bot"),
+        trust.Identity("bob", "User"),
+        trust.Identity("alice", "User"),
+    )
+
+
+def test_pr_actors_read_every_page() -> None:
+    page1: list[dict[str, object]] = [
+        {"event": "labeled", "actor": _user("alice")} for _ in range(30)
+    ]
+    page2: list[dict[str, object]] = [{"event": "labeled", "actor": _bot("a-vergil-user")}]
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([[]], [page1, page2], []),
+    ):
+        actors = pr_provenance.pr_actors("9")
+    assert actors[-1] == trust.Identity("a-vergil-user[bot]", "Bot")
+
+
+def test_pr_actors_malformed_page_fails_closed() -> None:
+    def fake_read_output(*args: str, **_: object) -> str:
+        if args[:2] == ("api", "--paginate") and "/reviews?" in args[2]:
+            return '[]{"message": "boom"}'
+        if args[:2] == ("api", "--paginate"):
+            return "[]"
+        if args[:2] == ("pr", "view") and "number,url" in args:
+            return _pr_view(9)
+        if args[:2] == ("pr", "view"):
+            return _ALICE_VIEW
+        raise AssertionError(f"unexpected call: {args}")
+
+    with (
+        patch("vergil_tooling.lib.pr_provenance.github.read_output", side_effect=fake_read_output),
+        pytest.raises(ValueError, match="not a list"),
+    ):
+        pr_provenance.pr_actors("9")
