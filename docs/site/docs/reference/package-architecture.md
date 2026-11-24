@@ -50,8 +50,9 @@ The main modules under `src/vergil_tooling/lib/`:
   ad-hoc, intake, planning, deferred, hoshin and operations standing epics and their
   per-quarter archives), the epic categories and their derived category
   labels, epic and queue homes, sub-issue linking, rollup,
-  and the parent-based queue-item check that `vrg-pr-workflow report-ready`
-  and `vrg-submit-pr` use to refuse intake, planning and deferred items.
+  and the parent-based check that `vrg-pr-workflow report-ready` and
+  `vrg-submit-pr` use to refuse intake, planning and deferred items and the
+  ops issues under an operations epic.
 - **`proxies.py`**: the proxy epic's link to its primary, read from the
   proxy's `Primary:` body line (from a body the trust layer trusts) and the
   primary's trusted `Proxy:` comments (`epics.is_proxy` is the label test every development-epic check skips).
@@ -61,6 +62,10 @@ The main modules under `src/vergil_tooling/lib/`:
 - **`epic_size.py`**: the epic-size scale, the sizing comment and cleared
   marker formats, and an item's size record, shared by the
   `vrg-intake-route` `size` route and the `vrg-queue` size column.
+- **`ops_report.py`**: `vrg-ops-report`: the combined result of an
+  unattended job, the lookup of its open ops issue through the trust layer
+  (`trust.py`), and the failure, cancel and recovery reports. It never
+  closes an issue.
 - **`security_records.py`**: `vrg-security-record`, including the
   security-records pass of `vrg-security-record sync` (previewed by the
   read-only `vrg-epic-audit`).

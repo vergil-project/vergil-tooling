@@ -779,8 +779,9 @@ issue is the open issue in `--repo` titled `ops: <repo> / <job> failing`,
 labelled `ops-report` and opened by the org's automation App. `--results`
 combines the GitHub job results of every job that makes up the named job:
 any `failure` wins, then `cancelled`, then `success`; all `skipped` reports
-nothing. A failure or cancel opens the issue under the org's operations
-epic (`Epic (operations): <org>`, in `<org>/.github`), naming the job, run,
+nothing. A failure or cancel opens the issue in `--repo`, linked as a
+sub-issue under the org's operations epic (`Epic (operations): <org>`, in
+`<org>/.github`), naming the job, run,
 step, date and the most recent closed ops issue with the same title
 (`previous occurrence: #N`), or comments on the open one. A success
 comments `ops-report: recovered` only on the first green run after a
