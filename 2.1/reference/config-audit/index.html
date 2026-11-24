@@ -1478,6 +1478,8 @@
       
         
       
+        
+      
     
     
     
@@ -1530,6 +1532,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.341/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.341
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19728,8 +19758,13 @@ order:</p>
   keeps an agent that may merge its own PRs into <code>develop</code> out of <code>main</code>
   (<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>,
   spec §4.1). The org automation App is not a bypass actor: <code>vrg-release</code>
-  refuses every agent identity, so the human merges every release PR. The
-  ruleset has no <code>creation</code> rule, so repo init can still create <code>main</code>.</li>
+  refuses every agent identity, so the human merges every release PR. Its
+  <code>merge-release</code> stage asks for that bypass explicitly (<code>gh pr merge
+  --admin</code>, pinned with <code>--match-head-commit</code>) once its own checks pass,
+  since a plain merge into <code>main</code> is refused even for the admin; it is the
+  only merge that does
+  (<a href="https://github.com/vergil-project/vergil-tooling/issues/5095">vergil-project/vergil-tooling#5095</a>).
+  The ruleset has no <code>creation</code> rule, so repo init can still create <code>main</code>.</li>
 <li><strong>Agent audit markers</strong> keeps the <code>vergil/agent-audit/</code> marker branches,
   which record where the daily agent audit has checked up to, out of reach
   of the identity being audited. Only the human admin (whose repo init

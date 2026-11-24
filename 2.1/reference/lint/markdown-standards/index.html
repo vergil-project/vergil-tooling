@@ -1478,6 +1478,8 @@
       
         
       
+        
+      
     
     
     
@@ -1530,6 +1532,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.341/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.341
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18535,6 +18565,10 @@ config bundled in vergil-tooling.</p>
 <td><code>docs/site/**/*.md</code></td>
 </tr>
 <tr>
+<td>Security records, such as the Scorecard snapshots</td>
+<td><code>docs/security/**/*.md</code></td>
+</tr>
+<tr>
 <td>Project README</td>
 <td><code>README.md</code></td>
 </tr>
@@ -18544,9 +18578,10 @@ config bundled in vergil-tooling.</p>
 </tr>
 </tbody>
 </table>
-<p>Other markdown files (changelogs, release notes, internal docs) are
-not validated by this check. The <code>[markdownlint].ignore</code> paths in
-<code>vergil.toml</code> drop files under <code>docs/site/</code> and <code>epics/</code>.</p>
+<p>Other markdown files (changelogs, release notes, internal docs, and the
+rest of <code>docs/</code>, such as plans and specs) are not validated by this
+check. The <code>[markdownlint].ignore</code> paths in <code>vergil.toml</code> drop files
+under <code>docs/site/</code>, <code>docs/security/</code> and <code>epics/</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The canonical config is bundled at
 <code>src/vergil_tooling/configs/markdownlint.yaml</code> and resolved at
