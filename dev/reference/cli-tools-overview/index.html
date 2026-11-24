@@ -20837,7 +20837,8 @@ the check again when it builds the body (see
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
 <p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
-directly Blocked-by an open deployment task and opened by a trusted author,
+directly blocked by an open deployment task (through a <code>Blocked-by:</code> line or a
+native GitHub blocked-by relationship) and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
 one commit per issue in the listed order, each subject ending in a space and
@@ -23370,7 +23371,10 @@ child, orphans, retired kind labels, body-only <code>Parent:</code> links, and a
 misplaced archive (one with a parent, one without its <code>archive</code> label, or one
 labelled <code>archive</code> whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending (an operational task is
-runnable or blocked by the <code>Blocked-by:</code> lines of its body, which count only
+runnable or blocked by the <code>Blocked-by:</code> lines of its body and its native
+GitHub blocked-by relationships, a blocker in another repo or org included;
+a native list that cannot be read in full fails the audit, never reads as
+runnable. The <code>Blocked-by:</code> lines count only
 from a body the trust layer trusts; a task whose body is untrusted or cannot
 be read in full is <strong>stopped</strong>, not the audit: its epic's line ends
 <code>stopped: &lt;K&gt; (see stderr)</code>, a count only, each stop is named on stderr,

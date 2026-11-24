@@ -20755,9 +20755,9 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   defect.)</li>
 <li><strong>Gates epic closure</strong> by staying open — an open operational child holds the
   epic until it succeeds, so rollup is honest.</li>
-<li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them
-  to report each as <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by
-  kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
+<li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them,
+  and the task's native GitHub blocked-by relationships, to report each as
+  <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
   <code>--blocked-by</code> to <code>vrg-issue-create --kind task</code> and it is appended to the task
   body — so an epic driver's plain-task frontier (which open tasks have every
   dependency closed) is machine-derivable, not inferred from plan prose.</li>
