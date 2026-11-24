@@ -16,6 +16,13 @@ The human and agent logins come from the trusted-authors configuration
 Actions, the delivered ``VRG_TRUSTED_AUTHORS`` copy). The audit refuses when
 it is missing, or names no human or more than one.
 
+An audited branch the repository has neither of nor its marker (a repo that
+is never released has no ``main``) is skipped by both, with the line
+``<owner/name>: no <branch> branch; not audited`` on stdout, which is in the
+run log hoshin reads; it is not a finding. An absent branch whose marker is
+set, and a repository with no ``develop``, are refused by ``--init`` and are
+a ``missing-branch`` finding in the audit.
+
 It is a security-signal job: it files no issue and posts nothing. Each
 finding is one line on stdout.
 
@@ -68,9 +75,12 @@ def _fail(message: str) -> None:
 
 
 def _init(repo: str) -> int:
-    for marker, sha, created in agent_audit.init_markers(repo):
-        state = "created at" if created else "already set at"
-        print(f"{repo}: {marker} {state} {sha}")
+    for done in agent_audit.init_markers(repo):
+        if done.sha is None:
+            print(agent_audit.not_audited(repo, done.branch))
+            continue
+        state = "created at" if done.created else "already set at"
+        print(f"{repo}: {done.marker} {state} {done.sha}")
     return EXIT_CLEAN
 
 
@@ -99,6 +109,9 @@ def _audit(repo: str) -> int:
     for finding in findings:
         print(finding.render())
     for result in results:
+        if result.skipped:
+            print(agent_audit.not_audited(repo, result.branch))
+            continue
         reached = result.audited_to[:12] if result.audited_to else "unchanged"
         print(f"{repo} {result.branch}: {len(result.findings)} finding(s); marker {reached}")
     return EXIT_FINDINGS if findings else EXIT_CLEAN

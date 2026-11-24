@@ -2448,8 +2448,13 @@ its change must be covered by a merge-review record or an approved
 merge-review exemption. It then moves each
 marker to where its audit reached; a read failure stops there, so the next
 run checks the rest again. A missing marker is a finding, never
-re-created. It is a security-signal job: it files no issue and posts
-nothing.
+re-created. A repo that is never released has no `main`: a branch the
+repo has neither of nor its marker is skipped, by the audit and by
+`--init`, each printing `<repo>: no <branch> branch; not audited`, and is
+not a finding. An absent branch whose marker is set is refused by
+`--init` and is a `missing-branch` finding, so deleting a branch never
+escapes the audit; a repo with no `develop` is always both. It is a
+security-signal job: it files no issue and posts nothing.
 
 | Attribute | Value |
 |---|---|

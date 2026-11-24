@@ -2859,17 +2859,30 @@ class TestStepAuditMarkers:
         assert "HTTP 403" in err
         assert marker_gh.creates == []
 
-    def test_missing_branch_stops_init(
+    def test_missing_main_is_reported_not_audited(
         self, marker_gh: _MarkerGitHub, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        # A repo that is never released has no main (.github#1384, ruling N0.18).
         del marker_gh.refs["main"]
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+
+        step_audit_markers(ctx)
+
+        assert marker_gh.creates == [("vergil/agent-audit/develop", _DEVELOP_TIP)]
+        assert "  vergil-project/demo: no main branch; not audited." in capsys.readouterr().out
+
+    def test_missing_develop_stops_init(
+        self, marker_gh: _MarkerGitHub, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        del marker_gh.refs["develop"]
         ctx = RepoInitContext(org="vergil-project", name="demo")
 
         with pytest.raises(SystemExit) as exc:
             step_audit_markers(ctx)
 
         assert exc.value.code == 1
-        assert "vergil-project/demo has no main branch" in capsys.readouterr().err
+        assert "vergil-project/demo has no develop branch" in capsys.readouterr().err
+        assert marker_gh.creates == []
 
     @pytest.mark.parametrize("adopt", [False, True], ids=["init", "adopt"])
     def test_runs_after_github_config_and_before_pages(self, adopt: bool) -> None:
