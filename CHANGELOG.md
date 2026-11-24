@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.341] - 2026-11-24
+
+### Bug fixes
+
+- exit 2 from check on auth, installation, token or gh-version errors (#5079)
+- merge the release PR into main with the human's ruleset bypass (#5099)
+
+### Features
+
+- one evaluator for approvals and merge-review coverage (#5097)
+- lint docs/security/ in vrg-validate's markdownlint scope (#5012)
+
 ## [2.1.340] - 2026-11-23
 
 ### CI
