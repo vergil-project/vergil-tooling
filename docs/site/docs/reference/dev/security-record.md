@@ -251,7 +251,8 @@ prints the command that would succeed:
   still names the advisory (an unmark not yet done) or carries the
   `Security record moved to <refs>` comment for exactly that set (a
   finished run). Such a re-run moves nothing; it only finishes the
-  unmarks.
+  unmarks, together with those of any other issue its listing finds still
+  naming the advisory (see below).
 - **Open-issue check.** The **dropped** issues are those that are not a
   `--to`: the issues in the tracking lines (on a re-run after the
   rewrite, every listed `security`-labelled issue whose line names this
@@ -323,8 +324,15 @@ A failure at any step exits 1 with a message naming the advisory and the
 step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
 After a failure at any step, re-run the same command: it finishes the
-job, and once the job is done a re-run writes nothing. An issue that still carries this advisory's line and label is found
-again by the re-run's listing, so an interrupted unmark is completed. The one case
+job. An issue that still carries this advisory's line and label is found
+again by the re-run's listing, so an interrupted unmark is completed. The
+re-run cannot tell an issue the first run dropped from any other issue
+that still names the advisory although the advisory does not track it
+(the other half of a broken pair, which a first run leaves alone): it
+treats every such issue as dropped. So a re-run, even of a finished
+retarget, unmarks any such issue that is closed and refuses, by the
+open-issue check, on any that is open; it writes nothing only when no
+such issue exists. The one case
 a re-run cannot reach is an issue whose `security` label was removed by
 hand while its advisory line stayed; `sync` reports it as a broken pair.
 On success it prints `Retargeted <GHSA-id> to <refs>.`

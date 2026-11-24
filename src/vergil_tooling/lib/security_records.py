@@ -737,8 +737,11 @@ def retarget(  # noqa: PLR0913 - the move, its source and its two exception list
       *ghsa_id* (the run stopped before its unmark finished) or because it
       carries the comment :func:`unmark_issue` posts naming exactly *targets*
       (the run finished). Such a re-run moves nothing: it only finishes the
-      unmarks, and writes nothing once they are done. Any other source is
-      refused.
+      unmarks. Its listing also finds any other issue whose body still names
+      *ghsa_id* though no tracking line names it (the other half of a broken
+      pair, which a first run leaves alone): the re-run unmarks it when it is
+      closed and refuses on it when it is open, so a re-run writes nothing
+      only when no such issue exists. Any other source is refused.
     - **Drop check.** A **dropped** issue is one that is not a target and not
       in *renamed*, and is named by the current tracking lines. A dropped
       issue that is still open, other than *source* (or the issue *source*
