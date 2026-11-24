@@ -206,7 +206,9 @@ def main(argv: list[str] | None = None) -> int:
             "than the disk: Lima never shrinks one, so a smaller disk needs "
             "'vrg-vm rebuild'. The VM is left running. A dedicated VM whose only spec "
             "drift was its disk size has its fingerprint re-stamped, so 'vrg-vm list' "
-            "no longer shows it NEEDS-REBUILD. Lima VMs only."
+            "no longer shows it NEEDS-REBUILD; this includes a running dedicated VM "
+            "whose disk is already at its configured size (grown by hand, or not "
+            "re-stamped after an earlier grow). Lima VMs only."
         ),
     )
     _add_identity_args(p_grow_disk)
@@ -1621,7 +1623,8 @@ def _cmd_grow_disk(args: argparse.Namespace) -> int:
     disk image on that start and refuses to shrink one; cloud-init's growpart
     and resizefs fill the larger disk on the boot. A dedicated VM whose stamped
     fingerprint differed from its spec only by the disk has it re-stamped, so
-    ``list`` stops showing it ``NEEDS-REBUILD``.
+    ``list`` stops showing it ``NEEDS-REBUILD``; so does one already at its
+    configured size, grown by hand or left stamped by a failed re-stamp.
     """
     target = _resolve_target(args)
     if target.spec.off_platform:
@@ -1633,7 +1636,8 @@ def _cmd_grow_disk(args: argparse.Namespace) -> int:
         return 1
     instance = target.instance
     ref = _target_ref(target)
-    if not vm_status(instance):
+    status = vm_status(instance)
+    if not status:
         print(
             f"ERROR: VM '{instance}' does not exist — run 'vrg-vm create' first",
             file=sys.stderr,
@@ -1655,7 +1659,9 @@ def _cmd_grow_disk(args: argparse.Namespace) -> int:
         return 1
     if wanted == current:
         print(f"VM '{instance}' already has its configured {configured} disk; nothing to grow.")
-        return 0
+        if not target.spec.dedicated:
+            return 0
+        return _restamp_at_size(target, status, wanted // _GIB)
 
     print(f"Growing VM '{instance}' disk from {_format_gib(current)} to {configured}...")
     try:
@@ -1697,34 +1703,58 @@ def _cmd_grow_disk(args: argparse.Namespace) -> int:
         f"{_format_gib(root_fs_bytes(transport))}."
     )
     if target.spec.dedicated:
-        return _restamp_after_grow(target, transport, current)
+        return _restamp_disk_drift(target, transport, (_format_gib(current),))
     return 0
 
 
-def _restamp_after_grow(target: Target, transport: Transport, before: int) -> int:
-    """Clear a grown dedicated VM's disk-only drift by re-stamping its fingerprint.
+def _restamp_at_size(target: Target, status: str, size_gib: int) -> int:
+    """Clear the disk-only drift of a dedicated VM already at its configured size.
 
-    The VM was stamped with the fingerprint of the spec it was built from. If
-    that is the current spec with the disk at its old size, the disk was the
-    only difference, and the grow removed it: stamp the current fingerprint.
-    Any other stamp means the spec drifted in some other field too, which only
-    a rebuild fixes, so it is left as it is and reported.
+    A VM whose disk was grown by hand (the vergil-vm#427 steps) or whose
+    re-stamp failed after a grow (the VM was unreachable) is at its configured
+    size but keeps the fingerprint it was built with. The size it was built at
+    is not recorded, but Lima never shrinks a disk, so it was a whole-GiB size
+    below the current one: each is tried as the old disk. Only a stamp that
+    matches the current spec with one of them is re-stamped.
+    """
+    if status != "Running":
+        print(
+            f"ERROR: VM '{target.instance}' is {status.lower()}, so its spec fingerprint "
+            "cannot be checked for disk-only drift; start it and run grow-disk again: "
+            f"vrg-vm start {_target_ref(target)}",
+            file=sys.stderr,
+        )
+        return 1
+    old_disks = tuple(f"{n}GiB" for n in range(1, size_gib))
+    return _restamp_disk_drift(target, LimaTransport(target.instance), old_disks)
+
+
+def _restamp_disk_drift(target: Target, transport: Transport, old_disks: tuple[str, ...]) -> int:
+    """Clear a dedicated VM's disk-only drift by re-stamping its fingerprint.
+
+    Called once Lima reports the VM's configured disk size. The VM was stamped
+    with the fingerprint of the spec it was built from. If that is the current
+    spec with the disk at one of *old_disks*, the disk was the only difference,
+    and it is gone: stamp the current fingerprint. Any other stamp means the
+    spec drifted in some other field too, which only a rebuild fixes, so it is
+    left as it is and reported.
     """
     ref = _target_ref(target)
     try:
         stamped = read_fingerprint(transport)
     except VmUnreachableError:
         print(
-            f"ERROR: VM '{target.instance}' was grown but is not reachable over SSH to "
-            "check its spec fingerprint; 'vrg-vm list' shows whether it needs a rebuild.",
+            f"ERROR: VM '{target.instance}' is not reachable over SSH to check its spec "
+            "fingerprint; 'vrg-vm list' shows whether it needs a rebuild.",
             file=sys.stderr,
         )
         return 1
     if stamped == target.fingerprint:
         print(f"VM '{target.instance}' meets its spec.")
         return 0
-    old_spec = replace(target.spec, disk=_format_gib(before))
-    if stamped is not None and stamped == spec_fingerprint(old_spec):
+    if stamped is not None and any(
+        stamped == spec_fingerprint(replace(target.spec, disk=disk)) for disk in old_disks
+    ):
         stamp_fingerprint(transport, target.fingerprint)
         print(f"VM '{target.instance}' meets its spec again: its fingerprint is re-stamped.")
         return 0
