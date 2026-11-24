@@ -126,7 +126,7 @@ directory to the first one named `<org>`. Pass `--target-dir <parent>`
 to name the clone's parent directory explicitly. The clone uses SSH
 (`git@github.com:<org>/<name>.git`).
 
-The wizard runs ten steps, each committed as `chore(init): step N - …`
+The wizard runs eleven steps, each committed as `chore(init): step N - …`
 so an interrupted run resumes where it stopped:
 
 1. Create the GitHub repository, always public.
@@ -149,7 +149,10 @@ so an interrupted run resumes where it stopped:
    Any still missing after a short wait stop the run, named. A resumed
    run checks again.
 9. Apply the GitHub settings, rulesets and labels.
-10. Configure GitHub Pages (when docs publishing is on).
+10. Create the agent audit markers, `vergil/agent-audit/develop` and
+    `vergil/agent-audit/main`, at the tips of `develop` and `main`. A
+    marker that already exists is left as it is.
+11. Configure GitHub Pages (when docs publishing is on).
 
 Every prompt has a matching flag (`--description`,
 `--repository-type`, `--language`, `--branching-model`,
@@ -179,7 +182,8 @@ Adopt is an idempotent "make it canonical" run. It overwrites every
 Vergil-managed file — `vergil.toml`, `CLAUDE.md`,
 `.claude/settings.json`, `.claude/hooks/guard.sh`, `LICENSE`,
 `README.md`, `.gitignore`, the CI/CD workflows and the docs site
-config — and applies the GitHub settings, rulesets and labels. It asks
+config — applies the GitHub settings, rulesets and labels, and creates
+any agent audit marker that is missing. It asks
 for confirmation first (`--non-interactive` accepts it). Values in an
 existing `vergil.toml` become the prompt defaults, and any table the
 wizard does not own (`[package]`, `[container]`, `[validation]`, …)

@@ -2484,7 +2484,7 @@ the managed `.gitignore` fence, the canonical report-only
 `.github/dependabot.yml`), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
-GitHub config, and Pages. The scaffolded `base + <language>`
+GitHub config, the agent audit markers, and Pages. The scaffolded `base + <language>`
 `.gitignore` fence, canonical `dependabot.yml` and staggered-cron
 `ops.yml` make a new repo pass the config audit's checks for those
 files from day one.

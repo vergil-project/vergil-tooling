@@ -1828,7 +1828,32 @@ def step_github_config(ctx: RepoInitContext) -> None:
     print("  Labels synced.")
 
 
-# The Pages source step 10 asks for: a legacy build from the root of gh-pages.
+def step_audit_markers(ctx: RepoInitContext) -> None:
+    """Step 10: Create the agent audit's marker branches at the tips of develop and main.
+
+    The markers and their create helper are the agent audit's own
+    (:func:`agent_audit.init_markers`, .github#1384 Task 12b): only a missing
+    marker is created, and an existing one is left as it is, so an adopt run
+    never moves an audit's progress. Repo init runs as the admin role, which
+    the "Agent audit markers" ruleset lets create them. A failed read or
+    create stops the run.
+    """
+    from vergil_tooling.lib.agent_audit import AuditError, init_markers
+
+    print("Step 10: Creating the agent audit markers...")
+    try:
+        done = init_markers(ctx.repo)
+    except AuditError as exc:
+        emit_error(str(exc))
+        raise SystemExit(1) from exc
+    for marker, sha, created in done:
+        if created:
+            print(f"  Created {marker} at {sha[:12]}.")
+        else:
+            print(f"  {marker} already at {sha[:12]}, left as it is.")
+
+
+# The Pages source step 11 asks for: a legacy build from the root of gh-pages.
 _PAGES_SOURCE: dict[str, str] = {"branch": "gh-pages", "path": "/"}
 
 
@@ -1899,12 +1924,12 @@ def _create_pages_site(repo: str) -> None:
 
 
 def step_github_pages(ctx: RepoInitContext) -> None:
-    """Step 10: Configure GitHub Pages."""
+    """Step 11: Configure GitHub Pages."""
     if not ctx.publish_docs:
-        print("Step 10: Docs disabled, skipping Pages.")
+        print("Step 11: Docs disabled, skipping Pages.")
         return
 
-    print("Step 10: Configuring GitHub Pages...")
+    print("Step 11: Configuring GitHub Pages...")
 
     if not _remote_branch_exists(ctx.repo, "gh-pages"):
         git.run("checkout", "--orphan", "gh-pages")
@@ -1990,7 +2015,8 @@ def run_wizard(ctx: RepoInitContext) -> None:
         (7, "Docs site", lambda: step_docs_site(ctx)),
         (8, "Branch structure", lambda: step_branch_structure(ctx)),
         (9, "GitHub config", lambda: step_github_config(ctx)),
-        (10, "GitHub Pages", lambda: step_github_pages(ctx)),
+        (10, "Agent audit markers", lambda: step_audit_markers(ctx)),
+        (11, "GitHub Pages", lambda: step_github_pages(ctx)),
     ]
 
     # Refuse a yes to integration tests before step 1 creates anything (#4462).
