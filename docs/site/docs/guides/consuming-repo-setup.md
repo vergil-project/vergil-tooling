@@ -151,7 +151,8 @@ so an interrupted run resumes where it stopped:
 9. Apply the GitHub settings, rulesets and labels.
 10. Create the agent audit markers, `vergil/agent-audit/develop` and
     `vergil/agent-audit/main`, at the tips of `develop` and `main`. A
-    marker that already exists is left as it is.
+    marker that already exists is left as it is. A repo with no `main`
+    gets no `main` marker, and the step reports `main` as not audited.
 11. Configure GitHub Pages (when docs publishing is on).
 
 Every prompt has a matching flag (`--description`,

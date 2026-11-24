@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.343] - 2026-11-24
+
+### Bug fixes
+
+- skip an audited branch the repo does not have (#5131) (#5132)
+
+### Documentation
+
+- say where ops issues live and list ops_report in the package architecture (#5128)
+
+### Features
+
+- the daily agent audit (#5129)
+
 ## [2.1.342] - 2026-11-24
 
 ### Bug fixes

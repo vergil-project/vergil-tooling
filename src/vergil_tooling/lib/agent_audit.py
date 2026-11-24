@@ -17,6 +17,16 @@ run that finds a marker missing reports a ``missing-marker`` finding and never
 re-creates it, since a marker re-created at the current tip would silently
 skip every merge since the last run.
 
+**An absent branch.** A repo that is never released has no ``main``. An
+audited branch the repo has neither of nor its marker is skipped, by
+``--init`` and by the audit, and each says so with the :func:`not_audited`
+line, so "not audited because absent" never reads as "audited clean". An
+absent branch whose marker is set is refused by ``--init`` and is a
+``missing-branch`` finding in the audit, since deleting a branch must never
+be a way out of its audit. ``develop`` is required
+(:data:`REQUIRED_BRANCHES`): a repo with no ``develop`` is always refused and
+a finding.
+
 **What one run checks.** For each branch, every commit on its first-parent
 history after the marker belongs to a *landing*: the merge of one PR (a merge
 commit, a squash commit, or the run of commits a rebase merge adds), found
@@ -80,16 +90,21 @@ __all__ = [
     "BranchAudit",
     "Finding",
     "Landing",
+    "MarkerInit",
     "audit",
     "audit_branch",
     "create_marker",
     "init_markers",
     "marker_branch",
+    "not_audited",
     "read_marker",
 ]
 
 #: The branches the audit covers, each from its own marker.
 AUDITED_BRANCHES = ("develop", "main")
+#: The audited branches every repo has. Any other may be absent (a repo that
+#: is never released has no ``main``): it is then skipped, and said so.
+REQUIRED_BRANCHES = ("develop",)
 MARKER_PREFIX = "vergil/agent-audit/"
 
 
@@ -98,11 +113,17 @@ def marker_branch(branch: str) -> str:
     return f"{MARKER_PREFIX}{branch}"
 
 
+def not_audited(repo: str, branch: str) -> str:
+    """The line that reports *branch* skipped because *repo* has no such branch and no marker."""
+    return f"{repo}: no {branch} branch; not audited"
+
+
 #: The marker branches, one per audited branch: the one definition repo init reuses.
 MARKER_BRANCHES = tuple(marker_branch(branch) for branch in AUDITED_BRANCHES)
 
 # Finding kinds.
 MISSING_MARKER = "missing-marker"
+MISSING_BRANCH = "missing-branch"
 MARKER_NOT_ANCESTOR = "marker-not-ancestor"
 NO_PR = "no-pr"
 UNEXPECTED_ACTOR = "unexpected-actor"
@@ -165,12 +186,37 @@ class Landing:
 class BranchAudit:
     """One branch's result: its findings and the commit its marker may move to.
 
-    *audited_to* is ``None`` when the marker stays where it is.
+    *audited_to* is ``None`` when the marker stays where it is. *skipped* is
+    true when the repo has neither the branch nor its marker, so the branch
+    was not audited at all (:func:`not_audited` gives the line to report).
     """
 
     branch: str
     findings: list[Finding] = field(default_factory=list)
     audited_to: str | None = None
+    skipped: bool = False
+
+
+@dataclass(frozen=True)
+class MarkerInit:
+    """What :func:`init_markers` did for one audited branch.
+
+    *sha* is the commit the marker holds, or ``None`` when the branch was
+    skipped because the repo has neither it nor its marker. *created* is
+    true when this run created the marker.
+    """
+
+    branch: str
+    sha: str | None
+    created: bool
+
+    @property
+    def marker(self) -> str:
+        return marker_branch(self.branch)
+
+    @property
+    def skipped(self) -> bool:
+        return self.sha is None
 
 
 # --- the markers ---------------------------------------------------------------
@@ -236,25 +282,50 @@ def _advance_marker(repo: str, branch: str, sha: str) -> None:
         raise AuditError(msg) from exc
 
 
-def init_markers(repo: str) -> list[tuple[str, str, bool]]:
+def _absent_branch_error(repo: str, branch: str, marker: str | None) -> str | None:
+    """Why an audited *branch* that *repo* does not have is an error, or ``None`` to skip it.
+
+    A required branch (:data:`REQUIRED_BRANCHES`) is always an error. Any
+    other is one when its marker is set: the branch disappeared after its
+    audit began, and deleting a branch never ends its audit.
+    """
+    if branch in REQUIRED_BRANCHES:
+        return f"{repo} has no {branch} branch; every repo has one, and it is always audited"
+    if marker is not None:
+        return (
+            f"{repo} has no {branch} branch, but its marker {marker_branch(branch)} is set at"
+            f" {marker[:12]}: an audited branch that disappeared is never skipped"
+        )
+    return None
+
+
+def init_markers(repo: str) -> list[MarkerInit]:
     """Create each missing marker of *repo* at its branch's current tip; audit nothing.
 
-    An existing marker is left untouched. Returns ``(marker, sha, created)``
-    for each audited branch. A branch that does not exist raises
-    :class:`AuditError`.
+    An existing marker is left untouched. A branch the repo has neither of
+    nor its marker is skipped (``skipped`` in its :class:`MarkerInit`), unless
+    it is a required branch. Every branch and marker is read before any
+    marker is created, and an absent required branch, or an absent branch
+    whose marker is set, raises :class:`AuditError` with nothing created.
     """
-    done: list[tuple[str, str, bool]] = []
+    found: list[tuple[str, str | None, str | None]] = []
     for branch in AUDITED_BRANCHES:
         existing = read_marker(repo, branch)
-        if existing is not None:
-            done.append((marker_branch(branch), existing, False))
-            continue
         tip = _read_ref(repo, branch)
         if tip is None:
-            msg = f"{repo} has no {branch} branch to set its marker at"
-            raise AuditError(msg)
-        create_marker(repo, branch, tip)
-        done.append((marker_branch(branch), tip, True))
+            error = _absent_branch_error(repo, branch, existing)
+            if error is not None:
+                raise AuditError(error)
+        found.append((branch, existing, tip))
+    done: list[MarkerInit] = []
+    for branch, existing, tip in found:
+        if existing is not None:
+            done.append(MarkerInit(branch, existing, created=False))
+        elif tip is None:
+            done.append(MarkerInit(branch, None, created=False))
+        else:
+            create_marker(repo, branch, tip)
+            done.append(MarkerInit(branch, tip, created=True))
     return done
 
 
@@ -632,6 +703,13 @@ def audit_branch(clone: Path, repo: str, branch: str, authors: TrustedAuthors) -
 
     try:
         marker = read_marker(repo, branch)
+        if _read_ref(repo, branch) is None:
+            error = _absent_branch_error(repo, branch, marker)
+            if error is None:
+                result.skipped = True
+            else:
+                result.findings.append(Finding(MISSING_BRANCH, repo, branch, branch, error))
+            return result
         if marker is None:
             result.findings.append(
                 Finding(
@@ -682,7 +760,9 @@ def audit_branch(clone: Path, repo: str, branch: str, authors: TrustedAuthors) -
 def audit(clone: Path, repo: str, authors: TrustedAuthors) -> list[BranchAudit]:
     """Audit both branches of *repo*, then move each marker to where its audit reached.
 
-    A marker that cannot be moved is a ``read-failure`` finding.
+    A branch the repo has neither of nor its marker comes back ``skipped``,
+    with no finding. A marker that cannot be moved is a ``read-failure``
+    finding.
     """
     results: list[BranchAudit] = []
     for branch in AUDITED_BRANCHES:
