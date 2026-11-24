@@ -122,10 +122,16 @@ class GateError(Exception):
 
 @dataclass(frozen=True)
 class GateResult:
-    """Whether a change passes both rules, and every reason it does not."""
+    """Whether a change passes both rules, and every reason it does not.
+
+    *read_failure* is true when a reason is a failed lookup rather than a
+    rule the change breaks, so a caller that can try again later (the
+    audit) tells the two apart.
+    """
 
     ok: bool
     reasons: tuple[str, ...]
+    read_failure: bool = False
 
 
 # --- the human override --------------------------------------------------------
@@ -407,6 +413,7 @@ def evaluate(
     if reasons:
         return GateResult(ok=False, reasons=tuple(reasons))
     lookups = _Lookups(authors)
+    read_failure = False
     for rule, check in (
         ("protected files", _protected_reasons),
         ("merge review", _merge_review_reasons),
@@ -415,4 +422,5 @@ def evaluate(
             reasons += check(repo, base, head, refs, lookups)
         except _LOOKUP_ERRORS as exc:
             reasons.append(f"{rule}: lookup failed for {change}: {exc}")
-    return GateResult(ok=not reasons, reasons=tuple(reasons))
+            read_failure = True
+    return GateResult(ok=not reasons, reasons=tuple(reasons), read_failure=read_failure)
