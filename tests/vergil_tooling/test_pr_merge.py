@@ -1090,8 +1090,21 @@ _RULE_VIOLATION_STDERR = (
 )
 
 
-def _bypass_gh(**kwargs: object) -> MagicMock:
-    gh = _gh(merge_states=["CLEAN"] * 20, **kwargs)  # type: ignore[arg-type]
+def _bypass_gh(
+    *,
+    failed: list[str] | None = None,
+    required: frozenset[str] | None = frozenset(),
+    outstanding: list[dict[str, str]] | None = None,
+    review: str = "",
+) -> MagicMock:
+    """A green, current PR whose head is ``h1``: the bypass path's starting point."""
+    gh = _gh(
+        merge_states=["CLEAN"] * 20,
+        failed=failed,
+        required=required,
+        outstanding=outstanding,
+        review=review,
+    )
     gh.head_sha.return_value = "h1"
     return gh
 

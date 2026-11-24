@@ -263,7 +263,9 @@ def _as_human() -> contextlib.AbstractContextManager[object]:
     from vergil_tooling.lib.identity_mode import IdentityMode
 
     stack = contextlib.ExitStack()
-    stack.enter_context(patch(_MOD + ".identity_mode.current_mode", return_value=IdentityMode.HUMAN))
+    stack.enter_context(
+        patch(_MOD + ".identity_mode.current_mode", return_value=IdentityMode.HUMAN)
+    )
     stack.enter_context(patch(_MOD + ".identity_mode.any_agent_signal", return_value=False))
     return stack
 
