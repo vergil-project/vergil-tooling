@@ -49,7 +49,8 @@ The ad-hoc view is not a review queue: it is the open tasks under every live
 ``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by
 repo and oldest first within each, each with its kind (``task``,
 ``validation`` or ``deployment``), its open blockers (its ``Blocked-by:``
-refs and its native blocked-by relationships) and its state: ``in-flight`` when any in-flight mark holds for it (see
+refs and its native blocked-by relationships) and its state: ``in-flight``
+when any in-flight mark holds for it (see
 :mod:`vergil_tooling.lib.in_flight`; it outranks ``blocked``), else
 ``blocked`` while any blocker is open, else ``ready``. An in-flight task
 carries its marks and its disposition (``handed-off`` or ``resume``). The

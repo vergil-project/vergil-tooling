@@ -1635,7 +1635,14 @@ def test_adhoc_items_body_and_native_blockers_merge() -> None:
         ]
     }
     views = {3: _view("held", "2026-09-01T00:00:00Z")}
-    blockers = {3: [IssueRef("org", "docs", 41), IssueRef("org", "vergil-tooling", 40)]}
+    # A body ref named twice is listed once.
+    blockers = {
+        3: [
+            IssueRef("org", "docs", 41),
+            IssueRef("org", "vergil-tooling", 40),
+            IssueRef("org", "Docs", 41),
+        ]
+    }
     states = {40: "OPEN", 41: "OPEN"}
     items, _ = _adhoc(_ADHOC_LISTING[:1], children, views, blockers=blockers, states=states)
     [held] = items
