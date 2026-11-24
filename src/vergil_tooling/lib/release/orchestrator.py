@@ -347,10 +347,13 @@ def merge_release(ctx: ReleaseContext) -> None:
     heals = 0
     while True:
         try:
+            # The one merge into main: it uses the human's bypass of the
+            # "Main updates" ruleset (#5095).
             wait_and_merge(
                 ctx.release_pr_url,
                 phase="merge-release",
                 on_branch_updated=lambda: updates.append(None),
+                into_main=True,
             )
             break
         except ReleaseConflictError as exc:
