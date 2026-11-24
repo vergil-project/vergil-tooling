@@ -24452,9 +24452,12 @@ to <code>scorecard</code>.</p>
 <h3 id="vrg-vm">vrg-vm<a class="headerlink" href="#vrg-vm" title="Permanent link">&para;</a></h3>
 <p>Create, start, stop, update, rebuild and enter the identity agent VMs,
 Lima on the Mac or off-platform (cloud). Subcommands: <code>create</code>, <code>start</code>,
-<code>stop</code>, <code>restart</code>, <code>update</code>, <code>destroy</code>, <code>destroy-volume</code>, <code>rebuild</code>,
-<code>list</code>, <code>volumes</code>, <code>session</code> (launch a Claude session in the VM) and <code>cp</code>
-(copy files between the host and a VM). <code>vrg-vm update</code> reinstalls
+<code>stop</code>, <code>restart</code>, <code>update</code>, <code>grow-disk</code>, <code>destroy</code>, <code>destroy-volume</code>,
+<code>rebuild</code>, <code>list</code>, <code>volumes</code>, <code>session</code> (launch a Claude session in the
+VM) and <code>cp</code> (copy files between the host and a VM). <code>vrg-vm grow-disk</code>
+grows a Lima VM's disk in place to its configured size and refuses a
+shrink (see <a href="../vm-spec/#growing-a-lima-disk-in-place">VM Spec</a>).
+<code>vrg-vm update</code> reinstalls
 vergil-tooling, copies the host's <code>~/.claude</code> config in and refreshes and
 verifies the plugins in a running VM in place; <code>--all</code> updates every
 configured identity's boxes, and one box's failure does not stop the rest.
@@ -24707,7 +24710,11 @@ the <code>vergil-actions</code> reusable workflows, the custom stage as
 for every check and where it runs. Every pipeline run, pass or fail,
 writes <code>.vergil/vrg-validate-last.json</code>: the commit at the start, the exit
 code, whether the run was full (no <code>--check</code>) and the tree clean at the
-start, and each stage's status. <code>vrg-merge-review-request</code> reads it.</p>
+start, and each stage's status. A stage skipped because the repository
+is not bootstrapped yet also carries a <code>skip</code> object: the reason
+<code>not-bootstrapped</code>, the language and the missing manifests. A run that
+skips no stage records none. <code>vrg-merge-review-request</code> reads it; a
+release from before <code>skip</code> existed refuses a record that carries one.</p>
 <p><code>--markdown FILE...</code> is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as
 the common stage would, against the bundled config. A file the common
