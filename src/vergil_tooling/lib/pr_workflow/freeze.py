@@ -1,7 +1,8 @@
 """Post-report-ready freeze: a branch reported ready is done — never touch it.
 
 Once ``report-ready`` records the PR metadata, the worktree's branch is the
-single deliverable for its issue and must not change before the human submits.
+single deliverable for its issue and must not change before it is submitted
+(by the agent that prepared it, through ``vrg-submit-pr``'s gates).
 Committing to (or advancing) it afterwards produces the flagship straggler
 (issue #1719): the PR merges at the reported commit, the branch tip moves past
 it, and worktree cleanup — correctly — refuses to delete unmerged work, stranding
@@ -124,7 +125,7 @@ def build_refusal(state: WorkflowState, *, action: str, current_head: str | None
         f"{_issues_phrase(state)} and is FROZEN.",
         "",
         "A task is exactly one PR: once its work is reported ready the branch is",
-        "done and must not change before the human submits it.",
+        "done and must not change before it is submitted with vrg-submit-pr.",
         "",
         "More work is a NEW follow-up issue, never a change to this branch:",
         '  vrg-issue-create --repo <owner>/<repo> --kind task --title "<what>"',

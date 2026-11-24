@@ -1,8 +1,8 @@
-"""Record PR metadata for the human's submit step: the oracle CLI.
+"""Record PR metadata for the submit step: the oracle CLI.
 
 Run-and-done since #1872. The implementing agent calls ``report-ready`` when its
 work is green; that writes ``.vergil/pr-workflow.json`` with the PR metadata,
-and ``vrg-submit-pr`` (human-run) reads it. ``status`` prints the current state.
+and ``vrg-submit-pr`` reads it. ``status`` prints the current state.
 
 ``report-ready`` publishes the branch itself (#3602): it pushes the reported
 commit to ``origin/<branch>`` (setting upstream) *before* recording anything, so
@@ -136,7 +136,7 @@ class WrongCloneError(WorkflowError):
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record PR metadata for the human submit step.")
+    parser = argparse.ArgumentParser(description="Record PR metadata for the submit step.")
     parser.add_argument("--base", default="origin/develop", help="Base ref for the delta")
     sub = parser.add_subparsers(dest="command", required=True)
 
