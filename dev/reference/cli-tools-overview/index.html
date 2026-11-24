@@ -21677,8 +21677,9 @@ issue is the open issue in <code>--repo</code> titled <code>ops: &lt;repo&gt; / 
 labelled <code>ops-report</code> and opened by the org's automation App. <code>--results</code>
 combines the GitHub job results of every job that makes up the named job:
 any <code>failure</code> wins, then <code>cancelled</code>, then <code>success</code>; all <code>skipped</code> reports
-nothing. A failure or cancel opens the issue under the org's operations
-epic (<code>Epic (operations): &lt;org&gt;</code>, in <code>&lt;org&gt;/.github</code>), naming the job, run,
+nothing. A failure or cancel opens the issue in <code>--repo</code>, linked as a
+sub-issue under the org's operations epic (<code>Epic (operations): &lt;org&gt;</code>, in
+<code>&lt;org&gt;/.github</code>), naming the job, run,
 step, date and the most recent closed ops issue with the same title
 (<code>previous occurrence: #N</code>), or comments on the open one. A success
 comments <code>ops-report: recovered</code> only on the first green run after a
