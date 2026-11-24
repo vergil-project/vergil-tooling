@@ -141,6 +141,18 @@ class TestPackagedCdWorkflow:
         assert jobs["docs"]["secrets"] == "inherit"
         assert "    secrets:\n" not in content
 
+    def test_package_repo_outside_vergil_project_passes_keys_by_name(self) -> None:
+        # inherit would pass nothing to a workflow in another org (issue #5108),
+        # so the App keys go by name there, [package] or not.
+        ctx = _packaged_python_ctx()
+        ctx.org = "logical-minds-foundry"
+        content = render_cd_workflow(ctx)
+        assert _INHERIT_LINE not in content
+        assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == {
+            "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+            "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+        }
+
     def test_no_package_inherits_the_same(self) -> None:
         # Without [package] the release inherits too: the App keys live in the
         # automation environment (epic .github#1384).
