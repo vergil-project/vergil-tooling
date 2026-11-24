@@ -20,6 +20,7 @@ import pytest
 from vergil_tooling.bin import vrg_agent_audit
 from vergil_tooling.lib import agent_audit, agent_gates, github, pr_provenance, trust
 from vergil_tooling.lib.agent_gates import GateResult
+from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
     TrustedAuthors,
@@ -129,6 +130,7 @@ class PR:
     base: str = "develop"
     events: list[dict[str, Any]] = field(default_factory=list)
     body: str | None = "Summary.\n\n- Ref #7\n"
+    pull: dict[str, object] = field(default_factory=dict)
 
 
 class Markers(MutableMapping[str, str]):
@@ -235,6 +237,7 @@ class FakeGitHub:
             "merge_commit_sha": pr.merge_commit,
             "user": pr.author,
             "merged_by": pr.merged_by,
+            **pr.pull,
         }
 
     def read_issue(self, repo: str, number: int, **_: object) -> trust.IssueContent:
@@ -803,3 +806,296 @@ def test_cli_usage_error_exits_2() -> None:
     with pytest.raises(SystemExit) as exc:
         vrg_agent_audit.main(["--repo", "not-a-repo"])
     assert exc.value.code == 2
+
+
+def test_cli_init_failure_exits_1(
+    origin: Origin,
+    cli: Path,
+    gh: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(agent_audit, "_read_ref", lambda repo, branch: None)
+    assert vrg_agent_audit.main(["--repo", REPO, "--init"]) == 1
+    assert "has no develop branch" in capsys.readouterr().err
+
+
+def test_cli_refuses_another_repos_clone(
+    origin: Origin,
+    cli: Path,
+    gh: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse(repo: str, command: str) -> None:
+        raise RulingError("the 'origin' remote is not o/r")
+
+    monkeypatch.setattr(vrg_agent_audit, "require_remote_is", refuse)
+    assert vrg_agent_audit.main(["--repo", REPO]) == 1
+    assert "is not o/r" in capsys.readouterr().err
+
+
+def test_cli_refuses_outside_a_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bare = tmp_path / "not-a-clone"
+    bare.mkdir()
+    monkeypatch.chdir(bare)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.setattr(vrg_agent_audit, "load_trusted_authors", lambda: AUTHORS)
+    monkeypatch.setattr(vrg_agent_audit, "require_remote_is", lambda repo, command: None)
+    assert vrg_agent_audit.main(["--repo", REPO]) == 1
+    assert "cannot read the clone" in capsys.readouterr().err
+
+
+# --- the GitHub reads, one at a time -------------------------------------------------
+
+
+class _Answer:
+    def __init__(self, stdout: str, returncode: int = 0) -> None:
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def _ref_answer(monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
+    def run(cmd: tuple[str, ...], *, is_answer: Any) -> object:
+        assert cmd == ("gh", "api", "-i", "repos/o/r/git/ref/heads/vergil/agent-audit/develop")
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(github, "run_tolerating", run)
+
+
+def test_read_marker_reads_the_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    sha = "a" * 40
+    body = f'{{"ref": "refs/heads/vergil/agent-audit/develop", "object": {{"sha": "{sha}"}}}}'
+    _ref_answer(monkeypatch, _Answer(f"HTTP/2.0 200 OK\r\nX: y\r\n\r\n{body}"))
+    assert agent_audit.read_marker(REPO, "develop") == sha
+
+
+def test_read_marker_absent_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ref_answer(monkeypatch, _Answer("HTTP/2.0 404 Not Found\r\n\r\n{}", 1))
+    assert agent_audit.read_marker(REPO, "develop") is None
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        _Answer("HTTP/2.0 200 OK\r\n\r\nnot json"),
+        _Answer('HTTP/2.0 200 OK\r\n\r\n{"ref": "refs/heads/vergil/agent-audit/develop"}'),
+        _Answer(
+            'HTTP/2.0 200 OK\r\n\r\n{"ref": "refs/heads/vergil/agent-audit/develop-x",'
+            f' "object": {{"sha": "{"a" * 40}"}}}}'
+        ),
+        github.GitHubAPIError(1, ("gh", "api"), "", "HTTP 502"),
+    ],
+)
+def test_read_marker_failure_raises(monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
+    _ref_answer(monkeypatch, answer)
+    with pytest.raises(agent_audit.AuditError, match="cannot read o/r branch"):
+        agent_audit.read_marker(REPO, "develop")
+
+
+def test_create_marker_failure_raises(origin: Origin, gh: FakeGitHub) -> None:
+    agent_audit.create_marker(REPO, "develop", origin.tip("develop"))
+    with pytest.raises(agent_audit.AuditError, match="Reference already exists"):
+        agent_audit.create_marker(REPO, "develop", origin.tip("develop"))
+
+
+def _rows(monkeypatch: pytest.MonkeyPatch, rows: list[object]) -> None:
+    monkeypatch.setattr(github, "read_json_paginated", lambda endpoint, jq=None: rows)
+
+
+def test_prs_of_a_commit_keep_merged_prs_into_the_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    merge = "b" * 40
+    _rows(
+        monkeypatch,
+        [
+            {"number": 1, "merged_at": None, "merge_commit_sha": None, "base": "develop"},
+            {"number": 2, "merged_at": "t", "merge_commit_sha": merge, "base": "main"},
+            {"number": 3, "merged_at": "t", "merge_commit_sha": merge, "base": "develop"},
+        ],
+    )
+    assert agent_audit._merged_prs_of(REPO, "develop", merge) == {3: merge}
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"number": "1", "merged_at": "t", "merge_commit_sha": "b" * 40, "base": "develop"},
+        {"number": 1, "merged_at": "t", "merge_commit_sha": None, "base": "develop"},
+        "not a row",
+    ],
+)
+def test_prs_of_a_commit_malformed_raises(monkeypatch: pytest.MonkeyPatch, row: object) -> None:
+    _rows(monkeypatch, [row])
+    with pytest.raises(agent_audit.AuditError, match="cannot read the PRs"):
+        agent_audit._merged_prs_of(REPO, "develop", "b" * 40)
+
+
+def test_timeline_event_without_a_name_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _rows(monkeypatch, [{"actor": HUMAN, "has_actor": True}])
+    with pytest.raises(agent_audit.AuditError, match="an event has no name"):
+        agent_audit._read_timeline(REPO, 11)
+
+
+def test_timeline_reads_a_reviews_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    _rows(monkeypatch, [{"event": "reviewed", "user": AGENT, "has_user": True}])
+    timeline = agent_audit._read_timeline(REPO, 11)
+    assert timeline.actors == (trust.Identity("human-vergil-user[bot]", "Bot"),)
+    assert timeline.mergers == ()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"number": 11, "merged": False, "html_url": "u", "merge_commit_sha": "c" * 40},
+        {"number": 12, "merged": True, "html_url": "u", "merge_commit_sha": "c" * 40},
+        {"number": 11, "merged": True, "html_url": None, "merge_commit_sha": "c" * 40},
+        ["not", "a", "PR"],
+    ],
+)
+def test_read_pull_malformed_raises(monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *args: answer)
+    with pytest.raises(agent_audit.AuditError, match="cannot read o/r PR #11"):
+        agent_audit._read_pull(REPO, 11)
+
+
+def test_read_pull_bad_json_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def bad(*args: str) -> object:
+        raise ValueError("Expecting value")
+
+    monkeypatch.setattr(github, "read_json", bad)
+    with pytest.raises(agent_audit.AuditError, match="Expecting value"):
+        agent_audit._read_pull(REPO, 11)
+
+
+def test_pr_body_read_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(repo: str, number: int, **_: object) -> object:
+        raise trust.TrustReadError("read_issue o/r#11", "truncated")
+
+    monkeypatch.setattr(trust, "read_issue", fail)
+    with pytest.raises(agent_audit.AuditError, match="cannot read the body"):
+        agent_audit._task_refs(REPO, 11, AUTHORS)
+
+
+def test_blob_of_a_missing_file_is_deleted(origin: Origin) -> None:
+    assert agent_audit._blob_at(origin.bare, "develop", "no/such/file") == "deleted"
+    assert agent_audit._blob_at(origin.bare, "develop", WORKFLOW) != "deleted"
+
+
+# --- the rest of the audit's failure paths ---------------------------------------------
+
+
+def test_marker_disagreeing_with_git_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mark(gh, origin)
+    real = gh.read_ref
+    monkeypatch.setattr(
+        agent_audit,
+        "_read_ref",
+        lambda repo, branch: "d" * 40 if branch.startswith("vergil/") else real(repo, branch),
+    )
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["read-failure", "read-failure"]
+    assert gh.writes == []
+
+
+def test_git_failure_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mark(gh, origin)
+
+    def broken(*args: object, **kwargs: object) -> bool:
+        raise subprocess.CalledProcessError(128, ("git", "merge-base"), "", "fatal")
+
+    monkeypatch.setattr(agent_audit.git, "is_ancestor", broken)
+    assert _kinds(agent_audit.audit(clone, REPO, AUTHORS)) == ["read-failure", "read-failure"]
+
+
+def test_commit_merging_several_prs_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    gh.add(PR(12, pr.merge_commit, pr.commits, author=AGENT, merged_by=AGENT), merger=AGENT)
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["read-failure"]
+    assert "several PRs" in results[0].findings[0].detail
+
+
+def test_direct_push_before_a_landing_is_a_finding(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    _git(origin.work, "checkout", "-q", "develop")
+    direct = origin.commit({"d.txt": "d\n"}, "direct push")
+    _git(origin.work, "push", "-q", "origin", "develop")
+    _git(origin.work, "fetch", "-q", "origin")
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert [(f.kind, f.subject) for f in results[0].findings] == [("no-pr", direct[:12])]
+    assert [call["base"] for call in gates.calls] == [direct]
+    assert gh.refs["vergil/agent-audit/develop"] == pr.merge_commit
+
+
+def test_merge_commit_mismatch_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    pr.pull["merge_commit_sha"] = "e" * 40
+    assert _kinds(agent_audit.audit(clone, REPO, AUTHORS)) == ["read-failure"]
+
+
+def test_provenance_read_failure_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mark(gh, origin)
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+
+    def fail(pr: str) -> object:
+        raise subprocess.CalledProcessError(1, ("gh",), "", "HTTP 502")
+
+    monkeypatch.setattr(pr_provenance, "check_pr", fail)
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["read-failure"]
+    assert "provenance" in results[0].findings[0].detail
+
+
+def test_malformed_registry_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _git(origin.work, "checkout", "-q", "develop")
+    origin.commit({"protected-paths.toml": "paths = 'not a list'\n"}, "a bad registry")
+    _git(origin.work, "push", "-q", "origin", "develop")
+    _git(origin.work, "fetch", "-q", "origin")
+    _mark(gh, origin)
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["read-failure"]
+    assert "protected-paths.toml" in results[0].findings[0].detail
+
+
+def test_protected_file_landed_as_approved_is_clean(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    _squash_pr(gh, origin, 11, {WORKFLOW: "on: pull_request\n"})
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert len(gates.calls) == 1
+
+
+def test_missing_pull_ref_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    _git(origin.bare, "update-ref", "-d", "refs/pull/11/head")
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["read-failure"]
+    assert "refs/pull/11/head" in results[0].findings[0].detail
+    assert gh.refs["vergil/agent-audit/develop"] != pr.merge_commit

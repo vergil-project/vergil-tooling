@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import agent_audit, git, github
+from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.draft_ref import require_remote_is
 from vergil_tooling.lib.rulings.identity import human_login
@@ -46,9 +47,12 @@ EXIT_FINDINGS = 1
 EXIT_USAGE = 2
 
 
+@cli_main
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo: str = args.repo
+    # Mint the App token for the audited repo's owner, not the cwd's org. A
+    # GitHub auth failure exits 1 through cli_main, as any failure does here.
     try:
         with github.target_org(repo.split("/", 1)[0]):
             if args.init:
@@ -56,12 +60,6 @@ def main(argv: list[str] | None = None) -> int:
             return _audit(repo)
     except agent_audit.AuditError as exc:
         _fail(str(exc))
-    except github.MissingGitHubTokenError:
-        print(github.missing_token_message(_PROG), file=sys.stderr)
-    except github.NoInstallationError as exc:
-        _fail(github.no_installation_message(exc))
-    except github.AppAuthError as exc:
-        _fail(github.app_auth_message(exc))
     return EXIT_FINDINGS
 
 
