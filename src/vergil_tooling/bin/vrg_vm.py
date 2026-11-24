@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -55,6 +55,7 @@ from vergil_tooling.lib.identity import (
 from vergil_tooling.lib.lima import (
     create_vm,
     delete_vm,
+    edit_disk,
     fetch_template,
     list_vms,
     nested_virt_unsupported_reason,
@@ -63,6 +64,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     vm_age_days,
+    vm_disk_bytes,
     vm_status,
     write_instance_meta,
 )
@@ -73,6 +75,7 @@ from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_guest import (
+    VmUnreachableError,
     check_tooling,
     copy_claude_config,
     get_tooling_version,
@@ -81,6 +84,9 @@ from vergil_tooling.lib.vm_guest import (
     install_tooling,
     link_claude_dirs,
     prune_cache_images,
+    read_fingerprint,
+    root_fs_bytes,
+    stamp_fingerprint,
     update_plugins,
     update_tooling,
     vm_probe,
@@ -188,6 +194,29 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     progress.add_progress_args(p_update, ())
+
+    p_grow_disk = sub.add_parser(
+        "grow-disk",
+        help="Grow a Lima VM's disk in place to its configured size (never shrinks)",
+        description=(
+            "Grow an existing Lima VM's disk to the size its spec configures, keeping "
+            "the VM and its data: stop it, set the size with 'limactl edit --disk', "
+            "and start it, which grows the disk image and, through cloud-init, the "
+            "root filesystem (Lima 1.1 or later). Refuses a configured size smaller "
+            "than the disk: Lima never shrinks one, so a smaller disk needs "
+            "'vrg-vm rebuild'. The VM is left running. A dedicated VM whose only spec "
+            "drift was its disk size has its fingerprint re-stamped, so 'vrg-vm list' "
+            "no longer shows it NEEDS-REBUILD. Lima VMs only."
+        ),
+    )
+    _add_identity_args(p_grow_disk)
+    _add_workspace_arg(p_grow_disk)
+    _add_name_arg(p_grow_disk)
+    p_grow_disk.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for the VM to reach running status (default: 30m)",
+    )
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
@@ -420,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop": _cmd_stop,
         "restart": _cmd_restart,
         "update": _cmd_update,
+        "grow-disk": _cmd_grow_disk,
         "destroy": _cmd_destroy,
         "destroy-volume": _cmd_destroy_volume,
         "rebuild": _cmd_rebuild,
@@ -1580,6 +1610,129 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     inject_trusted_authors(transport, config.trusted_authors)
 
     print(f"VM '{instance}' is running.")
+    return 0
+
+
+def _cmd_grow_disk(args: argparse.Namespace) -> int:
+    """Grow a Lima VM's disk in place to its configured size; never shrink it.
+
+    The steps a human ran by hand before (vergil-vm#427): stop the VM, set the
+    size with ``limactl edit --disk``, start it. Lima (v1.1 and later) grows the
+    disk image on that start and refuses to shrink one; cloud-init's growpart
+    and resizefs fill the larger disk on the boot. A dedicated VM whose stamped
+    fingerprint differed from its spec only by the disk has it re-stamped, so
+    ``list`` stops showing it ``NEEDS-REBUILD``.
+    """
+    target = _resolve_target(args)
+    if target.spec.off_platform:
+        print(
+            "ERROR: vrg-vm grow-disk grows a Lima VM's disk; an off-platform box's "
+            "disks are sized by 'volume' and 'boot_disk'",
+            file=sys.stderr,
+        )
+        return 1
+    instance = target.instance
+    ref = _target_ref(target)
+    if not vm_status(instance):
+        print(
+            f"ERROR: VM '{instance}' does not exist — run 'vrg-vm create' first",
+            file=sys.stderr,
+        )
+        return 1
+    current = vm_disk_bytes(instance)
+    if current is None:
+        print(f"ERROR: Lima reports no disk size for VM '{instance}'", file=sys.stderr)
+        return 1
+    configured = target.spec.disk
+    wanted = _gib_bytes(configured)
+    if wanted < current:
+        print(
+            f"ERROR: VM '{instance}' has a {_format_gib(current)} disk, larger than its "
+            f"configured {configured}. Lima can grow a disk but never shrink it; "
+            f"for a smaller disk, rebuild the VM: vrg-vm rebuild {ref}",
+            file=sys.stderr,
+        )
+        return 1
+    if wanted == current:
+        print(f"VM '{instance}' already has its configured {configured} disk; nothing to grow.")
+        return 0
+
+    print(f"Growing VM '{instance}' disk from {_format_gib(current)} to {configured}...")
+    try:
+        stop_vm(instance)
+        edit_disk(instance, wanted // _GIB)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"ERROR: failed to set VM '{instance}' disk to {configured} "
+            f"(exit status {exc.returncode}); the VM is stopped. "
+            f"Start it again: vrg-vm start {ref}",
+            file=sys.stderr,
+        )
+        return 1
+    transport = LimaTransport(instance)
+    try:
+        start_vm(instance, timeout=args.timeout)
+        print("Injecting credentials...")
+        inject_credentials(transport, target.identity)
+        inject_trusted_authors(transport, target.config.trusted_authors)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"ERROR: VM '{instance}' disk is set to {configured}, but starting it "
+            f"failed (exit status {exc.returncode}); inspect it with 'limactl list' "
+            f"and start it: vrg-vm start {ref}",
+            file=sys.stderr,
+        )
+        return 1
+
+    grown = vm_disk_bytes(instance)
+    if grown != wanted:
+        shown = _format_gib(grown) if grown is not None else "no size"
+        print(
+            f"ERROR: VM '{instance}' reports {shown} after the grow, not {configured}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"VM '{instance}' disk grown to {configured}; root filesystem is "
+        f"{_format_gib(root_fs_bytes(transport))}."
+    )
+    if target.spec.dedicated:
+        return _restamp_after_grow(target, transport, current)
+    return 0
+
+
+def _restamp_after_grow(target: Target, transport: Transport, before: int) -> int:
+    """Clear a grown dedicated VM's disk-only drift by re-stamping its fingerprint.
+
+    The VM was stamped with the fingerprint of the spec it was built from. If
+    that is the current spec with the disk at its old size, the disk was the
+    only difference, and the grow removed it: stamp the current fingerprint.
+    Any other stamp means the spec drifted in some other field too, which only
+    a rebuild fixes, so it is left as it is and reported.
+    """
+    ref = _target_ref(target)
+    try:
+        stamped = read_fingerprint(transport)
+    except VmUnreachableError:
+        print(
+            f"ERROR: VM '{target.instance}' was grown but is not reachable over SSH to "
+            "check its spec fingerprint; 'vrg-vm list' shows whether it needs a rebuild.",
+            file=sys.stderr,
+        )
+        return 1
+    if stamped == target.fingerprint:
+        print(f"VM '{target.instance}' meets its spec.")
+        return 0
+    old_spec = replace(target.spec, disk=_format_gib(before))
+    if stamped is not None and stamped == spec_fingerprint(old_spec):
+        stamp_fingerprint(transport, target.fingerprint)
+        print(f"VM '{target.instance}' meets its spec again: its fingerprint is re-stamped.")
+        return 0
+    print(
+        f"WARNING: VM '{target.instance}' still differs from its spec in more than its "
+        f"disk; rebuild it: vrg-vm rebuild {ref}",
+        file=sys.stderr,
+    )
     return 0
 
 

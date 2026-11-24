@@ -754,6 +754,41 @@ def read_fingerprint(transport: Transport) -> str | None:
     return value or None
 
 
+_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def stamp_fingerprint(transport: Transport, fingerprint: str) -> None:
+    """Rewrite the VM's stamped spec fingerprint, the marker create stamps.
+
+    Used only by ``vrg-vm grow-disk`` once a grown disk leaves the composed spec
+    matching the VM again. *fingerprint* must be a SHA-256 hex digest (what
+    ``spec_fingerprint`` returns); anything else raises ValueError before the VM
+    is touched. A failed write raises ``CalledProcessError``.
+    """
+    if not _FINGERPRINT_HEX_RE.fullmatch(fingerprint):
+        msg = f"not a spec fingerprint (64 lowercase hex digits): {fingerprint!r}"
+        raise ValueError(msg)
+    transport.run(
+        "bash",
+        "-c",
+        f"printf '%s\\n' {fingerprint} | sudo tee {_FINGERPRINT_PATH} >/dev/null",
+    )
+
+
+def root_fs_bytes(transport: Transport) -> int:
+    """Return the size in bytes of the guest's root filesystem (``df -B1 /``).
+
+    Raises ``CalledProcessError`` when the shell round-trip fails and
+    ValueError when ``df`` prints no size.
+    """
+    result = transport.run("df", "-B1", "--output=size", "/")
+    lines = result.stdout.split()
+    if len(lines) < 2 or not lines[-1].isdigit():  # noqa: PLR2004 - header + value
+        msg = f"cannot read the root filesystem size from df: {result.stdout!r}"
+        raise ValueError(msg)
+    return int(lines[-1])
+
+
 def vm_spec_status(transport: Transport, expected_fingerprint: str) -> str:
     """Compare the VM's stamped fingerprint to the freshly composed one.
 

@@ -2746,9 +2746,12 @@ to `scorecard`.
 
 Create, start, stop, update, rebuild and enter the identity agent VMs,
 Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
-`stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
-`list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
-(copy files between the host and a VM). `vrg-vm update` reinstalls
+`stop`, `restart`, `update`, `grow-disk`, `destroy`, `destroy-volume`,
+`rebuild`, `list`, `volumes`, `session` (launch a Claude session in the
+VM) and `cp` (copy files between the host and a VM). `vrg-vm grow-disk`
+grows a Lima VM's disk in place to its configured size and refuses a
+shrink (see [VM Spec](vm-spec.md#growing-a-lima-disk-in-place)).
+`vrg-vm update` reinstalls
 vergil-tooling, copies the host's `~/.claude` config in and refreshes and
 verifies the plugins in a running VM in place; `--all` updates every
 configured identity's boxes, and one box's failure does not stop the rest.
