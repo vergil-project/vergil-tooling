@@ -670,7 +670,6 @@ def typed_request(cid: int, kind: RequestKind) -> IssueComment:
     return IssueComment(cid, AGENT, f"Request text.\n\n{marker}", False)
 
 
-@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
 @pytest.mark.parametrize(
     "reply",
     [
@@ -681,23 +680,20 @@ def typed_request(cid: int, kind: RequestKind) -> IssueComment:
         "Decision: maybe",
     ],
 )
-def test_ruling_reply_refuses_missing_decision_for_new_kinds(
-    cli: Cli, gh: FakeGh, kind: RequestKind, reply: str
+def test_ruling_reply_refuses_missing_decision_for_an_exemption(
+    cli: Cli, gh: FakeGh, reply: str
 ) -> None:
-    gh.comments = [typed_request(41, kind)]
+    gh.comments = [typed_request(41, "merge-review-exemption")]
     assert cli(*ARGS, "--response-text", reply) == 1
-    assert f"a reply to a {kind} request must carry exactly one line" in cli.stderr
+    assert "a reply to a merge-review-exemption request must carry exactly one line" in cli.stderr
     assert "nothing was posted" in cli.stderr
     assert cli.prompts == []
     assert gh.posted == []
 
 
-@pytest.mark.parametrize("kind", ["protected-change", "merge-review-exemption"])
 @pytest.mark.parametrize("reply", ["Decision: approve", "Checked the diff.\nDecision: refuse\n"])
-def test_ruling_reply_posts_one_decision_for_new_kinds(
-    cli: Cli, gh: FakeGh, kind: RequestKind, reply: str
-) -> None:
-    gh.comments = [typed_request(41, kind)]
+def test_ruling_reply_posts_one_decision_for_an_exemption(cli: Cli, gh: FakeGh, reply: str) -> None:
+    gh.comments = [typed_request(41, "merge-review-exemption")]
     cli.answer("y")
     assert cli(*ARGS, "--response-text", reply) == 0
     assert gh.posted == [reply]
@@ -706,7 +702,7 @@ def test_ruling_reply_posts_one_decision_for_new_kinds(
 def test_ruling_reply_checks_the_drafted_decision(
     cli: Cli, gh: FakeGh, draft: Callable[[str], None]
 ) -> None:
-    gh.comments = [typed_request(41, "protected-change")]
+    gh.comments = [typed_request(41, "merge-review-exemption")]
     draft("A1: approve\n")
     assert cli(*ARGS) == 1
     assert "Decision: approve" in cli.stderr

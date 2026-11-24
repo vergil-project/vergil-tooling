@@ -18,8 +18,8 @@ In order, it:
 5. reads the reply **once**: ``--response-text``, else the agent's draft from
    the request's draft ref (no draft is a refusal);
 6. refuses a reply that is not plain text (printable ASCII plus newline, no
-   marker prefix) or is blank, and a reply to a protected-change or
-   merge-review exemption request that does not carry exactly one line
+   marker prefix) or is blank, and a reply to a merge-review exemption
+   request that does not carry exactly one line
    ``Decision: approve`` or ``Decision: refuse``;
 7. prints the reply exactly as it will be posted, with its byte length and
    SHA-256, and asks for confirmation;
@@ -182,7 +182,7 @@ class _Issue:
 
 
 def _check_decision(reply: str, kind: RequestKind | None) -> None:
-    """Refuse a reply to a protected-change or exemption request without one decision line."""
+    """Refuse a reply to an exemption request without one decision line."""
     if kind is None:
         return
     try:

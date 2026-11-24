@@ -3620,8 +3620,7 @@ def test_report_title_is_truncated() -> None:
         ("failed: provenance", "investigate before re-enabling auto-merge"),
         (
             "failed: gates",
-            "get the missing protected-change approval or merge review for its head, "
-            "then re-enable auto-merge",
+            "get the missing merge review for its head, then re-enable auto-merge",
         ),
         ("failed: not a develop PR", "finalize watches develop PRs only"),
     ],

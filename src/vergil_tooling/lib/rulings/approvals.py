@@ -1,32 +1,27 @@
-"""The two request kinds whose reply carries a structured decision (epic .github#1384).
+"""The request kind whose reply carries a structured decision (epic .github#1384).
 
-A **protected-change approval** (spec §4.5) and a **merge-review exemption**
-(spec §4.6) are rulings in the same authenticated exchange as every other:
-the agent posts the request, the human replies with ``vrg-ruling-reply`` as
-the human, and the agent closes the turn with ``vrg-ruling respond``. They
-differ from an ordinary ruling in two ways:
+A **merge-review exemption** (spec §4.6) is a ruling in the same
+authenticated exchange as every other: the agent posts the request, the
+human replies with ``vrg-ruling-reply`` as the human, and the agent closes
+the turn with ``vrg-ruling respond``. It differs from an ordinary ruling in
+two ways:
 
 - the request's marker names its kind
-  (``<!-- vrg-ruling kind=request type=<kind> -->``, see :mod:`.marker`), and
-  its body records exactly what an approval covers, one fact per line, so a
-  later reader can take it from the request alone;
+  (``<!-- vrg-ruling kind=request type=merge-review-exemption -->``, see
+  :mod:`.marker`), and its body records exactly what an approval covers, one
+  fact per line, so a later reader can take it from the request alone;
 - the human's reply carries exactly one decision line, ``Decision: approve``
   or ``Decision: refuse`` (:data:`DECISION_LINES`), which
   :func:`parse_decision` reads strictly. Anything else is not a decision.
 
-**The protected-change request** lists every protected path the change
-touches, one ``Protected: <blob> <path>`` line each, the blob being the
-file's git object ID at the head (``deleted`` for a deletion), then one
-``Diff: <url>`` line linking the change. **The exemption request** carries
-one ``Reason: <text>`` line and one ``Fingerprint: <sha256>`` line, the
-change fingerprint of :mod:`vergil_tooling.lib.change_fingerprint`. The blob
-comes first on its line so a path, which may hold spaces, is the rest of the
-line.
+**The exemption request** carries one ``Reason: <text>`` line and one
+``Fingerprint: <sha256>`` line, the change fingerprint of
+:mod:`vergil_tooling.lib.change_fingerprint`.
 
 Every value is checked before anything is rendered, and every line is plain
 text (:mod:`.plain_text`).
 
-**Verifying a past exchange** (spec §4.5). The turn checks of
+**Verifying a past exchange.** The turn checks of
 :mod:`.exchange` judge the exchange in hand, and treat any trusted comment
 after its response as fatal. A task issue always gains later comments, so
 submit, the watch and the audit read an approval already given with
@@ -42,7 +37,6 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib.protected_paths import DELETED, ProtectedChange
 from vergil_tooling.lib.rulings import RulingError, comments
 from vergil_tooling.lib.rulings.identity import expected_agent_login, human_login
 from vergil_tooling.lib.rulings.marker import (
@@ -66,27 +60,23 @@ __all__ = [
     "RequestKind",
     "parse_decision",
     "render_exemption_request",
-    "render_protected_change_request",
     "verified_approvals",
 ]
 
 type Decision = Literal["approve", "refuse"]
 
-#: The two decision lines a reply to either kind may carry, by their decision.
+#: The two decision lines a reply to an exemption request may carry, by their decision.
 DECISION_LINES: dict[str, Decision] = {
     "Decision: approve": "approve",
     "Decision: refuse": "refuse",
 }
 
-#: What every request of either kind tells the human to reply.
+#: What every exemption request tells the human to reply.
 REPLY_INSTRUCTION = "Reply with exactly one decision line: Decision: approve, or Decision: refuse."
 
 _DECISION_PREFIX = "decision:"
-_PROTECTED_PREFIX = "Protected: "
-_DIFF_PREFIX = "Diff: "
 _REASON_PREFIX = "Reason: "
 _FINGERPRINT_PREFIX = "Fingerprint: "
-_BLOB_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 
 
@@ -112,39 +102,6 @@ def _body(lines: list[str], kind: RequestKind) -> str:
     )
 
 
-def render_protected_change_request(changes: list[ProtectedChange], diff_url: str) -> str:
-    """The protected-change request: each protected path with its head blob, and the diff.
-
-    Refuses an empty list (there is nothing to approve), a path listed twice,
-    a blob that is neither a git object ID nor ``deleted``, and a path or URL
-    that is not one line of plain text.
-    """
-    if not changes:
-        msg = "the change touches no protected path; there is nothing to approve"
-        raise RulingError(msg)
-    url = _one_line(diff_url, what="the diff link")
-    if not url.startswith("https://"):
-        msg = "the diff link must be an https:// URL"
-        raise RulingError(msg)
-    lines = [
-        "Protected-change approval requested. This change edits protected files;"
-        " an approve covers exactly these files at exactly these blobs:"
-    ]
-    seen: set[str] = set()
-    for change in changes:
-        path = _one_line(change.path, what="a protected path")
-        if path in seen:
-            msg = f"the protected path {path} is listed twice"
-            raise RulingError(msg)
-        seen.add(path)
-        if change.blob != DELETED and _BLOB_RE.fullmatch(change.blob) is None:
-            msg = f"the blob of {path} is neither a git object ID nor {DELETED!r}"
-            raise RulingError(msg)
-        lines.append(f"{_PROTECTED_PREFIX}{change.blob} {path}")
-    lines.append(f"{_DIFF_PREFIX}{url}")
-    return _body(lines, "protected-change")
-
-
 def render_exemption_request(reason: str, fingerprint: str) -> str:
     """The merge-review exemption request: the reason, and the fingerprint it covers.
 
@@ -157,8 +114,7 @@ def render_exemption_request(reason: str, fingerprint: str) -> str:
         raise RulingError(msg)
     lines = [
         "Merge-review exemption requested. An approve stands in for merge review's"
-        " closing comment for the change with this fingerprint only; it never waives"
-        " a protected-change approval.",
+        " closing comment for the change with this fingerprint only.",
         f"{_REASON_PREFIX}{text}",
         f"{_FINGERPRINT_PREFIX}{fingerprint}",
     ]
@@ -196,18 +152,15 @@ def parse_decision(body: str) -> Decision:
 class Approval:
     """One verified, approving exchange: what the request recorded, by its comment ID.
 
-    ``blobs`` maps each protected path a ``protected-change`` request listed
-    to its blob (``deleted`` for a deletion), and is empty for an exemption.
-    ``fingerprint`` is the change fingerprint an exemption covers, and
-    ``None`` for a protected-change approval. ``decision`` is always
-    ``approve``: :func:`verified_approvals` returns no other.
+    ``fingerprint`` is the change fingerprint the exemption covers.
+    ``decision`` is always ``approve``: :func:`verified_approvals` returns no
+    other.
     """
 
     kind: RequestKind
     request_id: int
     decision: str
-    blobs: dict[str, str]
-    fingerprint: str | None
+    fingerprint: str
 
 
 def _values(lines: list[str], prefix: str) -> list[str]:
@@ -221,38 +174,21 @@ def _only(values: list[str], what: str) -> str:
     return values[0]
 
 
-def _request_facts(body: str, kind: RequestKind) -> tuple[dict[str, str], str | None]:
-    """The blobs and fingerprint a request of *kind* records, read back from its *body*.
+def _request_fingerprint(body: str, kind: RequestKind) -> str:
+    """The fingerprint an exemption request records, read back from its *body*.
 
-    The body must be exactly what :func:`render_protected_change_request` or
-    :func:`render_exemption_request` renders from the values its lines carry
-    (trailing whitespace aside), so a request in any other form records
-    nothing. Refuses with :class:`RulingError`.
+    The body must be exactly what :func:`render_exemption_request` renders
+    from the values its lines carry (trailing whitespace aside), so a request
+    in any other form records nothing. Refuses with :class:`RulingError`.
     """
     text = body.rstrip()
     lines = text.split("\n")
-    if kind == "protected-change":
-        changes: list[ProtectedChange] = []
-        for value in _values(lines, _PROTECTED_PREFIX):
-            blob, sep, path = value.partition(" ")
-            if not sep:
-                msg = f"the protected line {value!r} has no path"
-                raise RulingError(msg)
-            changes.append(ProtectedChange(path, blob))
-        rendered = render_protected_change_request(
-            changes, _only(_values(lines, _DIFF_PREFIX), "Diff:")
-        )
-        blobs = {change.path: change.blob for change in changes}
-        fingerprint = None
-    else:
-        reason = _only(_values(lines, _REASON_PREFIX), "Reason:")
-        fingerprint = _only(_values(lines, _FINGERPRINT_PREFIX), "Fingerprint:")
-        rendered = render_exemption_request(reason, fingerprint)
-        blobs = {}
-    if rendered != text:
+    reason = _only(_values(lines, _REASON_PREFIX), "Reason:")
+    fingerprint = _only(_values(lines, _FINGERPRINT_PREFIX), "Fingerprint:")
+    if render_exemption_request(reason, fingerprint) != text:
         msg = f"the request is not in the {kind} request's form"
         raise RulingError(msg)
-    return blobs, fingerprint
+    return fingerprint
 
 
 def _judge(
@@ -270,7 +206,7 @@ def _judge(
     if request.edited:
         msg = "the request has been edited"
         raise RulingError(msg)
-    blobs, fingerprint = _request_facts(request.body, kind)
+    fingerprint = _request_fingerprint(request.body, kind)
     after = stream[index + 1 :]
     if not after:
         return None
@@ -285,17 +221,17 @@ def _judge(
     decision = parse_decision(reply.body)
     if decision != "approve":
         return None
-    return Approval(kind, request.id, decision, blobs, fingerprint)
+    return Approval(kind, request.id, decision, fingerprint)
 
 
 def verified_approvals(issue_ref: str, *, authors: TrustedAuthors) -> list[Approval]:
-    """Every verified, approving exchange of either kind on *issue_ref*, oldest first.
+    """Every verified, approving exemption exchange on *issue_ref*, oldest first.
 
     Built on the trust layer's comment stream
     (:func:`~vergil_tooling.lib.rulings.comments.read_stream`, the human and
-    the agents). A request of either kind counts only when the agent login
+    the agents). A request counts only when the agent login
     (:func:`~vergil_tooling.lib.rulings.identity.expected_agent_login`)
-    posted it, with its typed marker, its body is exactly its kind's form,
+    posted it, with its typed marker, its body is exactly the exemption form,
     and the first trusted comment after it is the human login's reply,
     plain text with one ``Decision: approve`` line (:func:`parse_decision`).
     Neither may be edited; a deleted one is not on the stream. A comment the

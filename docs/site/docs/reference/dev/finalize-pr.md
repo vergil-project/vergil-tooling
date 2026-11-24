@@ -211,10 +211,8 @@ re-runs the gates `vrg-submit-pr` ran before it opened the PR:
 - **It fetches, then evaluates.** It fetches `develop` and the PR's head
   commit (which may have been pushed from elsewhere), moving no feature
   branch's remote-tracking ref, and checks the change from the fetched
-  `origin/develop` to the head: every protected file it touches needs an
-  approved protected-change approval for that file's content, and the
-  change needs a merge-review record, an approved exemption or a human
-  override with its fingerprint. The task issues are the linkage lines of
+  `origin/develop` to the head: the change needs a merge-review record or
+  an approved merge-review exemption with its fingerprint. The task issues are the linkage lines of
   the PR's trusted body, or, when it has none, its trusted ready state's.
 
 A head that does not pass, and any read or fetch the re-check cannot
@@ -510,7 +508,7 @@ step, and a provenance violation is named loudly:
 | *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
 | *failed: cancelled* | Re-run its cancelled checks, then re-run `vrg-finalize-pr <pr>` |
 | *failed: auto-merge off*, *failed: provenance* | Investigate before turning auto-merge back on |
-| *failed: gates* | Get the missing protected-change approval or merge review for its head, then turn auto-merge back on |
+| *failed: gates* | Get the missing merge review for its head, then turn auto-merge back on |
 | *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
 
 It then states the validate's result (`Validate: passed on <branch> at

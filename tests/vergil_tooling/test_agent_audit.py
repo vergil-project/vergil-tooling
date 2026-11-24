@@ -634,12 +634,13 @@ def test_untrusted_pr_body_is_a_finding(
     assert gates.calls == []
 
 
-def test_squash_changed_approved_file_is_its_own_condition(
+def test_squash_onto_a_develop_that_changed_the_same_file_is_clean(
     origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
 ) -> None:
     _mark(gh, origin)
     # The PR edits the workflow's first line; develop meanwhile adds a second,
-    # so the squash commit's workflow is neither side's blob.
+    # so the squash commit's workflow is neither side's blob. Only the gates
+    # judge the landing: there is no per-file condition.
     _git(origin.work, "checkout", "-q", "-B", "pr11", "origin/develop")
     origin.commit({WORKFLOW: "on: pull_request\n"}, "pr 11")
     _git(origin.work, "push", "-q", "origin", "HEAD:refs/pull/11/head")
@@ -657,9 +658,9 @@ def test_squash_changed_approved_file_is_its_own_condition(
         merger=AGENT,
     )
     results = agent_audit.audit(clone, REPO, AUTHORS)
-    findings = results[0].findings
-    assert [(f.kind, f.subject) for f in findings] == [("merge-changed-approved-file", "PR #11")]
-    assert WORKFLOW in findings[0].detail
+    assert _kinds(results) == []
+    assert len(gates.calls) == 1
+    assert gates.calls[0]["head"] == _git(origin.bare, "rev-parse", "refs/pull/11/head")
 
 
 # --- read failures --------------------------------------------------------------------
@@ -980,11 +981,6 @@ def test_pr_body_read_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         agent_audit._task_refs(REPO, 11, AUTHORS)
 
 
-def test_blob_of_a_missing_file_is_deleted(origin: Origin) -> None:
-    assert agent_audit._blob_at(origin.bare, "develop", "no/such/file") == "deleted"
-    assert agent_audit._blob_at(origin.bare, "develop", WORKFLOW) != "deleted"
-
-
 # --- the rest of the audit's failure paths ---------------------------------------------
 
 
@@ -1063,30 +1059,6 @@ def test_provenance_read_failure_is_a_read_failure(
     results = agent_audit.audit(clone, REPO, AUTHORS)
     assert _kinds(results) == ["read-failure"]
     assert "provenance" in results[0].findings[0].detail
-
-
-def test_malformed_registry_is_a_read_failure(
-    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
-) -> None:
-    _git(origin.work, "checkout", "-q", "develop")
-    origin.commit({"protected-paths.toml": "paths = 'not a list'\n"}, "a bad registry")
-    _git(origin.work, "push", "-q", "origin", "develop")
-    _git(origin.work, "fetch", "-q", "origin")
-    _mark(gh, origin)
-    _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
-    results = agent_audit.audit(clone, REPO, AUTHORS)
-    assert _kinds(results) == ["read-failure"]
-    assert "protected-paths.toml" in results[0].findings[0].detail
-
-
-def test_protected_file_landed_as_approved_is_clean(
-    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
-) -> None:
-    _mark(gh, origin)
-    _squash_pr(gh, origin, 11, {WORKFLOW: "on: pull_request\n"})
-    results = agent_audit.audit(clone, REPO, AUTHORS)
-    assert _kinds(results) == []
-    assert len(gates.calls) == 1
 
 
 def test_missing_pull_ref_is_a_read_failure(

@@ -15,12 +15,12 @@ writes exactly as before. Read ``all_issues`` for the list either way.
 mode (an :class:`~vergil_tooling.lib.identity_mode.IdentityMode` value) that
 ran the ``report-ready`` recording the state. The file is writable by the
 agent that prepared the branch, so the field is a hint that can only make a
-change more agent-involved, never skip a gate: ``vrg-submit-pr`` runs its gates
-on every submission and lets the human's ``--human-only`` skip them only when
-it reads ``human``. It is optional, still at schema version 2: a record with
-none (written before the field existed) reads as before and carries no
-``recorded_by`` key, and it keeps the gates even with ``--human-only``, as does
-any value submit does not recognise.
+change more agent-involved, never skip a gate: the finalize watch reads it,
+and ``vrg-submit-pr`` runs its gate on every submission whatever it says. It
+is optional, still at schema version 2: a record with none (written before the
+field existed) reads as before and carries no ``recorded_by`` key, and the
+watch counts it, as it does any value it does not recognise, as
+agent-involved.
 """
 
 from __future__ import annotations

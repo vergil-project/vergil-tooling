@@ -373,8 +373,7 @@ pass `secrets: inherit`, and every other caller passes an explicit,
 least-privilege secrets map. This narrows the least-privilege rule of
 epic [vergil-project/.github#189](https://github.com/vergil-project/.github/issues/189)
 on purpose, and only for these callers: the over-sharing is small once
-no org- or repo-level secret can write or act, and the called workflows
-are protected paths.
+no org- or repo-level secret can write or act.
 
 The allowed workflows are `INHERIT_ALLOWED` in
 `src/vergil_tooling/lib/secrets_inherit.py`:

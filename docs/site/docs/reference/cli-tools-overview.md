@@ -2439,9 +2439,8 @@ audit's markers, the `vergil/agent-audit/develop` and
 turned auto-merge on must be the human, or the user agent or the
 automation App on its own PR (into `main`, the human only), and its
 provenance must be clean. For an agent-involved PR merged into `develop`,
-its protected files must be covered by approvals, and its change by a
-merge-review record, exemption or human override. A protected file the
-merge changed from the PR's head is its own finding. It then moves each
+its change must be covered by a merge-review record or an approved
+merge-review exemption. It then moves each
 marker to where its audit reached; a read failure stops there, so the next
 run checks the rest again. A missing marker is a finding, never
 re-created. It is a security-signal job: it files no issue and posts

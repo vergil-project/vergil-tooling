@@ -180,7 +180,7 @@ def desired_repo_settings() -> DesiredRepoSettings:
         # auto-merge (epic vergil-project/.github#1064, spec §6.4), and so do
         # the PRs vrg-submit-pr opens. The user agent turns it on only for its
         # own PR, through vrg-submit-pr once the PR has passed the
-        # protected-change and merge-review gates (epic
+        # merge-review gate (epic
         # vergil-project/.github#1384); raw gh stays denied to it. The
         # automation-branch ruleset keeps every identity but the automation
         # App and the admin role off those branches.

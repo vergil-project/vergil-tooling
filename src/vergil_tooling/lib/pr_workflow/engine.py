@@ -91,8 +91,7 @@ def apply_report_ready(
 
     *recorded_by* is the identity mode (an ``IdentityMode`` value) running this
     report-ready, a hint that can only make a change more agent-involved
-    (epic vergil-project/.github#1384, Task 9): ``vrg-submit-pr``'s
-    ``--human-only`` skip applies only to a state it records as the human's.
+    (epic vergil-project/.github#1384, Task 9) to the finalize watch.
     An agent's recording is never
     replaced by the human's: once any identity other than the human has
     recorded the state, a human re-run keeps that value, so a human prose fix

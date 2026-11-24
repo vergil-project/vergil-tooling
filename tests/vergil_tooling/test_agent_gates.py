@@ -9,23 +9,11 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.lib import agent_gates, github, trust
-from vergil_tooling.lib.agent_gates import (
-    GateError,
-    Override,
-    agent_involved,
-    evaluate,
-    overrides,
-    parse_override,
-    render_override,
-)
+from vergil_tooling.lib.agent_gates import GateError, agent_involved, evaluate
 from vergil_tooling.lib.change_fingerprint import change_fingerprint, commit_fingerprint
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.merge_review.record import render_record
-from vergil_tooling.lib.protected_paths import ProtectedChange
-from vergil_tooling.lib.rulings.approvals import (
-    render_exemption_request,
-    render_protected_change_request,
-)
+from vergil_tooling.lib.rulings.approvals import render_exemption_request
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
@@ -35,8 +23,6 @@ AUTHORS = TrustedAuthors(human=("human",), agents=("human-vergil-user",))
 HUMAN: dict[str, str] = {"__typename": "User", "login": "human"}
 AGENT: dict[str, str] = {"__typename": "Bot", "login": "human-vergil-user"}
 IMPOSTOR: dict[str, str] = {"__typename": "User", "login": "human-vergil-user"}
-OUTSIDER: dict[str, str] = {"__typename": "User", "login": "drive-by"}
-URL = "https://github.com/o/r/compare/1111...2222"
 APPROVE = "Looked at it.\nDecision: approve"
 REFUSE = "Decision: refuse"
 REF = "o/r#7"
@@ -68,10 +54,6 @@ def _commit(repo: Path, files: dict[str, str | None], message: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", message)
     return _git(repo, "rev-parse", "HEAD")
-
-
-def _blob(repo: Path, path: str) -> str:
-    return _git(repo, "rev-parse", f"HEAD:{path}")
 
 
 @pytest.fixture
@@ -140,16 +122,9 @@ class Thread:
         )
         self.add(ref, body, AGENT)
 
-    def approve(self, ref: str, changes: list[ProtectedChange], reply: str = APPROVE) -> None:
-        self.add(ref, render_protected_change_request(changes, URL), AGENT)
-        self.add(ref, reply, HUMAN)
-
     def exempt(self, ref: str, fingerprint: str) -> None:
         self.add(ref, render_exemption_request("a typo fix", fingerprint), AGENT)
         self.add(ref, APPROVE, HUMAN)
-
-    def override(self, ref: str, fingerprint: str, author: dict[str, str] = HUMAN) -> None:
-        self.add(ref, render_override(fingerprint, "no agent session"), author)
 
 
 @pytest.fixture
@@ -213,17 +188,30 @@ def test_records_by_others_do_not_cover(repo: Path, thread: Thread) -> None:
     assert not _evaluate(repo).ok
 
 
-def test_exemption_stands_in_for_record_but_not_for_approval(repo: Path, thread: Thread) -> None:
+def test_exemption_stands_in_for_record(repo: Path, thread: Thread) -> None:
     _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
     thread.exempt(REF, _fp(repo))
     assert _evaluate(repo).ok
 
-    _commit(repo, {WORKFLOW: "on: pull_request\n"}, "edit the workflow")
-    thread.exempt(REF, _fp(repo))
+    # An exemption covers its fingerprint only: a later push is uncovered.
+    _commit(repo, {"b.txt": "uno\nDOS\n"}, "a later push")
+    result = _evaluate(repo)
+    assert not result.ok
+    assert result.reasons == (
+        f"merge review: no merge-review record or approved exemption on {REF} covers the"
+        f" change (fingerprint {_fp(repo)}); run merge review",
+    )
+
+
+def test_workflow_change_needs_only_merge_review(repo: Path, thread: Thread) -> None:
+    head = _commit(repo, {WORKFLOW: "on: pull_request\n"}, "edit the workflow")
+    thread.empty(REF)
     result = _evaluate(repo)
     assert not result.ok
     assert len(result.reasons) == 1
-    assert f"protected file {WORKFLOW}" in result.reasons[0]
+    assert result.reasons[0].startswith("merge review:")
+    thread.record(REF, head, _fp(repo))
+    assert _evaluate(repo) == agent_gates.GateResult(ok=True, reasons=())
 
 
 def test_refused_exemption_does_not_cover(repo: Path, thread: Thread) -> None:
@@ -233,55 +221,14 @@ def test_refused_exemption_does_not_cover(repo: Path, thread: Thread) -> None:
     assert not _evaluate(repo).ok
 
 
-def test_override_stands_in_for_record_only(repo: Path, thread: Thread) -> None:
+def test_human_comment_in_the_old_override_form_does_not_cover(repo: Path, thread: Thread) -> None:
     _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    thread.override(REF, _fp(repo))
-    assert _evaluate(repo).ok
-    _commit(repo, {"vergil.toml": "[project]\nname = 'x'\n"}, "edit vergil.toml")
-    thread.override(REF, _fp(repo))
+    thread.add(
+        REF, f"Merge review override: fingerprint={_fp(repo)} reason=no agent session", HUMAN
+    )
     result = _evaluate(repo)
     assert not result.ok
-    assert "protected file vergil.toml" in result.reasons[0]
-
-
-def test_override_by_non_human_role_ignored(repo: Path, thread: Thread) -> None:
-    _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fingerprint = _fp(repo)
-    thread.override(REF, fingerprint, AGENT)
-    thread.override(REF, fingerprint, OUTSIDER)
-    thread.override(REF, fingerprint, {"__typename": "Bot", "login": "human"})
-    thread.add(REF, render_override(fingerprint, "edited"), HUMAN, editor=HUMAN)
-    assert overrides(REF, authors=AUTHORS) == []
-    assert not _evaluate(repo).ok
-
-
-def test_overrides_read_the_human_role_only(
-    thread: Thread, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[frozenset[trust.Role]] = []
-    real = trust.read_comment_stream
-
-    def spy(repo: str, number: int, **kwargs: Any) -> trust.CommentStream:
-        seen.append(kwargs["roles"])
-        return real(repo, number, **kwargs)
-
-    monkeypatch.setattr(trust, "read_comment_stream", spy)
-    fingerprint = "f" * 64
-    thread.override(REF, fingerprint)
-    found = overrides(REF, authors=AUTHORS)
-    assert [(o.fingerprint, o.reason, o.author) for o in found] == [
-        (fingerprint, "no agent session", "human")
-    ]
-    assert seen == [frozenset({trust.Role.HUMAN})]
-
-
-@pytest.mark.parametrize("answer", [{}, {"repository": None}])
-def test_overrides_read_failure_raises(
-    items: trust_stubs.FakeItems, answer: dict[str, Any]
-) -> None:
-    items.items[("o/r", 7)] = answer
-    with pytest.raises(trust.TrustReadError):
-        overrides(REF, authors=AUTHORS)
+    assert "no merge-review record or approved exemption" in result.reasons[0]
 
 
 def test_lookup_failure_fails_closed(
@@ -304,23 +251,8 @@ def test_unreadable_ref_fails_closed(repo: Path, thread: Thread) -> None:
     _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
     result = evaluate(repo, base="no-such-ref", head="HEAD", issue_refs=[REF], authors=AUTHORS)
     assert not result.ok
-    assert [reason.split(":", 1)[0] for reason in result.reasons] == [
-        "protected files",
-        "merge review",
-    ]
-
-
-def test_malformed_registry_fails_closed(repo: Path, thread: Thread) -> None:
-    _git(repo, "checkout", "-q", "develop")
-    _commit(repo, {"protected-paths.toml": "paths = 'not a list'\n"}, "a bad registry")
-    _git(repo, "checkout", "-q", "feature")
-    _git(repo, "rebase", "-q", "develop")
-    _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    thread.record(REF, _git(repo, "rev-parse", "HEAD"), _fp(repo))
-    result = _evaluate(repo)
-    assert not result.ok
-    assert result.reasons[0].startswith("protected files: lookup failed")
-    assert "protected-paths.toml" in result.reasons[0]
+    assert len(result.reasons) == 1
+    assert result.reasons[0].startswith("merge review: lookup failed for no-such-ref...HEAD")
     assert result.read_failure
 
 
@@ -341,76 +273,6 @@ def test_a_repeated_task_issue_is_read_once(repo: Path, thread: Thread) -> None:
     thread.record(REF, head, _fp(repo))
     assert _evaluate(repo, [REF, REF]).ok
     assert thread.items.reads == [("o/r", 7)]
-
-
-# --- the protected-files rule ---------------------------------------------------------
-
-
-def test_approved_protected_change_passes(repo: Path, thread: Thread) -> None:
-    head = _commit(repo, {WORKFLOW: "on: pull_request\n"}, "edit the workflow")
-    thread.approve(REF, [ProtectedChange(WORKFLOW, _blob(repo, WORKFLOW))])
-    thread.record(REF, head, _fp(repo))
-    assert _evaluate(repo).ok
-
-
-def test_refused_or_unanswered_approval_does_not_cover(repo: Path, thread: Thread) -> None:
-    head = _commit(repo, {WORKFLOW: "on: pull_request\n"}, "edit the workflow")
-    changes = [ProtectedChange(WORKFLOW, _blob(repo, WORKFLOW))]
-    thread.approve(REF, changes, REFUSE)
-    thread.record(REF, head, _fp(repo))
-    assert not _evaluate(repo).ok
-
-
-def test_approval_for_other_path_does_not_cover(repo: Path, thread: Thread) -> None:
-    head = _commit(repo, {"vergil.toml": "on: pull_request\n"}, "edit vergil.toml")
-    blob = _blob(repo, "vergil.toml")
-    thread.approve(REF, [ProtectedChange(".github/workflows/other.yml", blob)])
-    thread.record(REF, head, _fp(repo))
-    result = _evaluate(repo)
-    assert not result.ok
-    assert result.reasons == (
-        f"protected file vergil.toml (blob {blob}) has no approved protected-change"
-        f" approval on {REF}; ask for one with vrg-ruling request --kind protected-change",
-    )
-
-
-def test_deleted_approval_is_per_path(repo: Path, thread: Thread) -> None:
-    head = _commit(repo, {WORKFLOW: None, "vergil.toml": None}, "delete both")
-    thread.approve(REF, [ProtectedChange(WORKFLOW, "deleted")])
-    thread.record(REF, head, _fp(repo))
-    result = _evaluate(repo)
-    assert not result.ok
-    assert len(result.reasons) == 1
-    assert "protected file vergil.toml (blob deleted)" in result.reasons[0]
-    thread.approve(REF, [ProtectedChange("vergil.toml", "deleted")])
-    assert _evaluate(repo).ok
-
-
-def test_edit_after_approval_voids_it(repo: Path, thread: Thread) -> None:
-    _commit(repo, {WORKFLOW: "on: pull_request\n"}, "edit the workflow")
-    thread.approve(REF, [ProtectedChange(WORKFLOW, _blob(repo, WORKFLOW))])
-    head = _commit(repo, {WORKFLOW: "on: [pull_request, push]\n"}, "edit it again")
-    thread.record(REF, head, _fp(repo))
-    result = _evaluate(repo)
-    assert not result.ok
-    assert f"protected file {WORKFLOW} (blob {_blob(repo, WORKFLOW)})" in result.reasons[0]
-
-
-def test_registry_is_read_at_base(repo: Path, thread: Thread) -> None:
-    _git(repo, "checkout", "-q", "develop")
-    _commit(repo, {"protected-paths.toml": "paths = ['b.txt']\n"}, "protect b.txt")
-    _git(repo, "checkout", "-q", "feature")
-    _git(repo, "rebase", "-q", "develop")
-    head = _commit(
-        repo, {"protected-paths.toml": "paths = []\n", "b.txt": "uno\n"}, "drop and edit b.txt"
-    )
-    thread.record(REF, head, _fp(repo))
-    result = _evaluate(repo)
-    assert not result.ok
-    assert [reason.split(" (", 1)[0] for reason in result.reasons] == [
-        "protected file b.txt",
-        "protected file protected-paths.toml",
-    ]
 
 
 # --- batches ------------------------------------------------------------------------
@@ -451,7 +313,7 @@ def test_whole_change_record_covers_a_fix_to_an_open_batch(repo: Path, thread: T
     assert not result.ok
     assert result.reasons == (
         f"merge review: commit {head[:12]} (fix: CI) is no issue's own commit, so only a"
-        f" record, exemption or override covering the whole change ({_fp(repo)}) covers it",
+        f" record or exemption covering the whole change ({_fp(repo)}) covers it",
     )
     thread.record(TWO, head, _fp(repo))
     assert _evaluate(repo, [ONE, TWO]).ok
@@ -477,47 +339,20 @@ def test_unfolded_fixup_is_not_covered_by_the_first_commit(repo: Path, thread: T
     assert f"commit {fixup[:12]}" in result.reasons[0]
 
 
-def test_batch_approval_on_any_issue_covers(repo: Path, thread: Thread) -> None:
-    first = _commit(repo, {"a.txt": "one\nTWO\nthree\n"}, "first change (#7)")
-    second = _commit(repo, {WORKFLOW: "on: pull_request\n"}, "the workflow (#8)")
-    thread.approve(ONE, [ProtectedChange(WORKFLOW, _blob(repo, WORKFLOW))])
-    thread.record(ONE, first, commit_fingerprint(repo, first))
-    thread.record(TWO, second, commit_fingerprint(repo, second))
+def test_batch_exemption_of_the_whole_change_on_any_issue_covers(
+    repo: Path, thread: Thread
+) -> None:
+    _batch(repo)
+    thread.empty(ONE)
+    thread.exempt(TWO, _fp(repo))
     assert _evaluate(repo, [ONE, TWO]).ok
 
 
-# --- the override line ------------------------------------------------------------
-
-
-def test_override_round_trip() -> None:
-    line = render_override("e" * 64, "the agent VM is down")
-    assert line == f"Merge review override: fingerprint={'e' * 64} reason=the agent VM is down"
-    assert parse_override(f"{line}\nmore text") == Override("e" * 64, "the agent VM is down")
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        f"> Merge review override: fingerprint={'e' * 64} reason=quoted",
-        f"intro\nMerge review override: fingerprint={'e' * 64} reason=second line",
-        f"Merge review override: fingerprint={'E' * 64} reason=upper",
-        f"Merge review override: fingerprint={'e' * 63} reason=short",
-        f"Merge review override: fingerprint={'e' * 64} reason=",
-        f"Merge review override: fingerprint={'e' * 64} reason= padded",
-        f"Merge review override: fingerprint={'e' * 64} reason=café",
-    ],
-)
-def test_parse_override_refuses_any_other_form(body: str) -> None:
-    assert parse_override(body) is None
-
-
-@pytest.mark.parametrize(
-    ("fingerprint", "reason"),
-    [("e" * 63, "ok"), ("e" * 64, ""), ("e" * 64, "two\nlines"), ("e" * 64, "tab\there")],
-)
-def test_render_override_refuses_bad_input(fingerprint: str, reason: str) -> None:
-    with pytest.raises(GateError):
-        render_override(fingerprint, reason)
+def test_batch_exemption_of_an_issues_own_commit_covers_it(repo: Path, thread: Thread) -> None:
+    first, second = _batch(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.exempt(TWO, commit_fingerprint(repo, second))
+    assert _evaluate(repo, [ONE, TWO]).ok
 
 
 # --- agent involvement ------------------------------------------------------------

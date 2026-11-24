@@ -12,9 +12,8 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    The watch runs the provenance check on each PR, and turns auto-merge off
    on an open PR with a violation, which ends ``failed: provenance``. On
    each new head of an agent-involved open PR it also re-checks the gates
-   (a protected-change approval and merge-review coverage), and turns
-   auto-merge off on a head that does not pass them, which ends
-   ``failed: gates``.
+   (merge-review coverage), and turns auto-merge off on a head that does
+   not pass them, which ends ``failed: gates``.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    by a closing reference the trust layer counts, before the lock is taken,
@@ -226,10 +225,7 @@ _INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
     "failed: auto-merge off": _INVESTIGATE,
     "failed: provenance": _INVESTIGATE,
-    "failed: gates": (
-        "get the missing protected-change approval or merge review for its head, "
-        "then re-enable auto-merge"
-    ),
+    "failed: gates": "get the missing merge review for its head, then re-enable auto-merge",
     "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
