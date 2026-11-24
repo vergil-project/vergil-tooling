@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.342] - 2026-11-24
+
+### Bug fixes
+
+- show each VM's actual Lima disk size in list (#5031)
+- count native blocked-by relationships as blockers in the task views (#5114)
+- clear disk-only drift on a VM already at its configured size (#5118)
+- remove the protected-change approval and the human skips of merge review (#5119)
+- count native blocked-by relationships when deciding a child is runnable (#5109)
+- count a native blocked-by link to an open deployment task in the batch rules (#5110)
+- pass the App keys by name for repos outside vergil-project (#5108)
+
+### Documentation
+
+- describe epic-create's nine checkpointed stages in the issue standards (#5116)
+
+### Features
+
+- add vrg-state-dir to create and check a task's state directory (#5105)
+- add grow-disk to grow a Lima VM's disk in place (#5030)
+- record why a stage was skipped and recognise skip records in vrg-ci-evidence (#5107)
+- a daily audit of agent merges (#5111)
+- re-check the gates on every new head (#5113)
+- agents submit through the gates (#5112)
+- create the agent audit markers (#5059)
+
 ## [2.1.341] - 2026-11-24
 
 ### Bug fixes
