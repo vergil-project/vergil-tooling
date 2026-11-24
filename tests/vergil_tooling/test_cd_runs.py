@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from subprocess import CompletedProcess
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib import cd_runs, github
 from vergil_tooling.lib.cd_runs import (
     CDRunLookupError,
     classify_jobs,
@@ -17,9 +20,23 @@ from vergil_tooling.lib.cd_runs import (
     watch_run,
 )
 
+if TYPE_CHECKING:
+    from tests.vergil_tooling.conftest import FakeApp
+
 _MOD = "vergil_tooling.lib.cd_runs"
 _SHA = "abc123def456"
 _URL = "https://github.com/o/r/actions/runs/12345"
+
+
+@pytest.fixture(autouse=True)
+def _no_cwd_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve no org from the cwd, so a token lookup never runs git.
+
+    ``gh`` runs with the current identity's token, whose owner comes from the
+    cwd's remote; the ``subprocess.run`` fakes here answer ``gh`` only.
+    :func:`fake_app` sets its own.
+    """
+    monkeypatch.setattr(github, "detect_org", lambda *, cwd=None: None)
 
 
 class _FakeGh:
@@ -72,7 +89,7 @@ def test_watch_waits_through_queued() -> None:
     with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep") as sleep:
         assert watch_run("12345", timeout=3600) == "success"
     assert sleep.call_count == 3
-    assert all(call[:4] == ["gh", "run", "view", "12345"] for call in fake.calls)
+    assert all(list(call[:4]) == ["gh", "run", "view", "12345"] for call in fake.calls)
 
 
 def test_watch_timeout_is_timed_out() -> None:
@@ -129,7 +146,7 @@ def test_find_run_matches_by_sha_and_names_the_repo() -> None:
     fake = _FakeGh(lists=[[], [_run(sha="deadbeef"), mine]])
     with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep"):
         assert find_run("o/r", "develop", _SHA, dispatch_timeout=3600) == mine
-    assert fake.calls[0][:5] == ["gh", "run", "list", "--repo", "o/r"]
+    assert list(fake.calls[0][:5]) == ["gh", "run", "list", "--repo", "o/r"]
     assert "develop" in fake.calls[0]
 
 
@@ -154,6 +171,92 @@ def test_find_run_raises_when_runs_cannot_be_listed(response: CompletedProcess) 
         pytest.raises(CDRunLookupError, match="gh run list --repo o/r"),
     ):
         find_run("o/r", "develop", _SHA, dispatch_timeout=0)
+
+
+# -- credentials (#5140) -------------------------------------------------------
+#
+# ``gh run list`` and ``gh run view`` run with the current identity's token,
+# as every other ``gh`` call does: in agent mode, the App's installation
+# token. A raw ``gh`` with no ``GH_TOKEN`` has no auth in agent mode.
+
+
+class _EnvRecorder(_FakeGh):
+    """A :class:`_FakeGh` that also records the ``env`` of each call."""
+
+    def __init__(self, **kwargs: list[object]) -> None:
+        super().__init__(**kwargs)
+        self.envs: list[object] = []
+
+    def __call__(self, command: list[str], **kwargs: object) -> CompletedProcess:
+        self.envs.append(kwargs.get("env"))
+        return super().__call__(command, **kwargs)
+
+
+def _token(env: object) -> object:
+    assert isinstance(env, dict)
+    return env.get("GH_TOKEN")
+
+
+def test_run_list_uses_the_current_identitys_token(fake_app: FakeApp) -> None:
+    fake_app.cwd_org = "cwd-org"
+    fake = _EnvRecorder(lists=[[]])
+    with patch(_MOD + ".subprocess.run", side_effect=fake):
+        assert cd_runs._list_cd_runs("develop") == []
+    assert _token(fake.envs[0]) == "ghs_fake_cwd-org"
+
+
+def test_run_list_of_a_named_repo_uses_that_owners_token(fake_app: FakeApp) -> None:
+    fake_app.cwd_org = "cwd-org"
+    fake = _EnvRecorder(lists=[[]])
+    with patch(_MOD + ".subprocess.run", side_effect=fake):
+        assert cd_runs._list_cd_runs("develop", repo="target-org/r") == []
+    assert _token(fake.envs[0]) == "ghs_fake_target-org"
+
+
+def test_run_view_uses_the_current_identitys_token(fake_app: FakeApp) -> None:
+    fake_app.cwd_org = "cwd-org"
+    fake = _EnvRecorder(views=[_view("completed", "success")])
+    with patch(_MOD + ".subprocess.run", side_effect=fake):
+        assert watch_run("12345", timeout=0) == "success"
+    assert _token(fake.envs[0]) == "ghs_fake_cwd-org"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        github.AppAuthError("o", "12345", Path("app.pem"), "the key was rejected"),
+        github.NoInstallationError("o", ["other"]),
+    ],
+)
+def test_run_list_without_credentials_names_the_cause(
+    error: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_token(*_: object, **__: object) -> None:
+        raise error
+
+    monkeypatch.setattr(github, "get_installation_token", no_token)
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=AssertionError("gh must not run")),
+        pytest.raises(CDRunLookupError, match="no credentials to list the CD runs") as raised,
+    ):
+        cd_runs._list_cd_runs("develop", repo="o/r")
+    assert str(error) in str(raised.value)
+
+
+def test_run_view_without_credentials_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Never read as a view that failed, which the watch would retry to its
+    # deadline and report as a run still in progress.
+    error = github.AppAuthError("o", "12345", Path("app.pem"), "the key was rejected")
+
+    def no_token(*_: object, **__: object) -> None:
+        raise error
+
+    monkeypatch.setattr(github, "get_installation_token", no_token)
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=AssertionError("gh must not run")),
+        pytest.raises(github.AppAuthError, match="the key was rejected"),
+    ):
+        watch_run("12345", timeout=0)
 
 
 # -- job classification -------------------------------------------------------

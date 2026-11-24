@@ -76,13 +76,41 @@ def cd_timeout_secs() -> int:
     return secs
 
 
+# Why ``gh`` could not be given the current identity's token: App credentials
+# that mint none, no installation for the owner, or a token source alongside
+# the App mode (``lib/github.py``).
+_CREDENTIAL_ERRORS = (
+    github.AppAuthError,
+    github.NoInstallationError,
+    github.TokenSourceConflictError,
+)
+
+
+def _run_gh(command: tuple[str, ...], *, repo: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run *command* once with the current identity's token; its result, any exit.
+
+    The token is the one every ``gh`` call through :mod:`~vergil_tooling.lib.github`
+    gets (vergil-tooling#5140): a registered token source's, else in App mode
+    the installation token of *repo*'s owner (the current repo's without
+    *repo*), else none (the human's ambient ``gh`` login). A non-zero exit is
+    returned for the caller to judge, never retried here: the callers poll.
+    A credential failure (:data:`_CREDENTIAL_ERRORS`) and an unusable gh
+    (``gh_version.GhVersionError``) raise.
+    """
+    owner = repo.split("/", 1)[0] if repo is not None else None
+    with github.target_org(owner):
+        return github.run_tolerating(command, is_answer=lambda _result: True)
+
+
 def _list_cd_runs(target_branch: str, *, repo: str | None = None) -> list[dict[str, object]]:
     """List the 30 most recent CD workflow runs on ``target_branch``, newest first.
 
     *repo* names the repository; without it ``gh`` uses the current one. An
-    empty list means the workflow has no run on the branch yet. A ``gh``
-    failure (which includes a repo with no CD workflow) or a malformed
-    response raises :class:`CDRunLookupError` with the reason.
+    empty list means the workflow has no run on the branch yet. ``gh`` runs
+    with the current identity's token (:func:`_run_gh`), so an agent lists
+    the runs as its App. A ``gh`` failure (which includes a repo with no CD
+    workflow), no credentials to run it with, or a malformed response raises
+    :class:`CDRunLookupError` with the reason.
     """
     command = ["gh", "run", "list"]
     if repo is not None:
@@ -97,8 +125,11 @@ def _list_cd_runs(target_branch: str, *, repo: str | None = None) -> list[dict[s
         "--json",
         "conclusion,databaseId,headSha,status,createdAt,url",
     ]
-    github.require_gh()
-    result = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603
+    try:
+        result = _run_gh(tuple(command), repo=repo)
+    except _CREDENTIAL_ERRORS as exc:
+        msg = f"no credentials to list the CD runs (`{' '.join(command)}`): {exc}"
+        raise CDRunLookupError(msg) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         msg = f"`{' '.join(command)}` failed (exit {result.returncode}): {detail}"
@@ -126,23 +157,12 @@ def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, obj
 def _view_cd_run(run_id: object) -> dict[str, object] | None:
     """Fetch a CD run's current status/conclusion/url, or ``None`` on a gh error.
 
-    An unusable gh (:func:`github.require_gh`) is raised, never read as a gh
-    error.
+    ``gh`` runs with the current identity's token (:func:`_run_gh`). An
+    unusable gh (:func:`github.require_gh`) or no credentials to run it with
+    is raised, never read as a gh error: the watch retries a failed view to
+    its deadline, so a missing credential would read as a run still going.
     """
-    github.require_gh()
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--json",
-            "status,conclusion,url",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_gh(("gh", "run", "view", str(run_id), "--json", "status,conclusion,url"))
     if result.returncode != 0:
         return None
     stdout = result.stdout or ""

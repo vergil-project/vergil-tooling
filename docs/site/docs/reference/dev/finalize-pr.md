@@ -173,7 +173,12 @@ PR or turn auto-merge on (the user identity may not approve it either),
 and an identity with no role is **untrusted**, with the same limits as
 the audit identity. The one exception is the user identity's **own** PR,
 one whose author is that same identity: it may author it, turn
-auto-merge on and merge it, but never edit, close, reopen or approve it. An untrusted approval counts for nothing: it is
+auto-merge on and merge it, but never edit, close, reopen or approve it.
+GitHub records a `closed` event, by the merging actor, with every merge;
+that one closing is part of the merge and is allowed with it. It is the
+first `closed` event after the PR's one `merged` event, at the same
+second, by the same actor. Any other close, a close and reopen before the
+merge included, stays a violation (issue #5140). An untrusted approval counts for nothing: it is
 reported on stderr, metadata only, and is no violation. What it does
 depends on whether the PR has merged:
 
@@ -450,8 +455,12 @@ Two other lines are plain:
 - `CD: no CD run for this head`, when no run registered in time (a change
   CD legitimately skips).
 
-Any other failure to list the runs is `CD: unknown`, with the reason,
-and a warning.
+Finalize lists and reads the runs with the current identity's token, as
+its other GitHub calls do: as an agent, its App's installation token. Any
+other failure to list the runs, no credentials to list them with
+included, is an error that names its cause, `CD: error (<cause>)`. It
+fails the CD report (exit 1, with or without `--wait-cd`), since the CD
+state is not known (issue #5140).
 
 **With `--wait-cd`, finalize blocks on the run** and fails if it does not
 succeed:

@@ -16,6 +16,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_finalize_pr import (
+    CDUnreadableError,
     FinalizeContext,
     FinalizeError,
     _classify_failed_jobs,
@@ -43,7 +44,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import closing_refs, progress, text_table, trust, worktrees
+from vergil_tooling.lib import closing_refs, github, progress, text_table, trust, worktrees
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -67,6 +68,19 @@ _PROJECTS = Path("/vergil/projects")
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
+
+    from tests.vergil_tooling.conftest import FakeApp
+
+
+@pytest.fixture(autouse=True)
+def _no_cwd_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve no org from the cwd, so a ``gh`` token lookup never runs git.
+
+    The CD lookup runs ``gh`` with the current identity's token, whose owner
+    comes from the cwd's remote (#5140); the ``subprocess.run`` fakes here
+    answer ``gh`` only. :func:`fake_app` sets its own.
+    """
+    monkeypatch.setattr(github, "detect_org", lambda *, cwd=None: None)
 
 
 @pytest.fixture(autouse=True)
@@ -2680,7 +2694,7 @@ def test_cd_report_prints_state_and_url_without_waiting(
     assert capsys.readouterr().out == f"  CD: {state} https://github.com/o/r/actions/runs/12345\n"
     # One listing, no view and no watch: the report never waits on the run.
     gh.assert_called_once()
-    assert gh.call_args.args[0][:3] == ["gh", "run", "list"]
+    assert list(gh.call_args.args[0][:3]) == ["gh", "run", "list"]
     mark_warn.assert_not_called()
 
 
@@ -2722,20 +2736,72 @@ def _failed_listing() -> CompletedProcess:
     return CompletedProcess(args=(), returncode=1, stdout="", stderr="oops")
 
 
-def test_cd_report_lookup_failure_is_unknown_not_hidden(
+def test_cd_report_lookup_failure_is_an_error_naming_the_cause(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # The repo declares a CD workflow, so a failed listing is a real failure.
+    # The repo declares a CD workflow, so a failed listing is a real failure:
+    # an error naming its cause, never a CD state reported as unknown (#5140).
     with (
         patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
         patch(_MOD + ".progress.mark_warn") as mark_warn,
+        pytest.raises(CDUnreadableError, match="oops") as raised,
     ):
         _report_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path), dispatch_timeout=0.0)
+    assert f"the CD runs for {_HEAD_SHA[:7]} could not be listed" in str(raised.value)
     captured = capsys.readouterr()
-    assert "CD: unknown (the CD runs could not be listed:" in captured.err
+    assert "ERROR: the CD runs for" in captured.err
     assert "oops" in captured.err
+    assert "unknown" not in captured.err
     assert "no CD workflow" not in captured.out
-    mark_warn.assert_called_once()
+    mark_warn.assert_not_called()
+
+
+def test_cd_report_without_credentials_names_the_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Agent mode whose App token cannot be minted: the cause is the error.
+    error = github.AppAuthError("o", "12345", Path("app.pem"), "the key was rejected")
+
+    def no_token(*_: object, **__: object) -> None:
+        raise error
+
+    monkeypatch.setattr(github, "get_installation_token", no_token)
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=AssertionError("gh must not run")),
+        pytest.raises(CDUnreadableError, match="no credentials to list the CD runs") as raised,
+    ):
+        _report_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path), dispatch_timeout=0.0)
+    assert "the key was rejected" in str(raised.value)
+
+
+def test_cd_report_lists_runs_with_the_agents_app_token(
+    tmp_path: Path, fake_app: FakeApp, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_app.cwd_org = "cwd-org"
+    with patch(_MOD + ".subprocess.run", return_value=_cd_list_resp([_cd_run()])) as gh:
+        _report_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path), dispatch_timeout=0.0)
+    assert gh.call_args.kwargs["env"]["GH_TOKEN"] == "ghs_fake_cwd-org"
+    assert "CD: queued" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [[], ["--wait-cd"]])
+def test_stage_cd_check_lookup_failure_fails_the_stage(
+    argv: list[str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(argv, root=_cd_root(tmp_path))
+    ctx.synced_to = _HEAD_SHA
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+        pytest.raises(CDUnreadableError, match="oops"),
+    ):
+        _stage_cd_check(ctx)
+    assert ctx.cd_line.startswith(f"CD: error (the CD runs for {_HEAD_SHA[:7]} could not be")
+    assert "oops" in ctx.cd_line
+    assert ctx.cd_unreadable
+    assert "ERROR: the CD runs for" in capsys.readouterr().err
+    mark_warn.assert_not_called()
 
 
 def test_cd_report_no_cd_workflow_passes_quietly(
@@ -2771,16 +2837,17 @@ def test_wait_cd_no_cd_workflow_reports_and_does_not_fail(
     mark_warn.assert_not_called()
 
 
-def test_wait_cd_lookup_failure_with_cd_workflow_warns(
+def test_wait_cd_lookup_failure_with_cd_workflow_is_an_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with (
         patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
         patch(_MOD + ".progress.mark_warn") as mark_warn,
+        pytest.raises(CDUnreadableError, match="oops"),
     ):
-        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path)) is None
-    assert "CD: unknown (the CD runs could not be listed:" in capsys.readouterr().err
-    mark_warn.assert_called_once()
+        _wait_for_cd_run("develop", _HEAD_SHA, root=_cd_root(tmp_path))
+    assert "ERROR: the CD runs for" in capsys.readouterr().err
+    mark_warn.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -2806,18 +2873,18 @@ def test_declares_cd_workflow_without_workflows_dir(tmp_path: Path) -> None:
     assert _declares_cd_workflow(tmp_path) is False
 
 
-def test_cd_report_unparsable_workflow_keeps_the_warning(
+def test_cd_report_unparsable_workflow_keeps_the_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A workflow that cannot be parsed might be the CD one: not known, so warn.
+    # A workflow that cannot be parsed might be the CD one: the failed
+    # listing is not explained away, so it stays an error naming its cause.
     _write_workflow(tmp_path, "broken.yml", "name: [unclosed\n")
     with (
         patch(_MOD + ".subprocess.run", return_value=_failed_listing()),
-        patch(_MOD + ".progress.mark_warn") as mark_warn,
+        pytest.raises(CDUnreadableError, match="oops"),
     ):
         _report_cd_run("develop", _HEAD_SHA, root=tmp_path, dispatch_timeout=0.0)
-    assert "CD: unknown" in capsys.readouterr().err
-    mark_warn.assert_called_once()
+    assert "ERROR: the CD runs for" in capsys.readouterr().err
 
 
 def test_stage_cd_check_falls_back_to_target_tip(tmp_path: Path) -> None:
@@ -3460,6 +3527,25 @@ def test_wait_cd_failure_after_a_passing_validate_names_cd(
     assert "DID NOT VALIDATE" not in out
     assert "ERROR: develop's CD did not succeed (--wait-cd)." in out
     assert "  CD: FinalizeError: CD run did not succeed" in out
+
+
+@pytest.mark.parametrize(
+    ("argv", "stage"), [([], "_report_cd_run"), (["--wait-cd"], "_wait_for_cd_run")]
+)
+def test_unreadable_cd_is_a_tool_error_naming_the_cause(
+    argv: list[str], stage: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CD runs that cannot be listed exit 1, never 4: CD's state is not known (#5140)."""
+    cause = "the CD runs for bbbb222 could not be listed: no credentials to list the CD runs"
+    with (
+        _settle_env(tmp_path, []),
+        patch(_MOD + "." + stage, side_effect=CDUnreadableError(cause)),
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+    ):
+        assert main([_PR_A, *argv]) == 1
+    out = capsys.readouterr().out
+    assert f"CD: error ({cause})" in out
+    assert "CD did not succeed" not in out
 
 
 def test_cd_check_failure_without_wait_cd_is_a_tool_error(tmp_path: Path) -> None:
