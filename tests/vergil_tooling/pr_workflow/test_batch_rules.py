@@ -59,6 +59,7 @@ class Issue:
     # The author as GraphQL returns it: an agent App is a Bot.
     author: dict[str, str] = field(default_factory=lambda: {"__typename": "Bot", "login": AGENT})
     blockers: list[IssueRef] = field(default_factory=list)
+    native_blockers: tuple[epics.BlockerState, ...] = ()
     state: str = "OPEN"
 
 
@@ -104,6 +105,9 @@ class FakeGitHub:
 
         monkeypatch.setattr(github, "graphql", graphql)
         monkeypatch.setattr(epics, "blockers_of", lambda ref: self._get("blockers", ref).blockers)
+        monkeypatch.setattr(
+            epics, "native_blockers_of", lambda ref: self._get("native", ref).native_blockers
+        )
         monkeypatch.setattr(epics, "issue_state", lambda ref: self._get("state", ref).state)
 
 
@@ -308,6 +312,7 @@ def test_hard_rules_refuse_when_trusted_authors_fails(
         ("parent", "buildable parent", "the parent of #10"),
         ("author", "trusted author", "the author of #10"),
         ("blockers", "no open deployment blocker", "the Blocked-by lines of #10"),
+        ("native", "no open deployment blocker", "the native blocked-by links of #10"),
     ],
 )
 def test_hard_rules_refuse_on_read_failure(
@@ -404,6 +409,62 @@ def test_hard_rules_accept_open_non_deployment_blocker(world: FakeGitHub) -> Non
     world.issues[task] = Issue()
     world.issues[_ref(11)].blockers = [task]
     check_hard_rules(["#10", "#11"], repo=REPO)
+
+
+# -- native blocked-by links (#5110) ---------------------------------------------
+
+
+def test_hard_rules_refuse_a_native_open_deployment_blocker(world: FakeGitHub) -> None:
+    # A blocker in another org counts, read from the link itself.
+    deploy = IssueRef("other-org", "infra", 30)
+    world.issues[deploy] = Issue(labels={"deployment"})
+    world.issues[_ref(11)].native_blockers = (epics.BlockerState(deploy, "OPEN"),)
+    message = _refused(["#10", "#11"], "no open deployment blocker")
+    assert "#11 is natively blocked by other-org/infra#30, an open deployment task" in message
+
+
+def test_hard_rules_accept_a_native_closed_deployment_blocker(world: FakeGitHub) -> None:
+    # The link's own state decides: a closed blocker's labels are never read.
+    deploy = IssueRef("acme", "other", 30)
+    world.issues[_ref(11)].native_blockers = (epics.BlockerState(deploy, "CLOSED"),)
+    check_hard_rules(["#10", "#11"], repo=REPO)
+
+
+def test_hard_rules_accept_a_native_open_non_deployment_blocker(world: FakeGitHub) -> None:
+    task = IssueRef("acme", "other", 31)
+    world.issues[task] = Issue(labels={"validation"})
+    world.issues[_ref(11)].native_blockers = (epics.BlockerState(task, "OPEN"),)
+    check_hard_rules(["#10", "#11"], repo=REPO)
+
+
+def test_hard_rules_refuse_on_a_native_blocker_label_read_failure(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deploy = IssueRef("acme", "other", 30)
+    world.issues[_ref(11)].native_blockers = (epics.BlockerState(deploy, "OPEN"),)
+
+    def kind(ref: IssueRef) -> str | None:
+        if ref == deploy:
+            raise subprocess.CalledProcessError(1, ["gh"], stderr="labels read failed")
+        return None
+
+    monkeypatch.setattr(epics, "operational_kind", kind)
+    message = _refused(["#10", "#11"], "no open deployment blocker")
+    assert "could not read the labels of #11's blocker acme/other#30" in message
+
+
+def test_hard_rules_refuse_an_incomplete_native_list(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def incomplete(ref: IssueRef) -> tuple[epics.BlockerState, ...]:
+        raise epics.NativeBlockersReadError(
+            f"{ref.slug} has 2 native blockers but only 1 could be read"
+        )
+
+    monkeypatch.setattr(epics, "native_blockers_of", incomplete)
+    message = _refused(["#10", "#11"], "no open deployment blocker")
+    assert "could not read the native blocked-by links of #10" in message
+    assert "has 2 native blockers but only 1 could be read" in message
 
 
 # -- the commit-per-issue invariant ----------------------------------------------

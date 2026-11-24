@@ -280,7 +280,8 @@ Any other issue, and a batch, prints no `planning_close`.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
-directly Blocked-by an open deployment task and opened by a trusted author,
+directly blocked by an open deployment task (through a `Blocked-by:` line or a
+native GitHub blocked-by relationship) and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
 one commit per issue in the listed order, each subject ending in a space and
