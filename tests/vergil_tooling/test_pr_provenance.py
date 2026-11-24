@@ -617,6 +617,123 @@ def test_untrusted_rules_unchanged(action: str) -> None:
     assert [v.action for v in result.violations] == [action]
 
 
+# --- the closing that accompanies the user agent's merge of its own PR (#5140) ---------
+#
+# GitHub records a ``closed`` event, by the merging actor, for every merge.
+# ``own_pr_squash_merge.json`` is the recorded timeline of
+# vergil-project/vergil-fixture-python-lib PR #87 (``gh api
+# repos/<o>/<r>/issues/87/timeline --paginate``, its commit author anonymised),
+# the user agent's first own submit: auto_squash_enabled, then ``merged`` and
+# ``closed`` by the same App, at the same second, ``closed`` right after
+# ``merged`` in the timeline's order.
+
+_RECORDED_AGENT = "wphillipmoore-vergil-user"
+_RECORDED_AUTHORS = TrustedAuthors(
+    human=("wphillipmoore",),
+    agents=(_RECORDED_AGENT,),
+    orgs={"vergil-project": OrgConfig("vergil-project-automation")},
+)
+_MERGED_AT = "2026-11-24T19:58:07Z"
+
+
+def _event(name: str, login: str = _AGENT, at: str = _MERGED_AT) -> dict[str, object]:
+    return {"event": name, "actor": _bot(login), "created_at": at}
+
+
+def test_recorded_own_pr_merge_close_is_allowed() -> None:
+    timeline = _recorded_timeline("own_pr_squash_merge")
+    names = [event.get("event") for event in timeline]
+    assert names[names.index("merged") + 1] == "closed"
+    view = json.dumps({"author": {"login": f"app/{_RECORDED_AGENT}", "is_bot": True}})
+    with (
+        patch(
+            "vergil_tooling.lib.pr_provenance.load_trusted_authors",
+            return_value=_RECORDED_AUTHORS,
+        ),
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.read_output",
+            side_effect=_paged_fake([[]], [timeline], [], author_view=view),
+        ),
+    ):
+        result = pr_provenance.check_pr("87")
+    assert result.ok, _violations(result)
+
+
+def test_own_pr_merge_close_is_allowed() -> None:
+    assert _check_actions([_event("merged"), _event("closed")]).ok
+
+
+def test_close_of_own_pr_that_did_not_merge_is_violation() -> None:
+    result = _check_actions([_event("closed")])
+    assert _violations(result) == [(_AGENT, "closed")]
+
+
+def test_close_by_another_actor_than_the_merger_is_violation() -> None:
+    # The human merged the agent's PR; a close the agent recorded at the same
+    # second is not the merge's own closing.
+    timeline = [
+        {"event": "merged", "actor": _user("alice"), "created_at": _MERGED_AT},
+        _event("closed"),
+    ]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_close_and_reopen_before_the_merge_is_violation() -> None:
+    timeline = [
+        _event("closed", at="2026-11-24T19:50:00Z"),
+        _event("reopened", at="2026-11-24T19:51:00Z"),
+        _event("merged"),
+        _event("closed"),
+    ]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed"), (_AGENT, "reopened")]
+
+
+def test_close_at_another_time_than_the_merge_is_violation() -> None:
+    timeline = [_event("merged"), _event("closed", at="2026-11-24T19:58:12Z")]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_close_before_the_merge_in_timeline_order_is_violation() -> None:
+    timeline = [_event("closed"), _event("merged")]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_only_the_first_close_after_the_merge_accompanies_it() -> None:
+    timeline = [_event("merged"), _event("closed"), _event("closed")]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_merge_close_without_timestamps_is_violation() -> None:
+    # No timestamp to tie the close to the merge: it fails closed.
+    timeline = [{"event": "merged", "actor": _bot(_AGENT)}, {"event": "closed", "actor": _bot(_AGENT)}]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_merge_close_on_another_identitys_pr_is_violation() -> None:
+    timeline = [_event("merged"), _event("closed")]
+    result = _check_actions(timeline, author_view=_ALICE_VIEW)
+    assert _violations(result) == [(_AGENT, "merged"), (_AGENT, "closed")]
+
+
+@pytest.mark.parametrize(
+    ("login", "author", "role"),
+    [
+        ("a-vergil-audit", "app/a-vergil-audit", Role.AUDIT),
+        ("stranger", "stranger", Role.UNTRUSTED),
+    ],
+)
+def test_merge_close_by_a_role_other_than_the_user_identity_is_violation(
+    login: str, author: str, role: Role
+) -> None:
+    actor = trust.Identity(f"{login}[bot]", "Bot")
+    actions = [
+        Action(login, role, "merged", actor, at=_MERGED_AT),
+        Action(login, role, "closed", actor, at=_MERGED_AT),
+    ]
+    result = pr_provenance.evaluate(actions, author=trust.Identity(author, "Bot"))
+    assert [v.action for v in result.violations] == ["merged", "closed"]
+
+
 # --- pr_actors: the agent-involvement evidence (epic .github#1384, Task 11) ------------
 
 

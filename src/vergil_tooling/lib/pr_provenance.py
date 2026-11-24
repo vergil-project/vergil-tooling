@@ -24,7 +24,10 @@ vergil-project/.github#1384, its spec's §4.3). On anyone else's PR (the
 human's, automation's, another agent's, an untrusted or deleted author's)
 every action it is forbidden stays a violation, and its approval is one on
 every PR, its own included. Submit never edits or renames a PR after
-creating it, so ``edited`` stays forbidden on its own PR too. An action is
+creating it, so ``edited`` stays forbidden on its own PR too. GitHub records
+a ``closed`` event, by the merging actor, for every merge; that one closing
+is part of the merge and is allowed with it (:func:`_merge_close`), while any
+other close stays a violation (vergil-tooling#5140). An action is
 either allowed or a
 violation, and a violation always fails: there is no override
 (vergil-tooling#4695). It is either a real problem to investigate or a bug
@@ -123,7 +126,9 @@ _FORBIDDEN: dict[Role, frozenset[str]] = {
 # The forbidden actions the user identity may still perform on its own PR:
 # open it, turn auto-merge on, and merge it (the ``merged_now`` path of
 # ``lib/auto_merge.py``). Submit never renames a PR, so ``edited`` is not
-# among them; nor are closing, reopening or approving.
+# among them; nor are closing, reopening or approving. The one close that is
+# allowed, the closing GitHub records with the merge, is judged apart
+# (:func:`_merge_close`).
 _USER_OWN_PR = frozenset({"created", "merged", _AUTO_MERGE_ENABLED})
 
 
@@ -132,13 +137,16 @@ class Action:
     """A single attributed action on the PR.
 
     *identity* is the actor as GitHub named it; ``None`` (not known) never
-    makes the PR the actor's own.
+    makes the PR the actor's own. *at* is the timeline event's ``created_at``
+    as GitHub gave it; ``None`` (not a timeline event, or none given) never
+    ties a close to the merge.
     """
 
     login: str
     role: Role
     action: str
     identity: trust.Identity | None = None
+    at: str | None = None
 
 
 def _same_identity(a: trust.Identity, b: trust.Identity) -> bool:
@@ -251,10 +259,9 @@ def _collect_actions(pr: str) -> _History:
     authors = load_trusted_authors()
     actions: list[Action] = []
 
-    def add(identity: trust.Identity, action: str) -> None:
-        actions.append(
-            Action(_shown(identity), classify(identity, org=org, authors=authors), action, identity)
-        )
+    def add(identity: trust.Identity, action: str, at: str | None = None) -> None:
+        role = classify(identity, org=org, authors=authors)
+        actions.append(Action(_shown(identity), role, action, identity, at))
 
     # ``gh pr view`` names the author's account type by ``is_bot``; an App
     # author's login is ``app/<slug>``, which the trust layer normalises.
@@ -316,23 +323,72 @@ def _collect_actions(pr: str) -> _History:
         mapped = _map_event(event.get("event", ""))
         if mapped is None:
             continue
-        add(_identity(event.get("actor")), mapped)
+        created_at = event.get("created_at")
+        add(
+            _identity(event.get("actor")),
+            mapped,
+            created_at if isinstance(created_at, str) and created_at else None,
+        )
 
     return _History(author=author, actions=actions, actors=tuple(actors))
+
+
+def _merge_close(actions: list[Action]) -> int | None:
+    """The index in *actions* of the ``closed`` event that accompanied the merge.
+
+    GitHub records a ``closed`` event, by the merging actor, for every merge
+    (vergil-tooling#5140). A close is that event only when all of these hold:
+
+    - the PR merged: *actions* hold exactly one ``merged`` event;
+    - the close is the first ``closed`` event after it in the timeline's
+      order (GitHub lists a timeline oldest first, and lists the merge's
+      ``closed`` right after its ``merged``);
+    - its ``created_at`` equals the merge's: GitHub gives both to the second,
+      and gives both the same second (vergil-project/vergil-fixture-python-lib
+      PR #87, recorded in
+      ``tests/vergil_tooling/fixtures/pr_provenance/own_pr_squash_merge.json``);
+    - its actor is the merge's actor.
+
+    Order and timestamp are both required, so a close before the merge (a
+    close and reopen included) or at another time never qualifies, nor does
+    an event with no timestamp or no actor. ``None`` when no close
+    accompanies a merge.
+    """
+    merges = [i for i, act in enumerate(actions) if act.action == "merged"]
+    if len(merges) != 1:
+        return None
+    merge = actions[merges[0]]
+    close_at = next(
+        (i for i in range(merges[0] + 1, len(actions)) if actions[i].action == "closed"), None
+    )
+    if close_at is None:
+        return None
+    close = actions[close_at]
+    if merge.at is None or close.at != merge.at:
+        return None
+    if merge.identity is None or close.identity is None:
+        return None
+    if not _same_identity(merge.identity, close.identity):
+        return None
+    return close_at
 
 
 def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> ProvenanceResult:
     """The violations among *actions* on a PR *author* opened. Pure.
 
     Each action its role forbids is a violation, except the user identity's
-    opening, auto-merging and merging of its own PR. With no *author*, no
-    PR is anyone's own.
+    opening, auto-merging and merging of its own PR, and the closing GitHub
+    records with that merge (:func:`_merge_close`). With no *author*, no PR
+    is anyone's own. *actions* keep the timeline's order.
     """
     result = ProvenanceResult()
-    for act in actions:
+    merge_close = _merge_close(actions)
+    for index, act in enumerate(actions):
         if act.action not in _FORBIDDEN.get(act.role, frozenset()):
             continue
         if act.action in _USER_OWN_PR and _own_pr(act, author):
+            continue
+        if index == merge_close and _own_pr(act, author):
             continue
         result.violations.append(act)
     return result
