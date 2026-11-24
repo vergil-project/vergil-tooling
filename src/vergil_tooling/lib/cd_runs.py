@@ -18,12 +18,14 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import time
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    import subprocess
 
 RunState = Literal[
     "queued", "in_progress", "success", "failed", "timed_out", "superseded", "cancelled", "none"
@@ -76,18 +78,43 @@ def cd_timeout_secs() -> int:
     return secs
 
 
+# Why ``gh`` could not be given the current identity's token: App credentials
+# that mint none, no installation for the owner, or a token source alongside
+# the App mode (``lib/github.py``).
+_CREDENTIAL_ERRORS = (
+    github.AppAuthError,
+    github.NoInstallationError,
+    github.TokenSourceConflictError,
+)
+
+
+def _any_exit(_result: subprocess.CompletedProcess[str]) -> bool:
+    """Every exit of a CD ``gh`` call is an answer its caller judges.
+
+    Passed to :func:`github.run_tolerating`, so the call runs once with the
+    current identity's token and is never retried there: the callers poll.
+    """
+    return True
+
+
 def _list_cd_runs(target_branch: str, *, repo: str | None = None) -> list[dict[str, object]]:
     """List the 30 most recent CD workflow runs on ``target_branch``, newest first.
 
     *repo* names the repository; without it ``gh`` uses the current one. An
-    empty list means the workflow has no run on the branch yet. A ``gh``
-    failure (which includes a repo with no CD workflow) or a malformed
-    response raises :class:`CDRunLookupError` with the reason.
+    empty list means the workflow has no run on the branch yet.
+
+    ``gh`` runs with the token every ``gh`` call through
+    :mod:`~vergil_tooling.lib.github` gets (vergil-tooling#5140): a registered
+    token source's, else in App mode the installation token of *repo*'s
+    owner (the current repo's without *repo*), else none (the human's ambient
+    ``gh`` login). A ``gh`` failure (which includes a repo with no CD
+    workflow), no credentials to run it with (:data:`_CREDENTIAL_ERRORS`) or
+    a malformed response raises :class:`CDRunLookupError` with the reason.
     """
-    command = ["gh", "run", "list"]
+    command: tuple[str, ...] = ("gh", "run", "list")
     if repo is not None:
-        command += ["--repo", repo]
-    command += [
+        command += ("--repo", repo)
+    command += (
         "--workflow",
         _CD_WORKFLOW_NAME,
         "--branch",
@@ -96,9 +123,14 @@ def _list_cd_runs(target_branch: str, *, repo: str | None = None) -> list[dict[s
         "30",
         "--json",
         "conclusion,databaseId,headSha,status,createdAt,url",
-    ]
-    github.require_gh()
-    result = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603
+    )
+    owner = repo.split("/", 1)[0] if repo is not None else None
+    try:
+        with github.target_org(owner):
+            result = github.run_tolerating(command, is_answer=_any_exit)
+    except _CREDENTIAL_ERRORS as exc:
+        msg = f"no credentials to list the CD runs (`{' '.join(command)}`): {exc}"
+        raise CDRunLookupError(msg) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         msg = f"`{' '.join(command)}` failed (exit {result.returncode}): {detail}"
@@ -126,22 +158,15 @@ def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, obj
 def _view_cd_run(run_id: object) -> dict[str, object] | None:
     """Fetch a CD run's current status/conclusion/url, or ``None`` on a gh error.
 
-    An unusable gh (:func:`github.require_gh`) is raised, never read as a gh
-    error.
+    ``gh`` runs with the current identity's token, as :func:`_list_cd_runs`
+    does. An unusable gh (:func:`github.require_gh`) or no credentials to run
+    it with is raised, never read as a gh error: the watch retries a failed
+    view to its deadline, so a missing credential would read as a run still
+    going.
     """
-    github.require_gh()
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "run",
-            "view",
-            str(run_id),
-            "--json",
-            "status,conclusion,url",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+    result = github.run_tolerating(
+        ("gh", "run", "view", str(run_id), "--json", "status,conclusion,url"),
+        is_answer=_any_exit,
     )
     if result.returncode != 0:
         return None
