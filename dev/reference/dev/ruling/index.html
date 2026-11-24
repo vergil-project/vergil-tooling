@@ -15596,10 +15596,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#protected-change-and-exemption-requests" class="md-nav__link">
+  <a href="#exemption-requests" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Protected-change and exemption requests
+        Exemption requests
       
     </span>
   </a>
@@ -18597,10 +18597,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#protected-change-and-exemption-requests" class="md-nav__link">
+  <a href="#exemption-requests" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Protected-change and exemption requests
+        Exemption requests
       
     </span>
   </a>
@@ -18715,12 +18715,11 @@ for the human, which the human posts with
 <a href="../scope-change/"><code>vrg-scope-change</code></a>.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-ruling request --issue 'OWNER/REPO#N' --items FILE
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-ruling request --issue 'OWNER/REPO#N' --kind protected-change
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-ruling request --issue 'OWNER/REPO#N' --kind merge-review-exemption --reason TEXT
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-ruling request --issue 'OWNER/REPO#N' --kind merge-review-exemption --reason TEXT
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>vrg-ruling draft   --issue 'OWNER/REPO#N' --request ID --items FILE
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>vrg-ruling read    --issue 'OWNER/REPO#N' --request ID [--json]
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --items FILE
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>vrg-ruling draft-scope --issue 'OWNER/REPO#N' --text-file FILE
 </code></pre></div>
 <p><code>--issue</code> is the task issue as <code>owner/repo#N</code>. <code>--request</code> and <code>--reply</code> are
 comment IDs, positive integers with no leading zero.</p>
@@ -18843,8 +18842,8 @@ ASCII (U+0020 to U+007E) that does not contain the marker prefix
 <p>A request and a response end with a blank line and their hidden marker,
 <code>&lt;!-- vrg-ruling kind=request --&gt;</code> or
 <code>&lt;!-- vrg-ruling kind=response request=&lt;ID&gt; reply=&lt;ID&gt; --&gt;</code>. A reply carries
-no marker. A protected-change or exemption request (see
-<a href="#protected-change-and-exemption-requests">below</a>) names its kind in its
+no marker. An exemption request (see
+<a href="#exemption-requests">below</a>) names its kind in its
 marker with a <code>type</code> attribute; an ordinary request carries none.</p>
 <p>A refusal names the item by its ID, or by its position when the ID itself is
 bad. It never echoes a refused value: extra keys are counted, not named, and
@@ -18869,13 +18868,12 @@ landed is reported by its ID; otherwise the error says it did not land
 (re-running is safe) or that the outcome cannot be told. A re-run settles the
 last case, because it is refused and names the open request if the post
 landed.</p>
-<h3 id="protected-change-and-exemption-requests">Protected-change and exemption requests<a class="headerlink" href="#protected-change-and-exemption-requests" title="Permanent link">&para;</a></h3>
-<p><code>request --kind</code> posts one of the two requests whose reply carries a
-structured decision: a <strong>protected-change approval</strong> or a <strong>merge-review
-exemption</strong>. It takes no items file, and it computes its own inputs from the
-clone it runs in: the change from <code>HEAD</code>'s merge base with <code>origin/develop</code>
-(as last fetched; fetch first) to <code>HEAD</code>. No blob or fingerprint is ever
-passed in.</p>
+<h3 id="exemption-requests">Exemption requests<a class="headerlink" href="#exemption-requests" title="Permanent link">&para;</a></h3>
+<p><code>request --kind merge-review-exemption</code> posts the request whose reply
+carries a structured decision: a <strong>merge-review exemption</strong>. It takes no
+items file, and it computes its own input from the clone it runs in: the
+change from <code>HEAD</code>'s merge base with <code>origin/develop</code> (as last fetched;
+fetch first) to <code>HEAD</code>. No fingerprint is ever passed in.</p>
 <table>
 <thead>
 <tr>
@@ -18885,22 +18883,15 @@ passed in.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>protected-change</code></td>
-<td>Every protected file the change touches (the protected set read at <code>origin/develop</code>, a rename counting both paths), one <code>Protected: &lt;blob&gt; &lt;path&gt;</code> line each, the blob being the file's git object ID at <code>HEAD</code> or <code>deleted</code>; then one <code>Diff: &lt;url&gt;</code> line, the GitHub compare link from the merge base to <code>HEAD</code> on <code>origin</code>'s repo</td>
-</tr>
-<tr>
 <td><code>merge-review-exemption</code></td>
 <td>One <code>Reason: &lt;text&gt;</code> line, from <code>--reason</code> (one line of plain text), and one <code>Fingerprint: &lt;sha256&gt;</code> line, the change fingerprint</td>
 </tr>
 </tbody>
 </table>
-<p>Each body ends with the line telling the human how to reply, a blank line,
-and the typed marker, <code>&lt;!-- vrg-ruling kind=request type=protected-change --&gt;</code>
-or <code>&lt;!-- vrg-ruling kind=request type=merge-review-exemption --&gt;</code>.</p>
-<p>It refuses, posting nothing, when the change touches no protected file
-(<code>protected-change</code>), the change is empty (<code>merge-review-exemption</code>),
-<code>HEAD</code> has no merge base with <code>origin/develop</code>, the protected-path registry
-cannot be read, or <code>origin</code> is not a GitHub repo. Otherwise it posts as
+<p>The body ends with the line telling the human how to reply, a blank line,
+and the typed marker, <code>&lt;!-- vrg-ruling kind=request type=merge-review-exemption --&gt;</code>.</p>
+<p>It refuses, posting nothing, when the change is empty or <code>HEAD</code> has no
+merge base with <code>origin/develop</code>. Otherwise it posts as
 <code>request</code> does, under the same open-request rule, prints the comment ID on
 stdout, and prints the human's two commands on stderr, one per decision:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-ruling-reply --issue 'OWNER/REPO#N' --request ID --response-text 'Decision: approve'

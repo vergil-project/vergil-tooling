@@ -18830,7 +18830,14 @@ selection, then opens each PR in turn. There is no confirmation prompt
 and no PR-body preview (vergil-tooling#4744): the arguments already
 chose the selection, and each body is on its opened PR:</p>
 <ol>
-<li>For a batch PR, re-check its rules (see
+<li>Run the <strong>merge-review gate</strong>: fetch <code>origin/develop</code> and check that
+   the change from it to the head is covered by a merge-review record or
+   a merge-review exemption the human approved, matched by the change's
+   fingerprint, on its task issue (on a batch, on each issue for its own
+   commit, or on any issue for the whole change). It runs on every
+   submission, the human's included, and nothing skips it. A change it
+   does not cover fails that PR's submit with the reasons, with nothing
+   pushed and no PR opened. For a batch PR, then re-check its rules (see
    <a href="#batch-prs-one-pr-closing-several-issues">Batch PRs</a>).</li>
 <li>Push the branch, in the modes that push.</li>
 <li>Hold origin's tip to the head the PR must open at, then open the PR
@@ -19112,6 +19119,14 @@ says why it is gone:</p>
 <tr>
 <td><code>--yes</code> / <code>-y</code></td>
 <td>There is no confirmation left to answer: drop the flag</td>
+</tr>
+<tr>
+<td><code>--override-merge-review</code></td>
+<td>The merge-review gate is met only by a merge-review record or an approved merge-review exemption (<code>vrg-ruling request --kind merge-review-exemption</code>)</td>
+</tr>
+<tr>
+<td><code>--human-only</code></td>
+<td>The merge-review gate runs on every submission; nothing skips it</td>
 </tr>
 </tbody>
 </table>

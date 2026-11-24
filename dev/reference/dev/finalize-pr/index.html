@@ -19228,10 +19228,8 @@ re-runs the gates <code>vrg-submit-pr</code> ran before it opened the PR:</p>
 <li><strong>It fetches, then evaluates.</strong> It fetches <code>develop</code> and the PR's head
   commit (which may have been pushed from elsewhere), moving no feature
   branch's remote-tracking ref, and checks the change from the fetched
-  <code>origin/develop</code> to the head: every protected file it touches needs an
-  approved protected-change approval for that file's content, and the
-  change needs a merge-review record, an approved exemption or a human
-  override with its fingerprint. The task issues are the linkage lines of
+  <code>origin/develop</code> to the head: the change needs a merge-review record or
+  an approved merge-review exemption with its fingerprint. The task issues are the linkage lines of
   the PR's trusted body, or, when it has none, its trusted ready state's.</li>
 </ul>
 <p>A head that does not pass, and any read or fetch the re-check cannot
@@ -19531,7 +19529,7 @@ step, and a provenance violation is named loudly:</p>
 </tr>
 <tr>
 <td><em>failed: gates</em></td>
-<td>Get the missing protected-change approval or merge review for its head, then turn auto-merge back on</td>
+<td>Get the missing merge review for its head, then turn auto-merge back on</td>
 </tr>
 <tr>
 <td><em>failed: not a develop PR</em></td>
