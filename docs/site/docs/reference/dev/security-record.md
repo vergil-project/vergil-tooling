@@ -224,10 +224,20 @@ shell: unquoted, the `#` is a glob operator in zsh with `EXTENDED_GLOB`
 set. The `retarget` commands that `vrg-intake-route` prints for an
 advisory it could not retarget are quoted the same way.
 
-Two checks run first, after the tracking lines and the org's
-`security`-labelled issues are read and before anything is written.
-Each refusal exits 1, names the issues the advisory tracks, and prints
-the command that would succeed:
+A retarget reads only the issues it knows: those in the tracking lines,
+`--from` and the `--to` set. It does no org-wide scan of the `security`
+issues (vergil-project/vergil-tooling#5138): an issue whose
+`Security advisory:` line names the advisory although the advisory does
+not track it is a broken pair, which [`sync`](#sync) reports. The one
+exception is a **re-run** after the rewrite landed (the tracking lines
+already name exactly the `--to` set): the tracking lines no longer name
+the issues the first run dropped, so the re-run alone lists the org's
+`security`-labelled issues to find any still naming the advisory.
+
+Two checks run first, after the tracking lines (and, on such a re-run,
+the org's `security`-labelled issues) are read and before anything is
+written. Each refusal exits 1, names the issues the advisory tracks, and
+prints the command that would succeed:
 
 - **Source check.** `--from` must be an issue a `Tracking issue:` line
   names:
@@ -243,11 +253,12 @@ the command that would succeed:
   finished run). Such a re-run moves nothing; it only finishes the
   unmarks.
 - **Open-issue check.** The **dropped** issues are those that are not a
-  `--to`: the issues in the tracking lines plus every `security`-labelled
-  issue whose line names this advisory. Each one still open, other than
-  `--from` (which is being handed on), is refused unless a `--drop`
-  names it. An issue the listing does not return (one that lost its
-  label) has its state read directly; a failed read fails the run. The
+  `--to`: the issues in the tracking lines (on a re-run after the
+  rewrite, every listed `security`-labelled issue whose line names this
+  advisory). Each one still open, other than `--from` (which is being
+  handed on), is refused unless a `--drop` names it. An issue the
+  listing does not hold has its state read directly; a failed read
+  fails the run. The
   refusal's command keeps every open dropped issue as a `--to`, and says
   that leaving one untracked is the human's decision; it never prints a
   `--drop`:
@@ -259,10 +270,11 @@ the command that would succeed:
 - **Trust check.** Every issue body `retarget` reads is read through the
   trust layer, never from the REST listing, and each one that decides or
   receives a write must be trusted (its author and every editor trusted).
-  It refuses, exit 1, before anything is written, when any
-  `security`-labelled issue in the org has an untrusted body (its lines
-  cannot be read, so which issues name this advisory cannot be known),
-  or when a target or an issue to unmark (`--from` included) has one. A
+  It refuses, exit 1, before anything is written, when a target or an
+  issue to unmark (`--from` included) has an untrusted body, or, on a
+  re-run that lists them, when any `security`-labelled issue in the org
+  has one (its lines cannot be read, so which issues name this advisory
+  cannot be known). A
   re-run's source tie by a body still naming the advisory counts only
   from a trusted body; an untrusted one stops the run. The message names
   metadata only, never the body:
@@ -281,10 +293,11 @@ succeeded:
 2. **Rewrite** the advisory's description: every `Tracking issue:` line is
    replaced by one line per target. The rest of the description is kept.
    An unchanged description is not written.
-3. **Unmark** every issue that names this advisory but is no longer a
-   target. These are the issues in the old tracking lines, plus every
-   `security`-labelled issue in the org whose `Security advisory:` line
-   names this GHSA ID (found by REST listing, never by search). Each one
+3. **Unmark** every dropped issue that names this advisory. These are the
+   issues in the old tracking lines that are no longer a target (on a
+   re-run after the rewrite, every listed `security`-labelled issue whose
+   `Security advisory:` line names this GHSA ID, found by REST listing,
+   never by search). Each one
    gets the comment `Security record moved to <refs>` (posted once, even on
    a re-run; only a trusted author's copy of it counts as already posted,
    and any other is reported on stderr, metadata only). Then this advisory's line is removed, together with the
@@ -311,7 +324,7 @@ step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
 After a failure at any step, re-run the same command: it finishes the
 job, and once the job is done a re-run writes nothing. An issue that still carries this advisory's line and label is found
-again by the listing, so an interrupted unmark is completed. The one case
+again by the re-run's listing, so an interrupted unmark is completed. The one case
 a re-run cannot reach is an issue whose `security` label was removed by
 hand while its advisory line stayed; `sync` reports it as a broken pair.
 On success it prints `Retargeted <GHSA-id> to <refs>.`
@@ -446,7 +459,10 @@ left unchanged: <error>`; the rest are still synced.
 
 **Untrusted bodies.** Each issue's `Security advisory:` lines are read
 only from a body the trust layer trusts (its author and every editor
-trusted). An untrusted body is reported, never acted on: it is named on
+trusted). The bodies are read in batches, one GraphQL query per repo for
+up to 50 issues, bodies and their edit history only: no comment is read,
+since the pass takes nothing from one (vergil-project/vergil-tooling#5138).
+An untrusted body is reported, never acted on: it is named on
 stderr, metadata only (`skipped untrusted content: …`; under GitHub
 Actions only a count by cause), its lines are not read, it is not
 reported as a broken pair, and each advisory that tracks it is left
@@ -494,27 +510,29 @@ org from the current repo's `origin` remote, as `show` and `sync` do.
 |---|---|
 | `--reason TEXT` | Required. Why the record is closed: one line, at most 500 characters. It is **public**, so it must be neutral, like an issue title: never the finding, its severity or any other advisory detail. |
 
-The issues are the ones the advisory's `Tracking issue:` lines name, plus
-any `security`-labelled issue in the org whose `Security advisory:` line
-names it (found by REST listing, never by search). An issue that was
-transferred is followed to where it is now. The steps run in order, and
-each starts only once the one before it succeeded:
+The issues are the ones the advisory's `Tracking issue:` lines name, and
+only those. `close` reads no other issue and does no org-wide scan of the
+`security` issues (vergil-project/vergil-tooling#5138), so its cost does
+not grow with the number of security issues in the org. An issue whose
+`Security advisory:` line names the record although the record does not
+track it is a broken pair: `close` does not comment on it, and
+[`sync`](#sync) reports it. An issue that was transferred is followed to
+where it is now. The steps run in order, and each starts only once the
+one before it succeeded:
 
 1. **Check.** Refuse, changing nothing, when:
    - the advisory does not exist in `<org>/.github`;
    - it is an external report, or in any state other than `draft` or
      `closed` (`published`, `withdrawn`, `triage`): those are a human's
      decision, and `sync` leaves them alone too;
-   - no issue tracks it and none names it, so no issue could carry the
-     comment;
-   - any of its issues is still open. `sync` sets an advisory back to
+   - it tracks no issue, so no issue could carry the comment;
+   - any issue it tracks is still open. `sync` sets an advisory back to
      draft while any issue it tracks is open, so the close would not
      hold: close the issue first (as not planned, for dropped work), or
-     retarget the record;
-   - any `security`-labelled issue in the org has a body the trust layer
-     does not trust: the lines that pick the issues naming the record are
-     read only from trusted bodies, so the issues to comment on cannot be
-     known. The message names metadata only, and the human decides.
+     retarget the record.
+
+   No issue body is read: the tracking lines, in the advisory's own
+   description, pick the issues, so no body can decide the close.
 2. **Comment.** Post `Security record <GHSA-id> closed: <reason>` on each
    issue, skipping one that already carries that exact comment from a
    trusted author (its author and every editor trusted, judged by the trust

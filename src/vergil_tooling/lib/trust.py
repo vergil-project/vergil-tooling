@@ -24,6 +24,8 @@ items and a :class:`Skipped` record for each untrusted one; where the content
 is load-bearing they raise :class:`UntrustedContentError` instead; for a
 report, :func:`read_issue_edits` also lists every untrusted edit of trusted
 content, and ``read_events(renames=True)`` every rename;
+:func:`read_bodies` judges many items' bodies alone, in batched reads, for a
+caller that takes nothing from their comments;
 :func:`read_comment_stream` keeps each trusted comment's author login and
 whether it was edited, for the ruling turn checks. Reviews and
 inline review comments follow the same rule (:func:`read_reviews`), and
@@ -396,6 +398,21 @@ class IssueContent:
     author_role: Role | None
     comments: tuple[TrustedComment, ...]
     skipped: tuple[Skipped, ...]
+
+
+@dataclass(frozen=True)
+class BodyContent:
+    """What :func:`read_bodies` trusts of one item: its body alone, never its comments.
+
+    *body* and *body_role* are ``None`` when the body is untrusted, and
+    *skipped* is then its record (field ``body``); *author_role* is ``None``
+    when the author is untrusted (an outsider-opened item).
+    """
+
+    body: str | None
+    body_role: Role | None
+    author_role: Role | None
+    skipped: Skipped | None
 
 
 @dataclass(frozen=True)
@@ -879,6 +896,101 @@ def read_issue(
     )
 
 
+# How many items one :func:`read_bodies` query reads. Each item's first page
+# of body edits is at most _PAGE nodes, so a query stays far below GitHub's
+# node limit.
+_BODIES_CHUNK = 50
+
+
+def _bodies_query(count: int) -> str:
+    """A query for the bodies of *count* items of one repo, ``$n0`` … aliased ``i0`` …."""
+    numbers = ", ".join(f"$n{i}: Int!" for i in range(count))
+    items = " ".join(
+        f"i{i}: issueOrPullRequest(number: $n{i}) {{ __typename {_on_issue_and_pr(_BODY_FIELDS)} }}"
+        for i in range(count)
+    )
+    return f"""
+query($owner: String!, $name: String!, {numbers}) {{
+  repository(owner: $owner, name: $name) {{ {items} }}
+}}
+"""
+
+
+def read_bodies(
+    repo: str,
+    numbers: Sequence[int],
+    *,
+    roles: frozenset[Role] = ALL_ROLES,
+    editors: EditorRule = "every",
+    authors: TrustedAuthors | None = None,
+) -> dict[int, BodyContent]:
+    """Read and judge the bodies of *repo*'s items *numbers*, never their comments.
+
+    For a caller that takes nothing from an item but its body. The bodies
+    are read :data:`_BODIES_CHUNK` items to one GraphQL query, then every
+    further page of each body's edit history; each body is judged as
+    :func:`read_issue` judges it (author, and editors by *editors*). An
+    untrusted body is returned as ``None`` with its :class:`Skipped` record,
+    never its text. A missing item, a missing field or a failed call raises
+    :class:`TrustReadError`: no body is ever taken from a partial read.
+    *authors* defaults to the loaded configuration.
+    """
+    owner, name = _split_repo(repo)
+    wanted = list(dict.fromkeys(numbers))
+    if wanted and authors is None:
+        authors = load_trusted_authors()
+    found: dict[int, BodyContent] = {}
+    for start in range(0, len(wanted), _BODIES_CHUNK):
+        chunk = wanted[start : start + _BODIES_CHUNK]
+        call = f"read_bodies {repo}#{chunk[0]}…#{chunk[-1]}"
+        variables: dict[str, object] = {f"n{i}": number for i, number in enumerate(chunk)}
+        data = _graphql(call, _bodies_query(len(chunk)), owner=owner, name=name, **variables)
+        repository = _obj(data.get("repository"), call, "the repository")
+        for i, number in enumerate(chunk):
+            found[number] = _body_content(
+                repo,
+                number,
+                _obj(repository.get(f"i{i}"), call, f"item {number}"),
+                roles=roles,
+                editors=editors,
+                authors=cast("TrustedAuthors", authors),
+            )
+    return found
+
+
+def _body_content(
+    repo: str,
+    number: int,
+    item: Mapping[str, Any],
+    *,
+    roles: frozenset[Role],
+    editors: EditorRule,
+    authors: TrustedAuthors,
+) -> BodyContent:
+    """One :func:`read_bodies` item's body, its edit history read in full, judged."""
+    call = f"read_bodies {repo}#{number}"
+    owner, name = _split_repo(repo)
+    kind = _kind_of(item, call)
+    body = _content(item, call, f"the {kind} body")
+    _read_body_edits(body, call, {"owner": owner, "name": name, "number": number})
+    body_role, author_role, skipped = _judge(
+        body,
+        repo=repo,
+        number=number,
+        kind=kind,
+        field="body",
+        roles=roles,
+        editors=editors,
+        authors=authors,
+    )
+    return BodyContent(
+        body=None if skipped is not None else body.body,
+        body_role=body_role,
+        author_role=author_role,
+        skipped=skipped,
+    )
+
+
 def read_issue_edits(
     repo: str,
     number: int,
@@ -968,6 +1080,16 @@ def read_comment_stream(
     return CommentStream(comments=stream, ids=frozenset(by_id), skipped=tuple(skipped))
 
 
+def _read_body_edits(body: _Content, call: str, where: Mapping[str, object]) -> None:
+    """Follow every further page of *body*'s edit history; *where* names the item."""
+    while body.edits_cursor is not None:
+        page = _item(_graphql(call, _BODY_EDITS_QUERY, **where, after=body.edits_cursor), call)
+        nodes, body.edits_cursor = _connection(
+            _get(page, "userContentEdits", call, "the body"), call, "the edits of the body"
+        )
+        body.edits += [_edit(edit, call, "the body") for edit in nodes]
+
+
 def _read_item(repo: str, number: int) -> tuple[str, _Content, list[_Comment]]:
     """An issue's or PR's kind, body and comments, every page of each read."""
     owner, name = _split_repo(repo)
@@ -976,12 +1098,7 @@ def _read_item(repo: str, number: int) -> tuple[str, _Content, list[_Comment]]:
     item = _item(_graphql(call, _ITEM_QUERY, **where), call)
     kind = _kind_of(item, call)
     body = _content(item, call, f"the {kind} body")
-    while body.edits_cursor is not None:
-        page = _item(_graphql(call, _BODY_EDITS_QUERY, **where, after=body.edits_cursor), call)
-        nodes, body.edits_cursor = _connection(
-            _get(page, "userContentEdits", call, "the body"), call, "the edits of the body"
-        )
-        body.edits += [_edit(edit, call, "the body") for edit in nodes]
+    _read_body_edits(body, call, where)
 
     nodes, cursor = _connection(_get(item, "comments", call, f"the {kind}"), call, "the comments")
     comments = [_comment(node, call) for node in nodes]

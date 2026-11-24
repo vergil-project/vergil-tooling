@@ -312,6 +312,141 @@ def test_read_issue_outsider_body_reported_without_require(fake: Any) -> None:
     assert content.skipped[0].kind == "issue"
 
 
+# --- read_bodies -----------------------------------------------------------------
+
+
+class FakeBodies:
+    """A fake ``github.graphql`` for :func:`trust.read_bodies`: one item answer per number."""
+
+    def __init__(self, items: dict[int, Any], body_edits: list[dict[str, Any]] | None = None):
+        self.items = items
+        self.body_edits = body_edits or []
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def __call__(self, query: str, **variables: object) -> dict[str, Any]:
+        self.calls.append((query, variables))
+        if query == trust._BODY_EDITS_QUERY:
+            return self.body_edits.pop(0)
+        numbers = [variables[f"n{i}"] for i in range(len(variables) - 2)]
+        assert query == trust._bodies_query(len(numbers))
+        return {"repository": {f"i{i}": self.items[n] for i, n in enumerate(numbers)}}
+
+
+def _bodies_node(**kwargs: Any) -> Any:
+    return _item(**kwargs)["repository"]["issueOrPullRequest"]
+
+
+@pytest.fixture
+def bodies(monkeypatch: pytest.MonkeyPatch) -> Any:
+    def install(items: dict[int, Any], **kwargs: Any) -> FakeBodies:
+        fake = FakeBodies(items, **kwargs)
+        monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fake)
+        return fake
+
+    return install
+
+
+def test_read_bodies_judges_each_body_in_one_query(bodies: Any) -> None:
+    fake = bodies(
+        {
+            1: _bodies_node(),
+            2: _bodies_node(author=OUTSIDER, body=SPAM),
+            3: _bodies_node(editor=OUTSIDER, edited=True, edits=_edits([OUTSIDER])),
+            4: _bodies_node(typename="PullRequest", author=AGENT, body="a PR body"),
+        }
+    )
+    found = trust.read_bodies(REPO, [1, 2, 3, 4, 2], authors=AUTHORS)
+    assert found[1] == trust.BodyContent("the trusted body", Role.HUMAN, Role.HUMAN, None)
+    assert found[4] == trust.BodyContent("a PR body", Role.AGENTS, Role.AGENTS, None)
+    # An untrusted body is never returned, only its record (metadata only).
+    assert found[2].body is None
+    assert found[2].author_role is None
+    assert found[2].skipped == Skipped(REPO, 2, "issue", "drive-by", CREATED, "body", "untrusted")
+    assert found[3].body is None
+    assert found[3].author_role is Role.HUMAN
+    assert found[3].skipped == Skipped(REPO, 3, "edit", "drive-by", EDITED, "body", "untrusted")
+    assert SPAM not in repr(found)
+    # One query for the four distinct numbers, and no comment is read.
+    assert fake.calls == [
+        (
+            trust._bodies_query(4),
+            {"owner": ORG, "name": "widgets", "n0": 1, "n1": 2, "n2": 3, "n3": 4},
+        )
+    ]
+    assert "comments" not in fake.calls[0][0]
+
+
+def test_read_bodies_reads_in_chunks(bodies: Any) -> None:
+    count = trust._BODIES_CHUNK + 1
+    fake = bodies({n: _bodies_node() for n in range(1, count + 1)})
+    found = trust.read_bodies(REPO, range(1, count + 1), authors=AUTHORS)
+    assert sorted(found) == list(range(1, count + 1))
+    assert [q for q, _ in fake.calls] == [
+        trust._bodies_query(trust._BODIES_CHUNK),
+        trust._bodies_query(1),
+    ]
+    assert fake.calls[1][1] == {"owner": ORG, "name": "widgets", "n0": count}
+
+
+def test_read_bodies_follows_every_page_of_a_bodys_edits(bodies: Any) -> None:
+    page = {"repository": {"issueOrPullRequest": {"userContentEdits": _edits([OUTSIDER])}}}
+    fake = bodies(
+        {7: _bodies_node(editor=HUMAN, edited=True, edits=_edits([HUMAN], cursor="b1"))},
+        body_edits=[page],
+    )
+    found = trust.read_bodies(REPO, [7], authors=AUTHORS)
+    assert found[7].body is None
+    assert found[7].skipped is not None
+    assert found[7].skipped.kind == "edit"
+    assert fake.calls[1] == (
+        trust._BODY_EDITS_QUERY,
+        {"owner": ORG, "name": "widgets", "number": 7, "after": "b1"},
+    )
+
+
+def test_read_bodies_with_no_numbers_reads_nothing(
+    bodies: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = bodies({})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: pytest.fail("authors loaded"))
+    assert trust.read_bodies(REPO, []) == {}
+    assert fake.calls == []
+
+
+def test_read_bodies_loads_configured_authors(
+    bodies: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bodies({7: _bodies_node()})
+    monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
+    assert trust.read_bodies(REPO, [7])[7].body_role is Role.HUMAN
+
+
+@pytest.mark.parametrize(
+    ("answer", "detail"),
+    [
+        ({"repository": None}, "the repository is missing"),
+        ({"repository": {"i0": None}}, "item 7 is missing"),
+        ({"repository": {"i0": {"__typename": "Discussion"}}}, "neither an issue"),
+    ],
+)
+def test_read_bodies_partial_answer_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch, answer: dict[str, Any], detail: str
+) -> None:
+    monkeypatch.setattr(vergil_tooling.lib.github, "graphql", lambda *_a, **_k: answer)
+    with pytest.raises(TrustReadError, match=detail):
+        trust.read_bodies(REPO, [7], authors=AUTHORS)
+
+
+def test_read_bodies_failed_call_is_a_read_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = vergil_tooling.lib.github.GitHubAPIError(1, ("gh",), SPAM, "HTTP 502")
+    monkeypatch.setattr(
+        vergil_tooling.lib.github, "graphql", lambda *_a, **_k: (_ for _ in ()).throw(error)
+    )
+    with pytest.raises(TrustReadError, match=r"read_bodies acme/widgets#7…#7") as excinfo:
+        trust.read_bodies(REPO, [7], authors=AUTHORS)
+    assert SPAM not in str(excinfo.value)
+
+
 # --- outsider_opened -----------------------------------------------------------
 
 
@@ -1854,6 +1989,7 @@ def test_worst_case_nodes_counts_nesting() -> None:
         *trust._CLOSE_SEARCH_QUERIES.values(),
         *trust._LIST_QUERIES.values(),
         trust._RENAMES_QUERY,
+        trust._bodies_query(trust._BODIES_CHUNK),
     ],
 )
 def test_every_query_is_under_githubs_node_limit(query: str) -> None:

@@ -1369,9 +1369,9 @@ issue unless `--drop` names it, and moves the advisory to another org's
 `.github` when every `--to` is there (a copy with a `Moved from:` line;
 the original closed with `Moved to:`), `sync` sets each paired advisory's state from its issues and
 reports broken pairs (`--dry-run` previews it), and `close` closes a draft
-advisory whose issues are all closed, posting the GHSA ID and a required
+advisory whose tracked issues are all closed, posting the GHSA ID and a required
 `--reason` on each of them first, and `note` appends a dated private note
-from a file to an advisory's description (append-only). Advisory text is printed only by `show` and `list --details`. An issue's `Security advisory:` lines are read only from a body the trust layer trusts: an untrusted body stops a mark, retarget or close before any write, and `sync` reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
+from a file to an advisory's description (append-only). Advisory text is printed only by `show` and `list --details`. A write reads only the issues it knows: `close` reads only the issues the advisory tracks, and `retarget` those plus `--from` and the `--to` set, with no scan of the org's `security` issues (only a `retarget` re-run after its rewrite landed lists them); finding broken pairs is `sync`'s job, which reads each `security` issue's body in batches, bodies only. An issue's `Security advisory:` lines are read only from a body the trust layer trusts: an untrusted body stops a mark or retarget before any write, and `sync` reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
 [vrg-security-record](dev/security-record.md) and
 [Security Records](../guides/security-records.md).
 

@@ -199,14 +199,40 @@ class FakeItems:
         self.event_reads: list[tuple[str, int]] = []
 
     def __call__(self, query: str, **variables: Any) -> dict[str, Any]:
+        numbers = bodies_numbers(query, variables)
+        if numbers is not None:
+            repo = f"{variables['owner']}/{variables['name']}"
+            return bodies_answer([self._item((repo, number)) for number in numbers])
         assert query in (trust._ITEM_QUERY, trust._EVENTS_QUERY), "only items and events are faked"
         key = (f"{variables['owner']}/{variables['name']}", int(variables["number"]))
         if query == trust._EVENTS_QUERY:
             self.event_reads.append(key)
             assert key in self.closers or not self.strict, f"unexpected events read of {key}"
             return closed_timeline(self.closers.get(key, HUMAN))
+        return self._item(key)
+
+    def _item(self, key: tuple[str, int]) -> dict[str, Any]:
         self.reads.append(key)
         if key not in self.items:
             assert not self.strict, f"unexpected read of {key}"
             return item()
         return self.items[key]
+
+
+def bodies_numbers(query: str, variables: dict[str, Any]) -> list[int] | None:
+    """The issue numbers of a :func:`trust.read_bodies` query, or None for any other query."""
+    numbers: list[int] = []
+    while f"n{len(numbers)}" in variables:
+        numbers.append(int(variables[f"n{len(numbers)}"]))
+    if not numbers or query != trust._bodies_query(len(numbers)):
+        return None
+    return numbers
+
+
+def bodies_answer(answers: list[dict[str, Any]]) -> dict[str, Any]:
+    """The answer to a :func:`trust.read_bodies` query: each :func:`item` answer, aliased."""
+    return {
+        "repository": {
+            f"i{i}": answer["repository"]["issueOrPullRequest"] for i, answer in enumerate(answers)
+        }
+    }
