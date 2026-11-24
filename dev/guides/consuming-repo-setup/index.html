@@ -19165,7 +19165,8 @@ so an interrupted run resumes where it stopped:</p>
 <li>Apply the GitHub settings, rulesets and labels.</li>
 <li>Create the agent audit markers, <code>vergil/agent-audit/develop</code> and
     <code>vergil/agent-audit/main</code>, at the tips of <code>develop</code> and <code>main</code>. A
-    marker that already exists is left as it is.</li>
+    marker that already exists is left as it is. A repo with no <code>main</code>
+    gets no <code>main</code> marker, and the step reports <code>main</code> as not audited.</li>
 <li>Configure GitHub Pages (when docs publishing is on).</li>
 </ol>
 <p>Every prompt has a matching flag (<code>--description</code>,
