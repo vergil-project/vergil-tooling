@@ -81,6 +81,13 @@ class Origin:
     def tip(self, branch: str) -> str:
         return _git(self.bare, "rev-parse", branch)
 
+    def has(self, branch: str) -> bool:
+        return bool(_git(self.bare, "for-each-ref", "--format=%(refname)", f"refs/heads/{branch}"))
+
+    def delete(self, branch: str) -> None:
+        """Delete *branch* from ``origin``, as a repo that never had it."""
+        _git(self.bare, "update-ref", "-d", f"refs/heads/{branch}")
+
     def squash(self, number: int, files: dict[str, str], *, onto: str = "develop") -> str:
         """Open PR *number* off *onto* with one commit, then squash-merge it: the merge commit."""
         _git(self.work, "checkout", "-q", "-B", f"pr{number}", f"origin/{onto}")
@@ -175,7 +182,7 @@ class FakeGitHub:
     def read_ref(self, repo: str, branch: str) -> str | None:
         assert repo == REPO
         if branch in ("develop", "main"):
-            return self.origin.tip(branch)
+            return self.origin.tip(branch) if self.origin.has(branch) else None
         return self.refs.get(branch)
 
     def write_json(self, method: str, endpoint: str, body: dict[str, object]) -> None:
@@ -311,7 +318,7 @@ def _squash_pr(
 
 def test_init_sets_marker_and_audits_nothing(origin: Origin, gh: FakeGitHub, gates: Gates) -> None:
     done = agent_audit.init_markers(REPO)
-    assert done == [
+    assert [(d.marker, d.sha, d.created) for d in done] == [
         ("vergil/agent-audit/develop", origin.tip("develop"), True),
         ("vergil/agent-audit/main", origin.tip("main"), True),
     ]
@@ -331,7 +338,11 @@ def test_init_leaves_an_existing_marker_untouched(origin: Origin, gh: FakeGitHub
     _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
     gh.refs["vergil/agent-audit/develop"] = old
     done = agent_audit.init_markers(REPO)
-    assert done[0] == ("vergil/agent-audit/develop", old, False)
+    assert (done[0].marker, done[0].sha, done[0].created) == (
+        "vergil/agent-audit/develop",
+        old,
+        False,
+    )
     assert gh.refs["vergil/agent-audit/develop"] == old
     assert [w[0] for w in gh.writes] == ["POST"]
 
@@ -362,6 +373,134 @@ def test_marker_off_the_branch_history_is_a_finding(
     results = agent_audit.audit(clone, REPO, AUTHORS)
     assert _kinds(results) == ["marker-not-ancestor"]
     assert gh.refs["vergil/agent-audit/develop"] == stray
+
+
+# --- an audited branch the repo does not have (.github#1384, ruling N0.18) ------------
+#
+# The four rows of vergil-tooling#5131, for --init and the audit: the branch
+# present with no marker and with one are the tests above; these are the
+# branch absent with no marker (skipped, and said so) and with one (refused or
+# a finding: deleting a branch never escapes the audit), and no develop at all.
+
+
+def test_init_skips_an_absent_branch_with_no_marker(origin: Origin, gh: FakeGitHub) -> None:
+    origin.delete("main")
+    done = agent_audit.init_markers(REPO)
+    assert [(d.branch, d.marker, d.sha, d.created, d.skipped) for d in done] == [
+        ("develop", "vergil/agent-audit/develop", origin.tip("develop"), True, False),
+        ("main", "vergil/agent-audit/main", None, False, True),
+    ]
+    assert gh.refs == {"vergil/agent-audit/develop": origin.tip("develop")}
+    assert agent_audit.not_audited(REPO, "main") == "o/r: no main branch; not audited"
+
+
+def test_init_refuses_an_absent_branch_whose_marker_is_set(origin: Origin, gh: FakeGitHub) -> None:
+    gh.refs["vergil/agent-audit/main"] = origin.tip("main")
+    origin.delete("main")
+    with pytest.raises(agent_audit.AuditError, match=r"o/r has no main branch, but its marker"):
+        agent_audit.init_markers(REPO)
+    assert gh.writes == []  # refused before any marker is created
+
+
+@pytest.mark.parametrize("marked", [False, True], ids=["no-marker", "marker"])
+def test_init_refuses_a_repo_with_no_develop(origin: Origin, gh: FakeGitHub, marked: bool) -> None:
+    if marked:
+        gh.refs["vergil/agent-audit/develop"] = origin.tip("develop")
+    origin.delete("develop")
+    with pytest.raises(agent_audit.AuditError, match=r"o/r has no develop branch"):
+        agent_audit.init_markers(REPO)
+    assert gh.writes == []
+
+
+def test_audit_skips_an_absent_branch_with_no_marker(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    gh.refs["vergil/agent-audit/develop"] = origin.tip("develop")
+    origin.delete("main")
+    merged = _squash_pr(gh, origin, 11, {"b.txt": "b\n"})
+    develop, main = agent_audit.audit(clone, REPO, AUTHORS)
+    assert (develop.skipped, develop.findings, develop.audited_to) == (
+        False,
+        [],
+        merged.merge_commit,
+    )
+    assert (main.branch, main.skipped, main.findings, main.audited_to) == ("main", True, [], None)
+    assert "vergil/agent-audit/main" not in gh.refs
+    assert [w[1] for w in gh.writes] == [f"repos/{REPO}/git/refs/heads/vergil/agent-audit/develop"]
+
+
+def test_audit_reports_an_absent_branch_whose_marker_is_set(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    held = origin.tip("main")
+    origin.delete("main")
+    main = agent_audit.audit(clone, REPO, AUTHORS)[1]
+    assert not main.skipped
+    assert [(f.kind, f.branch, f.subject) for f in main.findings] == [
+        ("missing-branch", "main", "main")
+    ]
+    assert held[:12] in main.findings[0].detail
+    assert main.audited_to is None
+    assert gh.refs["vergil/agent-audit/main"] == held
+
+
+@pytest.mark.parametrize("marked", [False, True], ids=["no-marker", "marker"])
+def test_audit_reports_a_repo_with_no_develop(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, marked: bool
+) -> None:
+    _mark(gh, origin)
+    if not marked:
+        del gh.refs["vergil/agent-audit/develop"]
+    origin.delete("develop")
+    develop, main = agent_audit.audit(clone, REPO, AUTHORS)
+    assert not develop.skipped
+    assert [(f.kind, f.branch) for f in develop.findings] == [("missing-branch", "develop")]
+    assert "every repo has one" in develop.findings[0].detail
+    assert main.findings == []
+
+
+def test_cli_init_reports_a_skipped_branch(
+    origin: Origin, cli: Path, gh: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin.delete("main")
+    assert vrg_agent_audit.main(["--repo", REPO, "--init"]) == 0
+    out = capsys.readouterr().out
+    assert "o/r: vergil/agent-audit/develop created at" in out
+    assert "o/r: no main branch; not audited\n" in out
+    assert set(gh.refs) == {"vergil/agent-audit/develop"}
+
+
+def test_cli_init_refuses_an_absent_branch_whose_marker_is_set(
+    origin: Origin, cli: Path, gh: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh.refs["vergil/agent-audit/main"] = origin.tip("main")
+    origin.delete("main")
+    assert vrg_agent_audit.main(["--repo", REPO, "--init"]) == 1
+    assert "o/r has no main branch, but its marker" in capsys.readouterr().err
+
+
+def test_cli_audit_reports_a_skipped_branch_and_exits_0(
+    origin: Origin, cli: Path, gh: FakeGitHub, gates: Gates, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gh.refs["vergil/agent-audit/develop"] = origin.tip("develop")
+    origin.delete("main")
+    assert vrg_agent_audit.main(["--repo", REPO]) == 0
+    out = capsys.readouterr().out
+    assert "o/r develop: 0 finding(s)" in out
+    assert "o/r: no main branch; not audited\n" in out
+    assert "o/r main:" not in out
+
+
+def test_cli_audit_reports_an_absent_branch_whose_marker_is_set(
+    origin: Origin, cli: Path, gh: FakeGitHub, gates: Gates, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark(gh, origin)
+    origin.delete("main")
+    assert vrg_agent_audit.main(["--repo", REPO]) == 1
+    out = capsys.readouterr().out
+    assert "missing-branch: o/r main: main:" in out
+    assert "not audited" not in out
 
 
 # --- catching up ----------------------------------------------------------------------

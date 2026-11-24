@@ -1875,11 +1875,13 @@ def step_audit_markers(ctx: RepoInitContext) -> None:
     The markers and their create helper are the agent audit's own
     (:func:`agent_audit.init_markers`, .github#1384 Task 12b): only a missing
     marker is created, and an existing one is left as it is, so an adopt run
-    never moves an audit's progress. Repo init runs as the admin role, which
-    the "Agent audit markers" ruleset lets create them. A failed read or
-    create stops the run.
+    never moves an audit's progress. A repo with no ``main`` (one never
+    released) gets no ``main`` marker, and the step says ``main`` is not
+    audited. Repo init runs as the admin role, which the "Agent audit
+    markers" ruleset lets create them. A failed read or create stops the run,
+    as does a repo with no ``develop``.
     """
-    from vergil_tooling.lib.agent_audit import AuditError, init_markers
+    from vergil_tooling.lib.agent_audit import AuditError, init_markers, not_audited
 
     print("Step 10: Creating the agent audit markers...")
     try:
@@ -1887,11 +1889,13 @@ def step_audit_markers(ctx: RepoInitContext) -> None:
     except AuditError as exc:
         emit_error(str(exc))
         raise SystemExit(1) from exc
-    for marker, sha, created in done:
-        if created:
-            print(f"  Created {marker} at {sha[:12]}.")
+    for item in done:
+        if item.sha is None:
+            print(f"  {not_audited(ctx.repo, item.branch)}.")
+        elif item.created:
+            print(f"  Created {item.marker} at {item.sha[:12]}.")
         else:
-            print(f"  {marker} already at {sha[:12]}, left as it is.")
+            print(f"  {item.marker} already at {item.sha[:12]}, left as it is.")
 
 
 # The Pages source step 11 asks for: a legacy build from the root of gh-pages.
