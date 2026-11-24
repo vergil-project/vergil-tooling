@@ -19110,7 +19110,7 @@ next to the org's other repos: the wizard walks up from the current
 directory to the first one named <code>&lt;org&gt;</code>. Pass <code>--target-dir &lt;parent&gt;</code>
 to name the clone's parent directory explicitly. The clone uses SSH
 (<code>git@github.com:&lt;org&gt;/&lt;name&gt;.git</code>).</p>
-<p>The wizard runs ten steps, each committed as <code>chore(init): step N - …</code>
+<p>The wizard runs eleven steps, each committed as <code>chore(init): step N - …</code>
 so an interrupted run resumes where it stopped:</p>
 <ol>
 <li>Create the GitHub repository, always public.</li>
@@ -19133,6 +19133,9 @@ so an interrupted run resumes where it stopped:</p>
    Any still missing after a short wait stop the run, named. A resumed
    run checks again.</li>
 <li>Apply the GitHub settings, rulesets and labels.</li>
+<li>Create the agent audit markers, <code>vergil/agent-audit/develop</code> and
+    <code>vergil/agent-audit/main</code>, at the tips of <code>develop</code> and <code>main</code>. A
+    marker that already exists is left as it is.</li>
 <li>Configure GitHub Pages (when docs publishing is on).</li>
 </ol>
 <p>Every prompt has a matching flag (<code>--description</code>,
@@ -19157,7 +19160,8 @@ and <code>--initial-version</code>.</p>
 Vergil-managed file — <code>vergil.toml</code>, <code>CLAUDE.md</code>,
 <code>.claude/settings.json</code>, <code>.claude/hooks/guard.sh</code>, <code>LICENSE</code>,
 <code>README.md</code>, <code>.gitignore</code>, the CI/CD workflows and the docs site
-config — and applies the GitHub settings, rulesets and labels. It asks
+config — applies the GitHub settings, rulesets and labels, and creates
+any agent audit marker that is missing. It asks
 for confirmation first (<code>--non-interactive</code> accepts it). Values in an
 existing <code>vergil.toml</code> become the prompt defaults, and any table the
 wizard does not own (<code>[package]</code>, <code>[container]</code>, <code>[validation]</code>, …)
@@ -19582,6 +19586,12 @@ never produces.</p>
   release. A later push to <code>main</code> with no release PR still fails the
   release's CI-evidence gate.</li>
 </ul>
+<p>The jobs of these three that call a workflow reading the automation
+App's keys pass <code>secrets: inherit</code> in a <code>vergil-project</code> repo. In a repo
+of any other organization they pass the keys by name, since GitHub
+passes <code>inherit</code> only to a reusable workflow in the caller's own
+organization or enterprise (see
+<a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>).</p>
 <p>To regenerate them after a <code>vergil.toml</code> change, re-run
 <code>vrg-github-repo-init --adopt</code>. See the
 <a href="../ci-architecture/">CI Architecture</a> guide for the CI tiers.</p>
@@ -19593,8 +19603,11 @@ never produces.</p>
 <li>Re-run <code>vrg-github-repo-init --adopt</code> from the repo root. It keeps
    <code>[package]</code> (and any other hand-written table) and regenerates the
    workflows: <code>ci.yml</code> gains a <code>package</code> job calling <code>ci-package.yml</code>. The
-   <code>cd.yml</code> <code>release</code> job already passes <code>secrets: inherit</code>, which carries the
-   signing secrets. The GitHub config step then makes <code>package / evidence</code> a
+   <code>cd.yml</code> <code>release</code> job of a <code>vergil-project</code> repo already passes
+   <code>secrets: inherit</code>, which carries the signing secrets. In a repo of any
+   other organization the job passes only the App keys (and a rust repo's
+   <code>CARGO_REGISTRY_TOKEN</code>) by name, so it does not carry the signing
+   secrets. The GitHub config step then makes <code>package / evidence</code> a
    required check.</li>
 <li>Create a <code>package-signing</code> environment, restricted to <code>main</code>, holding
    <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>.</li>
