@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
@@ -755,6 +756,168 @@ def _dep_state(ref: epics.IssueRef) -> str:
     return "OPEN" if ref == _OPEN_DEP else "CLOSED"
 
 
+# The status readers list children with their native blocked-by lists (#5109).
+_LISTING = "vergil_tooling.lib.epics.child_states_with_blockers"
+
+
+def _listed(children: list[epics.ChildState]) -> list[epics.ChildState]:
+    """*children* as the listing gives them: native children with no native blockers."""
+    return [replace(child, native_blockers=()) for child in children]
+
+
+def _native(*blockers: tuple[str, str, int, str]) -> tuple[epics.BlockerState, ...]:
+    return tuple(
+        epics.BlockerState(epics.IssueRef(owner, repo, number), state)
+        for owner, repo, number, state in blockers
+    )
+
+
+def test_child_status_counts_native_blockers() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    runnable = epics.IssueRef("org", "repo", 10)
+    native_open = epics.IssueRef("org", "repo", 11)
+    cross_org = epics.IssueRef("org", "repo", 12)
+    body_open = epics.IssueRef("org", "repo", 13)
+    children = [
+        epics.ChildState(runnable, "OPEN", native_blockers=_native(("org", "repo", 1, "CLOSED"))),
+        epics.ChildState(native_open, "OPEN", native_blockers=_native(("org", "repo", 2, "OPEN"))),
+        epics.ChildState(
+            cross_org, "OPEN", native_blockers=_native(("other-org", "lib", 3, "OPEN"))
+        ),
+        # A closed native blocker does not hide an open Blocked-by line.
+        epics.ChildState(body_open, "OPEN", native_blockers=_native(("org", "repo", 4, "CLOSED"))),
+    ]
+    with (
+        patch(_LISTING, return_value=children) as listing,
+        patch("vergil_tooling.lib.epics.blockers_of", side_effect=_blockers({13: [_OPEN_DEP]})),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=_dep_state),
+        patch("vergil_tooling.lib.epics.native_blockers_of") as own_read,
+    ):
+        status = epic_audit.child_status(epic, stops=trust.BatchStops())
+    assert status.runnable == (runnable,)
+    assert status.blocked == (native_open, cross_org, body_open)
+    own_read.assert_not_called()  # the listing already read every native list
+    # Only open children are wanted, so a closed child's list never fails the read.
+    wanted = listing.call_args.kwargs["wanted"]
+    assert wanted(epics.ChildState(runnable, "OPEN"))
+    assert not wanted(epics.ChildState(runnable, "CLOSED"))
+
+
+def test_child_status_reads_a_reflink_childs_native_blockers() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    blocked = epics.IssueRef("org", "repo", 10)
+    runnable = epics.IssueRef("org", "repo", 11)
+    children = [epics.ChildState(blocked, "OPEN"), epics.ChildState(runnable, "OPEN")]
+
+    def native_blockers_of(ref: epics.IssueRef) -> tuple[epics.BlockerState, ...]:
+        return _native(("org", "repo", 2, "OPEN" if ref == blocked else "CLOSED"))
+
+    with (
+        patch(_LISTING, return_value=children),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+        patch("vergil_tooling.lib.epics.native_blockers_of", side_effect=native_blockers_of),
+    ):
+        status = epic_audit.child_status(epic, stops=trust.BatchStops())
+    assert status.runnable == (runnable,)
+    assert status.blocked == (blocked,)
+
+
+def test_child_status_refuses_an_incomplete_native_list() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    failure = epics.NativeBlockersReadError("org/repo#10 has 2 native blockers but only 1")
+    with (
+        patch(_LISTING, return_value=[epics.ChildState(epics.IssueRef("org", "repo", 10), "OPEN")]),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+        patch("vergil_tooling.lib.epics.native_blockers_of", side_effect=failure),
+        pytest.raises(epics.NativeBlockersReadError, match="only 1"),
+    ):
+        epic_audit.child_status(epic, stops=trust.BatchStops())
+
+
+def _sub_issue(number: int, state: str, total: int) -> dict[str, Any]:
+    """A sub-issue node whose ``blockedBy`` list counts *total* but holds none."""
+    return {
+        "number": number,
+        "state": state,
+        "title": f"t{number}",
+        "closedAt": None,
+        "repository": {"name": "repo", "owner": {"login": "org"}},
+        "blockedBy": {"totalCount": total, "nodes": []},
+    }
+
+
+def test_child_status_through_the_listing_skips_only_a_closed_childs_list() -> None:
+    # Wired through the real listing: a closed child's incomplete list is not
+    # read, an open child's fails the whole status, never "runnable".
+    epic = epics.IssueRef("org", ".github", 99)
+
+    def listing(*nodes: dict[str, Any]) -> dict[str, Any]:
+        return {"node": {"subIssues": {"nodes": list(nodes)}}}
+
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            return_value=listing(_sub_issue(1, "CLOSED", 1), _sub_issue(2, "OPEN", 0)),
+        ),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+    ):
+        status = epic_audit.child_status(epic, stops=trust.BatchStops())
+    assert status.runnable == (epics.IssueRef("org", "repo", 2),)
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=listing(_sub_issue(2, "OPEN", 1))),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+        pytest.raises(epics.NativeBlockersReadError),
+    ):
+        epic_audit.child_status(epic, stops=trust.BatchStops())
+
+
+def test_operational_status_counts_native_blockers() -> None:
+    epic = epics.IssueRef("org", ".github", 115)
+    runnable = epics.IssueRef("org", "repo", 7)
+    blocked = epics.IssueRef("org", "repo", 8)
+    plain = epics.IssueRef("org", "repo", 5)
+    children = [
+        epics.ChildState(runnable, "OPEN", native_blockers=_native(("org", "repo", 1, "CLOSED"))),
+        epics.ChildState(blocked, "OPEN", native_blockers=_native(("other-org", "x", 2, "OPEN"))),
+        epics.ChildState(plain, "OPEN", native_blockers=()),
+    ]
+
+    def kind(ref: epics.IssueRef) -> str | None:
+        return None if ref == plain else "deployment"
+
+    with (
+        patch(_LISTING, return_value=children) as listing,
+        patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind) as kinds,
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+    ):
+        status = epic_audit.operational_status(epic, stops=trust.BatchStops())
+        wanted = listing.call_args.kwargs["wanted"]
+        # Only an open operational child is wanted: no other child's list is read.
+        assert wanted(epics.ChildState(runnable, "OPEN"))
+        assert not wanted(epics.ChildState(plain, "OPEN"))
+        assert not wanted(epics.ChildState(epics.IssueRef("org", "repo", 9), "CLOSED"))
+    assert status.runnable == (runnable,)
+    assert status.blocked == (blocked,)
+    assert status.by_kind == {runnable: "deployment", blocked: "deployment"}
+    # Each child's kind is read once, however often the filter asks.
+    assert sorted(call.args[0].number for call in kinds.call_args_list) == [5, 7, 8]
+
+
+def test_operational_status_refuses_an_incomplete_native_list() -> None:
+    epic = epics.IssueRef("org", ".github", 115)
+    failure = epics.NativeBlockersReadError("unreadable native blocker of org/repo#7")
+    with (
+        patch(_LISTING, return_value=[epics.ChildState(epics.IssueRef("org", "repo", 7), "OPEN")]),
+        patch("vergil_tooling.lib.epics.operational_kind", return_value="validation"),
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
+        patch("vergil_tooling.lib.epics.native_blockers_of", side_effect=failure),
+        pytest.raises(epics.NativeBlockersReadError, match="unreadable"),
+    ):
+        epic_audit.operational_status(epic, stops=trust.BatchStops())
+
+
 def test_operational_status_classifies_runnable_vs_blocked() -> None:
     epic = epics.IssueRef("org", ".github", 115)
     val_runnable = epics.IssueRef("org", "repo", 7)
@@ -771,7 +934,7 @@ def test_operational_status_classifies_runnable_vs_blocked() -> None:
 
     stops = trust.BatchStops()
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
         patch(
             "vergil_tooling.lib.epics.blockers_of",
@@ -797,7 +960,7 @@ def test_operational_status_tags_kind() -> None:
         return "validation" if ref.number == 7 else "deployment"
 
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
         patch("vergil_tooling.lib.epics.blockers_of", return_value=[]),
     ):
@@ -823,7 +986,7 @@ def test_operational_status_stops_only_the_untrusted_child() -> None:
     children = [epics.ChildState(epics.IssueRef("org", "repo", n), "OPEN") for n in (7, 8, 10, 11)]
     stops = trust.BatchStops()
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch("vergil_tooling.lib.epics.operational_kind", return_value="validation"),
         patch(
             "vergil_tooling.lib.epics.blockers_of",
@@ -846,7 +1009,7 @@ def test_operational_status_other_failures_still_raise() -> None:
     failure = github.GitHubAPIError(1, ["gh", "api"], "", "HTTP 502")
     with (
         patch(
-            "vergil_tooling.lib.epics.child_states",
+            _LISTING,
             return_value=[epics.ChildState(epics.IssueRef("org", "repo", 7), "OPEN")],
         ),
         patch("vergil_tooling.lib.epics.operational_kind", return_value="validation"),
@@ -868,7 +1031,7 @@ def test_child_status_classifies_every_open_child() -> None:
         epics.ChildState(epics.IssueRef("org", "repo", 13), "CLOSED"),  # closed -> ignored
     ]
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch(
             "vergil_tooling.lib.epics.blockers_of",
             side_effect=_blockers({10: [_CLOSED_DEP], 11: [_OPEN_DEP]}),
@@ -886,7 +1049,7 @@ def test_child_status_empty_when_no_open_children() -> None:
     epic = epics.IssueRef("org", ".github", 99)
     children = [epics.ChildState(epics.IssueRef("org", "repo", 1), "CLOSED")]
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch("vergil_tooling.lib.epics.blockers_of", return_value=[]) as mock_blockers,
     ):
         status = epic_audit.child_status(epic, stops=trust.BatchStops())
@@ -900,7 +1063,7 @@ def test_child_status_stops_only_the_untrusted_child() -> None:
     children = [epics.ChildState(epics.IssueRef("org", "repo", n), "OPEN") for n in (7, 8, 10)]
     stops = trust.BatchStops()
     with (
-        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch(_LISTING, return_value=_listed(children)),
         patch("vergil_tooling.lib.epics.blockers_of", side_effect=_blockers(_STOPPING)),
     ):
         status = epic_audit.child_status(epic, stops=stops)
