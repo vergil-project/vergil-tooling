@@ -31,7 +31,8 @@ neutral ``security``-labelled intake issue carrying only a pointer to it.
 - ``close`` closes a draft advisory whose issues are all closed, with a
   required ``--reason``: it first posts ``Security record <GHSA> closed:
   <reason>`` on every issue the record tracks, the audit trail
-  (vergil-tooling#4000).
+  (vergil-tooling#4000). It reads only those issues, with no org-wide scan
+  (vergil-tooling#5138); ``sync`` reports any broken pair.
 - ``note`` appends a dated note, read from a file, to an advisory's
   description, keeping the ``Tracking issue:`` lines last; it is append-only
   and prints only ``Noted <GHSA> in <org>/.github.`` (vergil-tooling#3998).
@@ -664,8 +665,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "for an external report or a published, withdrawn or triage advisory. It "
             "first posts 'Security record <GHSA> closed: <reason>' on every issue the "
             "record tracks, then sets the advisory to closed; a re-run with the same "
-            "reason finishes an interrupted close without posting twice. The reason is "
-            "public: never put advisory details in it."
+            "reason finishes an interrupted close without posting twice. It reads only "
+            "the issues the record tracks and scans no other: an issue that names the "
+            "record without being tracked by it is a broken pair, which sync reports. "
+            "The reason is public: never put advisory details in it."
         ),
     )
     close.add_argument("ghsa", help="The advisory's GHSA ID")
