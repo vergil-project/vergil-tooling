@@ -13,6 +13,7 @@ from vergil_tooling.lib.lima import (
     _nested_virt_unsupported_reason,
     create_vm,
     delete_vm,
+    edit_disk,
     fetch_template,
     list_vms,
     nested_virt_unsupported_reason,
@@ -21,6 +22,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     vm_age_days,
+    vm_disk_bytes,
     vm_status,
 )
 
@@ -198,6 +200,41 @@ class TestListVms:
     def test_returns_empty_on_error(self, mock: MagicMock) -> None:
         mock.side_effect = subprocess.CalledProcessError(1, "limactl")
         assert list_vms() == []
+
+
+class TestVmDiskBytes:
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_the_instance_disk_bytes(self, mock: MagicMock) -> None:
+        lines = "\n".join(
+            [
+                json.dumps({"name": "other", "status": "Running", "disk": 1}),
+                json.dumps({"name": "vergil-agent", "status": "Stopped", "disk": 53687091200}),
+            ]
+        )
+        mock.return_value = subprocess.CompletedProcess([], 0, stdout=lines + "\n")
+        assert vm_disk_bytes("vergil-agent") == 53687091200
+        mock.assert_called_once_with("list", "--json")
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_none_for_an_absent_instance_or_size(self, mock: MagicMock) -> None:
+        lines = json.dumps({"name": "vergil-agent", "status": "Stopped"})
+        mock.return_value = subprocess.CompletedProcess([], 0, stdout=lines + "\n")
+        assert vm_disk_bytes("vergil-agent") is None
+        assert vm_disk_bytes("missing") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_a_failed_list_raises(self, mock: MagicMock) -> None:
+        # Never read a limactl failure as "no disk" ahead of a resize.
+        mock.side_effect = subprocess.CalledProcessError(1, "limactl")
+        with pytest.raises(subprocess.CalledProcessError):
+            vm_disk_bytes("vergil-agent")
+
+
+class TestEditDisk:
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_runs_limactl_edit_disk_without_a_tty(self, mock: MagicMock) -> None:
+        edit_disk("vergil-agent", 200)
+        mock.assert_called_once_with("edit", "--tty=false", "--disk=200", "vergil-agent")
 
 
 class TestFetchTemplate:

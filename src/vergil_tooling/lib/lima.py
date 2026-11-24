@@ -143,6 +143,34 @@ def list_vms() -> list[dict[str, str]]:
     return vms
 
 
+def vm_disk_bytes(instance: str) -> int | None:
+    """Return the instance's disk size in bytes as Lima reports it, or None if absent.
+
+    Reads the ``disk`` field of ``limactl list --json`` (see :func:`list_vms`).
+    None means Lima lists no such instance, or lists it with no size. Unlike
+    :func:`list_vms`, a failed ``limactl list`` raises: a caller about to
+    resize a disk must never read a failure as "no disk".
+    """
+    result = _limactl("list", "--json")
+    for line in result.stdout.strip().splitlines():
+        entry = json.loads(line)
+        if entry.get("name") == instance:
+            disk = entry.get("disk")
+            return int(disk) if disk else None
+    return None
+
+
+def edit_disk(instance: str, size_gib: int) -> None:
+    """Set a stopped instance's disk size with ``limactl edit --disk <GiB>``.
+
+    Lima (v1.1 and later) writes ``.disk = "<N>GiB"`` into the instance's
+    ``lima.yaml``, refuses a running instance and a smaller size, and grows
+    the disk image on the next ``limactl start``. ``--tty=false`` keeps it
+    from asking whether to start the instance.
+    """
+    _limactl("edit", "--tty=false", f"--disk={size_gib}", instance)
+
+
 _TAG_PATTERN = re.compile(r"^v\d+\.\d+(\.\d+)?$")
 
 
