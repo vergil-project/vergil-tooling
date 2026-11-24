@@ -15267,6 +15267,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-agent-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-agent-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-dependabot-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19966,6 +19977,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-agent-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-agent-audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-dependabot-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -23930,6 +23952,56 @@ See the <a href="../config-audit/">GitHub Config Audit reference</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 compliant (for <code>diff</code>: whether or not it finds drift; for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete, including a setting not checked (for <code>update</code>, also an agent identity or a sync PR that did not merge)</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-agent-audit">vrg-agent-audit<a class="headerlink" href="#vrg-agent-audit" title="Permanent link">&para;</a></h3>
+<p>The daily audit of agent merges
+(<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>,
+spec §4.8). It checks every merge into <code>develop</code> and <code>main</code> since the
+audit's markers, the <code>vergil/agent-audit/develop</code> and
+<code>vergil/agent-audit/main</code> branches. For every PR, whoever merged it or
+turned auto-merge on must be the human, or the user agent or the
+automation App on its own PR (into <code>main</code>, the human only), and its
+provenance must be clean. For an agent-involved PR merged into <code>develop</code>,
+its protected files must be covered by approvals, and its change by a
+merge-review record, exemption or human override. A protected file the
+merge changed from the PR's head is its own finding. It then moves each
+marker to where its audit reached; a read failure stops there, so the next
+run checks the rest again. A missing marker is a finding, never
+re-created. It is a security-signal job: it files no issue and posts
+nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_agent_audit</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--repo OWNER/REPO</code> (required); <code>--init</code> creates each missing marker at its branch's tip and audits nothing (repo init and the one-time go-live only)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run in a full-history clone whose <code>origin</code> is the repo; the trusted-authors configuration, naming one human; a token that can move the markers (the admin role or the org automation App)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>One finding per line on stdout; one <code>vrg-agent-audit:</code> diagnostic on stderr when it cannot start</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 clean, 1 any finding or read failure, 2 usage error</td>
 </tr>
 <tr>
 <td>Status</td>
