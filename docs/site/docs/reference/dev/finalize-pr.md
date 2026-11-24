@@ -147,7 +147,10 @@ PR's head, the check is not a failure and the PR stays pending.
 
 A PR that ended *failed: CI* or *failed: cancelled* is read again on every
 later poll while the watch goes on. If GitHub has merged it, it is reported
-as *merged*.
+as *merged*. Its auto-merge is still on, so a new head pushed to it
+meanwhile gets the provenance check and the gates' re-check like any open
+PR's: a failure turns its auto-merge off and reports it *failed: provenance*
+or *failed: gates* instead.
 
 A PR still pending when the batch deadline passes ends as *timed out*,
 and its auto-merge stays on, so it may still merge later. The deadline

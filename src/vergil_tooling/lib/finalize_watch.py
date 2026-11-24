@@ -65,6 +65,9 @@ the new run as soon as it is created.
 **A merged PR is never reported as not merged.** A PR that ended
 ``failed: CI`` or ``failed: cancelled`` is read again on every later poll
 while the watch goes on. If GitHub has merged it, it ends ``merged`` instead.
+Its auto-merge is still on, so a new head pushed to it meanwhile gets the
+provenance check and the gates' re-check like a pending PR's: a failure
+turns its auto-merge off and replaces its result.
 
 **The gates' re-check** (epic vergil-project/.github#1384, plan Task 11).
 GitHub keeps a PR's auto-merge on across a push, so a head pushed after
@@ -868,12 +871,9 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
         return _result(snap, "merged", watched.violation, watched)
     if snap.state == "CLOSED":
         return _result(snap, "failed: closed", "closed without merging", watched)
-    failed = _check_gates(snap, watched) if snap.head != watched.checked_head else None
+    failed = _new_head_failure(snap, watched)
     if failed is not None:
-        if snap.auto_merge_on:
-            _disable_auto_merge(snap)
-        detail = watched.violation if failed == "failed: provenance" else watched.gate_failure
-        return _result(snap, failed, detail, watched)
+        return failed
     if not snap.auto_merge_on:
         detail = "auto-merge is off; investigate before re-enabling auto-merge"
         return _result(snap, "failed: auto-merge off", detail, watched)
@@ -895,6 +895,30 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
         )
         return _result(snap, "failed: conflict", detail, watched)
     return None
+
+
+def _new_head_failure(snap: Snapshot, watched: _Watched) -> PRResult | None:
+    """The failure a new head of a PR that ended on its checks alone ends it with, if any.
+
+    Such a PR is re-read while the watch goes on, and its auto-merge is still
+    on, so a fix pushed to it merges by itself once its checks pass: each new
+    head of it, while open on ``develop``, gets the same provenance and gates
+    check as a pending PR's, and a failure turns its auto-merge off and
+    replaces its result.
+    """
+    if (
+        snap.state != "OPEN"
+        or snap.head == watched.checked_head
+        or _not_develop(snap, watched.branch) is not None
+    ):
+        return None
+    failed = _check_gates(snap, watched)
+    if failed is None:
+        return None
+    if snap.auto_merge_on:
+        _disable_auto_merge(snap)
+    detail = watched.violation if failed == "failed: provenance" else watched.gate_failure
+    return _result(snap, failed, detail, watched)
 
 
 def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
@@ -1099,6 +1123,12 @@ def watch(
             if snap.state == "MERGED":
                 del recheck[url]
                 judge(snap, watched)
+                continue
+            failed = _new_head_failure(snap, watched)
+            if failed is not None:
+                del recheck[url]
+                results[url] = failed
+                rows[url] = _row(snap, failed.outcome, time.monotonic() - start)
         for url, (watched, _) in list(pending.items()):
             judge(snapshot(url), watched)
         now = time.monotonic()

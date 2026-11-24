@@ -729,6 +729,76 @@ def test_a_pr_failed_on_its_checks_that_stays_open_stays_failed(fake: FakeGitHub
     assert fake.views.count(url(1)) == 2
 
 
+def test_new_head_of_a_pr_failed_on_its_checks_failing_the_gates_disarms(
+    fake: FakeGitHub,
+) -> None:
+    """A fix pushed to a PR that ended on its checks gets the gates while the watch goes on."""
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.gate_failures[url(1), HEAD_B] = "protected file .github/workflows/ci.yml unapproved"
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["failed: gates", "merged"]
+    assert results[0].head == HEAD_B
+    assert results[0].detail == "protected file .github/workflows/ci.yml unapproved"
+    assert fake.disables == [url(1)]
+    assert (url(1), HEAD_B, "feature/1-thing") in fake.gate_checks
+
+
+def test_new_head_of_a_pr_failed_on_its_checks_with_a_violation_disarms(
+    fake: FakeGitHub,
+) -> None:
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.violations[url(1), HEAD_B] = [AGENT_ENABLE]
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["failed: provenance", "merged"]
+    assert results[0].provenance_violation is True
+    assert fake.disables == [url(1)]
+
+
+def test_new_head_of_a_pr_failed_on_its_checks_passing_the_gates_can_still_merge(
+    fake: FakeGitHub,
+) -> None:
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+        merged(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["merged", "merged"]
+    assert fake.disables == []
+    # The new head was checked once while open, never again until it merged.
+    assert [c for c in fake.gate_checks if c[0] == url(1)] == [
+        (url(1), HEAD_A, "feature/1-thing"),
+        (url(1), HEAD_B, "feature/1-thing"),
+    ]
+
+
 def test_conflict(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1), pr_state(1, mergeStateStatus="DIRTY"))
 
