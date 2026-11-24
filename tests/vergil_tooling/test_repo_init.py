@@ -56,6 +56,7 @@ from vergil_tooling.lib.repo_init import (
     render_vergil_toml,
     restore_generated_config,
     run_wizard,
+    step_audit_markers,
     step_branch_structure,
     step_ci_cd_workflows,
     step_clone,
@@ -2206,6 +2207,10 @@ class TestStepScaffoldLanguage:
                 side_effect=mock_step("gh-config"),
             ),
             patch(
+                "vergil_tooling.lib.repo_init.step_audit_markers",
+                side_effect=mock_step("audit-markers"),
+            ),
+            patch(
                 "vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step("gh-pages")
             ),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
@@ -2552,7 +2557,7 @@ def _post_result(returncode: int, status: str, stderr: str = "") -> Any:
 
 
 class TestStepGithubPages:
-    """Step 10 creates or confirms the Pages site, then sets the homepage (#4371)."""
+    """Step 11 creates or confirms the Pages site, then sets the homepage (#4371)."""
 
     def _run(
         self,
@@ -2695,6 +2700,158 @@ class TestStepGithubPages:
         ctx.publish_docs = False
 
         step_github_pages(ctx)
+
+
+_DEVELOP_TIP = "d" * 40
+_MAIN_TIP = "e" * 40
+
+
+class _MarkerGitHub:
+    """The branch refs of one repository, as the agent audit reads and creates them."""
+
+    def __init__(self, repo: str, refs: dict[str, str]) -> None:
+        self.repo = repo
+        self.refs = {"develop": _DEVELOP_TIP, "main": _MAIN_TIP, **refs}
+        self.creates: list[tuple[str, str]] = []
+        self.refuse: str | None = None
+
+    def read_ref(self, repo: str, branch: str) -> str | None:
+        assert repo == self.repo
+        return self.refs.get(branch)
+
+    def write_json(self, method: str, endpoint: str, body: dict[str, object]) -> None:
+        assert (method, endpoint) == ("POST", f"repos/{self.repo}/git/refs")
+        if self.refuse is not None:
+            raise subprocess.CalledProcessError(1, ("gh",), "", self.refuse)
+        name = str(body["ref"]).removeprefix("refs/heads/")
+        assert name not in self.refs
+        self.refs[name] = str(body["sha"])
+        self.creates.append((name, str(body["sha"])))
+
+
+@pytest.fixture
+def marker_gh(monkeypatch: pytest.MonkeyPatch) -> Iterator[_MarkerGitHub]:
+    from vergil_tooling.lib import agent_audit
+
+    fake = _MarkerGitHub("vergil-project/demo", {})
+    monkeypatch.setattr(agent_audit, "_read_ref", fake.read_ref)
+    monkeypatch.setattr(github, "write_json", fake.write_json)
+    yield fake
+
+
+class TestStepAuditMarkers:
+    """Step 10 creates the agent audit's marker branches (.github#1384 Task 12b)."""
+
+    def test_init_creates_both_audit_markers_at_branch_tips(
+        self, marker_gh: _MarkerGitHub, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+
+        step_audit_markers(ctx)
+
+        assert marker_gh.creates == [
+            ("vergil/agent-audit/develop", _DEVELOP_TIP),
+            ("vergil/agent-audit/main", _MAIN_TIP),
+        ]
+        out = capsys.readouterr().out
+        assert f"Created vergil/agent-audit/develop at {_DEVELOP_TIP[:12]}" in out
+        assert f"Created vergil/agent-audit/main at {_MAIN_TIP[:12]}" in out
+
+    def test_adopt_creates_missing_markers_only(
+        self, marker_gh: _MarkerGitHub, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        old = "a" * 40
+        marker_gh.refs["vergil/agent-audit/develop"] = old
+        ctx = RepoInitContext(org="vergil-project", name="demo", adopt=True)
+
+        step_audit_markers(ctx)
+
+        assert marker_gh.creates == [("vergil/agent-audit/main", _MAIN_TIP)]
+        out = capsys.readouterr().out
+        assert f"vergil/agent-audit/develop already at {old[:12]}, left as it is" in out
+
+    def test_existing_marker_left_untouched(self, marker_gh: _MarkerGitHub) -> None:
+        held = {"vergil/agent-audit/develop": "a" * 40, "vergil/agent-audit/main": "b" * 40}
+        marker_gh.refs.update(held)
+        ctx = RepoInitContext(org="vergil-project", name="demo", adopt=True)
+
+        step_audit_markers(ctx)
+
+        assert marker_gh.creates == []
+        assert {name: marker_gh.refs[name] for name in held} == held
+
+    def test_marker_creation_failure_stops_init(
+        self,
+        marker_gh: _MarkerGitHub,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The ERROR: prefix is emit_error's local form; under GitHub Actions
+        # it writes an ::error:: annotation instead.
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        marker_gh.refuse = "gh: Resource not accessible by integration (HTTP 403)"
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+
+        with pytest.raises(SystemExit) as exc:
+            step_audit_markers(ctx)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "ERROR: cannot create vergil-project/demo marker vergil/agent-audit/develop: "
+        )
+        assert "HTTP 403" in err
+        assert marker_gh.creates == []
+
+    def test_missing_branch_stops_init(
+        self, marker_gh: _MarkerGitHub, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        del marker_gh.refs["main"]
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+
+        with pytest.raises(SystemExit) as exc:
+            step_audit_markers(ctx)
+
+        assert exc.value.code == 1
+        assert "vergil-project/demo has no main branch" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("adopt", [False, True], ids=["init", "adopt"])
+    def test_runs_after_github_config_and_before_pages(self, adopt: bool) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="demo", adopt=adopt)
+        ctx.opt_integration_tests = False  # no early integration-tests prompt (#4462)
+        order: list[str] = []
+        names = (
+            "step_create_repo",
+            "step_clone",
+            "step_generate_config",
+            "step_scaffold_config_files",
+            "step_scaffold_language",
+            "step_ci_cd_workflows",
+            "step_docs_site",
+            "step_branch_structure",
+            "step_github_config",
+            "step_audit_markers",
+            "step_github_pages",
+        )
+        with contextlib.ExitStack() as stack:
+            for name in names:
+                stack.enter_context(
+                    patch(
+                        f"vergil_tooling.lib.repo_init.{name}",
+                        side_effect=lambda *a, _n=name, **kw: order.append(_n),
+                    )
+                )
+            stack.enter_context(
+                patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set())
+            )
+            stack.enter_context(patch("vergil_tooling.lib.repo_init.check_workflows_registered"))
+            stack.enter_context(
+                patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None)
+            )
+            run_wizard(ctx)
+
+        assert order[-3:] == ["step_github_config", "step_audit_markers", "step_github_pages"]
+        assert 10 in ctx.completed_steps
 
 
 class TestLoadExistingConfig:
@@ -3063,6 +3220,7 @@ class TestRunWizard:
         "step_docs_site",
         "step_branch_structure",
         "step_github_config",
+        "step_audit_markers",
         "step_github_pages",
     )
 
@@ -3195,6 +3353,7 @@ class TestRunWizard:
             "step_docs_site",
             "step_branch_structure",
             "step_github_config",
+            "step_audit_markers",
             "step_github_pages",
         ]
         with contextlib.ExitStack() as stack:
@@ -3251,7 +3410,8 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(11)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Local resume state is trusted only when CWD is the target's own
@@ -3309,7 +3469,8 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(11)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Adopt runs in the target's own clone, whose log carries markers for
@@ -3365,7 +3526,8 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(11)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # Standing inside the `.github` repo, whose log carries step 3/4/5
@@ -3416,7 +3578,8 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(11)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # CWD is the target's own clone, so the log is read — and its failure
@@ -3461,7 +3624,8 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(9)),
-            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers", side_effect=mock_step(10)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(11)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
             # CWD is not the target's clone, so local resume state is not trusted
@@ -3773,6 +3937,7 @@ class TestRestoreGeneratedConfig:
             patch("vergil_tooling.lib.repo_init.step_docs_site"),
             patch("vergil_tooling.lib.repo_init.step_branch_structure"),
             patch("vergil_tooling.lib.repo_init.step_github_config"),
+            patch("vergil_tooling.lib.repo_init.step_audit_markers"),
             patch("vergil_tooling.lib.repo_init.step_github_pages"),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value={1}),
             patch("vergil_tooling.lib.repo_init.check_workflows_registered"),
@@ -3791,7 +3956,7 @@ class TestRestoreGeneratedConfig:
 
         mock_step3.assert_not_called()
         # Resumed with {1, 3} done; the run then records each step it ran (#4462).
-        assert ctx.completed_steps == set(range(1, 11))
+        assert ctx.completed_steps == set(range(1, 12))
         ci = (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
         assert "      language: python\n" in ci
         assert "container-suffix: base" not in ci
