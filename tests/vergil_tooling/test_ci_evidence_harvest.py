@@ -466,6 +466,175 @@ def test_select_ci_run_skips_run_without_head_repository(
     assert select_ci_run("o/r", "abc")["id"] == 1
 
 
+# --- select_passed_attempt (issue #5153) --------------------------------
+#
+# Modelled on vergil-fixture-ts-lib's release 0.1.10: the release PR's CI run
+# 45505436055 passed at attempt 1, and attempt 2, a re-run after the release
+# PR merged, failed its version-bump check. The run list reports only a run's
+# latest attempt, so attempt 1 is read from the attempts endpoint.
+
+_HEAD = "ff154258a8e3c09d5d591cb0b65e51ac08efa7db"
+_RUN_URL = "https://github.com/o/r/actions/runs/45505436055"
+
+
+def _ci_run(
+    run_id: int, attempt: object, conclusion: str | None, started: str, **extra: Any
+) -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "name": "CI",
+        "status": "completed" if conclusion else "in_progress",
+        "conclusion": conclusion,
+        "head_repository": _OWN,
+        "head_sha": _HEAD,
+        "run_attempt": attempt,
+        "run_started_at": started,
+        "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
+        **extra,
+    }
+
+
+def _attempts_api(
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[dict[str, Any]],
+    attempts: dict[tuple[int, int], object],
+) -> list[tuple[str, ...]]:
+    """Serve *runs* as the head-SHA run list and *attempts* by (run id, attempt)."""
+    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: runs)
+    calls: list[tuple[str, ...]] = []
+
+    def read_json(*args: str) -> object:
+        calls.append(args)
+        assert args[0] == "api"
+        parts = args[1].split("/")
+        assert parts[:4] == ["repos", "o", "r", "actions"]
+        assert parts[6] == "attempts"
+        return attempts[(int(parts[5]), int(parts[7]))]
+
+    monkeypatch.setattr(github, "read_json", read_json)
+    return calls
+
+
+def test_select_passed_attempt_latest_attempt_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = _ci_run(45505436055, 1, "success", "2026-11-24T22:55:49Z")
+    calls = _attempts_api(monkeypatch, [run], {})
+    found = ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert found == ci_evidence.PassedAttempt(
+        run_id=45505436055, attempt=1, latest_attempt=1, url=_RUN_URL
+    )
+    assert found.is_latest
+    assert calls == []
+
+
+def test_select_passed_attempt_takes_the_attempt_that_passed_before_a_failed_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The latest attempt failed (version-bump, after the merge); attempt 1 passed."""
+    latest = _ci_run(45505436055, 2, "failure", "2026-11-24T23:09:08Z")
+    first = _ci_run(45505436055, 1, "success", "2026-11-24T22:55:49Z")
+    first["html_url"] = f"{_RUN_URL}/attempts/1"
+    calls = _attempts_api(monkeypatch, [latest], {(45505436055, 1): first})
+    found = ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert found == ci_evidence.PassedAttempt(
+        run_id=45505436055, attempt=1, latest_attempt=2, url=f"{_RUN_URL}/attempts/1"
+    )
+    assert not found.is_latest
+    assert calls == [("api", "repos/o/r/actions/runs/45505436055/attempts/1")]
+
+
+def test_select_passed_attempt_takes_the_most_recent_passing_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _ci_run(7, 4, "failure", "2026-11-24T23:30:00Z")
+    attempts: dict[tuple[int, int], object] = {
+        (7, 3): _ci_run(7, 3, "failure", "2026-11-24T23:20:00Z"),
+        (7, 2): _ci_run(7, 2, "success", "2026-11-24T23:10:00Z"),
+        (7, 1): _ci_run(7, 1, "success", "2026-11-24T23:00:00Z"),
+    }
+    calls = _attempts_api(monkeypatch, [latest], attempts)
+    found = ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert (found.run_id, found.attempt, found.latest_attempt) == (7, 2, 4)
+    # It stops at the newest attempt that passed and reads no older one.
+    assert [c[1].rsplit("/", 1)[1] for c in calls] == ["3", "2"]
+
+
+def test_select_passed_attempt_prefers_the_newest_across_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    older = _ci_run(1, 1, "success", "2026-11-24T22:00:00Z")
+    newer = _ci_run(2, 2, "failure", "2026-11-24T23:30:00Z")
+    attempts: dict[tuple[int, int], object] = {
+        (2, 1): _ci_run(2, 1, "success", "2026-11-24T23:00:00Z"),
+    }
+    _attempts_api(monkeypatch, [older, newer], attempts)
+    found = ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert (found.run_id, found.attempt) == (2, 1)
+
+
+def test_select_passed_attempt_no_attempt_passed_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    latest = _ci_run(9, 2, "failure", "2026-11-24T23:09:08Z")
+    attempts: dict[tuple[int, int], object] = {
+        (9, 1): _ci_run(9, 1, "failure", "2026-11-24T22:55:49Z"),
+    }
+    _attempts_api(monkeypatch, [latest], attempts)
+    with pytest.raises(NoQualifyingRunError) as exc:
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert exc.value.visible is True
+    assert exc.value.head_sha == _HEAD
+
+
+def test_select_passed_attempt_no_own_ci_run_is_not_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fork = _ci_run(3, 1, "success", "t", head_repository={"full_name": "drive-by/r"})
+    other = _ci_run(4, 1, "success", "t", name="Docs")
+    _attempts_api(monkeypatch, [fork, other], {})
+    with pytest.raises(NoQualifyingRunError) as exc:
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert exc.value.visible is False
+
+
+def test_select_passed_attempt_never_reads_a_fork_runs_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fork's run is never read for attempts, so its passing attempt never counts."""
+    fork = _ci_run(3, 2, "failure", "t", head_repository={"full_name": "drive-by/r"})
+    own = _ci_run(5, 1, "failure", "t")
+    calls = _attempts_api(monkeypatch, [fork, own], {})
+    with pytest.raises(NoQualifyingRunError):
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+    assert calls == []
+
+
+def test_select_passed_attempt_refuses_an_attempt_of_another_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _ci_run(9, 2, "failure", "t")
+    stray = _ci_run(9, 1, "success", "t", head_sha="0" * 40)
+    _attempts_api(monkeypatch, [latest], {(9, 1): stray})
+    with pytest.raises(ValueError, match="attempt 1 of run 9 is for head"):
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+
+
+@pytest.mark.parametrize("attempt", [None, "2", True, 0])
+def test_select_passed_attempt_refuses_a_run_with_no_attempt_number(
+    monkeypatch: pytest.MonkeyPatch, attempt: object
+) -> None:
+    run = _ci_run(9, attempt, "failure", "t")
+    _attempts_api(monkeypatch, [run], {})
+    with pytest.raises(ValueError, match="no usable run_attempt"):
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+
+
+def test_select_passed_attempt_refuses_a_non_object_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _ci_run(9, 2, "failure", "t")
+    _attempts_api(monkeypatch, [latest], {(9, 1): ["not", "an", "object"]})
+    with pytest.raises(ValueError, match="attempt 1 of run 9 is not a JSON object"):
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
+
+
 # --- wait_for_ci_run (issue #3434) --------------------------------------
 
 _SUCCESS_RUN = {

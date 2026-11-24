@@ -903,6 +903,106 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     return max(qualifying, key=lambda run: run["run_started_at"])
 
 
+@dataclass(frozen=True)
+class PassedAttempt:
+    """One attempt of a CI run that completed successfully (:func:`select_passed_attempt`).
+
+    *latest_attempt* is the run's latest attempt number when it was read; it
+    is *attempt* unless a later re-run of the run did not pass.
+    """
+
+    run_id: int
+    attempt: int
+    latest_attempt: int
+    url: str
+
+    @property
+    def is_latest(self) -> bool:
+        return self.attempt == self.latest_attempt
+
+
+def _run_attempt_number(run: Mapping[str, Any]) -> int:
+    """The ``run_attempt`` of workflow *run*, or a ``ValueError`` naming the run."""
+    attempt = run.get("run_attempt")
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+        msg = f"workflow run {run.get('id')!r} has no usable run_attempt ({attempt!r})"
+        raise ValueError(msg)
+    return attempt
+
+
+def _passed_earlier_attempt(
+    repo: str, head_sha: str, run: Mapping[str, Any], workflow: str
+) -> tuple[str, PassedAttempt] | None:
+    """The newest attempt before *run*'s latest that passed, with its start time, or None.
+
+    Each earlier attempt is read from ``actions/runs/{id}/attempts/{n}``,
+    newest first, stopping at the first that is COMPLETED + SUCCESS. An
+    attempt that is not an object, or is for another head commit, raises
+    ``ValueError``: it is never skipped.
+    """
+    run_id = int(run["id"])
+    latest = _run_attempt_number(run)
+    for number in range(latest - 1, 0, -1):
+        data = github.read_json("api", f"repos/{repo}/actions/runs/{run_id}/attempts/{number}")
+        if not isinstance(data, dict):
+            msg = f"attempt {number} of run {run_id} is not a JSON object"
+            raise ValueError(msg)
+        found = cast("dict[str, Any]", data)
+        if found.get("head_sha") != head_sha:
+            msg = (
+                f"attempt {number} of run {run_id} is for head {found.get('head_sha')!r}, "
+                f"not {head_sha}"
+            )
+            raise ValueError(msg)
+        if _is_qualifying_run(found, workflow):
+            passed = PassedAttempt(
+                run_id=run_id, attempt=number, latest_attempt=latest, url=str(found["html_url"])
+            )
+            return str(found["run_started_at"]), passed
+    return None
+
+
+def select_passed_attempt(repo: str, head_sha: str, *, workflow: str = "CI") -> PassedAttempt:
+    """The most recent COMPLETED + SUCCESS attempt of a *workflow* run for ``head_sha``.
+
+    Unlike :func:`select_ci_run`, which judges each run by its latest attempt,
+    an attempt that passed still counts when a later re-run of the same run
+    did not (#5153): a release PR's CI re-run after the PR merged fails its
+    version check, though the gates were judged and passed before the merge.
+    Only runs built from *repo* itself are read (:func:`_is_own_run`), and a
+    run's earlier attempts are read only when its latest did not pass. The
+    newest passing attempt across the runs wins, by its start time. Raises
+    :class:`NoQualifyingRunError` when no attempt passed, and ``ValueError``
+    on a run or attempt it cannot read.
+    """
+    # The filter stays in the URL, keeping the GET verb (see select_ci_run).
+    raw = github.read_json_paginated(
+        f"repos/{repo}/actions/runs?head_sha={head_sha}", "workflow_runs"
+    )
+    runs = [
+        run
+        for run in cast("list[dict[str, Any]]", raw)
+        if _is_own_run(run, repo) and run.get("name") == workflow
+    ]
+    if not runs:
+        raise NoQualifyingRunError(head_sha, visible=False)
+    passed: list[tuple[str, PassedAttempt]] = []
+    for run in runs:
+        if _is_qualifying_run(run, workflow):
+            latest = _run_attempt_number(run)
+            attempt = PassedAttempt(
+                run_id=int(run["id"]), attempt=latest, latest_attempt=latest, url=str(run["html_url"])
+            )
+            passed.append((str(run["run_started_at"]), attempt))
+            continue
+        earlier = _passed_earlier_attempt(repo, head_sha, run, workflow)
+        if earlier is not None:
+            passed.append(earlier)
+    if not passed:
+        raise NoQualifyingRunError(head_sha, visible=True)
+    return max(passed, key=lambda item: item[0])[1]
+
+
 # Default grace period for a CI run to appear in GitHub's head-SHA run index.
 # The index can trail a just-completed run by minutes during a GitHub incident
 # (issue #3434); 5 min sits well inside the gate step's 15-min timeout.

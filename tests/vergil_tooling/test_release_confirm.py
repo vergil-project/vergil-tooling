@@ -990,16 +990,32 @@ def test_confirm_main_records_failed_release_run(write_state: MagicMock) -> None
     assert "`vrg-release --resume 2.1.0`" in message
     # No hand-run steps: the resume does the re-runs.
     assert "gh run rerun" not in message
+    # The release PR is merged: the resume never re-runs its CI (#5153).
+    assert "CI run" not in message
 
 
-def _recover(ctx: ReleaseContext, jobs: list[dict[str, Any]], **rerun: Any) -> MagicMock:
+# vergil-fixture-ts-lib release 0.1.10 (#5153): the release PR's CI run passed
+# at attempt 1, before the merge; attempt 2, re-run after it, failed version-bump.
+_PASSED_LATEST = ci_evidence.PassedAttempt(
+    run_id=111, attempt=1, latest_attempt=1, url="https://run/111"
+)
+_PASSED_BEFORE_RERUN = ci_evidence.PassedAttempt(
+    run_id=111, attempt=1, latest_attempt=2, url="https://run/111/attempts/1"
+)
+
+
+def _recover(
+    ctx: ReleaseContext,
+    jobs: list[dict[str, Any]],
+    passed: ci_evidence.PassedAttempt = _PASSED_LATEST,
+) -> MagicMock:
     """Run confirm_main on a resume whose recorded CD release run 222 is on main's tip."""
     with (
         patch(_MOD + "._cd_head_sha", return_value=_SHA),
         patch(_MOD + ".github.read_output", return_value=_SHA),
         patch(_MOD + ".github.head_sha", return_value=_PR_HEAD) as head_sha,
-        patch(_MOD + ".ci_evidence.select_ci_run", return_value={"id": 111}) as select,
-        patch(_MOD + ".rerun_and_watch", **rerun) as m_rerun,
+        patch(_MOD + ".ci_evidence.select_passed_attempt", return_value=passed) as select,
+        patch(_MOD + ".rerun_and_watch") as m_rerun,
         patch(_MOD + "._watch_cd", return_value=("222", "https://run/222")),
         patch(_MOD + "._settled_run_jobs", return_value=jobs),
         patch(_MOD + "._verify_artifacts"),
@@ -1012,35 +1028,51 @@ def _recover(ctx: ReleaseContext, jobs: list[dict[str, Any]], **rerun: Any) -> M
     return m_rerun
 
 
-def test_confirm_main_resume_reruns_ci_then_cd() -> None:
+def test_confirm_main_resume_after_the_merge_reruns_only_cd(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The release PR's CI is judged before the merge and never re-run after it (#5153)."""
     ctx = _resumed_ctx()
     rerun = _recover(ctx, _MAIN_JOBS_OK)
     assert [(c.args[1], c.kwargs["check_status"]) for c in rerun.call_args_list] == [
-        ("111", True),
         ("222", False),
     ]
-    assert all(c.kwargs.get("rerun_args", ()) == () for c in rerun.call_args_list)
+    assert rerun.call_args.kwargs.get("rerun_args", ()) == ()
     assert ctx.cd_run_id == "222"
     assert ctx.state is not None
     assert ctx.state.failed_release_run is None
+    out = capsys.readouterr().out
+    assert "The release PR's CI run 111 passed at attempt 1" in out
+    assert "not re-run" in out
+    assert "Re-running the release PR's CI run" not in out
 
 
-def test_confirm_main_resume_ci_rerun_failure_stops_before_cd() -> None:
+def test_confirm_main_resume_names_the_attempt_that_passed_before_a_failed_rerun(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A CI head whose latest attempt failed but an earlier one passed is accepted, and named."""
     ctx = _resumed_ctx()
-    failure = subprocess.CalledProcessError(1, ["gh", "run", "watch"], stderr="failed")
-    with pytest.raises(ReleaseError, match="CI run 111 did not succeed") as raised:
-        _recover(ctx, _MAIN_JOBS_OK, side_effect=failure)
-    assert "--exit-status" in raised.value.command
+    rerun = _recover(ctx, _MAIN_JOBS_OK, passed=_PASSED_BEFORE_RERUN)
+    assert [c.args[1] for c in rerun.call_args_list] == ["222"]
     assert ctx.state is not None
-    assert ctx.state.failed_release_run == "222"
+    assert ctx.state.failed_release_run is None
+    out = capsys.readouterr().out
+    assert (
+        "The release PR's CI run 111 passed at attempt 1 (https://run/111/attempts/1); "
+        "its latest attempt, 2, did not pass." in out
+    )
+    assert "Using attempt 1" in out
 
 
 def test_confirm_main_resume_while_release_still_fails_keeps_it_recorded() -> None:
+    """A resume whose CD re-run fails again is still refused, and the run stays recorded."""
     ctx = _resumed_ctx()
-    with pytest.raises(ReleaseError, match="Release job did not succeed"):
-        _recover(ctx, _FAILED_RELEASE)
+    with pytest.raises(ReleaseError, match="Release job did not succeed") as raised:
+        _recover(ctx, _FAILED_RELEASE, passed=_PASSED_BEFORE_RERUN)
     assert ctx.state is not None
     assert ctx.state.failed_release_run == "222"
+    assert ctx.state.tag is None
+    assert "CD run 222 is recorded as the failed release run" in str(raised.value)
 
 
 def test_recovery_refuses_a_run_not_on_mains_tip() -> None:
@@ -1073,23 +1105,27 @@ def test_recovery_without_release_pr_refuses() -> None:
     [
         ci_evidence.NoQualifyingRunError(_PR_HEAD),
         subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 502"),
+        ValueError("attempt 1 of run 111 is not a JSON object"),
     ],
 )
 def test_recovery_ci_lookup_failure_is_named(error: Exception) -> None:
+    """No attempt of the release PR's CI that passed is a refusal before CD is touched."""
     ctx = _resumed_ctx()
     with (
         patch(_MOD + "._cd_head_sha", return_value=_SHA),
         patch(_MOD + ".github.read_output", return_value=_SHA),
         patch(_MOD + ".github.head_sha", return_value=_PR_HEAD),
-        patch(_MOD + ".ci_evidence.select_ci_run", side_effect=error),
+        patch(_MOD + ".ci_evidence.select_passed_attempt", side_effect=error),
         patch(_MOD + ".rerun_and_watch") as rerun,
         pytest.raises(ReleaseError, match="CI run could not be looked up") as raised,
     ):
         confirm_main(ctx)
     rerun.assert_not_called()
-    assert (
-        raised.value.command == f"gh run list --repo owner/repo --workflow CI --commit {_PR_HEAD}"
+    assert raised.value.command == (
+        f"gh api repos/owner/repo/actions/runs?head_sha={_PR_HEAD} (and each run's attempts)"
     )
+    assert ctx.state is not None
+    assert ctx.state.failed_release_run == "222"
 
 
 def test_release_job_not_found_records_nothing(write_state: MagicMock) -> None:
