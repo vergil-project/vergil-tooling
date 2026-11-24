@@ -1009,6 +1009,127 @@ Both subcommands run every read and write under the epic owner's App token.
 | Exit codes | 0 written or already correct, or (`backfill`) no epic needs a decision or failed, including a dry run with changes still to make; 1 error, or any epic that needs a decision or failed; 2 bad arguments |
 | Status | Active |
 
+### vrg-checkpoint
+
+Keep a workflow's **stage checklist** in a tracking issue's body, so a fresh
+session can find the stage a multi-session workflow stopped at. Each
+workflow's stage list is defined once in the tool, and the block is
+generated from it. `epic-create` is the first workflow; its stages, in
+order, are `bootstrap`, `brainstorm`, `spec-pushback`, `spec-review`,
+`plan`, `plan-pushback`, `alignment`, `file-tasks` and `docs-pr`.
+
+The block is a GitHub task list between two markers, one block per
+workflow:
+
+```markdown
+<!-- vrg-checkpoint:epic-create -->
+- [x] bootstrap
+- [ ] brainstorm
+...
+<!-- /vrg-checkpoint:epic-create -->
+```
+
+The parse is strict. Every line between the markers must be exactly
+`- [ ] <stage>` or `- [x] <stage>` (a box ticked in the web UI, which may
+write `[X]`, counts as done). A blank line, prose, any text after a stage
+name, a second block for the same workflow, or a marker without its partner
+makes the block **malformed**. Per-stage detail belongs in progress
+comments, not in the block.
+
+`--workflow NAME` is required on every subcommand, so one body can carry the
+blocks of several workflows, each rewritten only by its own operations. The
+issue is a fully qualified `OWNER/REPO#N`.
+
+- `init REF --workflow NAME [--tick STAGE]…` appends the block for the
+  workflow's current stage list after a blank line, all unticked, or with the
+  stages named by `--tick` ticked. The ticked stages must be the first stages
+  of the list, in any order. It refuses a body that already holds a block, and
+  exits 6 if that block is malformed.
+- `status REF --workflow NAME [--json]` prints the stages, their ticks and the
+  **next stage**, the first unticked one. On skew it prints how the block
+  differs from the current list (added and removed stages, and whether the
+  common stages are reordered); `reconcile` resolves it.
+- `tick REF --workflow NAME STAGE` ticks one stage. It refuses a stage that is
+  not in the block, a stage with an earlier one unticked (stages are linear),
+  and a block with skew. A stage already ticked succeeds and writes nothing,
+  so a re-entry can repeat a tick safely.
+- `reset REF --workflow NAME` removes every closed block of the workflow,
+  from its begin marker to its end marker (a malformed or duplicate block
+  included), and the blank line before each, leaving the rest of the body as
+  it was. With no block it succeeds and writes nothing. A begin marker with no
+  end marker (or an end marker with no begin) is refused with exit 6, since
+  where that block starts or ends is unknown.
+- `reconcile REF --workflow NAME [--tick STAGE]…` rewrites a block with
+  **skew** (one a tooling release changed the stage list under) to the
+  workflow's current stage list. A stage whose name matches keeps its tick
+  (a stage recorded more than once counts as ticked only when every copy
+  is); a removed stage is dropped; a new stage is unticked unless `--tick`
+  names it, because the human says it is done. `--tick` takes new stages
+  only. It refuses a block with no skew (exit 1), and exits 4 or 6 for a
+  missing or malformed block, with nothing written.
+
+`reconcile` prints one line per change, then the next stage:
+
+```text
+OWNER/REPO#N: reconciled the epic-create block:
+- kept ticked: bootstrap
+- new, unticked: alignment
+- dropped: old-stage (was ticked)
+- reordered: the stages now follow the current list
+next: brainstorm
+```
+
+A matching unticked stage is no change and gets no line. After the write it
+posts the same lines in a comment on the issue, whose first line is
+`vrg-checkpoint: reconciled <workflow>`, so the issue's log records every
+change made to the cursor. The comment is posted once and never retried. If
+it fails, the block stays written and the command exits 1, printing the
+comment's text to post by hand. If the write itself fails, it prints the
+same text, to post once `status` shows the block reconciled.
+
+A write rewrites only the block: every other byte of the body is kept, and
+the block takes the line ending the body already uses (GitHub's web editor
+saves `\r\n`). A write that would not change the body is skipped.
+
+Every operation reads the body through the trust layer, and counts it only
+when its author and every editor are trusted. A box a trusted human ticks in
+the web UI is a trusted edit; a body an outsider edited (a ticked box
+included) is never parsed or written: it is a stop, named by its metadata
+only (`stopped before any write: the issue body is untrusted: <ref>
+<issue|edit> <login> at <time> on body (<cause>). The human decides
+next.`), with exit 3. Every read and write runs under the issue owner's App
+token.
+
+`status --json` prints:
+
+```json
+{
+  "issue": "OWNER/REPO#N",
+  "workflow": "epic-create",
+  "state": "ok",
+  "stages": [{"name": "bootstrap", "done": true}],
+  "next": "brainstorm",
+  "skew": null
+}
+```
+
+`state` is `ok`, `missing`, `skew` or `malformed`, and the command exits with
+that state's code. `stages` is the block's stages in block order, and `[]`
+for `missing` and `malformed`. `next` is the first unticked stage, and
+`null` when every stage is ticked or the state is not `ok`. `skew` is `null`
+unless the state is `skew`, when it is `{"recorded": [...], "current":
+[...], "added": [...], "removed": [...], "reordered": bool}`: `added` in
+the current list's order, `removed` in the block's.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_checkpoint` (stage lists, format and parser: `lib/checkpoint.py`) |
+| Args | `init`, `status`, `tick`, `reset`, `reconcile`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE`; `reconcile`: `--tick STAGE` (repeatable, new stages only) |
+| Preconditions | GitHub App credentials for the issue's org; trusted authors configured |
+| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status`; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
+| Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick, a `reconcile` with no skew or a `--tick` of a stage that is not new, a failed `reconcile` comment); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
+| Status | Active |
+
 ### vrg-epic-link
 
 Link a task under an epic as a native GitHub sub-issue, reopening a closed
@@ -1456,13 +1577,36 @@ every listed org:
 - `render` prints the values the configuration implies, in that same shape,
   with no GitHub call, for comparison with the audit's values.
 
+`app-secrets` checks that the automation App's Actions secrets,
+`APP_CLIENT_ID` and `APP_PRIVATE_KEY`, reach each repo that runs an
+unattended job of epic vergil-project/.github#1494. With `--org ORG`, or
+without it for every listed org, it checks each repo of the org that is not
+archived and has a `.github/workflows/` file named `cd.yml`,
+`epic-rollup.yml`, `epic-sweep.yml` or `ops.yml`. Each `--repo OWNER/NAME`
+(repeatable, not with `--org`) is checked whatever its workflows.
+
+The App secrets live only in each repo's `automation` environment, never as
+repository or organization secrets (epic vergil-project/.github#1384; see
+[GitHub checks — the automation environment](config-audit.md#github-checks-the-automation-environment)).
+So the check reads the `automation` environment's secrets and prints
+`<owner>/<repo>: APP_CLIENT_ID=<source> APP_PRIVATE_KEY=<source>` per repo,
+the source being `environment` or `MISSING`, with `(no automation
+environment)` after it when the repo has none, which misses both. Then it
+prints a `FINDING:` line for each missing secret, and one for each
+repository or organization secret named `APP_CLIENT_ID` or
+`APP_PRIVATE_KEY` that the repo can see, since the layout forbids those
+copies. A copy never counts as the secret being present. It reads secret
+names only, never a value: the secrets APIs return none, and each read
+keeps only the `name` field. Like `check`, it runs as the org's automation
+App or the human, and refuses the agent modes.
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`; Actions copies: `lib/trust_publish.py`) |
-| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`); `publish [--org ORG]`; `check [--org ORG] [--values-out PATH]`; `render [--org ORG]` |
-| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set (not needed by `check --org`). `publish`: an org admin's `gh` credential. `check`: read-only Variables permission at organization and repository level |
-| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops `publish` and `check` with the failing call named |
-| Exit codes | 0 success; 1 not configured or invalid, `publish` refused or failed, or `check` findings; 2 bad arguments, or `check` could not run (refused identity, API error, no configuration) |
+| Source | `vergil_tooling.bin.vrg_trusted_authors` (config: `lib/trusted_authors.py`; Actions copies: `lib/trust_publish.py`; App secrets: `lib/app_secrets.py`) |
+| Args | `--json` (prints `{"human": [...], "agents": [...], "orgs": {"<org>": {"automation_app": "<slug>"}}}`); `publish [--org ORG]`; `check [--org ORG] [--values-out PATH]`; `render [--org ORG]`; `app-secrets [--org ORG \| --repo OWNER/NAME ...]` |
+| Preconditions | The VM file or the host stanzas exist, or, under GitHub Actions only, `$VRG_TRUSTED_AUTHORS` is set (not needed by `check --org`, `app-secrets --org` or `app-secrets --repo`). `publish`: an org admin's `gh` credential. `check`: read-only Variables permission at organization and repository level. `app-secrets`: read-only Secrets, Environments and Actions permission on each repo, and Metadata to list the org's repos |
+| Failure mode | Nothing configured, or an invalid configuration, prints the error on stderr and exits 1; it never prints a default. A GitHub API error stops `publish`, `check` and `app-secrets` with the failing call named; `app-secrets` never reports a failed read as present or missing. Its one read of absence is an HTTP 404 on the `automation` environment's secrets, read only after the repo's own secrets list has succeeded: the repo has no `automation` environment |
+| Exit codes | 0 success; 1 not configured or invalid, `publish` refused or failed, `check` findings, or `app-secrets` findings (a secret missing from the `automation` environment, or a forbidden repository or organization copy); 2 bad arguments, or `check` or `app-secrets` could not run (refused identity, API error, no configuration) |
 | Status | Active |
 
 ### vrg-ruling

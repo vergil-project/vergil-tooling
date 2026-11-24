@@ -62,6 +62,7 @@ the dev-tree override venv.
 | [vrg-issue-read](cli-tools-overview.md#vrg-issue-read) | Print an issue's or PR's trusted content, or the trusted results of a search or list |
 | [vrg-epic-create](cli-tools-overview.md#vrg-epic-create) | Create a top-level epic in its home repo |
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
+| [vrg-checkpoint](cli-tools-overview.md#vrg-checkpoint) | Keep a workflow's stage checklist in a tracking issue's body |
 | [vrg-epic-link](cli-tools-overview.md#vrg-epic-link) | Link a task under an epic as a native sub-issue |
 | [vrg-epic-move](cli-tools-overview.md#vrg-epic-move) | Move a task under a different epic |
 | [vrg-epic-rollup](cli-tools-overview.md#vrg-epic-rollup) | Close a finite epic once all its tasks are closed |
