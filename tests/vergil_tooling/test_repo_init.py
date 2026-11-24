@@ -142,7 +142,7 @@ class TestDefaultVergilSeries:
             render_ci_workflow(ctx)
             + render_cd_workflow(ctx)
             + repo_init.render_ops_workflow(ctx)
-            + render_epic_rollup_workflow("v9.4")
+            + render_epic_rollup_workflow("v9.4", org=ctx.org)
         )
         assert "@v2.1\n" not in rendered
         for workflow in (
@@ -601,6 +601,14 @@ class TestRenderGitignore:
         assert ".venv/" in rendered
 
 
+#: The App keys passed by name, as a repo outside vergil-project's callers
+#: pass them (issue #5108).
+_APP_KEYS_BY_NAME = {
+    "APP_CLIENT_ID": "${{ secrets.APP_CLIENT_ID }}",
+    "APP_PRIVATE_KEY": "${{ secrets.APP_PRIVATE_KEY }}",
+}
+
+
 class TestRenderOpsWorkflow:
     def test_ops_cron_minute_deterministic_and_in_range(self) -> None:
         a = repo_init._ops_cron_minute("vergil-project", "vergil-tooling")
@@ -622,10 +630,24 @@ class TestRenderOpsWorkflow:
         assert f"- cron: '{minute} 1 * * *'" in yaml
         assert "ops-github-config.yml@v2.1" in yaml
         assert "workflow_dispatch:" in yaml
-        # The config job reads the App keys from the automation environment,
-        # which reaches it only under `secrets: inherit` (epic .github#1384).
+        # Within vergil-project the config job inherits the App keys from the
+        # automation environment (epic .github#1384).
         assert "    secrets: inherit\n" in yaml
         assert inherit_violations(yaml) == []
+
+    def test_outside_vergil_project_passes_the_app_keys_by_name(self) -> None:
+        # GitHub passes `secrets: inherit` only within an org or enterprise,
+        # and the App-key workflows live in vergil-project (issue #5108).
+        ctx = RepoInitContext(org="mnemosys-project", name="melete")
+        content = repo_init.render_ops_workflow(ctx)
+        job = yaml.safe_load(content)["jobs"]["github-config"]
+        assert job["secrets"] == _APP_KEYS_BY_NAME
+        assert "    secrets: inherit\n" not in content
+        assert inherit_violations(content) == []
+
+    def test_org_match_ignores_case(self) -> None:
+        ctx = RepoInitContext(org="Vergil-Project", name="demo")
+        assert "    secrets: inherit\n" in repo_init.render_ops_workflow(ctx)
 
     def test_scaffolded_repo_passes_new_audit_checks(self, tmp_path: Path) -> None:
         """A freshly scaffolded repo passes both new audit checks (round-trip)."""
@@ -1160,8 +1182,8 @@ class TestRenderCdWorkflow:
         # cd-release@v2.1 derives the release image tag from the resolver's
         # primary, so the caller passes no container tag (issue #3484).
         assert "container-tag" not in content
-        # cd-release reads the App keys from the automation environment, which
-        # reaches it only under `secrets: inherit` (epic .github#1384).
+        # Within vergil-project cd-release inherits the App keys from the
+        # automation environment (epic .github#1384).
         assert yaml.safe_load(content)["jobs"]["release"]["secrets"] == "inherit"
         assert "attestations: write" in content
         assert "id-token: write" in content
@@ -1251,6 +1273,34 @@ class TestRenderCdWorkflow:
         content = render_cd_workflow(ctx)
         assert content.count("    secrets: inherit\n") == 2
         assert inherit_violations(content) == []
+
+    @pytest.mark.parametrize("language", ["python", "go", ""])
+    def test_outside_vergil_project_passes_the_app_keys_by_name(self, language: str) -> None:
+        # GitHub passes `secrets: inherit` only to a reusable workflow in the
+        # caller's own org or enterprise (issue #5108).
+        ctx = RepoInitContext(org="mnemosys-project", name="melete")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = language
+        content = render_cd_workflow(ctx)
+        jobs = yaml.safe_load(content)["jobs"]
+        assert jobs["docs"]["secrets"] == _APP_KEYS_BY_NAME
+        assert jobs["release"]["secrets"] == _APP_KEYS_BY_NAME
+        assert "    secrets: inherit\n" not in content
+        assert inherit_violations(content) == []
+
+    def test_outside_vergil_project_rust_passes_the_publisher_token(self) -> None:
+        # In-org, inherit carries CARGO_REGISTRY_TOKEN; by name it is listed.
+        ctx = RepoInitContext(org="logical-minds-foundry", name="crate")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = "rust"
+        jobs = yaml.safe_load(render_cd_workflow(ctx))["jobs"]
+        assert jobs["release"]["secrets"] == {
+            **_APP_KEYS_BY_NAME,
+            "CARGO_REGISTRY_TOKEN": "${{ secrets.CARGO_REGISTRY_TOKEN }}",
+        }
+        assert jobs["docs"]["secrets"] == _APP_KEYS_BY_NAME
 
 
 class TestRenderMkdocsYml:
@@ -2277,12 +2327,18 @@ class TestStepCiCdWorkflows:
 
 class TestRenderEpicRollupWorkflow:
     def test_is_a_thin_caller_to_the_reusable_workflow(self) -> None:
-        content = render_epic_rollup_workflow("v2.1")
+        content = render_epic_rollup_workflow("v2.1", org="vergil-project")
         assert "on:\n  issues:\n    types: [closed]" in content
         assert "ops-epic-rollup.yml@v2.1" in content
-        # The rollup reads the App keys from the automation environment, which
-        # reaches it only under `secrets: inherit` (epic .github#1384).
+        # Within vergil-project the rollup inherits the App keys from the
+        # automation environment (epic .github#1384).
         assert yaml.safe_load(content)["jobs"]["epic-rollup"]["secrets"] == "inherit"
+        assert inherit_violations(content) == []
+
+    def test_outside_vergil_project_passes_the_app_keys_by_name(self) -> None:
+        # inherit would pass nothing to a workflow in another org (issue #5108).
+        content = render_epic_rollup_workflow("v2.1", org="logical-minds-foundry")
+        assert yaml.safe_load(content)["jobs"]["epic-rollup"]["secrets"] == _APP_KEYS_BY_NAME
         assert inherit_violations(content) == []
 
 

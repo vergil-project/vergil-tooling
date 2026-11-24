@@ -24,6 +24,7 @@ from vergil_tooling.lib import dependabot, git, github, gitignore, lang_scaffold
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.labels import sync_labels
 from vergil_tooling.lib.output import emit_error, emit_warning
+from vergil_tooling.lib.secrets_inherit import ACTIONS_REPO
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -513,27 +514,60 @@ def _container_suffix(resolution: Resolution | None) -> str:
 
 
 _SECRETS_INHERIT_LINES = (
-    "    # `inherit` is required: the automation App keys live in the\n",
-    "    # `automation` environment, and environment secrets reach a cross-repo\n",
-    "    # reusable workflow only under `secrets: inherit`. Allowed only for the\n",
-    "    # App-key workflows (vrg-validate's secrets-inherit check).\n",
+    "    # `inherit` within vergil-project: it carries the App keys from the\n",
+    "    # `automation` environment and any signing or registry secrets the\n",
+    "    # callee declares. Allowed only for the App-key workflows (vrg-validate's\n",
+    "    # secrets-inherit check).\n",
     "    secrets: inherit\n",
 )
 """The ``secrets:`` of every generated job calling an App-key workflow.
 
 The automation App keys, and every other secret that can write or act, live
 only in the repo's ``automation`` environment (epic
-vergil-project/.github#1384). GitHub delivers a cross-repo reusable
-workflow's environment secrets only under ``secrets: inherit``, never through
-an explicit map (the probe in vergil-project/packages#6), and a calling job
-cannot declare an environment. So each generated caller of an App-key
-workflow (``cd-docs``, ``cd-release``, ``ops-epic-rollup``,
+vergil-project/.github#1384). Within vergil-project each generated caller of
+an App-key workflow (``cd-docs``, ``cd-release``, ``ops-epic-rollup``,
 ``ops-github-config``) inherits, superseding the explicit App-key maps of
-issue #4747 and epic vergil-project/.github#1494. ``inherit`` also carries a
-``[package]`` repo's signing secrets and the rust publisher's
-``CARGO_REGISTRY_TOKEN`` to ``cd-release``. Every such workflow is on
-:data:`~vergil_tooling.lib.secrets_inherit.INHERIT_ALLOWED`.
+issue #4747 and epic vergil-project/.github#1494. ``inherit`` is the chosen
+in-org shape: it also carries a ``[package]`` repo's signing secrets and the
+rust publisher's ``CARGO_REGISTRY_TOKEN`` to ``cd-release``. Every such
+workflow is on :data:`~vergil_tooling.lib.secrets_inherit.INHERIT_ALLOWED`.
+
+``inherit`` reaches only a reusable workflow in the caller's own organization
+or enterprise, so a repo outside the vergil-actions organization passes the
+keys by name instead (:func:`_app_key_secrets_lines`, issue #5108). Keys
+passed by name do reach a cross-org reusable workflow from the
+``automation`` environment: the probe of 2026-11-24
+(logical-minds-foundry/mq-gateway-replay-lab run 45390389192) showed it,
+superseding the vergil-project/packages#6 note that environment secrets
+reach a cross-repo callee only under ``inherit``.
 """
+
+#: The organization that holds the vergil-actions reusable workflows.
+_ACTIONS_ORG = ACTIONS_REPO.split("/", 1)[0]
+
+
+def _app_key_secrets_lines(org: str, *, cargo_token: bool = False) -> list[str]:
+    """The ``secrets:`` lines of a generated job that calls an App-key workflow.
+
+    A repo in the vergil-actions organization (*org*, case-insensitive)
+    inherits (:data:`_SECRETS_INHERIT_LINES`). GitHub passes ``secrets:
+    inherit`` only to a reusable workflow in the same organization or
+    enterprise, so for any other organization it would pass nothing and the
+    call would fail for want of ``APP_CLIENT_ID`` (issue #5108). Those repos
+    pass the App keys by name, and *cargo_token* adds the rust publisher's
+    ``CARGO_REGISTRY_TOKEN``, which ``inherit`` carries in-org.
+    """
+    if org.lower() == _ACTIONS_ORG:
+        return list(_SECRETS_INHERIT_LINES)
+    names = ["APP_CLIENT_ID", "APP_PRIVATE_KEY"]
+    if cargo_token:
+        names.append("CARGO_REGISTRY_TOKEN")
+    return [
+        "    # By name, not inherit: GitHub passes `secrets: inherit` only to a\n",
+        "    # reusable workflow in the caller's own organization or enterprise.\n",
+        "    secrets:\n",
+        *(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in names),
+    ]
 
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
@@ -716,14 +750,15 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     if ctx.publish_docs:
         # cd-docs reports its failures with the automation App's token (epic
         # vergil-project/.github#1494, spec §5.6; issue #4965), read from the
-        # automation environment, so every call inherits.
+        # automation environment, so an in-org call inherits and any other
+        # passes the keys by name (issue #5108).
         lines.extend(
             [
                 "  docs:\n",
                 _uses_line("cd-docs", ctx.vergil_version),
                 "    permissions:\n",
                 "      contents: write\n",
-                *_SECRETS_INHERIT_LINES,
+                *_app_key_secrets_lines(ctx.org),
             ]
         )
 
@@ -753,23 +788,27 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         )
         # cd-release pushes the release tags with the automation App's token
         # (issue #4747), and a [package] repo's package-sign job reads its
-        # `package-signing` environment (issue #3144): both reach it only
+        # `package-signing` environment (issue #3144): in-org, both reach it
         # under `secrets: inherit`, which also carries the publisher's token.
-        lines.extend(_SECRETS_INHERIT_LINES)
+        # Outside the org the App keys, and a rust repo's publisher token, are
+        # passed by name (issue #5108).
+        cargo_token = ctx.primary_language == "rust"
+        lines.extend(_app_key_secrets_lines(ctx.org, cargo_token=cargo_token))
 
     return "".join(lines)
 
 
-def render_epic_rollup_workflow(vergil_version: str) -> str:
+def render_epic_rollup_workflow(vergil_version: str, *, org: str) -> str:
     """Render .github/workflows/epic-rollup.yml — the event-driven rollup caller.
 
     Thin caller (epic vergil-project/.github#75): on any issue close it hands off
     to the reusable ops-epic-rollup workflow, which closes the parent epic once
-    all its sibling tasks are closed. Static across repos and orgs — the reusable
-    workflow reads the event and resolves the epic repo (``.github``) within the
-    caller's own org, so managed tasks auto-close on merge and their epics roll
-    up with no per-command step. The only per-repo input is *vergil_version*,
-    the vergil-actions series tag the caller pins (issue #3252).
+    all its sibling tasks are closed. Static across the repos of an org — the
+    reusable workflow reads the event and resolves the epic repo (``.github``)
+    within the caller's own org, so managed tasks auto-close on merge and their
+    epics roll up with no per-command step. The inputs are *vergil_version*,
+    the vergil-actions series tag the caller pins (issue #3252), and *org*,
+    which decides how the App keys are passed (:func:`_app_key_secrets_lines`).
     """
     return (
         "name: Epic Rollup\n"
@@ -786,7 +825,7 @@ def render_epic_rollup_workflow(vergil_version: str) -> str:
         f"{_uses_line('ops-epic-rollup', vergil_version)}"
         "    permissions:\n"
         "      contents: read\n"
-        f"{''.join(_SECRETS_INHERIT_LINES)}"
+        f"{''.join(_app_key_secrets_lines(org))}"
     )
 
 
@@ -827,7 +866,7 @@ def render_ops_workflow(ctx: RepoInitContext) -> str:
         "    permissions:\n"
         "      contents: read\n"
         "      issues: write\n"
-        f"{''.join(_SECRETS_INHERIT_LINES)}"
+        f"{''.join(_app_key_secrets_lines(ctx.org))}"
     )
 
 
@@ -1555,7 +1594,9 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
     # Event-driven epic rollup ships in every managed repo (epic
     # vergil-project/.github#75) so a merged task closes and its epic rolls up
     # with no per-command step.
-    (workflows_dir / "epic-rollup.yml").write_text(render_epic_rollup_workflow(ctx.vergil_version))
+    (workflows_dir / "epic-rollup.yml").write_text(
+        render_epic_rollup_workflow(ctx.vergil_version, org=ctx.org)
+    )
 
     # Daily config-audit caller so every managed repo is born self-policing
     # (epic vergil-project/.github#311). Staggered per-repo cron avoids a
