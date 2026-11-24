@@ -95,7 +95,7 @@ def parse_task_issue(ref: str) -> IssueRef:
     return issue
 
 
-def check_clone_is_issue_repo(issue: IssueRef) -> None:
+def check_clone_is_issue_repo(issue: IssueRef, command: str = "vrg-merge-review-request") -> None:
     """Refuse unless the current clone's ``origin`` is *issue*'s repository.
 
     The private directory is resolved from the current directory's main
@@ -104,10 +104,11 @@ def check_clone_is_issue_repo(issue: IssueRef) -> None:
     :func:`vergil_tooling.lib.rulings.draft_ref.require_remote_is`, the one
     ``vrg-ruling draft`` makes: every push URL of ``origin`` must name the
     issue's repository on github.com. The refusal names both repositories
-    and never a URL.
+    and never a URL, and tells the caller to run *command* in a clone of the
+    issue's repository.
     """
     try:
-        require_remote_is(f"{issue.owner}/{issue.repo}", command="vrg-merge-review-request")
+        require_remote_is(f"{issue.owner}/{issue.repo}", command=command)
     except RulingError as exc:
         refuse(str(exc))
 

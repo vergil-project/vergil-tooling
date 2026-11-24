@@ -15,6 +15,11 @@ The task's own level, ``issue-implement/<N>/``, also holds the batch marker
 (epic vergil-project/.github#1019): :func:`ensure_issue_dir` makes the same
 checks down to ``<N>`` only, and :func:`existing_issue_dir` makes them
 without creating anything, for a reader or a remover.
+
+Doctrine §1.5 names other kinds of task state directory beside
+``issue-implement``, each ``build/.vergil-state/<kind>/<N>/`` under the same
+rules: :func:`ensure_task_dir` makes the same checks down to any such kind's
+``<N>``, and ``vrg-state-dir`` runs it for the skills.
 """
 
 from __future__ import annotations
@@ -33,6 +38,10 @@ LEVELS = (".vergil-state", "issue-implement", "{issue}", "merge-review")
 
 #: The levels down to the issue's own directory, ``issue-implement/<N>``.
 ISSUE_LEVELS = LEVELS[:-1]
+
+#: The kinds of task state directory shaped ``build/.vergil-state/<kind>/<N>/``
+#: (doctrine §1.5). ``design-review`` is not one: it has a ``<round>`` level.
+TASK_KINDS = ("issue-implement", "operational", "upstream-report")
 
 #: The only permission bits a level may have.
 PRIVATE_MODE = 0o700
@@ -62,10 +71,24 @@ def ensure_issue_dir(main_clone: Path, issue: int) -> Path:
     The checks of :func:`ensure_private_dir`, stopping at the issue's own
     directory, which it returns.
     """
+    return ensure_task_dir(main_clone, ISSUE_LEVELS[1], issue)
+
+
+def ensure_task_dir(main_clone: Path, kind: str, issue: int) -> Path:
+    """Check (creating where absent) every level down to ``<kind>/<N>``.
+
+    The checks of :func:`ensure_private_dir`, on ``.vergil-state``, then
+    *kind* (one of :data:`TASK_KINDS`), then the issue's own directory,
+    which it returns. Raises :class:`StateDirError` for any other kind, or
+    a non-positive issue, before anything is created.
+    """
+    if kind not in TASK_KINDS:
+        msg = f"unknown state directory kind {kind!r}: expected one of {', '.join(TASK_KINDS)}"
+        raise StateDirError(msg)
     _check_issue(issue)
     path = ensure_state_root(main_clone)
-    for level in ISSUE_LEVELS[1:]:
-        path /= level.format(issue=issue)
+    for level in (kind, str(issue)):
+        path /= level
         _ensure_level(path)
     return path
 
