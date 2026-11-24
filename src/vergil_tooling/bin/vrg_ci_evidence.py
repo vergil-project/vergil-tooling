@@ -8,6 +8,7 @@ the substantive failures
 :class:`~vergil_tooling.lib.ci_evidence.ReleasePrUnresolvedError`,
 :class:`~vergil_tooling.lib.ci_evidence.HarvestStateError`,
 :class:`~vergil_tooling.lib.ci_evidence.EvidenceArtifactError`,
+:class:`~vergil_tooling.lib.ci_evidence.SkipRecordError`,
 :class:`~vergil_tooling.lib.remote_config.RemoteConfigError`, and the trust
 layer's :class:`~vergil_tooling.lib.trust.TrustReadError` and
 :class:`~vergil_tooling.lib.trusted_authors.TrustedAuthorsNotConfiguredError`,
@@ -42,6 +43,7 @@ from vergil_tooling.lib.ci_evidence import (
     IncompleteEvidenceError,
     NoQualifyingRunError,
     ReleasePrUnresolvedError,
+    SkipRecordError,
 )
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.output import emit_error
@@ -61,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         IncompleteEvidenceError,
         NoQualifyingRunError,
         ReleasePrUnresolvedError,
+        SkipRecordError,
         RemoteConfigError,
         TrustedAuthorsNotConfiguredError,
         VersionsError,

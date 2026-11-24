@@ -67,7 +67,7 @@ from vergil_tooling.lib.repo_init import (
     render_vergil_toml,
     step_scaffold_config_files,
 )
-from vergil_tooling.lib.validate_record import RECORD_PATH, read_record
+from vergil_tooling.lib.validate_record import RECORD_PATH, StageSkip, read_record
 
 _MOD = "vergil_tooling.bin.vrg_validate"
 
@@ -2299,6 +2299,38 @@ def test_unbootstrapped_rust_stages_are_warnings(tmp_path: Path) -> None:
         "trivy": "ok",
         "docs": "ok",
     }
+    # Each skipped stage records why, so CI need not repeat the test (#5034);
+    # a stage that ran records no skip.
+    skip = {
+        "reason": "not-bootstrapped",
+        "language": "rust",
+        "missing_manifests": ["Cargo.toml", "Cargo.lock"],
+    }
+    skips = {stage["name"]: stage.get("skip") for stage in data["stages"]}
+    assert skips == {name: (skip if s == "warn" else None) for name, s in status.items()}
+    record = read_record(tmp_path)
+    assert [name for name, _ in record.skips] == [
+        "install",
+        "lint",
+        "typecheck",
+        "build",
+        "test",
+        "audit",
+    ]
+    assert {s for _, s in record.skips} == {
+        StageSkip("not-bootstrapped", "rust", ("Cargo.toml", "Cargo.lock"))
+    }
+
+
+@pytest.mark.usefixtures("real_bootstrap_check")
+def test_bootstrapped_rust_records_no_skip(tmp_path: Path) -> None:
+    _write_config(tmp_path, "rust")
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "x"\n')
+    (tmp_path / "Cargo.lock").write_text("version = 4\n")
+    _run_validate(tmp_path, [])
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    assert all(set(stage) == {"name", "status"} for stage in data["stages"])
+    assert read_record(tmp_path).skips == ()
 
 
 @pytest.mark.usefixtures("real_bootstrap_check")

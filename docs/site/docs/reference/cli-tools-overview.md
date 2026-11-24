@@ -2918,7 +2918,11 @@ the `vergil-actions` reusable workflows, the custom stage as
 for every check and where it runs. Every pipeline run, pass or fail,
 writes `.vergil/vrg-validate-last.json`: the commit at the start, the exit
 code, whether the run was full (no `--check`) and the tree clean at the
-start, and each stage's status. `vrg-merge-review-request` reads it.
+start, and each stage's status. A stage skipped because the repository
+is not bootstrapped yet also carries a `skip` object: the reason
+`not-bootstrapped`, the language and the missing manifests. A run that
+skips no stage records none. `vrg-merge-review-request` reads it; a
+release from before `skip` existed refuses a record that carries one.
 
 `--markdown FILE...` is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as

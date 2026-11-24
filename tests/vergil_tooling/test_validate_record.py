@@ -14,6 +14,7 @@ from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage, StageResult
 from vergil_tooling.lib.validate_record import (
     RECORD_PATH,
+    StageSkip,
     ValidateRecord,
     ValidateRecordError,
     read_record,
@@ -136,6 +137,72 @@ def _good() -> dict[str, Any]:
 def test_read_record_malformed(tmp_path: Path, change: dict[str, Any], message: str) -> None:
     (tmp_path / ".vergil").mkdir()
     (tmp_path / RECORD_PATH).write_text(json.dumps({**_good(), **change}))
+    with pytest.raises(ValidateRecordError, match=message):
+        read_record(tmp_path)
+
+
+_SKIP = StageSkip("not-bootstrapped", "python", ("pyproject.toml", "uv.lock"))
+_SKIP_JSON = {
+    "reason": "not-bootstrapped",
+    "language": "python",
+    "missing_manifests": ["pyproject.toml", "uv.lock"],
+}
+
+
+def test_record_carries_a_skip_on_a_warn_stage_only(tmp_path: Path) -> None:
+    results = [
+        StageResult("common", "ok"),
+        StageResult("install", "warn", 0.0, "skipped"),
+        StageResult("lint", "interrupted"),
+    ]
+    _write(tmp_path, results=results, skips={"install": _SKIP, "lint": _SKIP})
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    # The skip goes on the stage it skipped; one interrupted first records none.
+    assert data["stages"] == [
+        {"name": "common", "status": "ok"},
+        {"name": "install", "status": "warn", "skip": _SKIP_JSON},
+        {"name": "lint", "status": "interrupted"},
+    ]
+    record = read_record(tmp_path)
+    assert record.skips == (("install", _SKIP),)
+    assert record.passed == ("common", "install")
+    assert record.not_passed == ("lint",)
+
+
+def test_record_with_no_skips_keeps_its_shape(tmp_path: Path) -> None:
+    # A reader released before the skip existed reads it unchanged (#5034).
+    _write(tmp_path, results=_RESULTS, skips={})
+    data = json.loads((tmp_path / RECORD_PATH).read_text())
+    assert all(set(stage) == {"name", "status"} for stage in data["stages"])
+    assert read_record(tmp_path).skips == ()
+
+
+@pytest.mark.parametrize(
+    ("stage", "message"),
+    [
+        ({"name": "lint", "status": "ok", "skip": _SKIP_JSON}, "a skipped stage is warn, not ok"),
+        ({"name": "lint", "status": "warn", "skip": None}, "skip must be"),
+        ({"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "x": 1}}, "skip must be"),
+        ({"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "reason": "x"}}, "skip must be"),
+        (
+            {"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "reason": ["x"]}},
+            "skip must be",
+        ),
+        ({"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "language": ""}}, "skip must"),
+        (
+            {"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "missing_manifests": []}},
+            "skip must be",
+        ),
+        (
+            {"name": "lint", "status": "warn", "skip": {**_SKIP_JSON, "missing_manifests": [1]}},
+            "skip must be",
+        ),
+        ({"name": "lint", "status": "warn", "other": 1}, "stage 1 must be"),
+    ],
+)
+def test_read_record_malformed_skip(tmp_path: Path, stage: dict[str, Any], message: str) -> None:
+    (tmp_path / ".vergil").mkdir()
+    (tmp_path / RECORD_PATH).write_text(json.dumps({**_good(), "stages": [stage]}))
     with pytest.raises(ValidateRecordError, match=message):
         read_record(tmp_path)
 

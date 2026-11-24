@@ -311,6 +311,43 @@ empty report. (An earlier registry ran the checks pass/fail only — `pytest`
 with no `--cov-report=xml` / `--junitxml`, `pip-audit` with no `--output` — and
 persisted no report; that gap is closed.)
 
+### Skip records: a gate skipped as not bootstrapped
+
+A repository that is not bootstrapped yet (none of its language's manifests,
+and no sources) has its language stages skipped by `vrg-validate`, so its
+test, audit, lint and typecheck legs write no report. The
+`vrg-validate` run record, `.vergil/vrg-validate-last.json`, gives each such
+stage a `skip` object: the reason `not-bootstrapped`, the language and the
+missing manifests. vergil-actions' report staging
+([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/),
+vergil-actions#1294) proves the skip and stages a **skip record** in place
+of the leg's reports: `<gate>-not-bootstrapped-<ver>.json`, or for a quality
+leg `quality-<gate>-not-bootstrapped-<ver>.json`, holding
+
+```json
+{
+  "gate": "test",
+  "language": "python",
+  "version": "3.15",
+  "skipped": true,
+  "reason": "not-bootstrapped",
+  "head": "<the commit the leg checked out>",
+  "missing_manifests": ["pyproject.toml", "uv.lock"]
+}
+```
+
+The harvester reads every file so named in a gate directory as a skip
+record. It refuses, with a one-line error, one it cannot read, one without
+every field above, one that is not `skipped: true` with the reason
+`not-bootstrapped`, one whose leg is not one of its gate's (`test` for the
+test gate, `audit` for audit, `lint` and `typecheck` for quality, none for
+any other) or whose name does not match its leg and version, and one whose
+`head` is not the release PR's validated head. A skip record counts as the
+gate's payload for the empty-payload guard, and the manifest lists the leg
+under the gate's `skipped`. The gate's `tools` are the `evidence.json`
+fragment's, as for any gate, so a skipped leg's tools are still listed
+there.
+
 ## The bundle tree
 
 The harvester assembles a single compressed archive,
@@ -376,13 +413,15 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
       "conclusion": "success",
       "tools": [{ "name": "codeql", "version": "..." }],
       "metrics": { "findings_by_severity": { "critical": 0, "high": 0 } },
-      "files": [{ "path": "gates/security/python.sarif", "sha256": "..." }]
+      "files": [{ "path": "gates/security/python.sarif", "sha256": "..." }],
+      "skipped": []
     },
     {
       "name": "test",
       "conclusion": "success",
       "metrics": { "coverage_pct": 100, "tests": 1423 },
-      "files": [{ "path": "gates/test/coverage-3.14.xml", "sha256": "..." }]
+      "files": [{ "path": "gates/test/coverage-3.14.xml", "sha256": "..." }],
+      "skipped": []
     }
   ],
   "missing_gates": []
@@ -396,7 +435,7 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
 | `release`        | The released `version`, git `tag`, and `released_commit` (the `main` merge SHA). |
 | `provenance`     | The evidence anchor: the `release_pr`, its `validated_head_sha`, and the `ci_run_urls` the evidence was harvested from. |
 | `generated_at`   | ISO-8601 timestamp, injected by the CD environment.                     |
-| `gates`          | Per-gate record: `name`, `conclusion`, `tools`, `metrics`, and `files` (each with `path` and `sha256`). |
+| `gates`          | Per-gate record: `name`, `conclusion`, `tools`, `metrics`, `files` (each with `path` and `sha256`), and `skipped`: each leg a [skip record](#skip-records-a-gate-skipped-as-not-bootstrapped) shows skipped, with its `leg`, `language`, `version`, `reason`, `missing_manifests` and the record's `path` (empty when none was). |
 | `missing_gates`  | Names of required gates that produced no evidence — recorded as data, never silently dropped. |
 
 **Current limitations (shipped state).** As with the `evidence.json` fragment,

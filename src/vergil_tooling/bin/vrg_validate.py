@@ -58,8 +58,9 @@ tests, not only the dev container's (issue #3547).
 Every pipeline run, pass or fail, interrupted or not, writes
 ``.vergil/vrg-validate-last.json``: the commit checked out at the start,
 the exit code, whether the run was full (no ``--check``), whether the tree
-was clean at the start, and each stage's status. merge-review's request
-builder reads it (:mod:`vergil_tooling.lib.validate_record`).
+was clean at the start, each stage's status and, for a stage skipped as not
+bootstrapped, why (issue #5034). merge-review's request builder reads it
+(:mod:`vergil_tooling.lib.validate_record`).
 """
 
 from __future__ import annotations
@@ -72,6 +73,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -108,7 +110,7 @@ from vergil_tooling.lib.languages import (
 from vergil_tooling.lib.progress import Stage, StageMode
 from vergil_tooling.lib.sarif import evaluate_findings, format_summary, parse_sarif
 from vergil_tooling.lib.semgrep import resolve_rulesets, run_scan, scan_failure_message
-from vergil_tooling.lib.validate_record import write_record
+from vergil_tooling.lib.validate_record import NOT_BOOTSTRAPPED, StageSkip, write_record
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.versions.floors import check_floors, check_toolchain_selection
 from vergil_tooling.lib.versions.resolve import resolve_language
@@ -310,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
             full=args.check is None,
             clean_at_start=clean_at_start,
             results=results,
+            skips=_stage_skips(stages),
         )
     return exit_code
 
@@ -830,6 +833,18 @@ def _run_rust_test_command(cmd: list[str], *, coverage_cmd: list[str], repo_root
     return rc
 
 
+@dataclass
+class _SkippedStage(Stage):
+    """A stage that only records a skip; *skip* is why, for the run record."""
+
+    skip: StageSkip | None = None
+
+
+def _stage_skips(stages: list[Stage]) -> dict[str, StageSkip]:
+    """Map each skipped stage's name to why it was skipped, for the run record."""
+    return {s.name: s.skip for s in stages if isinstance(s, _SkippedStage) and s.skip is not None}
+
+
 def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Stage:
     """A language stage skipped, loudly, because the repo has no manifest yet.
 
@@ -840,6 +855,9 @@ def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Sta
     ``warn`` (⚠, with the reason on its row and in the summary), never ``ok``,
     so the skip cannot pass unnoticed; ``warn`` still counts as passed, so the
     run can reach merge review. Adding the manifest runs the stage for real.
+    The run record gives the stage a ``not-bootstrapped`` skip naming the
+    language and the missing manifests (issue #5034), so CI need not repeat
+    the test.
     """
     reason = (
         f"skipped: no {', '.join(missing)} ({language} repo not bootstrapped yet); "
@@ -850,7 +868,8 @@ def _not_bootstrapped_stage(name: str, language: str, missing: list[str]) -> Sta
         print(f"NOTICE: {name}: {reason}")
         progress.mark_warn(reason)
 
-    return Stage(name, fn, mode="warn")
+    skip = StageSkip(reason=NOT_BOOTSTRAPPED, language=language, missing_manifests=tuple(missing))
+    return _SkippedStage(name, fn, mode="warn", skip=skip)
 
 
 # How many source paths the sources-without-manifest failure names.
