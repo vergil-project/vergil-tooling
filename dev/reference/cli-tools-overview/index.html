@@ -15190,6 +15190,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-state-dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-state-dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19878,6 +19889,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-state-dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-state-dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -23250,6 +23272,56 @@ makes there, and writes only to the path it prints.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's <code>--fix-base</code> is not an ancestor of <code>HEAD</code> (the branch was rebased)</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-state-dir">vrg-state-dir<a class="headerlink" href="#vrg-state-dir" title="Permanent link">&para;</a></h3>
+<p>Create and check a task's private state directory,
+<code>build/.vergil-state/&lt;kind&gt;/&lt;N&gt;/</code> in the main clone, as
+<a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories">doctrine §1.5</a>
+requires, and print its absolute path. <code>--kind</code> is <code>operational</code> (the
+security items of <code>issue-validate</code> and <code>issue-deploy</code>), <code>issue-implement</code> or
+<code>upstream-report</code>. <code>build</code> must be a real directory (it is created when
+absent), and each level from <code>.vergil-state</code> down to <code>&lt;N&gt;</code> must be a real
+directory, not a symlink, with mode exactly 700; an absent level is created
+mode 700. A level that fails stops the command before anything is created
+below it. These are the checks
+<a href="#vrg-merge-review-request"><code>vrg-merge-review-request --ensure-dir</code></a> makes,
+through the same code. Before it creates or checks anything, it refuses
+unless the current clone's <code>origin</code> is the <code>--issue</code> repository, naming both
+repositories. The caller runs it before every write it makes there, and
+writes only to the path it prints.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_state_dir</code> (library: <code>lib/merge_review/state.py</code>, <code>lib/build_dir.py</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Run in a clone (or worktree) of the <code>--issue</code> repository</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>ERROR: &lt;reason&gt;</code> on stderr, nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 the path was printed, 1 a refusal or error, 2 bad arguments</td>
 </tr>
 <tr>
 <td>Status</td>
