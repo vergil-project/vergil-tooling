@@ -184,8 +184,15 @@ class TestListVms:
         mock.return_value = subprocess.CompletedProcess([], 0, stdout=lines + "\n")
         result = list_vms()
         assert len(result) == 2
-        assert result[0] == {"name": "default", "status": "Stopped"}
-        assert result[1] == {"name": "vergil-agent", "status": "Running"}
+        assert result[0] == {"name": "default", "status": "Stopped", "disk": ""}
+        assert result[1] == {"name": "vergil-agent", "status": "Running", "disk": ""}
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_carries_the_disk_bytes_lima_reports(self, mock: MagicMock) -> None:
+        # Lima's `limactl list --json` carries `disk` as an int64 byte count.
+        lines = json.dumps({"name": "vergil-agent", "status": "Stopped", "disk": 53687091200})
+        mock.return_value = subprocess.CompletedProcess([], 0, stdout=lines + "\n")
+        assert list_vms() == [{"name": "vergil-agent", "status": "Stopped", "disk": "53687091200"}]
 
     @patch("vergil_tooling.lib.lima._limactl")
     def test_returns_empty_on_error(self, mock: MagicMock) -> None:

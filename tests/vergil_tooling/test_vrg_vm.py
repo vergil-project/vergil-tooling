@@ -1178,6 +1178,21 @@ class TestList:
         assert "AGENTS" in output  # new observability header
 
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_shows_the_actual_disk_and_marks_a_mismatch(
+        self, mock_list: MagicMock, config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The base box was created at 50GiB; its configured size is the 100GiB base
+        # default. DISK reads Lima's size, marked, and the column widens to fit it.
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Stopped", "disk": str(50 * 1024**3)}
+        ]
+        assert main(["list", "--config", str(config_file)]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        row = next(line for line in lines if line.startswith("vergil "))
+        assert "50GiB≠100GiB" in row
+        assert lines[0].index("AGENTS") == row.index("50GiB≠100GiB") + len("50GiB≠100GiB") + 1
+
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_not_created(
         self, mock_list: MagicMock, config_file: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -3952,6 +3967,48 @@ class TestListRows:
         probes = {"vergil-user.o.gone": (1, 0, None)}
         rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "o/gone")["agents"] == "1"
+
+    def test_disk_shows_the_actual_lima_size_when_it_matches(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")  # configured 50GiB
+        rows = _list_rows("vergil-user", ident, [], {}, {}, {"vergil-user": 50 * 1024**3})
+        assert self._row(rows, "base")["disk"] == "50GiB"
+
+    def test_disk_marks_an_actual_size_that_differs_from_the_configured(
+        self, tmp_path: Path
+    ) -> None:
+        # A base box created at 50GiB before its identity moved to 100GiB: list
+        # must not claim the configured 100GiB it does not have (#5031).
+        ident = self._identity(tmp_path / "projects", disk="100GiB")
+        rows = _list_rows("vergil-user", ident, [], {}, {}, {"vergil-user": 50 * 1024**3})
+        assert self._row(rows, "base")["disk"] == "50GiB≠100GiB"
+
+    def test_disk_marks_a_dedicated_vm_whose_disk_differs(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)  # the mq repo declares 300GiB
+        dedic = self._present(projects)
+        disks = {"vergil-user.lmf.mq": 200 * 1024**3}
+        rows = _list_rows("vergil-user", ident, dedic, {}, {}, disks)
+        assert self._row(rows, "lmf/mq")["disk"] == "200GiB≠300GiB"
+
+    def test_disk_shows_a_fractional_size_to_one_decimal(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        disks = {"vergil-user": 50 * 1024**3 + 512 * 1024**2}
+        rows = _list_rows("vergil-user", ident, [], {}, {}, disks)
+        assert self._row(rows, "base")["disk"] == "50.5GiB≠50GiB"
+
+    def test_disk_is_the_configured_size_without_a_lima_record(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        rows = _list_rows("vergil-user", ident, [], {}, {})  # VM never created
+        assert self._row(rows, "base")["disk"] == "50GiB"
+
+    def test_orphaned_disk_shows_the_actual_size(self, tmp_path: Path) -> None:
+        # An orphaned VM has no configured size; its actual one is still shown.
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
+        rows = _list_rows("vergil-user", ident, dedic, {}, {}, {"vergil-user.o.gone": 30 * 1024**3})
+        assert self._row(rows, "o/gone")["disk"] == "30GiB"
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
+        assert self._row(rows, "o/gone")["disk"] == "—"
 
     def _rebuilt_named(
         self, tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch

@@ -117,7 +117,14 @@ def vm_status(instance: str) -> str:
 
 
 def list_vms() -> list[dict[str, str]]:
-    """Return all Lima instances as ``[{name, status, ...}]``."""
+    """Return all Lima instances as ``[{name, status, disk}]``.
+
+    ``disk`` is the instance's disk size in bytes, as a decimal string: the
+    ``disk`` field of ``limactl list --json`` (an int64 byte count Lima reads
+    from the instance's ``lima.yaml``; ``limactl edit --disk`` changes it and
+    the next ``limactl start`` grows the disk image to it). It is ``""`` when
+    Lima's record carries no size.
+    """
     try:
         result = _limactl("list", "--json")
     except subprocess.CalledProcessError:
@@ -125,7 +132,14 @@ def list_vms() -> list[dict[str, str]]:
     vms: list[dict[str, str]] = []
     for line in result.stdout.strip().splitlines():
         entry = json.loads(line)
-        vms.append({"name": entry.get("name", ""), "status": entry.get("status", "")})
+        disk = entry.get("disk")
+        vms.append(
+            {
+                "name": entry.get("name", ""),
+                "status": entry.get("status", ""),
+                "disk": str(int(disk)) if disk else "",
+            }
+        )
     return vms
 
 

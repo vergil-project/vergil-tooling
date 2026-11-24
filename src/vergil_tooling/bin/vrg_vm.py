@@ -250,7 +250,10 @@ def main(argv: list[str] | None = None) -> int:
         help="List all identity VMs and their status",
         description=(
             "List each identity's base and dedicated VMs with configured footprint "
-            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
+            "(CPUS/MEM), disk size, live occupancy, and SPEC health. DISK is the size "
+            "Lima reports for the VM's disk (the configured size for a VM not yet "
+            "created); a disk that differs from its configured size shows as "
+            "<actual>≠<configured>. Dedicated rows enumerate "
             "existing VM instances only; a spec'd repo whose VM was never built is "
             "surfaced by the session/start preflight gate, not here. AGENTS counts "
             "harness instances (Claude Code sessions); HUMANS counts open human-held "
@@ -2250,14 +2253,56 @@ def _present_spec_state(
     return state
 
 
+_GIB = 1024**3
+
+
+def _gib_bytes(size: str) -> int:
+    """Bytes in a configured ``"<N>GiB"`` size (the only form vm sizes take)."""
+    return int(size.removesuffix("GiB")) * _GIB
+
+
+def _format_gib(size_bytes: int) -> str:
+    """A Lima byte count as ``<N>GiB``, with one decimal when it is not whole GiB."""
+    if size_bytes % _GIB == 0:
+        return f"{size_bytes // _GIB}GiB"
+    return f"{size_bytes / _GIB:.1f}GiB"
+
+
+def _lima_disks(vms: list[dict[str, str]]) -> dict[str, int]:
+    """Each Lima instance's disk size in bytes, from ``list_vms()``; unsized ones omitted."""
+    return {vm["name"]: int(vm["disk"]) for vm in vms if vm.get("disk")}
+
+
+def _disk_cell(actual: int | None, configured: str | None) -> str:
+    """The DISK column: the VM's actual Lima disk, marked when it is not the configured size.
+
+    With no Lima record (the VM was never created) the configured size is shown.
+    A disk that differs from its configured size reads ``<actual>≠<configured>``:
+    after an in-place grow, or for a box created before its size changed.
+    """
+    if actual is None:
+        return configured or "—"
+    shown = _format_gib(actual)
+    if configured is None or actual == _gib_bytes(configured):
+        return shown
+    return f"{shown}≠{configured}"
+
+
 def _list_rows(
     identity_name: str,
     identity: Identity,
     dedicated: list[DedicatedRow],
     status: dict[str, str],
     probes: Mapping[str, ProbeResult],
+    disks: Mapping[str, int] | None = None,
 ) -> list[dict[str, object]]:
-    """Build display rows for one identity: the base VM plus each dedicated row."""
+    """Build display rows for one identity: the base VM plus each dedicated row.
+
+    ``disks`` maps a Lima instance to its actual disk size in bytes
+    (:func:`_lima_disks`); the DISK column shows that size, marked when it
+    differs from the configured one (:func:`_disk_cell`).
+    """
+    disks = disks or {}
     base = _base_footprint(identity)
     rows: list[dict[str, object]] = []
 
@@ -2270,7 +2315,7 @@ def _list_rows(
             "status": status.get(identity.vm_instance, "Not Created"),
             "cpus": cast("int", base["cpus"]),
             "memory": str(base["memory"]),
-            "disk": str(base["disk"]),
+            "disk": _disk_cell(disks.get(identity.vm_instance), str(base["disk"])),
             "agents": b_agents,
             "humans": b_humans,
             "spec": "ok",
@@ -2290,7 +2335,7 @@ def _list_rows(
                     "status": st,
                     "cpus": "—",
                     "memory": "—",
-                    "disk": "—",
+                    "disk": _disk_cell(disks.get(d.instance), None),
                     "agents": agents,
                     "humans": humans,
                     "spec": "orphaned",
@@ -2317,7 +2362,7 @@ def _list_rows(
                 "status": st,
                 "cpus": spec.cpus,
                 "memory": spec.memory,
-                "disk": spec.disk,
+                "disk": _disk_cell(disks.get(d.instance), spec.disk),
                 "agents": agents,
                 "humans": humans,
                 "spec": _present_spec_state(d.instance, spec, probes),
@@ -2625,7 +2670,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
     if args.sessions:
         return _list_sessions(config, args)
 
-    status = {vm["name"]: vm["status"] for vm in list_vms()}
+    vms = list_vms()
+    status = {vm["name"]: vm["status"] for vm in vms}
+    disks = _lima_disks(vms)
     instances = list(status)
 
     discovered = {
@@ -2637,24 +2684,26 @@ def _cmd_list(args: argparse.Namespace) -> int:
     local_rows = [
         (id_name, r)
         for id_name, identity in config.identities.items()
-        for r in _list_rows(id_name, identity, discovered[id_name], status, probes)
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes, disks)
     ]
     cloud_rows = _cloud_list_rows(config)
 
-    # SCOPE and STATUS carry the only variable-length values — long org/repo handles
-    # and the wide 'unknown (no gcp creds)' placeholder — so size each to its widest
-    # value with the prior fixed widths as floors. A value that overruns a fixed
-    # field shoves every later column out of alignment, which is exactly what a long
-    # handle did to SCOPE (#1866).
-    scopes = [str(r["scope"]) for _id, r in local_rows] + [str(r["scope"]) for r in cloud_rows]
-    statuses = [str(r["status"]) for _id, r in local_rows] + [str(r["status"]) for r in cloud_rows]
+    # SCOPE, STATUS and DISK carry the only variable-length values — long org/repo
+    # handles, the wide 'unknown (no gcp creds)' placeholder and a marked
+    # '<actual>≠<configured>' disk — so size each to its widest value with the prior
+    # fixed widths as floors. A value that overruns a fixed field shoves every later
+    # column out of alignment, which is exactly what a long handle did to SCOPE (#1866).
+    all_rows = [r for _id, r in local_rows] + cloud_rows
+    scopes = [str(r["scope"]) for r in all_rows]
+    statuses = [str(r["status"]) for r in all_rows]
     scope_w = max(40, *(len(s) for s in scopes)) if scopes else 40
     status_w = max(11, *(len(s) for s in statuses)) if statuses else 11
+    disk_w = max(7, *(len(str(r["disk"])) for r in all_rows)) if all_rows else 7
 
     header = (
         f"{'IDENTITY':<14} {'SCOPE':<{scope_w}} {'INSTANCE':<11} {'BACKEND':<13} "
-        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} "
-        f"{'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} "
+        f"{'DISK':<{disk_w}} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -2663,7 +2712,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print(
             f"{id_name:<14} {r['scope']!s:<{scope_w}} {r.get('instance', '—')!s:<11} "
             f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {'—':<15} "
-            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<{disk_w}} "
             f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
         )
 
@@ -2671,7 +2720,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print(
             f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['instance']!s:<11} "
             f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {r['external_ip']!s:<15} "
-            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
+            f"{'—':<5} {'—':<7} {r['disk']!s:<{disk_w}} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 
     return 0
