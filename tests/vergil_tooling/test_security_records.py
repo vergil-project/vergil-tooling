@@ -480,6 +480,8 @@ class Issues:
         self.body_author: dict[IssueRef, dict[str, str]] = {}
         self.body_editor: dict[IssueRef, dict[str, str]] = {}
         self.trust_reads: list[IssueRef] = []
+        # Each batched body-only read of the listing, by the refs it read.
+        self.body_reads: list[tuple[IssueRef, ...]] = []
         monkeypatch.setattr(github, "graphql", self.graphql)
         monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
         monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
@@ -570,12 +572,22 @@ class Issues:
         written by the trusted human unless ``body_author`` or ``body_editor``
         names someone else for the issue.
         """
+        owner, repo = str(variables["owner"]), str(variables["name"])
+        numbers = trust_stubs.bodies_numbers(query, variables)
+        if numbers is not None:
+            # The listing's batched body-only read (no comments are taken).
+            self._maybe_fail(f"BODIES {owner}/{repo}")
+            refs = [IssueRef(owner, repo, number) for number in numbers]
+            self.body_reads.append(tuple(refs))
+            return trust_stubs.bodies_answer([self._item(ref) for ref in refs])
         assert query == trust._ITEM_QUERY
-        owner, repo, number = variables["owner"], variables["name"], variables["number"]
-        ref = IssueRef(str(owner), str(repo), int(str(number)))
+        ref = IssueRef(owner, repo, int(str(variables["number"])))
         self._maybe_fail(f"GRAPHQL {ref.slug}")
         ref = self.moved.get(ref, ref)
         self.trust_reads.append(ref)
+        return self._item(ref)
+
+    def _item(self, ref: IssueRef) -> dict[str, Any]:
         nodes = trust_stubs.comments(*self.comments[ref]) + self.untrusted.get(ref, [])
         return trust_stubs.item(
             body=self.bodies[ref],
@@ -809,10 +821,6 @@ def test_retarget_requires_targets(issues: Issues) -> None:
     [
         (f"GET repos/org/.github/security-advisories/{GHSA}", "reading the tracking lines"),
         (f"PATCH repos/org/.github/security-advisories/{GHSA}", "rewriting the tracking lines"),
-        (
-            "GET repos/org/.github/issues?state=all&labels=security",
-            "listing the security issues",
-        ),
         ("POST repos/org/.github/issues/10/comments", "unmarking org/.github#10"),
         ("PATCH repos/org/.github/issues/10", "unmarking org/.github#10"),
     ],
@@ -886,7 +894,6 @@ def test_retarget_rerun_after_unmark_failure_unmarks_once(issues: Issues, fail_o
         "PATCH repos/org/tool/issues/12",
         f"GET repos/org/.github/security-advisories/{GHSA}",
         f"PATCH repos/org/.github/security-advisories/{GHSA}",
-        "GET repos/org/.github/issues?state=all&labels=security",
     ],
 )
 def test_retarget_rerun_after_an_early_failure_completes(issues: Issues, fail_on: str) -> None:
@@ -909,15 +916,51 @@ def test_retarget_rerun_after_success_changes_nothing(issues: Issues) -> None:
     _assert_moved_a_to_c(issues)
 
 
-def test_retarget_unmarks_an_untracked_issue_that_names_the_advisory(issues: Issues) -> None:
-    """The dropped set comes from the issues too, not only the old tracking lines."""
+def test_retarget_first_run_reads_only_the_issues_it_knows(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No org-wide scan (vergil-tooling#5138): an untracked issue naming it is sync's."""
     _dropping_a(issues)
     issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
     issues.closed.add(D)
+    list_repos = MagicMock(side_effect=AssertionError("the org's repos were listed"))
+    monkeypatch.setattr(github, "list_org_repos", list_repos)
     retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
+    assert issues.labels[D] == {"security"}
+    assert issues.bodies[D] == f"Stray.\n\n{advisory_line(HOME, GHSA)}"
+    assert issues.comments[D] == []
+    assert D not in issues.trust_reads
+    assert issues.body_reads == []
+
+
+def test_retarget_rerun_after_the_rewrite_unmarks_an_issue_still_naming_it(
+    issues: Issues,
+) -> None:
+    """A re-run can no longer learn the dropped issues from the lines: it lists them."""
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    mark_issue(C, HOME, GHSA)
+    # D was dropped by the interrupted run but not yet unmarked.
+    issues.add(D, f"Stray.\n\n{advisory_line(HOME, GHSA)}", {"security"})
+    issues.closed.add(D)
+    retarget(HOME, GHSA, (C,), source=A)
+    _assert_moved_a_to_c(issues)
     assert issues.labels[D] == set()
     assert issues.bodies[D] == "Stray."
     assert issues.comments[D] == [MOVED]
+    # One batched body read per repo of the listing, each repo's issues at once.
+    assert issues.body_reads == [(A,), (C, D)]
+
+
+def test_retarget_rerun_listing_failure_names_its_step(issues: Issues) -> None:
+    _dropping_a(issues)
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.fail_on = "GET repos/org/.github/issues?state=all&labels=security"
+    with pytest.raises(RetargetError) as excinfo:
+        retarget(HOME, GHSA, (C,), source=A)
+    assert str(excinfo.value).startswith(f"advisory {GHSA}: listing the security issues failed: ")
+    assert issues.writes == []
 
 
 def test_retarget_never_unmarks_a_renamed_issue_that_carries_the_line(issues: Issues) -> None:
@@ -1985,26 +2028,48 @@ def test_close_comments_on_every_issue_then_closes(
     assert SECRET not in "".join(str(w) for w in issues.writes)
 
 
-def test_close_also_comments_on_an_untracked_issue_naming_it(
+def test_close_refuses_an_advisory_tracking_no_issue(
     issues: Issues, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # An issue naming the advisory it does not track is a broken pair, which
+    # sync reports: the close neither finds it nor comments on it.
     _listing(monkeypatch, _adv(tracking=()))
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
     issues.closed.add(C)
-    assert close_record(HOME, GHSA, REASON).issues == (C,)
-    assert issues.comments[C] == [CLOSED_COMMENT]
-    assert issues.states == {GHSA: "closed"}
+    with pytest.raises(CloseError) as excinfo:
+        close_record(HOME, GHSA, REASON)
+    assert str(excinfo.value) == (
+        f"advisory {GHSA} tracks no issue, so no issue can carry the close comment"
+    )
+    assert issues.writes == []
+    assert issues.states == {}
 
 
-@pytest.mark.parametrize("open_ref", [A, C])
-def test_close_refuses_while_any_issue_is_open(
-    issues: Issues, monkeypatch: pytest.MonkeyPatch, open_ref: IssueRef
+def test_close_reads_only_the_tracked_issues(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """No org-wide scan (vergil-tooling#5138): C names the advisory but is not tracked."""
     _listing(monkeypatch, _adv(tracking=(A,)))
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
-    issues.closed |= {A, C} - {open_ref}
-    with pytest.raises(CloseError, match=f"open issue {open_ref.slug}; close or retarget"):
+    issues.closed.add(A)
+    list_repos = MagicMock(side_effect=AssertionError("the org's repos were listed"))
+    monkeypatch.setattr(github, "list_org_repos", list_repos)
+    assert close_record(HOME, GHSA, REASON).issues == (A,)
+    assert issues.comments == {A: [CLOSED_COMMENT], C: []}
+    assert issues.states == {GHSA: "closed"}
+    # One trust read, the comment dedup's on A; no body read of any issue.
+    assert issues.trust_reads == [A]
+    assert issues.body_reads == []
+    assert not [w for w in issues.writes if "/issues/12" in w[1]]
+
+
+def test_close_refuses_while_a_tracked_issue_is_open(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch, _adv(tracking=(A,)))
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    with pytest.raises(CloseError, match=f"open issue {A.slug}; close or retarget"):
         close_record(HOME, GHSA, REASON)
     assert issues.writes == []
 
@@ -2138,11 +2203,10 @@ def test_close_of_a_closed_advisory_only_completes_the_comments(
 @pytest.mark.parametrize(
     ("fail_on", "step"),
     [
-        ("GET repos/org/.github/issues?state=all&labels=security", "listing the security issues"),
         ("GET repos/org/.github/issues/10", "reading org/.github#10"),
         ("POST repos/org/.github/issues/10/comments", "commenting on org/.github#10"),
-        # The listing reads each security issue's body through the trust layer.
-        ("GRAPHQL org/.github#10", "listing the security issues"),
+        # The comment dedup reads the issue's comments through the trust layer.
+        ("GRAPHQL org/.github#10", "commenting on org/.github#10"),
     ],
 )
 def test_close_names_the_failed_step(
@@ -3026,12 +3090,27 @@ def test_retarget_refuses_an_untrusted_source_body_before_any_write(issues: Issu
     assert issues.writes == []
 
 
-def test_retarget_refuses_an_untrusted_listed_security_issue(issues: Issues) -> None:
-    # An untracked security issue whose body is untrusted may or may not name
-    # the advisory; which issues to unmark cannot be known, so nothing moves.
+def test_retarget_first_run_never_reads_an_untracked_security_issue(issues: Issues) -> None:
+    # The issues a first run touches are known from the tracking lines, so an
+    # untracked security issue, its body untrusted, is never read or touched.
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(B, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, "New task.")
+    _untrusted_body(issues, B)
+    retarget(HOME, GHSA, (C,), source=A)
+    assert issues.description == f"{SECRET}\n\nTracking issue: org/tool#12"
+    assert B not in issues.trust_reads
+    assert not [w for w in issues.writes if "/issues/11" in w[1]]
+
+
+def test_retarget_rerun_refuses_an_untrusted_listed_security_issue(issues: Issues) -> None:
+    # On a re-run after the rewrite, an untracked security issue whose body is
+    # untrusted may or may not name the advisory; which issues to unmark
+    # cannot be known, so nothing moves.
+    issues.description = f"{SECRET}\n\nTracking issue: org/tool#12"
+    issues.add(A, advisory_line(HOME, GHSA), {"security"})
+    issues.add(B, advisory_line(HOME, GHSA), {"security"})
+    issues.add(C, advisory_line(HOME, GHSA), {"security"})
     _untrusted_body(issues, B)
     with pytest.raises(RetargetRefusedError) as excinfo:
         retarget(HOME, GHSA, (C,), source=A)
@@ -3071,13 +3150,16 @@ def test_move_refuses_an_untrusted_target_before_the_copy(move: Move) -> None:
     assert move.issues.writes == []
 
 
-def test_move_refuses_an_untrusted_listed_issue_before_the_copy(move: Move) -> None:
-    move.issues.add(B, "Other.", {"security"})
+def test_move_never_reads_an_untracked_security_issue(move: Move) -> None:
+    # A move's issues are known from the original's tracking lines, which it
+    # keeps until every unmark has run: it lists no security issues.
+    move.issues.add(B, advisory_line(HOME, GHSA), {"security"})
     _untrusted_body(move.issues, B)
-    with pytest.raises(RetargetRefusedError, match="a security issue's body is untrusted"):
-        move.run()
-    assert move.created == []
-    assert move.issues.writes == []
+    move.run()
+    assert len(move.created) == 1
+    assert B not in move.issues.trust_reads
+    assert move.issues.body_reads == []
+    assert not [w for w in move.issues.writes if "/issues/11" in w[1]]
 
 
 def test_pair_refuses_an_untrusted_issue_before_any_write(issues: Issues) -> None:
@@ -3089,22 +3171,22 @@ def test_pair_refuses_an_untrusted_issue_before_any_write(issues: Issues) -> Non
     assert issues.writes == []
 
 
-def test_close_refuses_an_untrusted_security_issue_before_any_write(
-    issues: Issues, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("untrusted", [A, C], ids=["tracked", "untracked"])
+def test_close_reads_no_issue_body(
+    issues: Issues, monkeypatch: pytest.MonkeyPatch, untrusted: IssueRef
 ) -> None:
+    # The tracking lines pick the issues, so no body decides the close: an
+    # untrusted body, tracked or not, is never read and never stops it.
     _listing(monkeypatch, _adv(tracking=(A,)))
     issues.add(A, advisory_line(HOME, GHSA), {"security"})
     issues.add(C, advisory_line(HOME, GHSA), {"security"})
     issues.closed |= {A, C}
-    _untrusted_body(issues, C)
-    with pytest.raises(CloseError) as excinfo:
-        close_record(HOME, GHSA, REASON)
-    message = str(excinfo.value)
-    assert message.startswith(f"advisory {GHSA}: stopped before any write: ")
-    assert "a security issue's body is untrusted" in message
-    assert "org/tool#12 issue drive-by" in message
-    assert issues.writes == []
-    assert issues.states == {}
+    _untrusted_body(issues, untrusted)
+    assert close_record(HOME, GHSA, REASON).issues == (A,)
+    assert issues.comments[A] == [CLOSED_COMMENT]
+    assert issues.comments[C] == []
+    assert issues.states == {GHSA: "closed"}
+    assert issues.body_reads == []
 
 
 def test_close_comment_dedup_read_failure_names_its_step(
@@ -3211,16 +3293,3 @@ def test_records_pass_trust_errors_are_one_line_failures(
     assert records_pass("org", apply=True, prog="prog") == 1
     err = capsys.readouterr().err
     assert err == f"prog: security records pass failed: {error}\n"
-
-
-def test_body_skip_finds_the_body_record_among_others() -> None:
-    comment = trust.Skipped("org/tool", 12, "comment", "drive-by", "t", "comment 1", "untrusted")
-    body = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
-    content = trust.IssueContent(None, None, None, (), (comment, body))
-    assert security_records._body_skip(content, "org/tool", 12) is body
-
-
-def test_body_skip_without_a_record_fails_loudly() -> None:
-    content = trust.IssueContent(None, None, None, (), ())
-    with pytest.raises(trust.TrustReadError, match="an untrusted body has no skip record"):
-        security_records._body_skip(content, "org/tool", 12)

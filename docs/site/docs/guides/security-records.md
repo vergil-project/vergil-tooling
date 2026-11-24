@@ -96,10 +96,16 @@ copy and `Moved to: <org>/.github <GHSA-id>` on the original (see
 
 An issue's `Security advisory:` lines count only in a body the trust
 layer trusts: its author and every editor are trusted authors. A body
-anyone else wrote or edited is never acted on. `create --issue`,
-`retarget` and `close` stop before any write when a body they rely on is
-untrusted, and `sync` reports it, metadata only, leaves each advisory
-tracking it unchanged, and exits 1 for the human to decide.
+anyone else wrote or edited is never acted on. `create --issue` and
+`retarget` stop before any write when a body they rely on is untrusted,
+and `sync` reports it, metadata only, leaves each advisory tracking it
+unchanged, and exits 1 for the human to decide. `close` relies on no
+body: the advisory's own `Tracking issue:` lines pick its issues.
+
+A write reads only the issues it knows (`close` the tracked issues,
+`retarget` those and its `--from` and `--to`), with no scan of every
+`security` issue in the org. Finding an issue that names an advisory
+which does not track it, a broken pair, is `sync`'s job.
 
 ### The labels
 
@@ -268,7 +274,7 @@ vrg-security-record close GHSA-xxxx-xxxx-xxxx \
 ```
 
 It posts `Security record <GHSA-id> closed: <reason>` on every issue the
-record tracks, then sets the advisory to `closed`. Use it when the work a
+record tracks, and only those, then sets the advisory to `closed`. Use it when the work a
 record tracks is dropped and `sync` would not close the record, for
 example when its pair is broken or the close guard holds it, or to put
 on record why a record was closed. The issue still drives the record: `close` refuses while any of
