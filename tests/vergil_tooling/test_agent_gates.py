@@ -182,6 +182,7 @@ def test_missing_or_stale_record_fails(repo: Path, thread: Thread) -> None:
     assert not result.ok
     assert len(result.reasons) == 1
     assert "no merge-review record" in result.reasons[0]
+    assert not result.read_failure
     thread.record(REF, head, _fp(repo))
     _commit(repo, {"b.txt": "uno\nDOS\n"}, "a later push")
     result = _evaluate(repo)
@@ -296,6 +297,7 @@ def test_lookup_failure_fails_closed(
     assert not result.ok
     assert "merge review: lookup failed" in result.reasons[0]
     assert "HTTP 502" in result.reasons[0]
+    assert result.read_failure
 
 
 def test_unreadable_ref_fails_closed(repo: Path, thread: Thread) -> None:
@@ -319,6 +321,7 @@ def test_malformed_registry_fails_closed(repo: Path, thread: Thread) -> None:
     assert not result.ok
     assert result.reasons[0].startswith("protected files: lookup failed")
     assert "protected-paths.toml" in result.reasons[0]
+    assert result.read_failure
 
 
 @pytest.mark.parametrize("refs", [[], ["not-a-ref"], ["o/r#7", "o/other#8"]])
@@ -329,6 +332,7 @@ def test_unresolvable_task_issue_refuses(
     result = evaluate(repo, base="develop", head="HEAD", issue_refs=refs, authors=AUTHORS)
     assert not result.ok
     assert result.reasons[0].startswith("task issue:")
+    assert not result.read_failure
     assert items.reads == []
 
 

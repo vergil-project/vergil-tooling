@@ -2398,6 +2398,33 @@ See the [GitHub Config Audit reference](config-audit.md).
 | Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity or a sync PR that did not merge) |
 | Status | Active |
 
+### vrg-agent-audit
+
+The daily audit of agent merges
+([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384),
+spec §4.8). It checks every merge into `develop` and `main` since the
+audit's markers, the `vergil/agent-audit/develop` and
+`vergil/agent-audit/main` branches. For every PR, whoever merged it or
+turned auto-merge on must be the human, or the user agent or the
+automation App on its own PR (into `main`, the human only), and its
+provenance must be clean. For an agent-involved PR merged into `develop`,
+its protected files must be covered by approvals, and its change by a
+merge-review record, exemption or human override. A protected file the
+merge changed from the PR's head is its own finding. It then moves each
+marker to where its audit reached; a read failure stops there, so the next
+run checks the rest again. A missing marker is a finding, never
+re-created. It is a security-signal job: it files no issue and posts
+nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_agent_audit` |
+| Args | `--repo OWNER/REPO` (required); `--init` creates each missing marker at its branch's tip and audits nothing (repo init and the one-time go-live only) |
+| Preconditions | Run in a full-history clone whose `origin` is the repo; the trusted-authors configuration, naming one human; a token that can move the markers (the admin role or the org automation App) |
+| Failure mode | One finding per line on stdout; one `vrg-agent-audit:` diagnostic on stderr when it cannot start |
+| Exit codes | 0 clean, 1 any finding or read failure, 2 usage error |
+| Status | Active |
+
 ### vrg-dependabot-audit
 
 Fail on any open Dependabot alert, at any severity: the gate for the

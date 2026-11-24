@@ -14,6 +14,7 @@ dependencies = ["rich>=13.0", "pyyaml>=6.0", "pyelftools>=0.31", "packaging>=24.
 [project.scripts]
 vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"
 vrg-adhoc-epic = "vergil_tooling.bin.vrg_adhoc_epic:main"
+vrg-agent-audit = "vergil_tooling.bin.vrg_agent_audit:main"
 vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
 vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-branch-sweep = "vergil_tooling.bin.vrg_branch_sweep:main"
