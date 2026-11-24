@@ -356,10 +356,13 @@ flag, no mode switch command.
 | `workflows` | write | Push changes under `.github/workflows/`, merge-reviewed like any change |
 
 This table is amended by epic vergil-project/.github#1384, which
-raised `pull_requests` from read and `workflows` from none. Both are
-granted only in the three in-scope orgs' installations (and, by the
-human's accepted risk, in three inactive ones until they are
-renovated). `workflows: write` came only after every secret that can
+raised `pull_requests` from read and `workflows` from none. The
+epic's design grants both only in the three in-scope orgs'
+installations. As granted, both were also accepted on the
+installations of three inactive orgs, a risk the human accepted until
+those orgs are renovated: rulings N0.13 (`workflows: write`) and N0.21
+(`pull_requests: write`) on vergil-project/.github#1384. `workflows:
+write` came only after every secret that can
 write or act moved into an `automation` environment limited to
 `develop` and `main`, so a workflow pushed on a feature branch runs
 without them. What holds the agent is no longer the server-side
