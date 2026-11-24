@@ -24,8 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     # any identity (issue #4178).
     if not identity_mode.is_human():
         print(
-            "vrg-update-deps is a human-only command (PR submission, merge, and "
-            "finalization are human actions). Refusing to run as an agent.",
+            "vrg-update-deps is a human-only command. Refusing to run as an agent.",
             file=sys.stderr,
         )
         return 1

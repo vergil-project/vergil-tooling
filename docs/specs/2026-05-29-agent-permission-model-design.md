@@ -4,6 +4,17 @@
 **Status:** Draft
 **Issue:** #1289
 
+> **Amended by epic vergil-project/.github#1384.** Agents now submit and
+> finalize their own PRs into `develop`, and the user App holds
+> `pull_requests: write` and `workflows: write`. The design principle
+> "Agents trigger the PR path; humans trigger releases" and the user
+> App table state the new boundary. Where an older section still says
+> that no agent holds `workflows`, that the human submits every PR, or
+> that `pull_requests: read` is the hard gate on submit ("Resolution
+> adopted", the documented gaps, "Revised Agent Workflow", "Workflow
+> File Changes" and "`vrg-submit-pr` Changes"), that section is
+> superseded.
+
 ## Motivation
 
 Moving agents from the developer's host into VMs with GitHub App
@@ -146,11 +157,18 @@ trigger operational tools. Every step that "really matters and causes
 damage" is encapsulated in a `vrg-*` CLI utility that the human
 invokes. `vrg-release` is the model.
 
-**The human triggers; the agent doesn't.** Agents never escalate
-their own privileges or perform the operations that really matter and
-cause damage. Those are encapsulated in `vrg-*` tools the human
-invokes deliberately, which concentrates human attention on the
-higher-risk work.
+**Agents trigger the PR path; humans trigger releases.** Agents never
+escalate their own privileges. An agent submits and finalizes its own
+PR into `develop` through `vrg-submit-pr` and `vrg-finalize-pr`, and
+that path is held by its gates: merge review on every PR, its record
+checked at submit, in the finalize watch and by the daily agent
+audit. A merge-review exemption is the human's to grant. Releases and
+promotion to `main` stay with the human, in `vrg-*` tools the human
+invokes deliberately (`vrg-release`, `vrg-submit-pr --release`),
+which concentrates human attention on the higher-risk work. (Amended
+by epic vergil-project/.github#1384; this principle was "the human
+triggers; the agent doesn't", under which the human submitted every
+PR.)
 
 **Human chokepoints are verification points.** Every high-risk,
 irreversible operation is denied to agents and reserved to a
@@ -333,15 +351,26 @@ flag, no mode switch command.
 |---|---|---|
 | `contents` | write | Push feature branches; push code fixes to iterate on CI |
 | `issues` | write | Create and comment on issues |
-| `pull_requests` | read | View PRs, check status |
+| `pull_requests` | write | Open its own PRs with `vrg-submit-pr` and turn auto-merge on |
 | `metadata` | read | Required baseline |
-| `workflows` | none | Server-side hard gate blocks workflow file pushes |
+| `workflows` | write | Push changes under `.github/workflows/`, merge-reviewed like any change |
 
-Note that `contents: write` — not `workflows: write` — is what lets
-the agent handle a failing CI gate: it pushes *code fixes* to
-re-trigger CI. Editing the workflow files themselves is never part of
-fixing a gate; that would be changing the rules to pass, the exact
-escape hatch we are closing.
+This table is amended by epic vergil-project/.github#1384, which
+raised `pull_requests` from read and `workflows` from none. The
+epic's design grants both only in the three in-scope orgs'
+installations. As granted, both were also accepted on the
+installations of three inactive orgs, a risk the human accepted until
+those orgs are renovated: rulings N0.13 (`workflows: write`) and N0.21
+(`pull_requests: write`) on vergil-project/.github#1384. `workflows:
+write` came only after every secret that can
+write or act moved into an `automation` environment limited to
+`develop` and `main`, so a workflow pushed on a feature branch runs
+without them. What holds the agent is no longer the server-side
+refusal but the gates above: merge review judges a workflow change as
+it does any other, and the `main` ruleset keeps releases human.
+
+Fixing a failing CI gate is still a *code fix*: weakening a check to
+make it pass is a change merge review judges, never a way around it.
 
 **Audit App (`<user>-vergil-audit`):**
 
