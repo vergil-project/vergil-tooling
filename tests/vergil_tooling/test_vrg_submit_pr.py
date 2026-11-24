@@ -17,6 +17,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     NO_FINALIZE_REMOVED,
     NO_INSTALL_REMOVED,
     SubmitSummary,
+    _agent_involved,
     _create_pr,
     _local_worktree_with_state,
     _metadata_from_state,
@@ -37,6 +38,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _require_relay_agrees,
     _require_reported_head,
     _resolve_ready_state,
+    _run_gates,
     _run_submit_batch,
     _select_batch_worktrees,
     _Submission,
@@ -54,6 +56,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _published_pr as _real_published_pr,
 )
 from vergil_tooling.lib import (
+    agent_gates,
     auto_merge,
     epics,
     github,
@@ -71,6 +74,7 @@ from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import Worktree
 
@@ -194,6 +198,20 @@ def _auto_merge_on() -> Iterator[None]:
         patch(_MOD + ".git.commit_sha", return_value="c0ffee"),
     ):
         yield
+
+
+_REAL_RUN_GATES = _run_gates
+
+
+@pytest.fixture(autouse=True)
+def _gates_pass() -> Iterator[MagicMock]:
+    """Default every submit's gate step to a pass, without reading git or GitHub.
+
+    The gate tests (epic vergil-project/.github#1384, Task 9) re-patch the
+    module attribute with the real function and stub what it reads.
+    """
+    with patch(_MOD + "._run_gates") as gates:
+        yield gates
 
 
 @pytest.fixture(autouse=True)
@@ -677,7 +695,7 @@ class TestIdentityGate:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
-        result = main([])
+        result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result == 1
         assert "vrg-pr-workflow report-ready" in capsys.readouterr().err
 
@@ -704,6 +722,7 @@ class TestIdentityGate:
         out = capsys.readouterr().out
         assert "usage:" in out
         assert "--release" in out
+        assert "--override-merge-review" in out
         assert "human-only" in out
         assert "vrg-pr-workflow report-ready" in out
 
@@ -3218,7 +3237,14 @@ def test_metadata_from_state_extracts_fields() -> None:
         "summary": "S",
         "notes": "N",
         "linkage": "Closes",
+        "recorded_by": "",
     }
+
+
+def test_metadata_from_state_carries_recorded_by() -> None:
+    state = _ready_state()
+    state.recorded_by = "user"
+    assert _metadata_from_state(state, "feature/x")["recorded_by"] == "user"
 
 
 def test_metadata_from_state_errors_without_pr_metadata() -> None:
@@ -4509,3 +4535,433 @@ def test_print_selection_groups_mixed_linkage(capsys: pytest.CaptureFixture[str]
 def test_print_selection_empty_prints_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     _print_selection([])
     assert capsys.readouterr().out == ""
+
+
+# --- agents submit through the gates (epic vergil-project/.github#1384, Task 9) ---
+
+_GATE_AUTHORS = trust_stubs.AUTHORS
+_FP = "a" * 64
+
+
+def _gate_sub(
+    *,
+    recorded_by: str | None = "user",
+    push: bool = True,
+    override: str | None = None,
+    issues: tuple[str, ...] = ("#42",),
+) -> _Submission:
+    return dataclasses.replace(
+        _submission("feature/42-x", issues=issues, head="f" * 40, push=push, record_in=None),
+        recorded_by=recorded_by,
+        override=override,
+    )
+
+
+@pytest.fixture()
+def real_gates() -> Iterator[dict[str, MagicMock]]:
+    """The real gate step, with git, GitHub and the evaluator stubbed."""
+    with (
+        patch(_MOD + "._run_gates", _REAL_RUN_GATES),
+        patch(_MOD + ".load_trusted_authors", return_value=_GATE_AUTHORS),
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".git.run") as git_run,
+        patch(
+            _MOD + ".agent_gates.evaluate",
+            return_value=agent_gates.GateResult(ok=True, reasons=()),
+        ) as evaluate,
+        patch(_MOD + ".change_fingerprint", return_value=_FP) as fingerprint,
+        patch(_MOD + ".agent_gates.overrides", return_value=[]) as overrides,
+        patch(_MOD + ".post_comment_once", return_value=99) as post,
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + "._create_pr", return_value="https://github.com/o/r/pull/9") as create,
+    ):
+        yield {
+            "git_run": git_run,
+            "evaluate": evaluate,
+            "fingerprint": fingerprint,
+            "overrides": overrides,
+            "post": post,
+            "push": push,
+            "create": create,
+        }
+
+
+def _fetches(git_run: MagicMock) -> list[tuple[str, ...]]:
+    return [c.args for c in git_run.call_args_list if c.args and c.args[0] == "fetch"]
+
+
+class TestAgentIdentityGate:
+    """Who may submit, and in which modes (spec §4.6)."""
+
+    def test_user_agent_submits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _gates_pass: MagicMock
+    ) -> None:
+        """The user agent submits in the template mode report-ready drives."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        _write_workflow_state(tmp_path)
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1") as create,
+        ):
+            assert main([]) == 0
+        create.assert_called_once()
+        _gates_pass.assert_called_once()
+        assert _state_submitted(tmp_path)
+
+    def test_user_agent_submits_a_batch_selection(
+        self, monkeypatch: pytest.MonkeyPatch, _gates_pass: MagicMock
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + "._run_submit_batch", return_value=0) as batch,
+            patch(_MOD + "._select_batch_worktrees", return_value=[]),
+        ):
+            assert main(["--all"]) == 0
+        batch.assert_called_once()
+
+    def test_agent_release_refused(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".github.create_pr") as create, patch(_MOD + "._push_branch") as push:
+            assert main(["--release"]) == 1
+        create.assert_not_called()
+        push.assert_not_called()
+        assert "--release is human-only" in capsys.readouterr().err
+
+    def test_agent_cli_mode_refused(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".github.create_pr") as create:
+            assert main(["--issue", "42", "--summary", "S", "--title", "fix: t"]) == 1
+        create.assert_not_called()
+        err = capsys.readouterr().err
+        assert "emergency path" in err
+        assert "vrg-pr-workflow report-ready" in err
+
+    @pytest.mark.parametrize("partial", [["--issue", "42"], ["--title", "t"]])
+    def test_agent_partial_cli_fields_refused(
+        self, partial: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        assert main(partial) == 1
+
+    def test_agent_relay_refused(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".GitHubTransport") as relay, patch(_MOD + ".github.create_pr") as create:
+            assert main(["feature/x"]) == 1
+        relay.assert_not_called()
+        create.assert_not_called()
+        assert "relay path is for the human" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "argv", [[], ["--all"], ["feature/x"], ["--issue", "1", "--summary", "s", "--title", "t"]]
+    )
+    def test_audit_refused(
+        self, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        with patch(_MOD + ".github.create_pr") as create:
+            assert main(argv) == 1
+        create.assert_not_called()
+        assert "audit agent cannot submit" in capsys.readouterr().err
+
+    def test_agent_cannot_use_override(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + "._submit_all") as submit_all:
+            assert main(["--override-merge-review", "no session"]) == 1
+        submit_all.assert_not_called()
+        assert "--override-merge-review is human-only" in capsys.readouterr().err
+
+    def test_agent_override_refused_again_at_post(
+        self, real_gates: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defence in depth: the post itself refuses an agent identity."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        summary = _submit_all([_gate_sub(override="no session")], _ARGS)
+        [(_branch, why)] = summary.failed
+        assert "human-only" in why
+        real_gates["post"].assert_not_called()
+        real_gates["create"].assert_not_called()
+
+    @pytest.mark.parametrize("reason", ["", " padded", "two\nlines"])
+    def test_malformed_override_reason_refused_before_anything(
+        self, reason: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(_MOD + "._submit_all") as submit_all:
+            assert main(["--override-merge-review", reason]) == 1
+        submit_all.assert_not_called()
+        assert "--override-merge-review" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("argv", [["--all"], ["feature/a", "feature/b"]])
+    def test_override_covers_one_pr(self, argv: list[str]) -> None:
+        with patch(_MOD + "._submit_all") as submit_all:
+            assert main(["--override-merge-review", "no session", *argv]) == 1
+        submit_all.assert_not_called()
+
+
+class TestAgentInvolvement:
+    """Only a human recording, submitted by the human, is human-only (scope change)."""
+
+    @pytest.mark.parametrize(
+        ("recorded_by", "expected"),
+        [
+            ("human", False),
+            ("user", True),
+            ("audit", True),
+            ("automation", True),
+            (None, True),
+            ("", True),
+            ("someone-else", True),
+        ],
+    )
+    def test_human_submitter(self, recorded_by: str | None, *, expected: bool) -> None:
+        assert _agent_involved(recorded_by, authors=_GATE_AUTHORS) is expected
+
+    @pytest.mark.parametrize("mode", ["user", "audit"])
+    def test_agent_submitter_is_always_involved(
+        self, mode: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+        assert _agent_involved("human", authors=_GATE_AUTHORS) is True
+
+    def test_template_mode_carries_recorded_by(
+        self, tmp_path: Path, _gates_pass: MagicMock
+    ) -> None:
+        _write_workflow_state(tmp_path)
+        state = LocalFileTransport(tmp_path, base="develop").read()
+        assert state is not None
+        state.recorded_by = "user"
+        LocalFileTransport(tmp_path, base="develop").write(state)
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+        ):
+            assert main([]) == 0
+        assert _gates_pass.call_args.args[0].recorded_by == "user"
+
+    def test_cli_mode_counts_as_recorded_by_the_human(self, _gates_pass: MagicMock) -> None:
+        with (
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+        ):
+            assert main(["--issue", "42", "--summary", "S", "--title", "fix: t"]) == 0
+        assert _gates_pass.call_args.args[0].recorded_by == "human"
+
+    def test_relay_mode_carries_recorded_by(self, _gates_pass: MagicMock) -> None:
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        state.recorded_by = "user"
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
+        ):
+            assert main(["feature/x"]) == 0
+        assert _gates_pass.call_args.args[0].recorded_by == "user"
+
+
+class TestGateStep:
+    """The gate step runs before any push or ``gh pr create`` (spec §4.6)."""
+
+    def test_single_issue_submit_runs_gates(self, real_gates: dict[str, MagicMock]) -> None:
+        summary = _submit_all([_gate_sub()], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        real_gates["evaluate"].assert_called_once_with(
+            Path("/repo"),
+            base="origin/develop",
+            head="f" * 40,
+            issue_refs=["o/r#42"],
+            authors=_GATE_AUTHORS,
+        )
+        # A pushing submit fetches the base only: the branch's lease stays put.
+        assert _fetches(real_gates["git_run"]) == [("fetch", "origin", "develop")]
+
+    def test_batch_submit_gates_every_issue(self, real_gates: dict[str, MagicMock]) -> None:
+        with patch(_MOD + "._recheck_batch"):
+            _submit_all([_gate_sub(issues=("#42", "#43"))], _ARGS)
+        assert real_gates["evaluate"].call_args.kwargs["issue_refs"] == ["o/r#42", "o/r#43"]
+
+    def test_relay_mode_gates_fetch_branch(self, real_gates: dict[str, MagicMock]) -> None:
+        """Run as the human, on the relay path: the branch is fetched too, never pushed."""
+        summary = _submit_all([_gate_sub(push=False)], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        assert _fetches(real_gates["git_run"]) == [("fetch", "origin", "feature/42-x", "develop")]
+        real_gates["evaluate"].assert_called_once()
+        real_gates["push"].assert_not_called()
+
+    def test_gate_failure_leaves_no_pr_and_pushes_nothing(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        real_gates["evaluate"].return_value = agent_gates.GateResult(
+            ok=False, reasons=("protected file vergil.toml (blob b1) has no approval",)
+        )
+        summary = _submit_all([_gate_sub()], _ARGS)
+        assert summary.opened == []
+        [(branch, why)] = summary.failed
+        assert branch == "feature/42-x"
+        assert "protected file vergil.toml" in why
+        assert "no PR was opened" in why
+        real_gates["push"].assert_not_called()
+        real_gates["create"].assert_not_called()
+
+    def test_gates_run_before_the_batch_recheck(self, real_gates: dict[str, MagicMock]) -> None:
+        real_gates["evaluate"].return_value = agent_gates.GateResult(ok=False, reasons=("x",))
+        with patch(_MOD + "._recheck_batch") as recheck:
+            _submit_all([_gate_sub(issues=("#42", "#43"))], _ARGS)
+        recheck.assert_not_called()
+
+    def test_fetch_failure_refuses(self, real_gates: dict[str, MagicMock]) -> None:
+        real_gates["git_run"].side_effect = subprocess.CalledProcessError(1, ["git", "fetch"])
+        summary = _submit_all([_gate_sub()], _ARGS)
+        [(_branch, why)] = summary.failed
+        assert "could not fetch develop" in why
+        real_gates["evaluate"].assert_not_called()
+        real_gates["create"].assert_not_called()
+
+    def test_trusted_authors_missing_refuses(self, real_gates: dict[str, MagicMock]) -> None:
+        with patch(
+            _MOD + ".load_trusted_authors",
+            side_effect=TrustedAuthorsNotConfiguredError("no trusted authors"),
+        ):
+            summary = _submit_all([_gate_sub()], _ARGS)
+        assert summary.opened == []
+        real_gates["create"].assert_not_called()
+
+    def test_rerun_after_approval_submits(self, real_gates: dict[str, MagicMock]) -> None:
+        real_gates["evaluate"].side_effect = [
+            agent_gates.GateResult(ok=False, reasons=("no approval",)),
+            agent_gates.GateResult(ok=True, reasons=()),
+        ]
+        first = _submit_all([_gate_sub()], _ARGS)
+        assert first.opened == []
+        real_gates["create"].assert_not_called()
+        second = _submit_all([_gate_sub()], _ARGS)
+        assert second.opened == ["https://github.com/o/r/pull/9"]
+
+    def test_human_submit_of_agent_pr_runs_gates(self, real_gates: dict[str, MagicMock]) -> None:
+        """The hermetic identity is the human; an agent recorded the ready-state."""
+        _submit_all([_gate_sub(recorded_by="user")], _ARGS)
+        real_gates["evaluate"].assert_called_once()
+
+    @pytest.mark.parametrize("recorded_by", [None, "someone-else"])
+    def test_missing_or_unknown_recorded_by_runs_gates(
+        self, recorded_by: str | None, real_gates: dict[str, MagicMock]
+    ) -> None:
+        _submit_all([_gate_sub(recorded_by=recorded_by)], _ARGS)
+        real_gates["evaluate"].assert_called_once()
+
+    def test_human_only_pr_skips_both_gates(
+        self, real_gates: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        summary = _submit_all([_gate_sub(recorded_by="human")], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        real_gates["evaluate"].assert_not_called()
+        assert _fetches(real_gates["git_run"]) == []
+
+    def test_human_override_posts_comment_and_submits(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        summary = _submit_all([_gate_sub(override="no agent session")], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        real_gates["fingerprint"].assert_called_once_with(Path("/repo"), "origin/develop", "f" * 40)
+        real_gates["post"].assert_called_once_with(
+            "o/r",
+            42,
+            agent_gates.render_override(_FP, "no agent session"),
+            author="human",
+            authors=_GATE_AUTHORS,
+        )
+        # The override covers the merge-review check only: the evaluator,
+        # which still applies the protected-change rule, runs after the post.
+        real_gates["evaluate"].assert_called_once()
+
+    def test_override_never_covers_a_protected_file(self, real_gates: dict[str, MagicMock]) -> None:
+        real_gates["evaluate"].return_value = agent_gates.GateResult(
+            ok=False, reasons=("protected file vergil.toml (blob b1) has no approval",)
+        )
+        summary = _submit_all([_gate_sub(override="no agent session")], _ARGS)
+        real_gates["post"].assert_called_once()
+        assert summary.opened == []
+        real_gates["create"].assert_not_called()
+
+    def test_override_already_posted_is_not_posted_again(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        real_gates["overrides"].return_value = [agent_gates.Override(_FP, "earlier")]
+        summary = _submit_all([_gate_sub(override="no agent session")], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        real_gates["post"].assert_not_called()
+
+    def test_override_post_failure_refuses(self, real_gates: dict[str, MagicMock]) -> None:
+        real_gates["post"].side_effect = RulingError("comment did not land")
+        summary = _submit_all([_gate_sub(override="no agent session")], _ARGS)
+        [(_branch, why)] = summary.failed
+        assert "override was not posted" in why
+        real_gates["evaluate"].assert_not_called()
+        real_gates["create"].assert_not_called()
+
+    def test_override_not_posted_for_a_human_only_pr(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        _submit_all([_gate_sub(recorded_by="human", override="no agent session")], _ARGS)
+        real_gates["post"].assert_not_called()
+
+    def test_unqualifiable_ref_is_passed_on_for_the_gates_to_refuse(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        with patch(_MOD + ".github.current_repo", return_value="no-slash"):
+            _submit_all([_gate_sub()], _ARGS)
+        assert real_gates["evaluate"].call_args.kwargs["issue_refs"] == ["#42"]
+
+    def test_override_with_several_selected_worktrees_refused(self) -> None:
+        selected = [
+            Worktree(path=Path("/repo/.worktrees/issue-1-x"), branch="feature/1-x"),
+            Worktree(path=Path("/repo/.worktrees/issue-2-x"), branch="feature/2-x"),
+        ]
+        fields = {
+            "issue": "1",
+            "issues": "1",
+            "title": "t",
+            "summary": "s",
+            "notes": "",
+            "linkage": "Ref",
+            "base": "develop",
+            "head_sha": "h0",
+            "recorded_by": "user",
+        }
+        args = parse_args(["--select", "1,2", "--override-merge-review", "no agent session"])
+        with (
+            patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+            patch(_MOD + "._submit_all") as submit_all,
+            pytest.raises(SystemExit, match="covers one PR"),
+        ):
+            _run_submit_batch(selected, args)
+        submit_all.assert_not_called()
+
+    def test_override_flag_reaches_the_submission(self, _gates_pass: MagicMock) -> None:
+        with (
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+        ):
+            argv = ["--issue", "42", "--summary", "S", "--title", "fix: t"]
+            assert main([*argv, "--override-merge-review", "no agent session"]) == 0
+        assert _gates_pass.call_args.args[0].override == "no agent session"
