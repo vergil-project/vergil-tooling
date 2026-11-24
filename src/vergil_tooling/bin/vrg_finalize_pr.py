@@ -636,11 +636,17 @@ def _develop_broken(settle: SettleOutcome) -> bool:
     """Whether nothing has shown develop healthy: the validate failed or could not run.
 
     A provision failure stops the pipeline before the validate, so it could
-    not run. With ``--wait-cd``, a CD check that failed counts too.
+    not run. With ``--wait-cd``, a CD check that failed counts too, unless it
+    failed because the CD runs could not be listed: CD's state is then not
+    known, a tool error (exit 1), not a CD that did not succeed.
     """
     if _validate_failed(settle):
         return True
-    return bool(settle.ctx.args.wait_cd) and settle.status("cd-check") == "failed"
+    return (
+        bool(settle.ctx.args.wait_cd)
+        and settle.status("cd-check") == "failed"
+        and not settle.ctx.cd_unreadable
+    )
 
 
 def _settle_exit(settle: SettleOutcome) -> int:
@@ -731,6 +737,15 @@ class FinalizeError(Exception):
     """
 
 
+class CDUnreadableError(FinalizeError):
+    """The CD runs of a repo that declares CD could not be listed (#5140).
+
+    Its message names the cause (a ``gh`` failure, or no credentials to run
+    ``gh`` with). The CD state is not known, so the cd-check stage fails as a
+    tool error rather than reporting the state as unknown.
+    """
+
+
 @dataclass
 class FinalizeContext:
     """State threaded through the settle phase's stages."""
@@ -754,6 +769,9 @@ class FinalizeContext:
     stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
     # The CD line the cd-check stage reported, repeated in the final report.
     cd_line: str = ""
+    # The cd-check stage failed because the CD runs could not be listed
+    # (CDUnreadableError): a tool error, not a CD that did not succeed.
+    cd_unreadable: bool = False
     # A failed validate's full output log and its last lines.
     validate_log: Path | None = None
     # One (label, lines) pair per stream that had output, stdout first.
@@ -1188,10 +1206,11 @@ def _wait_for_cd_run(
     any other cancel, or one that cannot be checked, is a
     :class:`CDRunProblem` (issue #3834). Returns ``None`` — do not fail
     finalize — when:
-      - the CD runs cannot be listed: a repo with no CD workflow
-        (:func:`_declares_cd_workflow` on *root*) is reported as
-        ``CD: no CD workflow in this repo``, any other failure as
-        ``CD: unknown`` and marked ⚠ (:func:`_report_cd_lookup_failure`),
+      - the CD runs cannot be listed in a repo with no CD workflow
+        (:func:`_declares_cd_workflow` on *root*), reported as
+        ``CD: no CD workflow in this repo``; any other failed listing raises
+        :class:`CDUnreadableError` naming its cause
+        (:func:`_report_cd_lookup_failure`),
       - no run was dispatched for this SHA within ``dispatch_timeout``
         (a change CD legitimately skips, e.g. path filters), or
       - the run concluded success / skipped / neutral.
@@ -1209,7 +1228,7 @@ def _wait_for_cd_run(
         )
     except CDRunLookupError as exc:
         # Nothing to block on: a repo with no CD workflow passes quietly, as
-        # it always has; any other failed lookup is said, not hidden.
+        # it always has; any other failed lookup raises, naming its cause.
         _report_cd_lookup_failure(exc, head_sha, root=root)
         return None
     if run is None:
@@ -1270,19 +1289,20 @@ def _classify_failed_jobs(run_id: object) -> tuple[list[str], list[str]]:
 
 
 def _report_cd_lookup_failure(exc: CDRunLookupError, head_sha: str, *, root: Path) -> str:
-    """Report a CD runs listing that failed; return the line reported.
+    """Report a CD runs listing that failed; return the line reported, or raise.
 
     A repo whose workflows declare no CD (:func:`_declares_cd_workflow`) has
-    no CD to report: one plain line, no warning. Any other failure is
-    ``CD: unknown`` with the reason, and marks the stage ⚠.
+    no CD to report: one plain line, no warning, returned. Any other failure
+    is an error naming its cause, printed and raised as
+    :class:`CDUnreadableError`, never a CD state reported as unknown
+    (vergil-tooling#5140).
     """
     if _declares_cd_workflow(root) is False:
         print(NO_CD_WORKFLOW_LINE)
         return NO_CD_WORKFLOW_LINE
-    line = f"  CD: unknown (the CD runs could not be listed: {exc})"
-    print(line, file=sys.stderr)
-    progress.mark_warn(f"CD state of {head_sha[:7]} unknown: the CD runs could not be listed")
-    return line
+    msg = f"the CD runs for {head_sha[:7]} could not be listed: {exc}"
+    print(f"ERROR: {msg}", file=sys.stderr)
+    raise CDUnreadableError(msg) from exc
 
 
 def _report_cd_run(
@@ -1301,9 +1321,10 @@ def _report_cd_run(
     queued, in progress, succeeded, failed, cancelled or superseded. No run
     registered in time is ``CD: no CD run for this head``, and a repo with no
     CD workflow (*root* declares none) is ``CD: no CD workflow in this repo``.
-    A state that is not green, and any other lookup that fails, marks the
-    stage ⚠ and never fails it: the release's develop-CD gate is what
-    refuses a develop whose CD is not green. Returns the ``CD:`` line it
+    A state that is not green marks the stage ⚠ and never fails it: the
+    release's develop-CD gate is what refuses a develop whose CD is not
+    green. A listing that fails in a repo that declares CD raises
+    :class:`CDUnreadableError` naming its cause. Returns the ``CD:`` line it
     printed.
     """
     try:
@@ -1946,11 +1967,17 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
         ctx.cd_line = f"CD: unknown (could not resolve the tip of {args.target_branch})"
         return
 
-    if not args.wait_cd:
-        ctx.cd_line = _report_cd_run(args.target_branch, head_sha, root=ctx.root)
-        return
-
-    problem = _wait_for_cd_run(args.target_branch, head_sha, root=ctx.root)
+    try:
+        if not args.wait_cd:
+            ctx.cd_line = _report_cd_run(args.target_branch, head_sha, root=ctx.root)
+            return
+        problem = _wait_for_cd_run(args.target_branch, head_sha, root=ctx.root)
+    except CDUnreadableError as exc:
+        # The CD runs could not be listed: the stage fails with the cause, and
+        # the final report repeats it (vergil-tooling#5140).
+        ctx.cd_line = f"CD: error ({exc})"
+        ctx.cd_unreadable = True
+        raise
     if problem is None:
         ctx.cd_line = f"CD: no CD failure for {head_sha[:7]} (--wait-cd; the run is named above)"
         return
