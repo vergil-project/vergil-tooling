@@ -14,16 +14,21 @@ from vergil_tooling.lib.ci_evidence import (
     HarvestState,
     HarvestStateError,
     IncompleteEvidenceError,
+    SkipRecord,
+    SkipRecordError,
     assemble_bundle,
     build_manifest,
     copy_sbom,
     evidence_asset_name,
     evidence_manifest_name,
+    is_skip_record,
+    load_gate_evidence,
     load_harvested_gates_from_state,
     read_harvest_state,
     render_readme,
     sha256_file,
     validate_completeness,
+    validate_skip_heads,
     write_checks_json,
     write_harvest_state,
     write_manifest,
@@ -472,3 +477,184 @@ def test_load_harvested_gates_from_state_rebuilds_sorted_gates(tmp_path: Path) -
     assert gates[0].conclusion == "failure"  # conclusion comes from the state
     assert gates[1].conclusion == "success"
     assert gates[1].tools == ({"name": "test"},)  # tools/files come from the tree
+
+
+# -- Skip records (issue #5034) ------------------------------------------------
+
+_HEAD = "cafef00d"
+
+
+def _skip_payload(leg: str = "test", version: str = "3.15", **over: object) -> dict[str, object]:
+    """A skip record as vergil-actions' report staging writes it (vergil-actions#1294)."""
+    payload: dict[str, object] = {
+        "gate": leg,
+        "language": "python",
+        "version": version,
+        "skipped": True,
+        "reason": "not-bootstrapped",
+        "head": _HEAD,
+        "missing_manifests": ["pyproject.toml", "uv.lock"],
+    }
+    payload.update(over)
+    return payload
+
+
+def _skip_gate_dir(staging: Path, gate: str, files: dict[str, object]) -> Path:
+    """Stage *gate* with an ``evidence.json`` and *files* (a dict is written as JSON)."""
+    gate_dir = staging / "evidence" / "gates" / gate
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "evidence.json").write_text(
+        json.dumps({"gate": gate, "tools": [{"name": "pytest"}], "metrics": {}}),
+        encoding="utf-8",
+    )
+    for name, content in files.items():
+        text = content if isinstance(content, str) else json.dumps(content)
+        (gate_dir / name).write_text(text, encoding="utf-8")
+    return gate_dir
+
+
+def test_is_skip_record() -> None:
+    assert is_skip_record(Path("test-not-bootstrapped-3.15.json"))
+    assert is_skip_record(Path("quality-lint-not-bootstrapped-3.15.json"))
+    assert not is_skip_record(Path("coverage-3.15.xml"))
+    assert not is_skip_record(Path("quality-ruff-3.15.json"))
+    assert not is_skip_record(Path("evidence.json"))
+
+
+def test_load_gate_evidence_reads_a_test_skip_record(tmp_path: Path) -> None:
+    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+
+    evidence = load_gate_evidence(gate_dir, conclusion="success")
+
+    record = gate_dir / "test-not-bootstrapped-3.15.json"
+    assert evidence.skips == (
+        SkipRecord(
+            leg="test",
+            language="python",
+            version="3.15",
+            reason="not-bootstrapped",
+            head=_HEAD,
+            missing_manifests=("pyproject.toml", "uv.lock"),
+            path=record,
+        ),
+    )
+    # The record is still a gate file, hashed like any other.
+    assert record in evidence.files
+
+
+def test_load_gate_evidence_reads_quality_leg_skip_records(tmp_path: Path) -> None:
+    gate_dir = _skip_gate_dir(
+        tmp_path,
+        "quality",
+        {
+            "quality-common-3.15.log": "common",
+            "quality-lint-not-bootstrapped-3.15.json": _skip_payload("lint"),
+            "quality-typecheck-not-bootstrapped-3.15.json": _skip_payload("typecheck"),
+        },
+    )
+
+    evidence = load_gate_evidence(gate_dir, conclusion="success")
+
+    assert [(s.leg, s.version) for s in evidence.skips] == [
+        ("lint", "3.15"),
+        ("typecheck", "3.15"),
+    ]
+
+
+def test_gate_without_skip_records_has_no_skips(tmp_path: Path) -> None:
+    gate_dir = _skip_gate_dir(tmp_path, "test", {"coverage-3.15.xml": "<coverage/>"})
+    assert load_gate_evidence(gate_dir, conclusion="success").skips == ()
+
+
+@pytest.mark.parametrize(
+    ("gate", "name", "content", "message"),
+    [
+        ("test", "test-not-bootstrapped-3.15.json", "{", "cannot be read"),
+        ("test", "test-not-bootstrapped-3.15.json", [], "must be a JSON object holding"),
+        (
+            "test",
+            "test-not-bootstrapped-3.15.json",
+            {k: v for k, v in _skip_payload().items() if k != "head"},
+            "must be a JSON object holding",
+        ),
+        ("test", "test-not-bootstrapped-3.15.json", _skip_payload(head=""), "non-empty strings"),
+        (
+            "test",
+            "test-not-bootstrapped-3.15.json",
+            _skip_payload(missing_manifests=[]),
+            "missing_manifests",
+        ),
+        (
+            "test",
+            "test-not-bootstrapped-3.15.json",
+            _skip_payload(missing_manifests=[1]),
+            "missing_manifests",
+        ),
+        ("test", "test-not-bootstrapped-3.15.json", _skip_payload(skipped="true"), "skipped: true"),
+        ("test", "test-not-bootstrapped-3.15.json", _skip_payload(reason="other"), "skipped: true"),
+        ("test", "audit-not-bootstrapped-3.15.json", _skip_payload("audit"), "has skippable legs"),
+        ("quality", "quality-test-not-bootstrapped-3.15.json", _skip_payload(), "skippable legs"),
+        ("security", "test-not-bootstrapped-3.15.json", _skip_payload(), "legs: none"),
+        ("test", "test-not-bootstrapped-3.14.json", _skip_payload(), "must be named"),
+        ("quality", "lint-not-bootstrapped-3.15.json", _skip_payload("lint"), "must be named"),
+    ],
+)
+def test_load_gate_evidence_refuses_a_bad_skip_record(
+    tmp_path: Path, gate: str, name: str, content: object, message: str
+) -> None:
+    gate_dir = _skip_gate_dir(tmp_path, gate, {name: content})
+    with pytest.raises(SkipRecordError, match=message):
+        load_gate_evidence(gate_dir, conclusion="success")
+
+
+def test_manifest_records_skipped_legs(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    gate_dir = _skip_gate_dir(staging, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    evidence = load_gate_evidence(gate_dir, conclusion="success")
+
+    m = build_manifest(
+        _ctx(),
+        [evidence],
+        generated_at="2026-07-12T00:00:00Z",
+        missing_gates=[],
+        staging_dir=staging,
+    )
+
+    entry = m["gates"][0]
+    assert entry["skipped"] == [
+        {
+            "leg": "test",
+            "language": "python",
+            "version": "3.15",
+            "reason": "not-bootstrapped",
+            "missing_manifests": ["pyproject.toml", "uv.lock"],
+            "path": "gates/test/test-not-bootstrapped-3.15.json",
+        }
+    ]
+    assert "gates/test/test-not-bootstrapped-3.15.json" in {f["path"] for f in entry["files"]}
+
+
+def test_manifest_gate_with_no_skips_lists_none(tmp_path: Path) -> None:
+    staging = _stage_one_gate(tmp_path)
+    m = build_manifest(
+        _ctx(),
+        [_gate_test(staging)],
+        generated_at="2026-07-12T00:00:00Z",
+        missing_gates=[],
+        staging_dir=staging,
+    )
+    assert m["gates"][0]["skipped"] == []
+
+
+def test_skip_record_counts_as_payload(tmp_path: Path) -> None:
+    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    evidence = load_gate_evidence(gate_dir, conclusion="success")
+    validate_completeness([EvidenceGate(name="test", checks=())], {"test": evidence})
+
+
+def test_validate_skip_heads(tmp_path: Path) -> None:
+    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    evidence = load_gate_evidence(gate_dir, conclusion="success")
+    validate_skip_heads({"test": evidence}, _HEAD)
+    with pytest.raises(SkipRecordError, match=r"not of the validated head beef: test/test-not"):
+        validate_skip_heads({"test": evidence}, "beef")
