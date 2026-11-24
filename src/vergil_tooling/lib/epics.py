@@ -25,6 +25,7 @@ import logging
 import re
 import sys
 import time
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
@@ -432,7 +433,9 @@ def native_blockers_of(task: IssueRef) -> tuple[BlockerState, ...]:
     return _native_blockers(issue.get("blockedBy"), task)
 
 
-def child_states_with_blockers(epic: IssueRef) -> list[ChildState]:
+def child_states_with_blockers(
+    epic: IssueRef, *, wanted: Callable[[ChildState], bool] | None = None
+) -> list[ChildState]:
     """:func:`child_states`, with each native child's blocked-by list read too.
 
     The native sub-issue listing reads every child's ``blockedBy`` list in the
@@ -440,21 +443,30 @@ def child_states_with_blockers(epic: IssueRef) -> list[ChildState]:
     child carries ``None``, since its blockers were not read: a caller that
     needs them reads them with :func:`native_blockers_of`. An incomplete list
     raises :class:`NativeBlockersReadError` for the whole listing.
+
+    With *wanted*, only the children it accepts (judged on their ref, state,
+    title and close time, before any blocker is taken) are returned, and only
+    their lists are checked: a child the caller would discard, such as a
+    closed one, never fails the listing over a list it does not need.
     """
     data: Any = github.graphql(_SUBISSUES_WITH_BLOCKERS_QUERY, id=_node_id(epic))
     nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
     if not nodes:
-        return _reflink_child_states(epic)
+        reflinked = _reflink_child_states(epic)
+        return reflinked if wanted is None else [c for c in reflinked if wanted(c)]
     states: list[ChildState] = []
     for n in nodes:
-        ref = _ref_from_node(n)
+        child = ChildState(
+            ref=_ref_from_node(n),
+            state=str(n["state"]).upper(),
+            title=str(n.get("title") or ""),
+            closed_at=str(n.get("closedAt") or ""),
+        )
+        if wanted is not None and not wanted(child):
+            continue
         states.append(
-            ChildState(
-                ref=ref,
-                state=str(n["state"]).upper(),
-                title=str(n.get("title") or ""),
-                closed_at=str(n.get("closedAt") or ""),
-                native_blockers=_native_blockers(n.get("blockedBy"), ref),
+            dataclasses.replace(
+                child, native_blockers=_native_blockers(n.get("blockedBy"), child.ref)
             )
         )
     return states

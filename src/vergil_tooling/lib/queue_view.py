@@ -868,14 +868,19 @@ def _standing_items(
     (:func:`epics.blockers_or_stop`): it is left out, added to *stops*, and
     the rest are read. A child's open blockers are its body ``Blocked-by:``
     refs and its native blocked-by relationships (:func:`_open_blockers`).
-    Every other read failure raises.
+    Only a child the view keeps has its native list checked, so a closed or
+    filtered-out child never fails the view. Every other read failure raises.
     """
+
+    def wanted(child: epics.ChildState) -> bool:
+        if child.state != "OPEN":
+            return False
+        return repo is None or _repo_of(child.ref).casefold() == repo.casefold()
+
     found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
     for epic in epic_refs:
-        for child in epics.child_states_with_blockers(epic):
-            if child.state != "OPEN":
-                continue
-            if repo is not None and _repo_of(child.ref).casefold() != repo.casefold():
+        for child in epics.child_states_with_blockers(epic, wanted=wanted):
+            if not wanted(child):
                 continue
             view = _view(child.ref, "title,createdAt,labels")
             blockers = epics.blockers_or_stop(child.ref, stops)

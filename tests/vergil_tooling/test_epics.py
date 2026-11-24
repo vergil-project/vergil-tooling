@@ -342,6 +342,54 @@ def test_child_states_with_blockers_reads_them_in_the_listing_query() -> None:
     ]
 
 
+def _is_open(child: ChildState) -> bool:
+    return child.state == "OPEN"
+
+
+def test_child_states_with_blockers_skips_an_unwanted_childs_incomplete_list() -> None:
+    # R1: a closed child whose list is incomplete (a blocker the token cannot
+    # see) is not wanted, so it is left out and never fails the listing.
+    closed = {**_child_node(101, _blocked_by(total=2)), "state": "CLOSED"}
+    data = _listing(closed, _child_node(102, _blocked_by()))
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        result = epics.child_states_with_blockers(EPIC, wanted=_is_open)
+    assert result == [
+        ChildState(IssueRef("org", "repo-a", 102), "OPEN", "t102", native_blockers=())
+    ]
+
+
+def test_child_states_with_blockers_still_refuses_a_wanted_childs_incomplete_list() -> None:
+    data = _listing(_child_node(101, _blocked_by(total=2)))
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+        pytest.raises(epics.NativeBlockersReadError, match="only 0 could be read"),
+    ):
+        epics.child_states_with_blockers(EPIC, wanted=_is_open)
+
+
+def test_child_states_with_blockers_filters_reflink_children(layer: FakeItems) -> None:
+    search = [
+        {
+            "number": number,
+            "state": state,
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        }
+        for number, state in ((41, "OPEN"), (42, "CLOSED"))
+    ]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, _listing())),
+        patch("vergil_tooling.lib.github.read_json", return_value=_mirror(layer, search)),
+    ):
+        result = epics.child_states_with_blockers(EPIC, wanted=_is_open)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+
+
 def test_child_states_with_blockers_reflink_fallback_reads_none(layer: FakeItems) -> None:
     # A reflink child's blockers were not read: None, never an empty tuple.
     search = [

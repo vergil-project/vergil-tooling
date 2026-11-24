@@ -6,7 +6,7 @@ import io
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -1455,7 +1455,7 @@ def _adhoc(
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(
             f"{_MOD}.epics.child_states_with_blockers",
-            side_effect=lambda epic: children[epic.number],
+            side_effect=lambda epic, **_: children[epic.number],
         ),
         patch(f"{_MOD}.epics.blockers_of", side_effect=blockers_of),
         patch(f"{_MOD}.epics.native_blockers_of", side_effect=native_blockers_of),
@@ -1894,7 +1894,7 @@ def test_hoshin_items_lists_open_tasks() -> None:
     ]
     views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
     items, _, kids = _hoshin(_HOSHIN_EPIC, children, views, signals=_worktree_signals)
-    kids.assert_called_once_with(_HOSHIN_EPIC)
+    kids.assert_called_once_with(_HOSHIN_EPIC, wanted=ANY)
     assert items == [
         queue_view.AdhocItem(
             ref=IssueRef("org", "docs", 7),
@@ -1924,6 +1924,16 @@ def test_hoshin_items_repo_filters_children() -> None:
     views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
     items, _, _ = _hoshin(_HOSHIN_EPIC, children, views, repo="org/Docs")
     assert [i.ref.slug for i in items] == ["org/docs#7"]
+
+
+def test_hoshin_items_checks_blockers_only_of_kept_children() -> None:
+    # The listing is asked to check only the children the view keeps: open
+    # ones in the --repo filter. A closed or other-repo child never fails it.
+    _, _, kids = _hoshin(_HOSHIN_EPIC, [], {}, repo="org/Docs")
+    wanted = kids.call_args.kwargs["wanted"]
+    assert wanted(ChildState(IssueRef("org", "docs", 7), "OPEN"))
+    assert not wanted(ChildState(IssueRef("org", "docs", 6), "CLOSED"))
+    assert not wanted(ChildState(IssueRef("org", "vergil-tooling", 8), "OPEN"))
 
 
 def test_hoshin_items_without_repo_lists_every_repo() -> None:
