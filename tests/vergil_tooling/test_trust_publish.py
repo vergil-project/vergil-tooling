@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import cast
 
 import pytest
 
 from vergil_tooling.bin import vrg_trusted_authors
-from vergil_tooling.lib import trust_publish
+from vergil_tooling.lib import gh_version, github, trust_publish
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.trust_publish import (
     ORG_VARIABLES,
@@ -34,9 +35,6 @@ from vergil_tooling.lib.trusted_authors import (
     parse_actions_value,
     render_actions_value,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 ORG = "example-org"
 OTHER_ORG = "example-other-org"
@@ -443,6 +441,58 @@ class TestCheck:
         fake.fail = f"orgs/{ORG}/repos"
         assert vrg_trusted_authors.main(["check", "--org", ORG]) == 2
         assert "HTTP 403" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (
+                github.NoInstallationError(ORG, ["other-org"]),
+                f"no installation for owner '{ORG}'. Known installations: other-org.",
+            ),
+            (
+                github.AppAuthError(ORG, "123", Path("/key.pem"), "the key was rejected"),
+                "the key was rejected",
+            ),
+            (
+                github.MissingGitHubTokenError(4, ["gh", "api"], "", "no token"),
+                f"GET orgs/{ORG}/actions/variables failed",
+            ),
+            (gh_version.GhVersionError("gh 2.0.0 is older than 2.97.0"), "older than 2.97.0"),
+        ],
+    )
+    def test_check_auth_or_setup_error_exits_2(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        error: Exception,
+        expected: str,
+    ) -> None:
+        # issue #5079: a check that read nothing "could not run" (2), never
+        # "found a problem" (1), the code cli_main would give these.
+        _set_mode(monkeypatch, IdentityMode.AUTOMATION)
+
+        def _fail(*_args: object, **_kwargs: object) -> list[object]:
+            raise error
+
+        monkeypatch.setattr(trust_publish.github, "read_json_paginated", _fail)
+        assert vrg_trusted_authors.main(["check", "--org", ORG]) == 2
+        captured = capsys.readouterr()
+        assert expected in captured.err
+        assert "FINDING" not in captured.out
+
+    def test_check_missing_token_names_the_fix(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A missing token that escapes the reads unwrapped is "could not run"
+        # too, with the configuration fix in its message.
+        _set_mode(monkeypatch, IdentityMode.AUTOMATION)
+
+        def _fail(_org: str) -> object:
+            raise github.MissingGitHubTokenError(4, ["gh", "api"], "", "no token")
+
+        monkeypatch.setattr(vrg_trusted_authors.trust_publish, "check", _fail)
+        assert vrg_trusted_authors.main(["check", "--org", ORG]) == 2
+        assert "vrg-trusted-authors: no GitHub token available" in capsys.readouterr().err
 
 
 class TestRender:

@@ -158,6 +158,27 @@ def _refuse_agent_mode(command: str, permission: str) -> None:
         raise _RefusedError(msg)
 
 
+# A check whose GitHub login, token or gh failed read nothing, so it "could not
+# run" (2), never "found a problem" (1), the code cli_main would give these.
+_SETUP_ERRORS = (
+    github.NoInstallationError,
+    github.AppAuthError,
+    github.MissingGitHubTokenError,
+    gh_version.GhVersionError,
+)
+
+
+def _setup_error_message(exc: Exception) -> str:
+    """The message for one of :data:`_SETUP_ERRORS`, naming its cause."""
+    if isinstance(exc, github.NoInstallationError):
+        return github.no_installation_message(exc)
+    if isinstance(exc, github.AppAuthError):
+        return github.app_auth_message(exc)
+    if isinstance(exc, github.MissingGitHubTokenError):
+        return github.missing_token_message("vrg-trusted-authors")
+    return str(exc)
+
+
 def _check(args: argparse.Namespace) -> int:
     try:
         _refuse_agent_mode("check", "Variables")
@@ -176,6 +197,10 @@ def _check(args: argparse.Namespace) -> int:
         trust_publish.TrustPublishError,
     ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        return _CHECK_COULD_NOT_RUN
+    # A missing token raised by a read reaches here as a TrustPublishError.
+    except _SETUP_ERRORS as exc:
+        print(f"ERROR: {_setup_error_message(exc)}", file=sys.stderr)
         return _CHECK_COULD_NOT_RUN
     if args.values_out:
         Path(args.values_out).write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n")
@@ -208,18 +233,12 @@ def _app_secrets(args: argparse.Namespace) -> int:
         TrustedAuthorsNotConfiguredError,
         ValueError,
         app_secrets.AppSecretsError,
-        gh_version.GhVersionError,
     ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return _CHECK_COULD_NOT_RUN
-    # A GitHub login that failed read no secret, so it is "could not run" (2),
-    # never "a secret is missing" (1), the code cli_main would give it. A
-    # missing token reaches here as an AppSecretsError: it is a gh failure.
-    except github.NoInstallationError as exc:
-        print(f"ERROR: {github.no_installation_message(exc)}", file=sys.stderr)
-        return _CHECK_COULD_NOT_RUN
-    except github.AppAuthError as exc:
-        print(f"ERROR: {github.app_auth_message(exc)}", file=sys.stderr)
+    # A missing token raised by a read reaches here as an AppSecretsError.
+    except _SETUP_ERRORS as exc:
+        print(f"ERROR: {_setup_error_message(exc)}", file=sys.stderr)
         return _CHECK_COULD_NOT_RUN
     env = AUTOMATION_ENVIRONMENT_NAME
     findings: list[str] = []
