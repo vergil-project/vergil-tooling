@@ -12,15 +12,27 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_provenance, progress, trust
+from vergil_tooling.lib import (
+    agent_gates,
+    auto_merge,
+    finalize_watch,
+    git,
+    github,
+    pr_provenance,
+    progress,
+    trust,
+)
+from vergil_tooling.lib.change_fingerprint import change_fingerprint
 from vergil_tooling.lib.finalize_watch import (
     DEADLINE_ENV,
     FinalizeWatchError,
@@ -29,10 +41,17 @@ from vergil_tooling.lib.finalize_watch import (
     watch,
 )
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.trusted_authors import TrustedAuthors
+
+# The re-check's real functions, before any fixture stubs them.
+REAL_RECHECK = finalize_watch.recheck_gates
+REAL_FETCH = finalize_watch._fetch_for_gates
+REAL_READY_STATE = finalize_watch.ready_state
 
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 REQUIRED = frozenset({"test / unit", "CodeQL"})
+CLONE = Path("/clones/o/r")
 AGENT_ENABLE = Action("x-vergil-user", Role.USER, "auto_merge_enabled")
 
 
@@ -106,6 +125,14 @@ class FakeGitHub:
     run_reads: list[tuple[str, str]] = field(default_factory=list)
     last_pr: str = ""
     branch_lookups: list[tuple[str, str, str]] = field(default_factory=list)
+    gate_failures: dict[tuple[str, str], str] = field(default_factory=dict)
+    gate_checks: list[tuple[str, str, str]] = field(default_factory=list)
+
+    def recheck_gates(self, snap: finalize_watch.Snapshot, branch: str, clone: Path) -> str:
+        """The gates' answer for the PR's head: ``gate_failures``, else a pass."""
+        assert clone == CLONE
+        self.gate_checks.append((snap.url, snap.head, branch))
+        return self.gate_failures.get((snap.url, snap.head), "")
 
     def prs_for_branch(
         self, repo: str, branch: str, *, state: str
@@ -206,13 +233,14 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(pr_provenance, "check_pr", api.check_pr)
     monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
     monkeypatch.setattr(auto_merge, "auto_merge_enabled", api.auto_merge_enabled)
+    monkeypatch.setattr(finalize_watch, "recheck_gates", api.recheck_gates)
     clock = SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep)
     monkeypatch.setattr(finalize_watch, "time", clock)
     return api
 
 
 def run(prs: list[str], *, poll: float = 15.0) -> list[PRResult]:
-    return watch(prs, poll_interval=poll)
+    return watch(prs, clone=CLONE, poll_interval=poll)
 
 
 # --- start-up ------------------------------------------------------------------
@@ -541,7 +569,7 @@ def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub
         ),
     )
 
-    [result] = watch([url(1)], cancel_grace=60)
+    [result] = watch([url(1)], clone=CLONE, cancel_grace=60)
 
     assert result.outcome == "failed: cancelled"
     assert result.detail == (
@@ -581,7 +609,7 @@ def test_cancelled_check_on_a_run_not_yet_completed_is_pending(fake: FakeGitHub)
     )
     fake.script(1, rerun, rerun, rerun, merged(1))
 
-    [result] = watch([url(1)], cancel_grace=1)
+    [result] = watch([url(1)], clone=CLONE, cancel_grace=1)
 
     assert result.outcome == "merged"
 
@@ -701,6 +729,76 @@ def test_a_pr_failed_on_its_checks_that_stays_open_stays_failed(fake: FakeGitHub
     assert fake.views.count(url(1)) == 2
 
 
+def test_new_head_of_a_pr_failed_on_its_checks_failing_the_gates_disarms(
+    fake: FakeGitHub,
+) -> None:
+    """A fix pushed to a PR that ended on its checks gets the gates while the watch goes on."""
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.gate_failures[url(1), HEAD_B] = "protected file .github/workflows/ci.yml unapproved"
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["failed: gates", "merged"]
+    assert results[0].head == HEAD_B
+    assert results[0].detail == "protected file .github/workflows/ci.yml unapproved"
+    assert fake.disables == [url(1)]
+    assert (url(1), HEAD_B, "feature/1-thing") in fake.gate_checks
+
+
+def test_new_head_of_a_pr_failed_on_its_checks_with_a_violation_disarms(
+    fake: FakeGitHub,
+) -> None:
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.violations[url(1), HEAD_B] = [AGENT_ENABLE]
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["failed: provenance", "merged"]
+    assert results[0].provenance_violation is True
+    assert fake.disables == [url(1)]
+
+
+def test_new_head_of_a_pr_failed_on_its_checks_passing_the_gates_can_still_merge(
+    fake: FakeGitHub,
+) -> None:
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+        merged(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.script(2, pr_state(2), pr_state(2), pr_state(2), pr_state(2), merged(2))
+
+    results = run([url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["merged", "merged"]
+    assert fake.disables == []
+    # The new head was checked once while open, never again until it merged.
+    assert [c for c in fake.gate_checks if c[0] == url(1)] == [
+        (url(1), HEAD_A, "feature/1-thing"),
+        (url(1), HEAD_B, "feature/1-thing"),
+    ]
+
+
 def test_conflict(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1), pr_state(1, mergeStateStatus="DIRTY"))
 
@@ -728,7 +826,7 @@ def test_a_new_head_starts_the_conflict_settle_again(fake: FakeGitHub) -> None:
     dirty_b = pr_state(1, mergeStateStatus="DIRTY", headRefOid=HEAD_B)
     fake.script(1, dirty_a, dirty_a, dirty_b)
 
-    [result] = watch([url(1)], conflict_settle=30)
+    [result] = watch([url(1)], clone=CLONE, conflict_settle=30)
 
     assert result.outcome == "failed: conflict"
     assert result.head == HEAD_B
@@ -1232,3 +1330,514 @@ def test_status_table_when_every_pr_ended_at_start_up(
         "  #2  feat: change 2  failed: closed  0m00s\n"
         "  1 merged, 0 pending, 1 failed; 2h00m00s left before the batch deadline"
     ]
+
+
+# --- the gates' re-check (epic vergil-project/.github#1384, plan Task 11) ------------
+
+AUTHORS = TrustedAuthors(human=("human",), agents=("human-vergil-user",))
+AGENT_ID = trust.Identity("human-vergil-user", "Bot")
+HUMAN_ID = trust.Identity("human", "User")
+TASK = "o/r#7"
+LINKED_BODY = f"# Pull Request\n\n## Issue Linkage\n\n- Ref {TASK}\n"
+WORKFLOW = ".github/workflows/ci.yml"
+
+
+def _sh(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _commit(repo: Path, files: dict[str, str], message: str) -> str:
+    for name, text in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    _sh(repo, "add", "-A")
+    _sh(repo, "commit", "-q", "-m", message)
+    return _sh(repo, "rev-parse", "HEAD")
+
+
+@dataclass
+class Gated:
+    """A clone of o/r with ``develop`` and ``feature``, and the gates' GitHub reads stubbed.
+
+    *records* are the fingerprints the merge-review records on the task
+    issue cover; *actors* the PR's GitHub actors; *ready* its ready state;
+    *body* its trusted body. *evaluations* records each evaluation's
+    ``(base, head, issue_refs)``.
+    """
+
+    clone: Path
+    records: list[str] = field(default_factory=list)
+    actors: tuple[trust.Identity, ...] = (AGENT_ID,)
+    ready: finalize_watch.ReadyState | None = None
+    body: str = LINKED_BODY
+    evaluations: list[tuple[str, str, list[str]]] = field(default_factory=list)
+    actor_reads: list[str] = field(default_factory=list)
+
+    def develop(self) -> str:
+        return _sh(self.clone, "rev-parse", "develop")
+
+    def fingerprint(self) -> str:
+        return change_fingerprint(self.clone, "develop", "feature")
+
+
+@pytest.fixture
+def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Gated:
+    """The real :func:`recheck_gates` and evaluator over a local clone; GitHub stubbed."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    _sh(clone, "init", "-q", "-b", "develop")
+    _commit(
+        clone, {"a.txt": "one\ntwo\nthree\n", "b.txt": "uno\ndos\n", WORKFLOW: "on: push\n"}, "base"
+    )
+    _sh(clone, "checkout", "-q", "-b", "feature")
+    state = Gated(clone=clone)
+    monkeypatch.setenv(DEADLINE_ENV, "60")
+
+    monkeypatch.setattr(finalize_watch, "recheck_gates", REAL_RECHECK)
+    monkeypatch.setattr(
+        git, "remote_url", lambda remote="origin", repo=None: "https://github.com/o/r.git"
+    )
+    monkeypatch.setattr(finalize_watch, "load_trusted_authors", lambda: AUTHORS)
+
+    def actors(pr: str) -> tuple[trust.Identity, ...]:
+        state.actor_reads.append(pr)
+        return state.actors
+
+    monkeypatch.setattr(pr_provenance, "pr_actors", actors)
+    monkeypatch.setattr(finalize_watch, "ready_state", lambda clone, repo, branch: state.ready)
+    monkeypatch.setattr(
+        trust,
+        "read_issue",
+        lambda repo, number, **_kw: SimpleNamespace(body=state.body),
+    )
+
+    def fetch(fetched: Path, head: str) -> str:
+        assert fetched == clone
+        _sh(clone, "cat-file", "-e", f"{head}^{{commit}}")
+        return state.develop()
+
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", fetch)
+    monkeypatch.setattr(
+        agent_gates,
+        "records",
+        lambda ref, *, authors: [SimpleNamespace(fingerprint=f) for f in state.records],
+    )
+    monkeypatch.setattr(agent_gates, "verified_approvals", lambda ref, *, authors: [])
+    monkeypatch.setattr(agent_gates, "overrides", lambda ref, *, authors: [])
+    real_evaluate = agent_gates.evaluate
+
+    def evaluate(repo: Path, *, base: str, head: str, issue_refs: list[str], authors: Any) -> Any:
+        state.evaluations.append((base, head, list(issue_refs)))
+        return real_evaluate(repo, base=base, head=head, issue_refs=issue_refs, authors=authors)
+
+    monkeypatch.setattr(agent_gates, "evaluate", evaluate)
+    return state
+
+
+def _watch_gated(gated: Gated) -> list[PRResult]:
+    return watch([url(1)], clone=gated.clone)
+
+
+def test_new_head_touching_workflow_without_approval_disarms(
+    fake: FakeGitHub, gated: Gated, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.records.append(gated.fingerprint())
+    second = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    fake.script(1, pr_state(1, headRefOid=first), pr_state(1, headRefOid=second))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert result.head == second
+    assert f"protected file {WORKFLOW}" in result.detail
+    assert "no approved protected-change approval on o/r#7" in result.detail
+    assert fake.disables == [url(1)]
+    assert [head for _base, head, _refs in gated.evaluations] == [first, second]
+    assert "GATES NOT PASSED" in capsys.readouterr().err
+
+
+def test_clean_rebase_keeps_auto_merge(fake: FakeGitHub, gated: Gated) -> None:
+    first = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.records.append(gated.fingerprint())
+    _sh(gated.clone, "checkout", "-q", "develop")
+    _commit(gated.clone, {"b.txt": "uno\ndos\ntres\n"}, "develop moves on")
+    _sh(gated.clone, "checkout", "-q", "feature")
+    _sh(gated.clone, "rebase", "-q", "develop")
+    rebased = _sh(gated.clone, "rev-parse", "HEAD")
+    assert rebased != first
+    fake.script(
+        1,
+        pr_state(1, headRefOid=first),
+        pr_state(1, headRefOid=rebased),
+        merged(1, headRefOid=rebased),
+    )
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "merged"
+    assert fake.disables == []
+    # Both heads were evaluated, the rebased one against the moved develop.
+    assert [head for _base, head, _refs in gated.evaluations] == [first, rebased]
+    assert gated.evaluations[1][0] == gated.develop()
+
+
+def test_gates_failing_at_start_disarm(fake: FakeGitHub, gated: Gated) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert "no merge-review record" in result.detail
+    assert fake.disables == [url(1)]
+    assert fake.sleeps == []
+
+
+def test_gates_failing_with_auto_merge_already_off_disable_nothing(
+    fake: FakeGitHub, gated: Gated
+) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    fake.script(1, pr_state(1, headRefOid=head, autoMergeRequest=None))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert fake.disables == []
+
+
+def test_provenance_violation_ends_before_the_gates(fake: FakeGitHub, gated: Gated) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    fake.script(1, pr_state(1, headRefOid=head))
+    fake.violations[url(1), head] = [AGENT_ENABLE]
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: provenance"
+    assert gated.evaluations == []
+
+
+def test_merged_pr_is_not_rechecked(fake: FakeGitHub, gated: Gated) -> None:
+    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    fake.script(1, merged(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "merged"
+    assert gated.evaluations == []
+    assert gated.actor_reads == []
+
+
+@pytest.mark.parametrize(
+    "broken",
+    ["actors", "body", "fetch", "untrusted body"],
+)
+def test_recheck_read_failure_disarms(
+    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch, broken: str
+) -> None:
+    """A read the re-check cannot complete turns auto-merge off, never left armed."""
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.records.append(gated.fingerprint())
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    def api_error(*_args: object, **_kwargs: object) -> object:
+        raise github.GitHubAPIError(1, ("gh", "api"), stderr="HTTP 502")
+
+    def untrusted(*_args: object, **_kwargs: object) -> object:
+        item = trust.Skipped("o/r", 1, "pr", "drive-by", "t", "body", trust.CROSS_REPOSITORY)
+        raise trust.UntrustedContentError(item, "the PR's body is untrusted")
+
+    def fetch_failed(*_args: object) -> str:
+        raise subprocess.CalledProcessError(128, ("git", "fetch"), stderr="fatal: unreachable")
+
+    target, replacement = {
+        "actors": ((pr_provenance, "pr_actors"), api_error),
+        "body": ((trust, "read_issue"), api_error),
+        "fetch": ((finalize_watch, "_fetch_for_gates"), fetch_failed),
+        "untrusted body": ((trust, "read_issue"), untrusted),
+    }[broken]
+    monkeypatch.setattr(*target, replacement)
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert result.detail.startswith(f"the gates could not be re-checked at {head[:12]}: ")
+    assert fake.disables == [url(1)]
+    assert gated.evaluations == []
+
+
+def test_recheck_refuses_other_repo_clone(
+    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    fake.script(1, pr_state(1, headRefOid=head))
+    monkeypatch.setattr(
+        git, "remote_url", lambda remote="origin", repo=None: "git@github.com:o/other.git"
+    )
+
+    with pytest.raises(
+        FinalizeWatchError, match=r"whose origin is o/other, not the PR's repository o/r"
+    ):
+        _watch_gated(gated)
+
+    assert gated.actor_reads == []
+    assert gated.evaluations == []
+    assert fake.disables == []
+
+
+def test_recheck_refuses_a_clone_with_no_readable_origin(
+    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    def no_origin(remote: str = "origin", repo: Path | None = None) -> str:
+        raise subprocess.CalledProcessError(2, ("git", "remote"), stderr="error: No such remote")
+
+    monkeypatch.setattr(git, "remote_url", no_origin)
+
+    with pytest.raises(FinalizeWatchError, match="cannot read the origin of"):
+        _watch_gated(gated)
+
+    assert gated.actor_reads == []
+    assert fake.disables == []
+
+
+def test_human_only_pr_skips_the_gates(fake: FakeGitHub, gated: Gated) -> None:
+    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    gated.actors = (HUMAN_ID,)
+    fake.script(1, pr_state(1, headRefOid=head), merged(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "merged"
+    assert gated.evaluations == []
+
+
+def test_recorded_by_human_never_skips_the_gates_of_an_agent_pr(
+    fake: FakeGitHub, gated: Gated
+) -> None:
+    """A forged ``recorded_by: human`` does not make an agent's PR human-only."""
+    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    gated.actors = (HUMAN_ID, AGENT_ID)
+    gated.ready = finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="human")
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert len(gated.evaluations) == 1
+    assert fake.disables == [url(1)]
+
+
+@pytest.mark.parametrize(
+    "ready",
+    [
+        finalize_watch.ReadyState(trusted=True, issues=(TASK,)),
+        finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="user"),
+        finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="audit"),
+        finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="robot"),
+        finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by=["human"]),
+        finalize_watch.ReadyState(trusted=False),
+    ],
+    ids=["missing", "user", "audit", "unknown", "not a string", "untrusted"],
+)
+def test_ready_state_makes_a_human_actors_pr_agent_involved(
+    fake: FakeGitHub, gated: Gated, ready: finalize_watch.ReadyState
+) -> None:
+    """GitHub records no pusher: the ready state adds the involvement it cannot show."""
+    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    gated.actors = (HUMAN_ID,)
+    gated.ready = ready
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "failed: gates"
+    assert len(gated.evaluations) == 1
+
+
+def test_ready_state_recorded_by_human_with_human_actors_is_human_only(
+    fake: FakeGitHub, gated: Gated
+) -> None:
+    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    gated.actors = (HUMAN_ID,)
+    gated.ready = finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="human")
+    fake.script(1, pr_state(1, headRefOid=head), merged(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "merged"
+    assert gated.evaluations == []
+
+
+def test_task_issues_come_from_the_trusted_body(fake: FakeGitHub, gated: Gated) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.body = "## Issue Linkage\n\n- Closes #7\n- Closes #8\n"
+    gated.ready = finalize_watch.ReadyState(trusted=True, issues=("#9",), recorded_by="user")
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    _watch_gated(gated)
+
+    assert gated.evaluations[0][2] == ["o/r#7", "o/r#8"]
+
+
+@pytest.mark.parametrize(
+    ("ready", "expected"),
+    [
+        (finalize_watch.ReadyState(trusted=True, issues=("#9",), recorded_by="user"), ["o/r#9"]),
+        (finalize_watch.ReadyState(trusted=False), []),
+        (None, []),
+    ],
+    ids=["trusted ready state", "untrusted ready state", "no ready state"],
+)
+def test_task_issues_fall_back_to_a_trusted_ready_state(
+    fake: FakeGitHub,
+    gated: Gated,
+    ready: finalize_watch.ReadyState | None,
+    expected: list[str],
+) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.body = "# Pull Request\n\nNo linkage here.\n"
+    gated.ready = ready
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert gated.evaluations[0][2] == expected
+    assert result.outcome == "failed: gates"
+    if not expected:
+        assert "resolves to no task issue" in result.detail
+
+
+# --- the re-check's git reads, against a local origin ---------------------------------
+
+
+@pytest.fixture
+def remote(gated: Gated, tmp_path: Path) -> Path:
+    """A bare origin the clone fetches from, holding develop and the clone's history."""
+    bare = tmp_path / "origin.git"
+    _sh(tmp_path, "init", "-q", "--bare", str(bare))
+    _sh(gated.clone, "remote", "add", "origin", str(bare))
+    _sh(gated.clone, "push", "-q", "origin", "develop")
+    return bare
+
+
+def test_recheck_fetches_unseen_head(
+    fake: FakeGitHub, gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A head made outside the clone is fetched by SHA; no feature tracking ref moves."""
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", REAL_FETCH)
+    other = tmp_path / "elsewhere"
+    _sh(tmp_path, "clone", "-q", "-b", "develop", str(remote), str(other))
+    _sh(other, "checkout", "-q", "-b", "feature/1-thing")
+    head = _commit(other, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    _sh(other, "push", "-q", "origin", "feature/1-thing")
+    gated.records.append(change_fingerprint(other, "develop", head))
+    with pytest.raises(subprocess.CalledProcessError):
+        _sh(gated.clone, "cat-file", "-e", f"{head}^{{commit}}")
+    fake.script(1, pr_state(1, headRefOid=head))
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome != "failed: gates", result.detail
+    assert gated.evaluations == [(gated.develop(), head, [TASK])]
+    _sh(gated.clone, "cat-file", "-e", f"{head}^{{commit}}")
+    tracking = _sh(gated.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    assert tracking.splitlines() == ["refs/remotes/origin/develop"]
+
+
+def _relay(remote: Path, tmp_path: Path, branch: str, payload: object) -> str:
+    """Write *payload* as *branch*'s relay ref in *remote*, as report-ready does."""
+    work = tmp_path / "relay"
+    work.mkdir(exist_ok=True)
+    blob = subprocess.run(
+        ["git", "-C", str(remote), "hash-object", "-w", "--stdin"],
+        input=json.dumps(payload),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "-C", str(remote), "mktree"],
+        input=f"100644 blob {blob}\tpr-workflow.json\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    commit = _sh(work, "-C", str(remote), "commit-tree", tree, "-m", "vergil: pr-workflow relay")
+    _sh(work, "-C", str(remote), "update-ref", f"refs/vergil/pr-workflow/{branch}", commit)
+    return commit
+
+
+def _payload(**extra: object) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "issue": "#7",
+        "branch": "feature/1-thing",
+        "base": "develop",
+        "status": "ready",
+        "created_at": "t",
+        "updated_at": "t",
+        "git": {},
+        **extra,
+    }
+
+
+def test_ready_state_reads_the_relay_ref(
+    gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    judged: list[tuple[str, str]] = []
+    commit = _relay(remote, tmp_path, "feature/1-thing", _payload(recorded_by="human"))
+    monkeypatch.setattr(
+        trust,
+        "require_trusted_commit",
+        lambda repo, oid, *, field: judged.append((repo, oid)) or trust.Role.HUMAN,
+    )
+
+    ready = REAL_READY_STATE(gated.clone, "o/r", "feature/1-thing")
+
+    assert ready == finalize_watch.ReadyState(trusted=True, issues=("#7",), recorded_by="human")
+    assert judged == [("o/r", commit)]
+    assert REAL_READY_STATE(gated.clone, "o/r", "feature/2-other") is None
+
+
+def test_ready_state_with_an_untrusted_author_is_not_parsed(
+    gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _relay(remote, tmp_path, "feature/1-thing", "not even a state")
+
+    def untrusted(repo: str, oid: str, *, field: str) -> trust.Role:
+        item = trust.Skipped(repo, 0, "commit", "drive-by", "t", field, trust.CROSS_REPOSITORY)
+        raise trust.UntrustedContentError(item, "untrusted author")
+
+    monkeypatch.setattr(trust, "require_trusted_commit", untrusted)
+
+    assert REAL_READY_STATE(gated.clone, "o/r", "feature/1-thing") == finalize_watch.ReadyState(
+        trusted=False
+    )
+
+
+def test_ready_state_malformed_payload_raises(
+    gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _relay(remote, tmp_path, "feature/1-thing", ["not", "an", "object"])
+    monkeypatch.setattr(
+        trust, "require_trusted_commit", lambda repo, oid, *, field: trust.Role.HUMAN
+    )
+
+    with pytest.raises(TypeError, match="carries no JSON object"):
+        REAL_READY_STATE(gated.clone, "o/r", "feature/1-thing")

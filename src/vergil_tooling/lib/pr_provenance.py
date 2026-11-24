@@ -223,8 +223,23 @@ def _map_event(name: str) -> str | None:
     return mapped
 
 
-def _collect_actions(pr: str) -> tuple[trust.Identity, list[Action]]:
-    """The author of *pr*, and its attributed actions from GitHub, each with its role.
+@dataclass(frozen=True)
+class _History:
+    """What :func:`_collect_actions` read of a PR.
+
+    *actions* are the attributed actions the provenance check judges.
+    *actors* are every identity GitHub records acting on the PR: its author,
+    the author of every review (whatever its state, an untrusted one
+    included) and the actor or user of every timeline event that names one.
+    """
+
+    author: trust.Identity
+    actions: list[Action]
+    actors: tuple[trust.Identity, ...]
+
+
+def _collect_actions(pr: str) -> _History:
+    """The author of *pr*, its attributed actions from GitHub, and its actors.
 
     The repo and number come from the PR itself, not the current directory's
     remote: ``vrg-finalize-pr <PR URL>`` run from a checkout of another repo
@@ -261,7 +276,11 @@ def _collect_actions(pr: str) -> tuple[trust.Identity, list[Action]]:
         github.read_json_paginated(f"repos/{repo}/pulls/{number}/reviews"),
     )
     skipped: list[trust.Skipped] = []
+    actors: list[trust.Identity] = [author]
     for review in reviews:
+        # Every review's author acted on the PR, whatever the review's state;
+        # a review with no user is a deleted account's.
+        actors.append(_identity(review.get("user")))
         if review.get("state") != "APPROVED":
             continue
         reviewer = _identity(review.get("user"))
@@ -288,12 +307,18 @@ def _collect_actions(pr: str) -> tuple[trust.Identity, list[Action]]:
         github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline"),
     )
     for event in timeline:
+        # An event's actor, and the user of an event that names one instead
+        # (a review or a comment), acted on the PR. An event naming neither
+        # (a commit, whose pusher GitHub does not record) adds no actor.
+        actors.extend(
+            _identity(event[key]) for key in ("actor", "user") if isinstance(event.get(key), dict)
+        )
         mapped = _map_event(event.get("event", ""))
         if mapped is None:
             continue
         add(_identity(event.get("actor")), mapped)
 
-    return author, actions
+    return _History(author=author, actions=actions, actors=tuple(actors))
 
 
 def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> ProvenanceResult:
@@ -315,5 +340,17 @@ def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> 
 
 def check_pr(pr: str) -> ProvenanceResult:
     """Verify PR provenance by fetching and evaluating its action history."""
-    author, actions = _collect_actions(pr)
-    return evaluate(actions, author=author)
+    history = _collect_actions(pr)
+    return evaluate(history.actions, author=history.author)
+
+
+def pr_actors(pr: str) -> tuple[trust.Identity, ...]:
+    """Every identity GitHub records acting on *pr*, its author first.
+
+    The evidence :func:`vergil_tooling.lib.agent_gates.agent_involved` takes
+    for an open or merged PR: the author, the author of every review (any
+    state) and the actor or user of every timeline event naming one. Read
+    as :func:`check_pr` reads the PR, every page; a failed or malformed read
+    raises, never an empty answer.
+    """
+    return _collect_actions(pr).actors

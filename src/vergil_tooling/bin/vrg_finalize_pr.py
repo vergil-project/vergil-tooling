@@ -6,11 +6,15 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
 
 1. **Watches** every listed PR (``lib/finalize_watch.py``), holding no lock,
    until each ends ``merged`` or ``failed: …`` (CI, conflict, closed,
-   auto-merge off, provenance, not a develop PR), or the batch deadline
+   auto-merge off, provenance, gates, not a develop PR), or the batch deadline
    (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
    ``timed out``. A PR that merged before the run started counts as merged.
    The watch runs the provenance check on each PR, and turns auto-merge off
-   on an open PR with a violation, which ends ``failed: provenance``.
+   on an open PR with a violation, which ends ``failed: provenance``. On
+   each new head of an agent-involved open PR it also re-checks the gates
+   (a protected-change approval and merge-review coverage), and turns
+   auto-merge off on a head that does not pass them, which ends
+   ``failed: gates``.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    by a closing reference the trust layer counts, before the lock is taken,
@@ -34,7 +38,9 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
    did not validate is said loudly, with its head SHA, the commits the sync
    brought in, the validate's log path and its last lines.
 5. **Releases**, with ``--release``, only on full success: ``vrg-release``,
-   which installs as part of every release. It starts after the
+   which installs as part of every release. Releasing is a human action:
+   under any agent identity ``--release`` is refused at once, before any
+   watch or cleanup, ``--cleanup-only`` included. The release starts after the
    lock is let go, so the release's own preflight can take it, and it
    fast-forwards develop itself (spec §6.6).
 
@@ -109,6 +115,7 @@ from vergil_tooling.lib import (
     finalize_watch,
     git,
     github,
+    identity_mode,
     progress,
     text_table,
     trust,
@@ -182,6 +189,12 @@ SKIP_POST_CHECKS_REMOVED = (
     "vrg-finalize-pr: --skip-post-checks was removed; one run now watches every "
     "listed PR, then settles develop once (pass the PRs as a comma list)"
 )
+# The refusal of --release under any agent identity (epic vergil-project/.github#1384).
+AGENT_RELEASE_REFUSAL = (
+    "vrg-finalize-pr --release: releasing is a human maintainer action. "
+    "Agents cannot chain into vrg-release; finalize without --release."
+)
+
 INSTALL_REMOVED = "vrg-finalize-pr: --install was removed; install is part of every release"
 NO_INSTALL_REMOVED = "vrg-finalize-pr: --no-install was removed; install is part of every release"
 ALLOW_PROVENANCE_VIOLATION_REMOVED = (
@@ -213,6 +226,10 @@ _INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
     "failed: auto-merge off": _INVESTIGATE,
     "failed: provenance": _INVESTIGATE,
+    "failed: gates": (
+        "get the missing protected-change approval or merge review for its head, "
+        "then re-enable auto-merge"
+    ),
     "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
@@ -245,9 +262,14 @@ def main(argv: list[str] | None = None) -> int:
 
     root = git.repo_root()
 
-    # A release cascade on a repo that is not released is refused before any
-    # watch or cleanup, so nothing changes (issue #4175).
+    # A release cascade is refused before any watch or cleanup, so nothing
+    # changes: under any agent identity, since releasing is a human action
+    # (epic vergil-project/.github#1384), and on a repo that is not released
+    # (issue #4175).
     if args.release:
+        if identity_mode.is_agent() or identity_mode.any_agent_signal():
+            print(AGENT_RELEASE_REFUSAL, file=sys.stderr)
+            return EXIT_ERROR
         refusal = gate.unreleased_refusal(root)
         if refusal is not None:
             print(f"vrg-finalize-pr --release: {refusal}", file=sys.stderr)
@@ -356,7 +378,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--release",
         action="store_true",
-        help="On full success, chain into vrg-release (install is part of every release)",
+        help=(
+            "On full success, chain into vrg-release (install is part of every release);"
+            " refused for agents"
+        ),
     )
     parser.add_argument(
         "--wait-cd",
@@ -413,7 +438,7 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         try:
             results = progress.run_stage(
                 "watch",
-                lambda: finalize_watch.watch(prs),
+                lambda: finalize_watch.watch(prs, clone=root),
                 args=args,
                 log=log,
                 describe=_describe_watch,
