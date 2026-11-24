@@ -4964,9 +4964,7 @@ class TestGateStep:
     def test_human_only_skips_both_gates_and_records_it(
         self, real_gates: dict[str, MagicMock]
     ) -> None:
-        summary = _submit_all(
-            [_gate_sub(recorded_by="human", human_only="my own docs fix")], _ARGS
-        )
+        summary = _submit_all([_gate_sub(recorded_by="human", human_only="my own docs fix")], _ARGS)
         assert summary.opened == ["https://github.com/o/r/pull/9"]
         real_gates["evaluate"].assert_not_called()
         assert _fetches(real_gates["git_run"]) == []
