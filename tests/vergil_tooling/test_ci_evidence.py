@@ -482,6 +482,7 @@ def test_load_harvested_gates_from_state_rebuilds_sorted_gates(tmp_path: Path) -
 # -- Skip records (issue #5034) ------------------------------------------------
 
 _HEAD = "cafef00d"
+_TEST_SKIP = "test-not-bootstrapped-3.15.json"
 
 
 def _skip_payload(leg: str = "test", version: str = "3.15", **over: object) -> dict[str, object]:
@@ -522,7 +523,7 @@ def test_is_skip_record() -> None:
 
 
 def test_load_gate_evidence_reads_a_test_skip_record(tmp_path: Path) -> None:
-    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    gate_dir = _skip_gate_dir(tmp_path, "test", {_TEST_SKIP: _skip_payload()})
 
     evidence = load_gate_evidence(gate_dir, conclusion="success")
 
@@ -647,13 +648,13 @@ def test_manifest_gate_with_no_skips_lists_none(tmp_path: Path) -> None:
 
 
 def test_skip_record_counts_as_payload(tmp_path: Path) -> None:
-    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    gate_dir = _skip_gate_dir(tmp_path, "test", {_TEST_SKIP: _skip_payload()})
     evidence = load_gate_evidence(gate_dir, conclusion="success")
     validate_completeness([EvidenceGate(name="test", checks=())], {"test": evidence})
 
 
 def test_validate_skip_heads(tmp_path: Path) -> None:
-    gate_dir = _skip_gate_dir(tmp_path, "test", {"test-not-bootstrapped-3.15.json": _skip_payload()})
+    gate_dir = _skip_gate_dir(tmp_path, "test", {_TEST_SKIP: _skip_payload()})
     evidence = load_gate_evidence(gate_dir, conclusion="success")
     validate_skip_heads({"test": evidence}, _HEAD)
     with pytest.raises(SkipRecordError, match=r"not of the validated head beef: test/test-not"):

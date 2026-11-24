@@ -191,15 +191,13 @@ class GateEvidence:
 # yet writes no report. vergil-actions' report staging (vergil-actions#1294,
 # ``actions/ci/evidence/reports/reports.sh``) proves the skip and stages a
 # skip record in its place, named ``<leg>-not-bootstrapped-<version>.json``
-# (``quality-<leg>-not-bootstrapped-<version>.json`` for a quality leg):
-#
-#     {"gate": "<leg>", "language": "<language>", "version": "<version>",
-#      "skipped": true, "reason": "not-bootstrapped", "head": "<sha>",
-#      "missing_manifests": ["<manifest>", ...]}
-#
-# The harvester recognises each one, refuses one that is not exactly that,
-# and records the leg as skipped in the manifest, so the release evidence
-# says the gate was skipped instead of passing a skip record off as a report.
+# (``quality-<leg>-not-bootstrapped-<version>.json`` for a quality leg): a
+# JSON object giving the leg as ``gate``, its ``language``, ``version`` and
+# ``head``, ``skipped: true``, the ``not-bootstrapped`` ``reason`` and the
+# ``missing_manifests``. The harvester recognises each one, refuses one that
+# is not exactly that (:func:`load_skip_record`), and records the leg as
+# skipped in the manifest, so the release evidence says the gate was skipped
+# instead of passing a skip record off as a report.
 
 #: The reason a skip record carries, the one reason vergil-actions stages.
 SKIP_REASON_NOT_BOOTSTRAPPED = "not-bootstrapped"
@@ -252,7 +250,7 @@ def load_skip_record(path: Path, gate: str) -> SkipRecord:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         msg = f"{bad} cannot be read: {exc}"
         raise SkipRecordError(msg) from exc
-    if not isinstance(data, dict) or not _SKIP_FIELDS <= set(data):
+    if not isinstance(data, dict) or not set(data) >= _SKIP_FIELDS:
         msg = f"{bad} must be a JSON object holding {', '.join(sorted(_SKIP_FIELDS))}"
         raise SkipRecordError(msg)
     strings = ("gate", "language", "version", "reason", "head")
@@ -673,7 +671,7 @@ def validate_completeness(
     evidence that ``vrg-validate`` skipped it, and the manifest records the
     gate's legs as ``skipped``.
     """
-    missing =[gate.name for gate in required if gate.name not in harvested]
+    missing = [gate.name for gate in required if gate.name not in harvested]
     empty_payload = [
         gate.name
         for gate in required

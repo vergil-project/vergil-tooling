@@ -59,7 +59,8 @@ Every pipeline run, pass or fail, interrupted or not, writes
 ``.vergil/vrg-validate-last.json``: the commit checked out at the start,
 the exit code, whether the run was full (no ``--check``), whether the tree
 was clean at the start, each stage's status and, for a stage skipped as not
-bootstrapped, why (issue #5034). merge-review's request builder reads it (:mod:`vergil_tooling.lib.validate_record`).
+bootstrapped, why (issue #5034). merge-review's request builder reads it
+(:mod:`vergil_tooling.lib.validate_record`).
 """
 
 from __future__ import annotations

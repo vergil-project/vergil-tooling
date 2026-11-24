@@ -200,9 +200,7 @@ def test_record_with_no_skips_keeps_its_shape(tmp_path: Path) -> None:
         ({"name": "lint", "status": "warn", "other": 1}, "stage 1 must be"),
     ],
 )
-def test_read_record_malformed_skip(
-    tmp_path: Path, stage: dict[str, Any], message: str
-) -> None:
+def test_read_record_malformed_skip(tmp_path: Path, stage: dict[str, Any], message: str) -> None:
     (tmp_path / ".vergil").mkdir()
     (tmp_path / RECORD_PATH).write_text(json.dumps({**_good(), "stages": [stage]}))
     with pytest.raises(ValidateRecordError, match=message):
