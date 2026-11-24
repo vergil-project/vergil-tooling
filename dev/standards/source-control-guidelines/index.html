@@ -18905,7 +18905,9 @@ branch names, so a tag or branch of either shape can never appear unprotected.</
      no identity but the human can merge into <code>main</code></li>
 <li>No creation restriction, so repo init can create <code>main</code></li>
 <li>
-<p>Bypass: the repository Admin role only</p>
+<p>Bypass: the repository Admin role only; <code>vrg-release</code> merges the
+     release PR with that bypass (<code>gh pr merge --admin</code>) once its own checks
+     pass, and no other merge uses it</p>
 </li>
 <li>
 <p><strong>Agent audit markers</strong> (targets: <code>vergil/agent-audit/*</code>)</p>
