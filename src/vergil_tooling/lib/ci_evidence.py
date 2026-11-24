@@ -991,7 +991,10 @@ def select_passed_attempt(repo: str, head_sha: str, *, workflow: str = "CI") -> 
         if _is_qualifying_run(run, workflow):
             latest = _run_attempt_number(run)
             attempt = PassedAttempt(
-                run_id=int(run["id"]), attempt=latest, latest_attempt=latest, url=str(run["html_url"])
+                run_id=int(run["id"]),
+                attempt=latest,
+                latest_attempt=latest,
+                url=str(run["html_url"]),
             )
             passed.append((str(run["run_started_at"]), attempt))
             continue

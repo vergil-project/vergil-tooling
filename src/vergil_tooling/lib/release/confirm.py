@@ -715,7 +715,9 @@ def _check_release_ci(ctx: ReleaseContext) -> ci_evidence.PassedAttempt:
             command=where,
             message=f"The release PR's CI run could not be looked up: {exc}",
         ) from exc
-    named = f"The release PR's CI run {passed.run_id} passed at attempt {passed.attempt} ({passed.url})"
+    named = (
+        f"The release PR's CI run {passed.run_id} passed at attempt {passed.attempt} ({passed.url})"
+    )
     if passed.is_latest:
         print(f"{named}; it is not re-run, as its gates were judged before the merge.")
     else:
