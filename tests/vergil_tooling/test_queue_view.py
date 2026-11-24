@@ -6,7 +6,7 @@ import io
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -1427,13 +1427,17 @@ def _adhoc(
     states: dict[int, str] | None = None,
     repo: str | None = None,
     stops: trust.BatchStops | None = None,
+    native: Mapping[int, tuple[epics.BlockerState, ...] | Exception] | None = None,
 ) -> tuple[list[queue_view.AdhocItem], _FakeGh]:
     """Run :func:`queue_view.adhoc_items` on ``org/.github`` against fakes.
 
     A *blockers* value that is an exception is raised by that task's read.
+    *native* is what :func:`epics.native_blockers_of` gives a reflink child
+    (none by default); an exception there is raised too.
     """
     gh = _FakeGh(views, listing=listing)
     blocked = blockers or {}
+    natives = native or {}
 
     def blockers_of(ref: IssueRef) -> list[IssueRef]:
         found = blocked.get(ref.number, [])
@@ -1441,10 +1445,20 @@ def _adhoc(
             raise found
         return found
 
+    def native_blockers_of(ref: IssueRef) -> tuple[epics.BlockerState, ...]:
+        found = natives.get(ref.number, ())
+        if isinstance(found, Exception):
+            raise found
+        return found
+
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
-        patch(f"{_MOD}.epics.child_states", side_effect=lambda epic: children[epic.number]),
+        patch(
+            f"{_MOD}.epics.child_states_with_blockers",
+            side_effect=lambda epic, **_: children[epic.number],
+        ),
         patch(f"{_MOD}.epics.blockers_of", side_effect=blockers_of),
+        patch(f"{_MOD}.epics.native_blockers_of", side_effect=native_blockers_of),
         patch(f"{_MOD}.epics.issue_state", side_effect=lambda ref: (states or {})[ref.number]),
         patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
         patch(f"{_MOD}.in_flight.repo_signals", side_effect=_no_marks_signals),
@@ -1565,6 +1579,100 @@ def test_adhoc_items_blocked_state() -> None:
     assert free.blocked_by == ()
 
 
+def _blocker(owner: str, repo: str, number: int, state: str) -> epics.BlockerState:
+    return epics.BlockerState(IssueRef(owner, repo, number), state)
+
+
+def test_adhoc_items_native_blockers_from_the_listing() -> None:
+    # #5094: a task held only by native blocked-by relationships is blocked,
+    # a blocker in another org included, and the listing's read is used as is.
+    children = {
+        100: [
+            ChildState(
+                IssueRef("org", "vergil-tooling", 3),
+                "OPEN",
+                "held",
+                native_blockers=(
+                    _blocker("other-org", "lib", 131, "OPEN"),
+                    _blocker("org", "vergil-tooling", 40, "CLOSED"),
+                ),
+            ),
+            ChildState(
+                IssueRef("org", "vergil-tooling", 5),
+                "OPEN",
+                "free",
+                native_blockers=(_blocker("other-org", "lib", 84, "CLOSED"),),
+            ),
+        ]
+    }
+    views = {
+        3: _view("held", "2026-09-01T00:00:00Z"),
+        5: _view("free", "2026-10-01T00:00:00Z"),
+    }
+    # No second read: a per-task read of either task would raise.
+    unread: dict[int, tuple[epics.BlockerState, ...] | Exception] = {
+        n: AssertionError("read again") for n in (3, 5)
+    }
+    items, _ = _adhoc(_ADHOC_LISTING[:1], children, views, native=unread)
+    held, free = items
+    assert (held.state, held.blocked_by) == ("blocked", (IssueRef("other-org", "lib", 131),))
+    assert (free.state, free.blocked_by) == ("ready", ())
+
+
+def test_adhoc_items_body_and_native_blockers_merge() -> None:
+    # Body refs first, then native ones not already named (GitHub names ignore case).
+    children = {
+        100: [
+            ChildState(
+                IssueRef("org", "vergil-tooling", 3),
+                "OPEN",
+                "held",
+                native_blockers=(
+                    _blocker("Org", "Docs", 41, "OPEN"),
+                    _blocker("org", "vergil-tooling", 43, "OPEN"),
+                ),
+            )
+        ]
+    }
+    views = {3: _view("held", "2026-09-01T00:00:00Z")}
+    # A body ref named twice is listed once.
+    blockers = {
+        3: [
+            IssueRef("org", "docs", 41),
+            IssueRef("org", "vergil-tooling", 40),
+            IssueRef("org", "Docs", 41),
+        ]
+    }
+    states = {40: "OPEN", 41: "OPEN"}
+    items, _ = _adhoc(_ADHOC_LISTING[:1], children, views, blockers=blockers, states=states)
+    [held] = items
+    assert held.state == "blocked"
+    assert held.blocked_by == (
+        IssueRef("org", "docs", 41),
+        IssueRef("org", "vergil-tooling", 40),
+        IssueRef("org", "vergil-tooling", 43),
+    )
+
+
+def test_adhoc_items_reads_a_reflink_childs_native_blockers() -> None:
+    # A reflink-fallback child carries no native read, so it is read on its own.
+    children = {100: [ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "held")]}
+    views = {3: _view("held", "2026-09-01T00:00:00Z")}
+    native = {3: (_blocker("other-org", "lib", 131, "OPEN"),)}
+    items, _ = _adhoc(_ADHOC_LISTING[:1], children, views, native=native)
+    [held] = items
+    assert (held.state, held.blocked_by) == ("blocked", (IssueRef("other-org", "lib", 131),))
+
+
+def test_adhoc_items_native_blocker_read_failure_raises() -> None:
+    # A native list that cannot be read in full fails the view, never shows the task ready.
+    children = {100: [ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "held")]}
+    views = {3: _view("held", "2026-09-01T00:00:00Z")}
+    failure = epics.NativeBlockersReadError("org/vergil-tooling#3 has 2 native blockers")
+    with pytest.raises(epics.NativeBlockersReadError, match="2 native blockers"):
+        _adhoc(_ADHOC_LISTING[:1], children, views, native={3: failure})
+
+
 # A task whose body an outsider edited, and one whose body cannot be read in full.
 _UNTRUSTED_BODY = trust.Skipped(
     "org/vergil-tooling", 3, "edit", "drive-by", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
@@ -1621,8 +1729,9 @@ def test_hoshin_untrusted_body_stops_only_its_task() -> None:
     with (
         patch(f"{_MOD}.github.read_json", side_effect=_FakeGh(views)),
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_HOSHIN_EPIC),
-        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children),
         patch(f"{_MOD}.epics.blockers_of", side_effect=blockers_of),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
         patch(f"{_MOD}.in_flight.repo_signals", side_effect=_no_marks_signals),
     ):
@@ -1690,7 +1799,7 @@ def test_adhoc_items_sub_issue_read_failure_raises() -> None:
     failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
-        patch(f"{_MOD}.epics.child_states", side_effect=failure),
+        patch(f"{_MOD}.epics.child_states_with_blockers", side_effect=failure),
         pytest.raises(github.GitHubAPIError, match="502"),
     ):
         queue_view.adhoc_items("org/.github", stops=trust.BatchStops())
@@ -1706,10 +1815,11 @@ def test_adhoc_items_blocker_read_failure_raises(failing: str) -> None:
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(
-            f"{_MOD}.epics.child_states",
+            f"{_MOD}.epics.child_states_with_blockers",
             return_value=[ChildState(IssueRef("org", "vergil-tooling", 3), "OPEN", "t")],
         ),
         patch(f"{_MOD}.epics.blockers_of", **_effect(blockers)),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_MOD}.epics.issue_state", **_effect(state)),
         pytest.raises(github.GitHubAPIError, match="403"),
     ):
@@ -1726,7 +1836,7 @@ def _effect(value: Any) -> dict[str, Any]:
 def test_adhoc_items_never_mutate() -> None:
     with (
         patch(f"{_MOD}.github.read_json", side_effect=_FakeGh({}, listing=_ADHOC_LISTING)),
-        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]),
         patch(f"{_MOD}.epics.ensure_standing_epic") as ensure,
         patch(f"{_MOD}.github.create_issue") as create,
         patch(f"{_MOD}.github.run") as run,
@@ -1762,8 +1872,9 @@ def _hoshin(
     with (
         patch(f"{_MOD}.github.read_json", side_effect=gh),
         patch(f"{_MOD}.epics.find_standing_epic", return_value=epic) as find,
-        patch(f"{_MOD}.epics.child_states", return_value=children) as kids,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children) as kids,
         patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_MOD}.in_flight.find_clones", side_effect=_no_marks_clones),
         patch(f"{_MOD}.in_flight.repo_signals", side_effect=signals),
         patch(f"{_MOD}.epics.ensure_standing_epic") as ensure,
@@ -1783,7 +1894,7 @@ def test_hoshin_items_lists_open_tasks() -> None:
     ]
     views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
     items, _, kids = _hoshin(_HOSHIN_EPIC, children, views, signals=_worktree_signals)
-    kids.assert_called_once_with(_HOSHIN_EPIC)
+    kids.assert_called_once_with(_HOSHIN_EPIC, wanted=ANY)
     assert items == [
         queue_view.AdhocItem(
             ref=IssueRef("org", "docs", 7),
@@ -1813,6 +1924,16 @@ def test_hoshin_items_repo_filters_children() -> None:
     views = {7: _view("Logbook: 2026-11-18", "2026-11-18T00:00:00Z")}
     items, _, _ = _hoshin(_HOSHIN_EPIC, children, views, repo="org/Docs")
     assert [i.ref.slug for i in items] == ["org/docs#7"]
+
+
+def test_hoshin_items_checks_blockers_only_of_kept_children() -> None:
+    # The listing is asked to check only the children the view keeps: open
+    # ones in the --repo filter. A closed or other-repo child never fails it.
+    _, _, kids = _hoshin(_HOSHIN_EPIC, [], {}, repo="org/Docs")
+    wanted = kids.call_args.kwargs["wanted"]
+    assert wanted(ChildState(IssueRef("org", "docs", 7), "OPEN"))
+    assert not wanted(ChildState(IssueRef("org", "docs", 6), "CLOSED"))
+    assert not wanted(ChildState(IssueRef("org", "vergil-tooling", 8), "OPEN"))
 
 
 def test_hoshin_items_without_repo_lists_every_repo() -> None:
@@ -1846,7 +1967,7 @@ def test_hoshin_items_sub_issue_read_failure_raises() -> None:
     failure = github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502")
     with (
         patch(f"{_MOD}.epics.find_standing_epic", return_value=_HOSHIN_EPIC),
-        patch(f"{_MOD}.epics.child_states", side_effect=failure),
+        patch(f"{_MOD}.epics.child_states_with_blockers", side_effect=failure),
         pytest.raises(github.GitHubAPIError, match="502"),
     ):
         queue_view.hoshin_items("org/.github", stops=trust.BatchStops())

@@ -650,8 +650,9 @@ def test_adhoc_items_in_flight_outranks_blocked(tmp_path: Path) -> None:
     )
     with (
         patch(f"{_QV}.github.read_json", side_effect=gh),
-        patch(f"{_QV}.epics.child_states", return_value=children),
+        patch(f"{_QV}.epics.child_states_with_blockers", return_value=children),
         patch(f"{_QV}.epics.blockers_of", return_value=[IssueRef("org", "tool", 40)]),
+        patch(f"{_QV}.epics.native_blockers_of", return_value=()),
         patch(f"{_QV}.epics.issue_state", return_value="OPEN"),
         patch(f"{_QV}.in_flight.find_clones", return_value={_REPO: tmp_path}) as find,
         patch(f"{_QV}.in_flight.repo_signals", return_value=signals) as read,
@@ -673,7 +674,7 @@ def test_adhoc_items_default_roots_and_no_tasks_reads_nothing() -> None:
     listing = [{"number": 100, "title": "Epic (ad hoc): tool"}]
     with (
         patch(f"{_QV}.github.read_json", return_value=listing),
-        patch(f"{_QV}.epics.child_states", return_value=[]),
+        patch(f"{_QV}.epics.child_states_with_blockers", return_value=[]),
         patch(f"{_QV}.live_branches.default_repo_roots") as defaults,
         patch(f"{_QV}.in_flight.find_clones") as find,
     ):
@@ -690,10 +691,11 @@ def test_adhoc_items_no_roots_on_the_platform_raises(tmp_path: Path) -> None:
             f"{_QV}.github.read_json", side_effect=lambda *a: listing if a[1] == "list" else view
         ),
         patch(
-            f"{_QV}.epics.child_states",
+            f"{_QV}.epics.child_states_with_blockers",
             return_value=[ChildState(IssueRef("org", "tool", 3), "OPEN", "t")],
         ),
         patch(f"{_QV}.epics.blockers_of", return_value=[]),
+        patch(f"{_QV}.epics.native_blockers_of", return_value=()),
         patch(
             f"{_QV}.live_branches.default_repo_roots",
             side_effect=live_branches.RepoSetError("no default repo set"),

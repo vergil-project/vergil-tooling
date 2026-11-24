@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_queue import main, parse_args
 from vergil_tooling.lib import (
+    epics,
     github,
     in_flight,
     live_branches,
@@ -484,6 +485,7 @@ def test_vrg_queue_adhoc_repo_narrows_to_its_epic(
     [
         github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "HTTP 502"),
         ValueError("the open epic + ad-hoc issues of org/.github reached its 1000-row limit"),
+        epics.NativeBlockersReadError("org/tool#3 has 2 native blockers but only 1 could be read"),
     ],
 )
 def test_vrg_queue_adhoc_read_failure_exits_1(

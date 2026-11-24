@@ -59,8 +59,10 @@ current org's, and with ``--repo OWNER/REPO`` that repo's org's. Nothing is
 created or changed.
 
 ``vrg-queue adhoc`` lists the open tasks under every live ad-hoc epic in the
-home, grouped by repo and oldest first, each with its kind, its open
-``Blocked-by:`` refs and its state (ready, blocked or in-flight). An in-flight
+home, grouped by repo and oldest first, each with its kind, its open blockers
+(its body ``Blocked-by:`` refs and its native blocked-by relationships, in any
+org; a list it cannot read in full is an error) and its state (ready, blocked
+or in-flight). An in-flight
 task also shows its marks and its disposition, handed-off or resume (see
 :mod:`vergil_tooling.lib.in_flight`); the local marks are read from each repo's
 main clone under the repo roots (``--root DIR``, repeatable, or the platform
@@ -145,9 +147,15 @@ _VIEW_ERRORS = (
     ValueError,
 )
 
-# What the task views can raise besides: an in-flight source they cannot read or
-# a repo with no main clone, and repo roots they cannot determine.
-_TASK_ERRORS = (*_VIEW_ERRORS, in_flight.InFlightError, live_branches.RepoSetError)
+# What the task views can raise besides: a native blocked-by list they cannot read
+# in full, an in-flight source they cannot read or a repo with no main clone, and
+# repo roots they cannot determine.
+_TASK_ERRORS = (
+    *_VIEW_ERRORS,
+    epics.NativeBlockersReadError,
+    in_flight.InFlightError,
+    live_branches.RepoSetError,
+)
 
 
 @cli_main

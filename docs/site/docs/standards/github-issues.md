@@ -764,7 +764,7 @@ details.
 
 `vrg-queue adhoc` lists the open tasks under every live ad-hoc epic, grouped by
 repo, each with a state: **ready**, **blocked** (an open `Blocked-by:`
-dependency) or **in-flight** (an open PR, a ready record, a branch, a
+dependency or native blocked-by relationship) or **in-flight** (an open PR, a ready record, a branch, a
 worktree, a merge review or a batch marker already exists for it). It is not a
 review queue, so a bare `vrg-queue` never shows it; it appears only when
 named. Its in-flight marks are read from each repo's main clone, found under
