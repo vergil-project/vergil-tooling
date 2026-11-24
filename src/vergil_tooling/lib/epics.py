@@ -25,8 +25,7 @@ import logging
 import re
 import sys
 import time
-import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
@@ -465,9 +464,7 @@ def child_states_with_blockers(
         if wanted is not None and not wanted(child):
             continue
         states.append(
-            dataclasses.replace(
-                child, native_blockers=_native_blockers(n.get("blockedBy"), child.ref)
-            )
+            replace(child, native_blockers=_native_blockers(n.get("blockedBy"), child.ref))
         )
     return states
 
