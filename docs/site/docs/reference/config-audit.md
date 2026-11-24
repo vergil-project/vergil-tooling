@@ -644,8 +644,13 @@ order:
   keeps an agent that may merge its own PRs into `develop` out of `main`
   ([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384),
   spec §4.1). The org automation App is not a bypass actor: `vrg-release`
-  refuses every agent identity, so the human merges every release PR. The
-  ruleset has no `creation` rule, so repo init can still create `main`.
+  refuses every agent identity, so the human merges every release PR. Its
+  `merge-release` stage asks for that bypass explicitly (`gh pr merge
+  --admin`, pinned with `--match-head-commit`) once its own checks pass,
+  since a plain merge into `main` is refused even for the admin; it is the
+  only merge that does
+  ([vergil-project/vergil-tooling#5095](https://github.com/vergil-project/vergil-tooling/issues/5095)).
+  The ruleset has no `creation` rule, so repo init can still create `main`.
 - **Agent audit markers** keeps the `vergil/agent-audit/` marker branches,
   which record where the daily agent audit has checked up to, out of reach
   of the identity being audited. Only the human admin (whose repo init

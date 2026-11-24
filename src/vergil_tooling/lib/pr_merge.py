@@ -46,6 +46,15 @@ job's upload creates (``Semgrep OSS``) never registers when that job fails first
 the wait ends as soon as that producing job has failed, even with other checks still
 running, and the abort names the unregistered check and the failed job with its
 result, instead of waiting out the deadline (issue #4294).
+
+A caller may ask for one merge to use the caller's ruleset bypass
+(``bypass_ruleset``): the release PR's merge into ``main``, which the "Main
+updates" ruleset lets only its bypass actor (the human, through the repository
+admin role) make. ``gh pr merge --admin`` also skips the checks and reviews the
+base branch requires, so the engine re-proves them itself, at a head it then pins
+with ``--match-head-commit``, immediately before the bypassed merge; a refusal of
+the bypass stops with a message naming the ruleset instead of polling
+(vergil-project/vergil-tooling#5095).
 """
 
 from __future__ import annotations
@@ -166,6 +175,64 @@ _HEAD_MOVED_REJECTION_SIGNATURE = "head branch was modified"
 def _is_head_moved_rejection(exc: GitHubAPIError) -> bool:
     """True when a pinned merge was refused because the PR's head moved."""
     return _HEAD_MOVED_REJECTION_SIGNATURE in (exc.stderr or "").lower()
+
+
+# Substrings of a merge rejection that a ruleset or branch protection refused the
+# update itself: what a bypassed merge gets when the caller is not a bypass actor.
+_RULESET_REJECTION_SIGNATURES = (
+    _POLICY_REJECTION_SIGNATURE,
+    "repository rule violation",
+    "protected ref",
+    "protected branch",
+)
+
+
+def _is_ruleset_rejection(exc: GitHubAPIError) -> bool:
+    """True when a merge rejection is a ruleset or branch-protection refusal."""
+    stderr = (exc.stderr or "").lower()
+    return any(signature in stderr for signature in _RULESET_REJECTION_SIGNATURES)
+
+
+def _bypass_refused(pr: str, ruleset: str, exc: GitHubAPIError) -> MergeAbortError:
+    """The abort for a bypassed merge that GitHub refused under a ruleset."""
+    detail = (exc.stderr or "").strip()
+    return MergeAbortError(
+        f"PR {pr} could not be merged with the ruleset bypass: GitHub refused it "
+        f"({detail}). Only a bypass actor of the {ruleset!r} ruleset may merge it, "
+        "and that is the repository admin role: run the release as a repository "
+        "admin, then re-run vrg-release --resume."
+    )
+
+
+def _bypass_head(pr: str, required: frozenset[str]) -> str:
+    """Re-prove the merge requirements the bypass would skip; return the head read.
+
+    ``gh pr merge --admin`` skips every check and review the base branch
+    requires, so the engine checks them itself (#5095). The head is read
+    first, then the checks and the review decision: if the head moves after
+    it is read, the merge pinned to it is refused by GitHub, so a merge never
+    lands at a head other than the one whose checks were read here.
+    """
+    head = github.head_sha(pr)
+    failed = github.failed_check_names(pr)
+    if failed:
+        msg = f"Checks failed on PR {pr}: {', '.join(failed)}"
+        raise MergeAbortError(msg)
+    outstanding = github.required_checks_outstanding(pr, required)
+    if outstanding:
+        msg = (
+            f"PR {pr} has required checks outstanding: {describe_outstanding(outstanding)}; "
+            "refusing a ruleset-bypassed merge until they pass."
+        )
+        raise MergeAbortError(msg)
+    review = github.merge_status(pr).get("reviewDecision", "")
+    if review in _REVIEW_BLOCKS:
+        msg = (
+            f"PR {pr} is blocked by base branch policy: reviewDecision={review}. "
+            "It needs an approving review before it can merge."
+        )
+        raise MergeAbortError(msg)
+    return head
 
 
 # --- The loop's shared pieces ------------------------------------------------
@@ -407,6 +474,7 @@ def wait_and_merge(
     wait_checks: Callable[[str], None] | None = None,
     on_branch_updated: Callable[[], None] | None = None,
     batch_check: Callable[[], str] | None = None,
+    bypass_ruleset: str | None = None,
 ) -> None:
     """Block until *pr* is green and current, then merge it.
 
@@ -432,6 +500,17 @@ def wait_and_merge(
     against the same update cap as a branch update. Without it, the engine
     behaves exactly as before.
 
+    ``bypass_ruleset`` names the ruleset whose bypass the merge uses
+    (``gh pr merge --admin``): the release workflow's merge of its release
+    PR into ``main`` (#5095), and no other caller. The bypass also skips the
+    base branch's required checks and reviews, so immediately before the
+    merge the engine re-checks them itself (no failed check, no required
+    check outstanding, no review required) at a head it pins with
+    ``--match-head-commit``. A head moved after that read is refused by
+    GitHub and re-checked, within the update cap. A refusal of the bypass
+    itself (the caller is not the ruleset's bypass actor) raises naming the
+    ruleset, never a poll. It cannot be combined with ``batch_check``.
+
     The base branch's required status checks are resolved once up front (a
     lookup failure warns and falls back to registered checks only; a PR whose
     URL names no repo raises). Whatever waiter runs, the engine re-checks the
@@ -440,6 +519,9 @@ def wait_and_merge(
 
     Raises ``MergeAbortError`` on any unmergeable condition.
     """
+    if bypass_ruleset is not None and batch_check is not None:
+        msg = "bypass_ruleset and batch_check cannot be combined"
+        raise ValueError(msg)
     resolved, required = _resolve_required(pr)
     if wait_checks is not None:
         wait = wait_checks
@@ -489,7 +571,14 @@ def wait_and_merge(
             continue  # something merged while we waited -> update at loop top
 
         try:
-            if batch_check is None:
+            if bypass_ruleset is not None:
+                pinned = _bypass_head(pr, required)
+                print(
+                    f"Checks passed. Merging {pr} (--{strategy}) at {pinned} with the "
+                    f"{bypass_ruleset!r} ruleset bypass..."
+                )
+                github.merge(pr, strategy=strategy, match_head=pinned, admin=True)
+            elif batch_check is None:
                 print(f"Checks passed. Merging {pr} (--{strategy})...")
                 github.merge(pr, strategy=strategy)
             else:
@@ -511,6 +600,18 @@ def wait_and_merge(
                 print(f"PR {pr}'s head moved after the batch check — re-checking...")
                 updater.spend()
                 continue
+            if bypass_ruleset is not None:
+                # The bypassed merge was pinned to the head its checks were
+                # read at: a moved head is re-checked, within the update cap.
+                if _is_head_moved_rejection(exc):
+                    print(f"PR {pr}'s head moved after its checks were read — re-checking...")
+                    updater.spend()
+                    continue
+                # A ruleset refusal of a bypassed merge cannot clear by waiting:
+                # the caller is not a bypass actor (#5095).
+                if _is_ruleset_rejection(exc):
+                    raise _bypass_refused(pr, bypass_ruleset, exc) from exc
+                raise
             # A branch-policy rejection with no failed checks means "not ready
             # yet" (e.g. a required check still registering), not fatal: poll and
             # re-attempt within the deadline (#3061). Any other failure is real.

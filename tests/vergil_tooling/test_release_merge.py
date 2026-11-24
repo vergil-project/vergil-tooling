@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import subprocess
 from typing import TYPE_CHECKING
@@ -253,3 +254,84 @@ def test_sync_refuses_worktree_on_another_branch(repos: tuple[Path, Path]) -> No
 def test_is_ancestor_raises_on_bad_revision(repos: tuple[Path, Path]) -> None:
     with pytest.raises(subprocess.CalledProcessError):
         _is_ancestor("no-such-rev", "HEAD")
+
+
+# --- #5095: the release PR's merge into main uses the human's ruleset bypass ---
+
+
+def _as_human() -> contextlib.AbstractContextManager[object]:
+    from vergil_tooling.lib.identity_mode import IdentityMode
+
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch(_MOD + ".identity_mode.current_mode", return_value=IdentityMode.HUMAN))
+    stack.enter_context(patch(_MOD + ".identity_mode.any_agent_signal", return_value=False))
+    return stack
+
+
+def test_into_main_asks_the_engine_for_the_main_ruleset_bypass() -> None:
+    with (
+        _as_human(),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.base_ref", return_value="main"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        wait_and_merge(_PR, phase="merge-release", into_main=True)
+    assert engine.call_args.kwargs["bypass_ruleset"] == "Main updates"
+
+
+def test_a_plain_merge_asks_for_no_bypass() -> None:
+    """The back-merge into develop (and every other caller) never bypasses."""
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.base_ref") as base_ref,
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        wait_and_merge(_PR, phase="back-merge-bump")
+    assert engine.call_args.kwargs["bypass_ruleset"] is None
+    base_ref.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("mode", "agent_signal"),
+    [("USER", False), ("AUDIT", False), ("AUTOMATION", False), ("HUMAN", True)],
+)
+def test_into_main_refuses_every_identity_but_the_human(mode: str, agent_signal: bool) -> None:
+    from vergil_tooling.lib.identity_mode import IdentityMode
+
+    with (
+        patch(_MOD + ".identity_mode.current_mode", return_value=IdentityMode[mode]),
+        patch(_MOD + ".identity_mode.any_agent_signal", return_value=agent_signal),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.base_ref", return_value="main"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        pytest.raises(ReleaseError, match="only the human maintainer") as excinfo,
+    ):
+        wait_and_merge(_PR, phase="merge-release", into_main=True)
+    assert excinfo.value.phase == "merge-release"
+    engine.assert_not_called()
+
+
+def test_into_main_refuses_a_pr_whose_base_is_not_main() -> None:
+    with (
+        _as_human(),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.base_ref", return_value="develop"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        pytest.raises(ReleaseError, match="its base is 'develop', not 'main'"),
+    ):
+        wait_and_merge(_PR, phase="merge-release", into_main=True)
+    engine.assert_not_called()
+
+
+def test_into_main_bypass_refusal_is_a_release_error_naming_the_ruleset() -> None:
+    with (
+        _as_human(),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.base_ref", return_value="main"),
+        patch(
+            _MOD + ".pr_merge.wait_and_merge",
+            side_effect=MergeAbortError("Only a bypass actor of the 'Main updates' ruleset"),
+        ),
+        pytest.raises(ReleaseError, match="'Main updates' ruleset"),
+    ):
+        wait_and_merge(_PR, phase="merge-release", into_main=True)

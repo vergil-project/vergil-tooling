@@ -194,7 +194,9 @@ branch names, so a tag or branch of either shape can never appear unprotected.
    - Prevent updating `main`, merging a pull request into it included, so
      no identity but the human can merge into `main`
    - No creation restriction, so repo init can create `main`
-   - Bypass: the repository Admin role only
+   - Bypass: the repository Admin role only; `vrg-release` merges the
+     release PR with that bypass (`gh pr merge --admin`) once its own checks
+     pass, and no other merge uses it
 
 7. **Agent audit markers** (targets: `vergil/agent-audit/*`)
    - Prevent creating, updating or deleting the daily agent audit's marker

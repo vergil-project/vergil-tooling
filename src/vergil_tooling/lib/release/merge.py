@@ -20,6 +20,14 @@ When the engine updates a BEHIND PR on GitHub, the server adds a merge commit
 the local branch never sees. :func:`sync_local_branch` fast-forwards the local
 branch (and the worktree it is checked out in) to the merged PR's head, so the
 release worktree matches what actually merged (#3175).
+
+The release PR's merge into ``main`` (``into_main``) uses the caller's bypass
+of the "Main updates" ruleset, whose ``update`` rule lets only its bypass actor,
+the human through the repository admin role, update ``main``
+(vergil-project/vergil-tooling#5095). It is the only bypassed merge: the
+back-merge into ``develop`` is a plain one. The engine re-checks the checks and
+reviews the bypass would skip before it merges, and this wrapper refuses it for
+any identity but the human's and for a PR whose base is not ``main``.
 """
 
 from __future__ import annotations
@@ -27,7 +35,8 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github, pr_merge, retry
+from vergil_tooling.lib import git, github, identity_mode, pr_merge, retry
+from vergil_tooling.lib.github_config import MAIN_UPDATE_RULESET_NAME
 from vergil_tooling.lib.release.context import ReleaseError
 
 if TYPE_CHECKING:
@@ -49,11 +58,45 @@ def known_pr_state(pr_url: str) -> str:
     return retry.retry_known_resource(lambda: github.pr_state(pr_url), resource=f"PR {pr_url}")
 
 
+def _refuse_bypass(pr_url: str, *, phase: str) -> None:
+    """Refuse the ruleset-bypassed merge into ``main`` unless it is the human's, into main.
+
+    ``vrg-release`` already refuses every agent identity before any side
+    effect; this is the same fail-closed test again, at the one merge that
+    uses a bypass, plus the automation identity, which is not a bypass actor
+    (``APP_MERGES_RELEASES`` is false). The PR's base must be ``main``, so the
+    bypass is never spent on any other branch.
+    """
+    if (
+        identity_mode.current_mode() is not identity_mode.IdentityMode.HUMAN
+        or identity_mode.any_agent_signal()
+    ):
+        raise ReleaseError(
+            phase=phase,
+            command="pr_merge.wait_and_merge",
+            message=(
+                f"Refusing to merge {pr_url} into main with the {MAIN_UPDATE_RULESET_NAME!r} "
+                "ruleset bypass: only the human maintainer merges a release PR."
+            ),
+        )
+    base = github.base_ref(pr_url)
+    if base != "main":
+        raise ReleaseError(
+            phase=phase,
+            command="pr_merge.wait_and_merge",
+            message=(
+                f"Refusing the {MAIN_UPDATE_RULESET_NAME!r} ruleset bypass for {pr_url}: "
+                f"its base is {base!r}, not 'main'."
+            ),
+        )
+
+
 def wait_and_merge(
     pr_url: str,
     *,
     phase: str,
     on_branch_updated: Callable[[], None] | None = None,
+    into_main: bool = False,
 ) -> None:
     """Wait for checks, handle behind-base, then merge with a merge commit.
 
@@ -61,10 +104,24 @@ def wait_and_merge(
     first confirmed readable via :func:`known_pr_state`. *on_branch_updated*
     is forwarded to the engine, which calls it after each server-side
     update-branch.
+
+    *into_main* marks the release PR's merge into ``main``: it is refused
+    for any identity but the human's and for a PR whose base is not
+    ``main``, then merged with the "Main updates" ruleset bypass, once the
+    engine's own checks pass (#5095).
     """
     known_pr_state(pr_url)
+    bypass: str | None = None
+    if into_main:
+        _refuse_bypass(pr_url, phase=phase)
+        bypass = MAIN_UPDATE_RULESET_NAME
     try:
-        pr_merge.wait_and_merge(pr_url, strategy="merge", on_branch_updated=on_branch_updated)
+        pr_merge.wait_and_merge(
+            pr_url,
+            strategy="merge",
+            on_branch_updated=on_branch_updated,
+            bypass_ruleset=bypass,
+        )
     except pr_merge.MergeConflictError as exc:
         raise ReleaseConflictError(
             phase=phase,

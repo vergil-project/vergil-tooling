@@ -1318,6 +1318,23 @@ def test_merge_with_match_head_pins_the_head_commit() -> None:
     run.assert_called_once_with("pr", "merge", "--rebase", "--match-head-commit", "abc123", "42")
 
 
+def test_admin_merge_passes_admin_with_the_pinned_head() -> None:
+    with patch("vergil_tooling.lib.github.run") as run:
+        github.merge("42", strategy="merge", match_head="abc123", admin=True)
+    run.assert_called_once_with(
+        "pr", "merge", "--merge", "--admin", "--match-head-commit", "abc123", "42"
+    )
+
+
+def test_admin_merge_without_a_pinned_head_is_refused() -> None:
+    with (
+        patch("vergil_tooling.lib.github.run") as run,
+        pytest.raises(ValueError, match="pinned"),
+    ):
+        github.merge("42", strategy="merge", admin=True)
+    run.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "pr_view",
     [

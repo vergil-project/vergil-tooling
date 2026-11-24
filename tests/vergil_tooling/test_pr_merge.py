@@ -1080,3 +1080,150 @@ def test_watch_not_ready_pause_never_sleeps_past_the_deadline() -> None:
     ):
         wait_until_merged(_URL, strategy="squash", deadline_secs=2400)
     sleep.assert_called_once_with(2.0)
+
+
+# --- the ruleset-bypassed merge into main (#5095) -----------------------------
+
+_RULESET = "Main updates"
+_RULE_VIOLATION_STDERR = (
+    "GraphQL: Repository rule violations found\n\nCannot update this protected ref.\n"
+)
+
+
+def _bypass_gh(**kwargs: object) -> MagicMock:
+    gh = _gh(merge_states=["CLEAN"] * 20, **kwargs)  # type: ignore[arg-type]
+    gh.head_sha.return_value = "h1"
+    return gh
+
+
+def test_bypass_merges_a_ruleset_blocked_pr_with_admin_pinned_to_the_head() -> None:
+    """A green PR whose only block is the main ruleset (mergeStateStatus BLOCKED)
+    merges at once with --admin, pinned to the head its checks were read at."""
+    gh = _bypass_gh()
+    gh.merge_status.return_value = {"mergeStateStatus": "BLOCKED", "reviewDecision": ""}
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep") as sleep:
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.merge.assert_called_once_with("99", strategy="merge", match_head="h1", admin=True)
+    sleep.assert_not_called()
+
+
+def test_without_bypass_a_ruleset_blocked_pr_polls_and_never_uses_admin() -> None:
+    """The bug: the plain merge is refused by policy and polled until timeout."""
+    gh = _gh(merge_states=["CLEAN"] * 20)
+    gh.merge.side_effect = [_policy_error(), None]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="merge")
+    for call in gh.merge.call_args_list:
+        assert "admin" not in call.kwargs
+    gh.head_sha.assert_not_called()
+
+
+def test_bypass_never_skips_a_failed_check() -> None:
+    gh = _bypass_gh(failed=["ci / test"])
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="ci / test"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.merge.assert_not_called()
+
+
+def test_bypass_rechecks_failures_at_the_pinned_head() -> None:
+    """A check that fails after the wait but before the merge stops the merge."""
+    gh = _bypass_gh()
+    gh.failed_check_names.side_effect = [[], ["ci / lint"]]
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="ci / lint"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.merge.assert_not_called()
+
+
+def test_bypass_never_skips_an_outstanding_required_check() -> None:
+    """A required check outstanding at merge time aborts; the bypass never merges past it."""
+    gh = _bypass_gh(required=_EVIDENCE, outstanding=[{}, {"test / evidence": "pending"}])
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match=r"outstanding: test / evidence"),
+    ):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.merge.assert_not_called()
+
+
+@pytest.mark.parametrize("review", ["REVIEW_REQUIRED", "CHANGES_REQUESTED"])
+def test_bypass_never_skips_a_required_review(review: str) -> None:
+    gh = _bypass_gh(review=review)
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match=review):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.merge.assert_not_called()
+
+
+def test_bypass_reads_the_head_before_the_checks() -> None:
+    """The head is pinned before the checks are read, so a head that moves after
+    the read is refused by GitHub rather than merged with unread checks."""
+    gh = _bypass_gh()
+    order: list[str] = []
+    gh.head_sha.side_effect = lambda pr: order.append("head") or "h1"
+    gh.failed_check_names.side_effect = lambda pr: order.append("failed") or []
+    gh.merge.side_effect = lambda *a, **k: order.append("merge")
+    with patch(_MOD + ".github", gh):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    # post-wait gate, then the bypass's own reads: head first.
+    assert order == ["failed", "head", "failed", "merge"]
+
+
+def test_bypass_head_moved_is_rechecked_then_merged_at_the_new_head() -> None:
+    gh = _bypass_gh()
+    gh.head_sha.side_effect = ["h1", "h2"]
+    gh.merge.side_effect = [GitHubAPIError(1, "gh pr merge", stderr=_HEAD_MOVED_STDERR), None]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    assert [c.kwargs["match_head"] for c in gh.merge.call_args_list] == ["h1", "h2"]
+    assert gh.wait_for_checks.call_count == 2
+
+
+def test_bypass_head_moved_rechecks_are_bounded_by_the_update_cap() -> None:
+    gh = _gh(merge_states=["CLEAN"] * 40)
+    gh.head_sha.return_value = "h1"
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr=_HEAD_MOVED_STDERR)
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="still behind after 5"),
+    ):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    assert gh.merge.call_count == 6
+
+
+@pytest.mark.parametrize("stderr", [_POLICY_STDERR, _RULE_VIOLATION_STDERR])
+def test_bypass_refused_names_the_ruleset_and_does_not_poll(stderr: str) -> None:
+    """A caller who is not a bypass actor gets a clear stop, never a silent loop."""
+    gh = _bypass_gh()
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr=stderr)
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep") as sleep,
+        pytest.raises(MergeAbortError, match="'Main updates' ruleset") as excinfo,
+    ):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    assert "repository admin" in str(excinfo.value)
+    assert gh.merge.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_bypass_behind_rejection_still_updates_and_retries() -> None:
+    gh = _bypass_gh()
+    gh.merge.side_effect = [GitHubAPIError(1, "gh pr merge", stderr=_NOT_UP_TO_DATE_STDERR), None]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.update_branch.assert_called_once_with("99")
+    assert gh.merge.call_count == 2
+
+
+def test_bypass_unrelated_merge_error_reraises() -> None:
+    gh = _bypass_gh()
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr="HTTP 502: Bad Gateway")
+    with patch(_MOD + ".github", gh), pytest.raises(GitHubAPIError, match="502"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+
+
+def test_bypass_cannot_be_combined_with_a_batch_check() -> None:
+    gh = _bypass_gh()
+    with patch(_MOD + ".github", gh), pytest.raises(ValueError, match="cannot be combined"):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET, batch_check=lambda: "h1")
+    gh.merge.assert_not_called()
