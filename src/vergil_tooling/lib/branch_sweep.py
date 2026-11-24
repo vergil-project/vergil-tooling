@@ -11,7 +11,7 @@ The rules, applied per remote branch by :func:`decide`:
 * **Never deleted:** the repo's default branch, ``develop``, ``main`` and
   ``gh-pages``; any branch protected by classic branch protection or a
   ruleset; any branch with **no PR** (an agent pushes its branch before
-  ``report-ready``, and the branch has no PR until the human submits it).
+  ``report-ready``, and the branch has no PR until it is submitted).
   Only a same-repo PR with a trusted author counts: one from a fork, or one
   an untrusted identity opened on the branch, is left out and reported
   (:func:`list_prs`, epic vergil-project/.github#1467).

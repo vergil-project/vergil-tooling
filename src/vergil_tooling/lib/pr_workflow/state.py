@@ -2,8 +2,8 @@
 
 Pure data with validation on the way in. The oracle is the only writer; this
 module serializes, deserializes, and checks value invariants. Run-and-done
-since #1872: a worktree records its PR metadata and, after the human submits, a
-submission marker. The dual-agent coordination fields were removed with the
+since #1872: a worktree records its PR metadata and, after ``vrg-submit-pr``
+opens the PR, a submission marker. The dual-agent coordination fields were removed with the
 loop.
 
 A batch PR (epic vergil-project/.github#1019) records its ordered issue list in

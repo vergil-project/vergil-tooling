@@ -6,7 +6,7 @@ across calls). All wall-clock and git facts are passed in as arguments, keeping
 every function deterministic and unit-testable.
 
 Run-and-done since #1872: a worktree initializes, records PR metadata, and is
-marked submitted once the human opens the PR. No turn-taking, no audit.
+marked submitted once ``vrg-submit-pr`` opens the PR. No turn-taking, no audit.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def apply_report_ready(
 
     Idempotent: there is no turn-taking to guard, so re-running overwrites the
     metadata. An agent can correct a mistaken title/summary by calling
-    ``report-ready`` again any time before the human submits.
+    ``report-ready`` again any time before the PR is submitted.
 
     *recorded_by* is the identity mode (an ``IdentityMode`` value) running this
     report-ready, a hint that can only make a change more agent-involved
