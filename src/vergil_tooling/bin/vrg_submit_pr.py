@@ -83,30 +83,37 @@ may use every mode. The user agent may submit only in the modes
 ``report-ready`` drives, the template mode and its ``--all``/``--select``
 batch: it is refused with ``--release``, in the CLI emergency mode
 (``--issue``/``--summary``/``--title``), on the named-branch relay path and
-with ``--override-merge-review``. The audit agent is refused outright.
+with ``--override-merge-review``. The audit agent is refused outright, and
+``--human-only`` is refused to every agent identity (user, audit, automation).
 
 **The gates** (:mod:`vergil_tooling.lib.agent_gates`). For every PR, a
 single-issue one included, the submit rollup runs one more step after the
 trust-layer preflight and before any push or ``gh pr create``: it decides
-whether the change is agent-involved and, when it is, fetches
+whether the gates apply and, when they do, fetches
 ``origin/develop`` (and the branch on the relay path, which never pushes) and
 applies both rules, the protected-change approvals and merge-review coverage,
 to ``origin/develop...<head>``. A failure refuses that PR with every reason
 and leaves nothing pushed and no PR open, so a re-run once the cause is
-fixed (an approval given, a merge review closed) submits normally. A change is
-agent-involved unless the human is submitting it and its ready-state was
-recorded by the human (``recorded_by``, written by ``report-ready``): a
-missing or unrecognised ``recorded_by`` counts as agent-involved. The CLI
-emergency mode has no ready-state, so its change counts as recorded by its
-submitter, always the human.
+fixed (an approval given, a merge review closed) submits normally. Both gates
+run on every submission, whoever recorded the ready-state. The only skip is
+the human's explicit ``--human-only "<reason>"``, and it applies only to a
+change whose ready-state was recorded by the human (``recorded_by``, written
+by ``report-ready``); the PR body's Notes then record the skip and its
+reason. ``recorded_by`` lives in a file the agent that prepared the branch
+could edit, so it is a hint that can only make a change more
+agent-involved: a recording by any other identity, or a missing or
+unrecognised ``recorded_by``, keeps both gates even with ``--human-only``,
+and on its own it never skips a gate. The CLI emergency mode has no
+ready-state, so its change counts as recorded by its submitter, always the
+human.
 
 **The human override.** ``--override-merge-review "<reason>"`` (human only, one
 PR per run) posts, from the human login, the line ``Merge review override:
 fingerprint=<sha256> reason=<reason>`` for the change's fingerprint on the
 (first) task issue, unless an override for that fingerprint is already
 there, and then submits. It stands in for the merge-review record only: a
-protected file still needs its approval. It is posted only for an
-agent-involved change, since a human-only one needs no record.
+protected file still needs its approval. It cannot be combined with
+``--human-only``.
 
 **Finalize always** (spec §6.2). Once every PR in the selection has been
 tried, submit runs **one** ``vrg-finalize-pr <pr>,<pr>,…`` over the PRs whose
@@ -147,7 +154,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -169,7 +176,11 @@ from vergil_tooling.lib import (
 from vergil_tooling.lib.change_fingerprint import FingerprintError, change_fingerprint
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.identity_mode import IdentityMode
-from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
+from vergil_tooling.lib.linkage import (
+    ALLOWED_LINKAGES,
+    find_linkage_keyword,
+    normalize_linkage,
+)
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import batch_rules, freeze, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
@@ -179,6 +190,7 @@ from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.rulings import RulingError, comments
 from vergil_tooling.lib.rulings.identity import human_login
+from vergil_tooling.lib.rulings.plain_text import check_plain_text
 from vergil_tooling.lib.rulings.post import post_comment_once
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
@@ -214,6 +226,10 @@ _AGENT_OVERRIDE_REFUSAL = (
     "the human for a merge-review exemption with vrg-ruling request --kind "
     "merge-review-exemption."
 )
+_AGENT_HUMAN_ONLY_REFUSAL = (
+    "vrg-submit-pr: --human-only is human-only: only the human maintainer may skip the "
+    "protected-change and merge-review gates. Submit without it; the gates run."
+)
 
 
 @cli_main
@@ -232,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     # whose first line repeats it) ties the run to a release (issue #4994).
     print(progress.tooling_version_line(_SUBMIT_COMMAND))
 
-    refusal = _flag_refusal(args) or _override_refusal(args)
+    refusal = _flag_refusal(args) or _override_refusal(args) or _human_only_refusal(args)
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 1
@@ -304,15 +320,18 @@ def main(argv: list[str] | None = None) -> int:
 def _identity_refusal(args: argparse.Namespace) -> str | None:
     """The refusal for the current identity and these *args*, or ``None`` (spec §4.6).
 
-    The audit agent is refused outright. The user agent is refused with
-    ``--release``, ``--override-merge-review``, the named-branch relay path
-    and the CLI emergency mode, and allowed in the template and batch modes,
-    which ``report-ready`` drives. Any other identity (the human, the
-    automation App) is not refused here.
+    The audit agent is refused outright, and ``--human-only`` is refused to
+    every identity but the human, the automation App included. The user agent
+    is also refused with ``--release``, ``--override-merge-review``, the
+    named-branch relay path and the CLI emergency mode, and allowed in the
+    template and batch modes, which ``report-ready`` drives. Any other use by
+    the human or the automation App is not refused here.
     """
     mode = identity_mode.current_mode()
     if mode is IdentityMode.AUDIT:
         return _AUDIT_REFUSAL
+    if args.human_only is not None and mode is not IdentityMode.HUMAN:
+        return _AGENT_HUMAN_ONLY_REFUSAL
     if mode is not IdentityMode.USER:
         return None
     if args.release:
@@ -346,6 +365,42 @@ def _override_refusal(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _human_only_refusal(args: argparse.Namespace) -> str | None:
+    """The refusal for a malformed ``--human-only`` reason, or ``None``.
+
+    The reason goes into the PR body, so it must be one line of plain text
+    with no issue-linkage keyword. ``--human-only`` and
+    ``--override-merge-review`` contradict each other (one skips the gates,
+    the other stands in for a record they check), so the two are refused
+    together. Checked before any side effect.
+    """
+    reason = args.human_only
+    if reason is None:
+        return None
+    if args.override_merge_review is not None:
+        return (
+            "vrg-submit-pr: --human-only and --override-merge-review cannot be combined: "
+            "--human-only skips both gates, the override stands in for a merge-review "
+            "record they check. Pass one. Nothing was submitted."
+        )
+    if not reason.strip() or reason != reason.strip() or "\n" in reason:
+        return (
+            "vrg-submit-pr --human-only: the reason must be one non-empty line with no "
+            "surrounding whitespace; nothing was submitted."
+        )
+    try:
+        check_plain_text(reason, what="the --human-only reason")
+    except RulingError as exc:
+        return f"vrg-submit-pr --human-only: {exc}; nothing was submitted."
+    found = find_linkage_keyword(reason)
+    if found:
+        return (
+            f"vrg-submit-pr --human-only: the reason contains the issue-linkage keyword "
+            f"{found!r}, which the PR body cannot carry; nothing was submitted."
+        )
+    return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -355,10 +410,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "'vrg-pr-workflow report-ready --issue <N> --title <title> --summary "
             "<summary> --notes <notes>', then vrg-submit-pr from the worktree (or "
             "--all/--select from the repo root). The branch arguments, the "
-            "--issue/--summary/--title mode, --release and --override-merge-review "
-            "are human-only, and the audit agent is refused. Every agent-involved PR "
+            "--issue/--summary/--title mode, --release, --override-merge-review and "
+            "--human-only are human-only, and the audit agent is refused. Every PR "
             "must pass the protected-change and merge-review gates before anything "
-            "is pushed or opened."
+            "is pushed or opened, unless the human skips them with --human-only."
         ),
     )
     parser.add_argument(
@@ -401,6 +456,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Human-only, one PR per run. Post a logged merge-review override for "
         "the change's fingerprint on its task issue, then submit. It stands in for "
         "the merge-review record only; a protected file still needs its approval.",
+    )
+    parser.add_argument(
+        "--human-only",
+        default=None,
+        metavar="REASON",
+        help="Human-only; refused to every agent identity. Skip the protected-change "
+        "and merge-review gates, which otherwise run on every submission, for a "
+        "change the human prepared: it applies only where the ready-state was "
+        "recorded by the human (the CLI mode counts as such), and the PR body "
+        "records the skip and REASON. Any other ready-state keeps both gates.",
     )
     # Removed flags. Kept hidden so main can refuse each by name, naming the
     # reason, rather than argparse rejecting it as unknown (spec §6.10).
@@ -724,8 +789,9 @@ class _Submission:
     ``pr-workflow.json`` records the submission, ``None`` when there is none.
     *links* are the body's ``(linkage, ref)`` lines, shown in the selection
     table. *recorded_by* is the identity mode the ready-state was recorded by
-    (``None`` when it records none, which counts as agent-involved), and
-    *override* the human's ``--override-merge-review`` reason, if any.
+    (``None`` when it records none), *override* the human's
+    ``--override-merge-review`` reason and *human_only* the human's
+    ``--human-only`` reason, if any (:func:`_agent_involved`).
     """
 
     branch: str
@@ -739,6 +805,7 @@ class _Submission:
     record_in: Path | None
     recorded_by: str | None = None
     override: str | None = None
+    human_only: str | None = None
 
 
 class _SubmitFailedError(Exception):
@@ -774,22 +841,26 @@ def _merge_method(issue_refs: list[str]) -> auto_merge.MergeMethod:
     return "REBASE" if batch_rules.is_batch(issue_refs) else "SQUASH"
 
 
-def _agent_involved(recorded_by: str | None, *, authors: TrustedAuthors) -> bool:
+def _agent_involved(recorded_by: str | None, *, human_only: bool) -> bool:
     """Whether a submission is agent-involved, so both gates apply (spec §4.6, §4.8).
 
-    It is human-only only when the human is submitting it and its ready-state
-    was recorded by the human. Any other submitter, a ready-state with no
-    *recorded_by*, and a value that is not an identity mode all count as
-    agent-involved, as does a recording by any identity but the human.
+    Every submission is agent-involved unless the human says otherwise: the
+    gates are skipped only when the human is submitting it, passed
+    ``--human-only`` (*human_only*), and its ready-state was recorded by the
+    human. *recorded_by* is a hint the ready-state carries, which the agent
+    that wrote the file could have set to anything, so it can only ever make
+    a change more agent-involved, never skip a gate by itself: a recording by
+    any identity but the human, a ready-state with no *recorded_by*, and a
+    value that is not an identity mode all keep both gates, ``--human-only``
+    or not.
     """
-    if identity_mode.current_mode() is not IdentityMode.HUMAN:
+    if not human_only or identity_mode.current_mode() is not IdentityMode.HUMAN:
         return True
     try:
         mode = IdentityMode(recorded_by or "")
     except ValueError:
         return True
-    involved = agent_gates.agent_involved(authors=authors, recorded_by=mode)
-    return involved or mode is not IdentityMode.HUMAN
+    return mode is not IdentityMode.HUMAN
 
 
 def _qualified(issue_ref: str) -> str:
@@ -843,24 +914,32 @@ def _post_override(
 def _run_gates(sub: _Submission) -> None:
     """Apply the protected-change and merge-review gates to *sub* (spec §4.6).
 
-    Runs for every submission, before any push or ``gh pr create``. A change
-    that is not agent-involved (:func:`_agent_involved`) needs neither gate.
-    Otherwise ``origin/<base>`` is fetched, and the branch too when *sub.push*
-    is false (a pushing submit must not move the ``--force-with-lease`` ref,
-    and its head is the local commit); the human's override is posted when
-    given; then :func:`agent_gates.evaluate` judges ``origin/<base>...<head>``.
-    A failure raises :class:`_SubmitFailedError` naming every reason, with
+    Runs for every submission, before any push or ``gh pr create``. Both
+    gates apply unless the human skipped them with ``--human-only`` for a
+    change whose ready-state the human recorded (:func:`_agent_involved`);
+    the skip is then recorded in the PR body (:func:`_open_one`). Otherwise
+    ``origin/<base>`` is fetched, and the branch too when *sub.push* is false
+    (a pushing submit must not move the ``--force-with-lease`` ref, and its
+    head is the local commit); the human's override is posted when given;
+    then :func:`agent_gates.evaluate` judges ``origin/<base>...<head>``. A
+    failure raises :class:`_SubmitFailedError` naming every reason, with
     nothing pushed or opened.
     """
-    authors = load_trusted_authors()
-    if not _agent_involved(sub.recorded_by, authors=authors):
+    if sub.human_only is not None and identity_mode.current_mode() is not IdentityMode.HUMAN:
+        raise _SubmitFailedError(_AGENT_HUMAN_ONLY_REFUSAL.removeprefix("vrg-submit-pr: "))
+    if not _agent_involved(sub.recorded_by, human_only=sub.human_only is not None):
         print(
-            f"{sub.branch}: recorded and submitted by the human, so not agent-involved; "
-            "the protected-change and merge-review gates do not apply."
+            f"{sub.branch}: --human-only, recorded and submitted by the human; the "
+            "protected-change and merge-review gates are skipped, and the PR body "
+            "records it."
         )
-        if sub.override is not None:
-            print("--override-merge-review is not needed here; no override was posted.")
         return
+    if sub.human_only is not None:
+        print(
+            f"{sub.branch}: --human-only does not apply: the ready-state was not recorded "
+            f"by the human (recorded_by={sub.recorded_by or 'none'}), so both gates run."
+        )
+    authors = load_trusted_authors()
     refs = (sub.base,) if sub.push else (sub.branch, sub.base)
     try:
         git.run("fetch", "origin", *refs)
@@ -895,10 +974,19 @@ def _run_gates(sub: _Submission) -> None:
         raise _SubmitFailedError(msg)
 
 
+def _human_only_note(reason: str) -> str:
+    """The line the PR body's Notes section gains when ``--human-only`` skipped the gates."""
+    return (
+        "\n- Human-only submit: the protected-change and merge-review gates were "
+        f"skipped by the human with --human-only: {reason}"
+    )
+
+
 def _open_one(sub: _Submission) -> str:
     """Open *sub*'s PR at its expected head, record the submission, return the URL.
 
-    The gates run first (:func:`_run_gates`), then a batch is re-checked at
+    The gates run first (:func:`_run_gates`; a ``--human-only`` skip of them
+    adds :func:`_human_only_note` to the PR body), then a batch is re-checked at
     the head, both before anything is pushed; then the branch is pushed (when
     *sub.push*), origin's tip is held to the head, and the PR is opened. The
     submission is recorded as soon as the PR exists, so a later step that
@@ -906,6 +994,8 @@ def _open_one(sub: _Submission) -> str:
     for a second one.
     """
     _run_gates(sub)
+    if not _agent_involved(sub.recorded_by, human_only=sub.human_only is not None):
+        sub = replace(sub, pr_body=sub.pr_body + _human_only_note(sub.human_only or ""))
     _recheck_batch(
         sub.issue_refs, branch=sub.branch, target=sub.base, head=sub.expected_head, push=sub.push
     )
@@ -1360,6 +1450,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
             record_in=None,
             recorded_by=identity_mode.current_mode().value,
             override=args.override_merge_review,
+            human_only=args.human_only,
         )
     ]
     _print_selection(selection)
@@ -1518,6 +1609,7 @@ def _run_submit_batch(selected: list[worktrees.Worktree], args: argparse.Namespa
                 expected_head=fields.get("head_sha", ""),
                 record_in=wt.path,
                 override=args.override_merge_review,
+                human_only=args.human_only,
             )
         )
     if args.override_merge_review is not None and len(selection) > 1:
@@ -1553,6 +1645,7 @@ def _prepare(
     expected_head: str,
     record_in: Path | None,
     override: str | None = None,
+    human_only: str | None = None,
 ) -> _Submission:
     """Gate one PR from its ready-state *metadata*; return its submission.
 
@@ -1591,6 +1684,7 @@ def _prepare(
         record_in=record_in,
         recorded_by=metadata.get("recorded_by") or None,
         override=override,
+        human_only=human_only,
     )
 
 
@@ -1719,6 +1813,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
             record_in=root,
             recorded_by=fields.get("recorded_by") or None,
             override=args.override_merge_review,
+            human_only=args.human_only,
         )
     ]
     _print_selection(selection)
@@ -2012,6 +2107,7 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
         expected_head=expected_head,
         record_in=wt_path,
         override=args.override_merge_review,
+        human_only=args.human_only,
     )
 
 

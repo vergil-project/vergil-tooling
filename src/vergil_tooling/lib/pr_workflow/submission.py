@@ -48,8 +48,9 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
     workflow state file.
 
     ``recorded_by`` is the identity mode that recorded the ready state, or
-    ``""`` when the state records none; ``vrg-submit-pr`` counts that, and any
-    value it does not recognise, as agent-involved.
+    ``""`` when the state records none. It is only a hint: ``vrg-submit-pr``
+    runs its gates whatever it says, and lets the human's ``--human-only``
+    skip them only when it reads ``human``.
 
     ``issues`` is every issue the PR hands off, comma-joined in order
     (``WorkflowState.all_issues``), so it is always present: the one issue of a

@@ -29,9 +29,11 @@ reopens the local one, and fails with nothing changed if it cannot, so no
 
 Every ``report-ready`` records who ran it as the state's ``recorded_by``, the
 current identity mode, in the local file and the relay ref alike (epic
-vergil-project/.github#1384, Task 9). ``vrg-submit-pr`` decides from it whether
-the change is agent-involved, so its gates apply. A human re-run never replaces
-an agent's recording.
+vergil-project/.github#1384, Task 9). It is a hint for ``vrg-submit-pr``, the
+finalize watch and the audit, which can only make a change more agent-involved:
+``vrg-submit-pr`` runs its gates on every submission, and skips them only on
+the human's ``--human-only`` for a state recorded by the human. A human re-run
+never replaces an agent's recording.
 
 A batch PR repeats ``--issue``, in commit order (epic vergil-project/.github#1019).
 Each issue runs the per-issue refusals; then the batch hard rules and the

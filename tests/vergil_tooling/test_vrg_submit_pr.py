@@ -19,6 +19,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     SubmitSummary,
     _agent_involved,
     _create_pr,
+    _human_only_note,
     _local_worktree_with_state,
     _metadata_from_state,
     _origin_has_branch,
@@ -60,12 +61,14 @@ from vergil_tooling.lib import (
     auto_merge,
     epics,
     github,
+    identity_mode,
     pr_provenance,
     progress,
     retry,
     trust,
     worktrees,
 )
+from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.linkage import extract_tracking_refs
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.pr_body import build_pr_body
@@ -4548,12 +4551,14 @@ def _gate_sub(
     recorded_by: str | None = "user",
     push: bool = True,
     override: str | None = None,
+    human_only: str | None = None,
     issues: tuple[str, ...] = ("#42",),
 ) -> _Submission:
     return dataclasses.replace(
         _submission("feature/42-x", issues=issues, head="f" * 40, push=push, record_in=None),
         recorded_by=recorded_by,
         override=override,
+        human_only=human_only,
     )
 
 
@@ -4585,6 +4590,11 @@ def real_gates() -> Iterator[dict[str, MagicMock]]:
             "push": push,
             "create": create,
         }
+
+
+def _as_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    """Run as identity *mode*; the automation App's mode cannot be set by env var."""
+    monkeypatch.setattr(identity_mode, "current_mode", lambda: IdentityMode(mode))
 
 
 def _fetches(git_run: MagicMock) -> list[tuple[str, ...]]:
@@ -4709,9 +4719,77 @@ class TestAgentIdentityGate:
             assert main(["--override-merge-review", "no session", *argv]) == 1
         submit_all.assert_not_called()
 
+    @pytest.mark.parametrize("mode", ["user", "automation"])
+    @pytest.mark.parametrize(
+        "argv", [[], ["--all"], ["feature/x"], ["--issue", "1", "--summary", "s", "--title", "t"]]
+    )
+    def test_human_only_refused_to_each_agent_identity(
+        self,
+        mode: str,
+        argv: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _as_mode(monkeypatch, mode)
+        with patch(_MOD + "._submit_all") as submit_all, patch(_MOD + "._run_relay") as relay:
+            assert main(["--human-only", "my own change", *argv]) == 1
+        submit_all.assert_not_called()
+        relay.assert_not_called()
+        assert "--human-only is human-only" in capsys.readouterr().err
+
+    def test_human_only_refused_to_the_audit_agent(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        with patch(_MOD + "._submit_all") as submit_all:
+            assert main(["--human-only", "my own change"]) == 1
+        submit_all.assert_not_called()
+        assert "audit agent cannot submit" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("mode", ["user", "automation"])
+    def test_human_only_refused_again_at_the_gates(
+        self, mode: str, real_gates: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Defence in depth: the gate step itself refuses an agent's --human-only."""
+        _as_mode(monkeypatch, mode)
+        summary = _submit_all([_gate_sub(recorded_by="human", human_only="mine")], _ARGS)
+        [(_branch, why)] = summary.failed
+        assert "--human-only is human-only" in why
+        real_gates["create"].assert_not_called()
+
+    @pytest.mark.parametrize(
+        "reason", ["", " padded", "two\nlines", "caf\u00e9", "closes #42 by hand"]
+    )
+    def test_malformed_human_only_reason_refused_before_anything(
+        self, reason: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(_MOD + "._submit_all") as submit_all:
+            assert main(["--human-only", reason]) == 1
+        submit_all.assert_not_called()
+        assert "--human-only" in capsys.readouterr().err
+
+    def test_human_only_and_override_refused_together(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(_MOD + "._submit_all") as submit_all:
+            argv = ["--human-only", "mine", "--override-merge-review", "no session"]
+            assert main(argv) == 1
+        submit_all.assert_not_called()
+        assert "cannot be combined" in capsys.readouterr().err
+
 
 class TestAgentInvolvement:
-    """Only a human recording, submitted by the human, is human-only (scope change)."""
+    """The gates run on every submission; only the human's --human-only skips them.
+
+    recorded_by is a hint the agent could forge, so it may only ever make a
+    change more agent-involved (merge-review ruling on R1, #4785).
+    """
+
+    @pytest.mark.parametrize(
+        "recorded_by", ["human", "user", "audit", "automation", None, "", "someone-else"]
+    )
+    def test_without_human_only_every_change_is_involved(self, recorded_by: str | None) -> None:
+        assert _agent_involved(recorded_by, human_only=False) is True
 
     @pytest.mark.parametrize(
         ("recorded_by", "expected"),
@@ -4725,15 +4803,17 @@ class TestAgentInvolvement:
             ("someone-else", True),
         ],
     )
-    def test_human_submitter(self, recorded_by: str | None, *, expected: bool) -> None:
-        assert _agent_involved(recorded_by, authors=_GATE_AUTHORS) is expected
+    def test_human_only_skips_only_a_human_recording(
+        self, recorded_by: str | None, *, expected: bool
+    ) -> None:
+        assert _agent_involved(recorded_by, human_only=True) is expected
 
-    @pytest.mark.parametrize("mode", ["user", "audit"])
+    @pytest.mark.parametrize("mode", ["user", "audit", "automation"])
     def test_agent_submitter_is_always_involved(
         self, mode: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
-        assert _agent_involved("human", authors=_GATE_AUTHORS) is True
+        _as_mode(monkeypatch, mode)
+        assert _agent_involved("human", human_only=True) is True
 
     def test_template_mode_carries_recorded_by(
         self, tmp_path: Path, _gates_pass: MagicMock
@@ -4868,13 +4948,44 @@ class TestGateStep:
         _submit_all([_gate_sub(recorded_by=recorded_by)], _ARGS)
         real_gates["evaluate"].assert_called_once()
 
-    def test_human_only_pr_skips_both_gates(
-        self, real_gates: dict[str, MagicMock], capsys: pytest.CaptureFixture[str]
+    def test_forged_human_recording_still_runs_both_gates(
+        self, real_gates: dict[str, MagicMock]
     ) -> None:
+        """An agent-prepared branch whose state was edited to read "human" is gated."""
+        real_gates["evaluate"].return_value = agent_gates.GateResult(
+            ok=False, reasons=("no merge-review record covers the change",)
+        )
         summary = _submit_all([_gate_sub(recorded_by="human")], _ARGS)
+        real_gates["evaluate"].assert_called_once()
+        assert summary.opened == []
+        real_gates["push"].assert_not_called()
+        real_gates["create"].assert_not_called()
+
+    def test_human_only_skips_both_gates_and_records_it(
+        self, real_gates: dict[str, MagicMock]
+    ) -> None:
+        summary = _submit_all(
+            [_gate_sub(recorded_by="human", human_only="my own docs fix")], _ARGS
+        )
         assert summary.opened == ["https://github.com/o/r/pull/9"]
         real_gates["evaluate"].assert_not_called()
         assert _fetches(real_gates["git_run"]) == []
+        body = real_gates["create"].call_args.kwargs["pr_body"]
+        assert body == "BODY" + _human_only_note("my own docs fix")
+        assert "--human-only: my own docs fix" in body
+
+    @pytest.mark.parametrize("recorded_by", ["user", "automation", None, "someone-else"])
+    def test_human_only_does_not_skip_an_agent_recording(
+        self,
+        recorded_by: str | None,
+        real_gates: dict[str, MagicMock],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        summary = _submit_all([_gate_sub(recorded_by=recorded_by, human_only="mine")], _ARGS)
+        assert summary.opened == ["https://github.com/o/r/pull/9"]
+        real_gates["evaluate"].assert_called_once()
+        assert real_gates["create"].call_args.kwargs["pr_body"] == "BODY"
+        assert "--human-only does not apply" in capsys.readouterr().out
 
     def test_human_override_posts_comment_and_submits(
         self, real_gates: dict[str, MagicMock]
@@ -4918,11 +5029,13 @@ class TestGateStep:
         real_gates["evaluate"].assert_not_called()
         real_gates["create"].assert_not_called()
 
-    def test_override_not_posted_for_a_human_only_pr(
+    def test_override_on_a_human_recording_is_posted_and_gated(
         self, real_gates: dict[str, MagicMock]
     ) -> None:
+        """A human recording is no longer human-only by itself: the override applies."""
         _submit_all([_gate_sub(recorded_by="human", override="no agent session")], _ARGS)
-        real_gates["post"].assert_not_called()
+        real_gates["post"].assert_called_once()
+        real_gates["evaluate"].assert_called_once()
 
     def test_unqualifiable_ref_is_passed_on_for_the_gates_to_refuse(
         self, real_gates: dict[str, MagicMock]
@@ -4965,3 +5078,16 @@ class TestGateStep:
             argv = ["--issue", "42", "--summary", "S", "--title", "fix: t"]
             assert main([*argv, "--override-merge-review", "no agent session"]) == 0
         assert _gates_pass.call_args.args[0].override == "no agent session"
+
+    def test_human_only_flag_reaches_the_submission(self, _gates_pass: MagicMock) -> None:
+        with (
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + "._create_pr", return_value="https://github.com/pr/1") as create,
+        ):
+            argv = ["--issue", "42", "--summary", "S", "--title", "fix: t"]
+            assert main([*argv, "--human-only", "emergency fix"]) == 0
+        sub = _gates_pass.call_args.args[0]
+        assert sub.human_only == "emergency fix"
+        assert sub.recorded_by == "human"
+        assert _human_only_note("emergency fix") in create.call_args.kwargs["pr_body"]
