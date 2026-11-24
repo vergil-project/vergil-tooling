@@ -193,7 +193,7 @@ gate rollup:
 | Planning | `Epic (planning): <name>` | `epic` + `planning` | one per queue home | items waiting for or undergoing `epic-create` |
 | Deferred | `Epic (deferred): <name>` | `epic` + `deferred` | one per queue home | evaluated items parked until their revival conditions are met |
 | Hoshin | `Epic (hoshin): <org>` | `epic` + `hoshin` | one per org, always in `<org>/.github` | the `Logbook:` tasks `/vergil:hoshin` files and works |
-| Operations | `Epic (operations): <org>` | `epic` + `operations` | one per org, always in `<org>/.github` | the ops issues of the org's unattended jobs |
+| Operations | `Epic (operations): <org>` | `epic` + `operations` | one per org, always in `<org>/.github` | the ops issues of the org's unattended jobs, each in its job's own repo |
 
 An intake, planning, deferred, hoshin or operations epic also gets the display-only
 `epic-management` [category label](#epic-categories) when it is created; the
@@ -217,10 +217,13 @@ one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter `Archive (hoshin): <org>` archives like the other
 standing kinds.
 
-The **operations epic** is not a queue either: it holds one ops issue per
-failing unattended job, whatever repo the job ran in, and an ops issue is
-closed by hand once the problem is dealt with. It is homed in
-`<org>/.github` and named for the org, like the hoshin epic.
+The **operations epic** is not a queue either: it holds one open ops issue
+per failing unattended job and repo, and an ops issue is closed by hand once
+the problem is dealt with. The epic is homed in `<org>/.github` and named for
+the org, like the hoshin epic, but each ops issue lives in the repo its job
+ran in, linked under the org's epic as a sub-issue: a failing `branch-sweep`
+run in `<org>/widget` is filed in `<org>/widget` as
+`ops: widget / branch-sweep failing`.
 `vrg-issue-create` and `vrg-epic-move` accept the `operations` sentinel, and
 `vrg-epic-create --standing operations --org <org>` ensures the epic without
 filing a task. Its closed children drain into per-quarter
