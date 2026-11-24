@@ -509,7 +509,9 @@ def wait_and_merge(
     ``--match-head-commit``. A head moved after that read is refused by
     GitHub and re-checked, within the update cap. A refusal of the bypass
     itself (the caller is not the ruleset's bypass actor) raises naming the
-    ruleset, never a poll. It cannot be combined with ``batch_check``.
+    ruleset, never a poll. A required set that cannot be read raises before
+    any wait, since the bypass would skip whatever it holds. It cannot be
+    combined with ``batch_check``.
 
     The base branch's required status checks are resolved once up front (a
     lookup failure warns and falls back to registered checks only; a PR whose
@@ -523,6 +525,15 @@ def wait_and_merge(
         msg = "bypass_ruleset and batch_check cannot be combined"
         raise ValueError(msg)
     resolved, required = _resolve_required(pr)
+    if bypass_ruleset is not None and resolved is None:
+        # Without the required set the engine cannot prove what --admin would
+        # skip, and GitHub no longer enforces it, so never fall back here.
+        msg = (
+            f"PR {pr}: the base branch's required checks could not be read (see warning "
+            f"above), so the {bypass_ruleset!r} ruleset bypass will not be used. Re-run "
+            "once they can be read."
+        )
+        raise MergeAbortError(msg)
     if wait_checks is not None:
         wait = wait_checks
     else:

@@ -1235,6 +1235,18 @@ def test_bypass_unrelated_merge_error_reraises() -> None:
         wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
 
 
+def test_bypass_refused_when_the_required_checks_cannot_be_read() -> None:
+    """With no required set, --admin could skip an unregistered required check."""
+    gh = _bypass_gh(required=None)
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match="required checks could not be read"),
+    ):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=_RULESET)
+    gh.wait_for_checks.assert_not_called()
+    gh.merge.assert_not_called()
+
+
 def test_bypass_cannot_be_combined_with_a_batch_check() -> None:
     gh = _bypass_gh()
     with patch(_MOD + ".github", gh), pytest.raises(ValueError, match="cannot be combined"):
