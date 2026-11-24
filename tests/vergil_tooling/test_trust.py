@@ -327,7 +327,7 @@ class FakeBodies:
         self.calls.append((query, variables))
         if query == trust._BODY_EDITS_QUERY:
             return self.body_edits.pop(0)
-        numbers = [variables[f"n{i}"] for i in range(len(variables) - 2)]
+        numbers = [int(str(variables[f"n{i}"])) for i in range(len(variables) - 2)]
         assert query == trust._bodies_query(len(numbers))
         return {"repository": {f"i{i}": self.items[n] for i, n in enumerate(numbers)}}
 
@@ -413,9 +413,7 @@ def test_read_bodies_with_no_numbers_reads_nothing(
     assert fake.calls == []
 
 
-def test_read_bodies_loads_configured_authors(
-    bodies: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_bodies_loads_configured_authors(bodies: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     bodies({7: _bodies_node()})
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
     assert trust.read_bodies(REPO, [7])[7].body_role is Role.HUMAN

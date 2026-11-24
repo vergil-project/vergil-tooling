@@ -3293,5 +3293,3 @@ def test_records_pass_trust_errors_are_one_line_failures(
     assert records_pass("org", apply=True, prog="prog") == 1
     err = capsys.readouterr().err
     assert err == f"prog: security records pass failed: {error}\n"
-
-
