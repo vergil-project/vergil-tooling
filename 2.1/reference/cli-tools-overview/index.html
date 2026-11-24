@@ -1482,6 +1482,8 @@
       
         
       
+        
+      
     
     
     
@@ -1534,6 +1536,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.343/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.343
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21677,8 +21707,9 @@ issue is the open issue in <code>--repo</code> titled <code>ops: &lt;repo&gt; / 
 labelled <code>ops-report</code> and opened by the org's automation App. <code>--results</code>
 combines the GitHub job results of every job that makes up the named job:
 any <code>failure</code> wins, then <code>cancelled</code>, then <code>success</code>; all <code>skipped</code> reports
-nothing. A failure or cancel opens the issue under the org's operations
-epic (<code>Epic (operations): &lt;org&gt;</code>, in <code>&lt;org&gt;/.github</code>), naming the job, run,
+nothing. A failure or cancel opens the issue in <code>--repo</code>, linked as a
+sub-issue under the org's operations epic (<code>Epic (operations): &lt;org&gt;</code>, in
+<code>&lt;org&gt;/.github</code>), naming the job, run,
 step, date and the most recent closed ops issue with the same title
 (<code>previous occurrence: #N</code>), or comments on the open one. A success
 comments <code>ops-report: recovered</code> only on the first green run after a
@@ -24010,8 +24041,13 @@ its change must be covered by a merge-review record or an approved
 merge-review exemption. It then moves each
 marker to where its audit reached; a read failure stops there, so the next
 run checks the rest again. A missing marker is a finding, never
-re-created. It is a security-signal job: it files no issue and posts
-nothing.</p>
+re-created. A repo that is never released has no <code>main</code>: a branch the
+repo has neither of nor its marker is skipped, by the audit and by
+<code>--init</code>, each printing <code>&lt;repo&gt;: no &lt;branch&gt; branch; not audited</code>, and is
+not a finding. An absent branch whose marker is set is refused by
+<code>--init</code> and is a <code>missing-branch</code> finding, so deleting a branch never
+escapes the audit; a repo with no <code>develop</code> is always both. It is a
+security-signal job: it files no issue and posts nothing.</p>
 <table>
 <thead>
 <tr>

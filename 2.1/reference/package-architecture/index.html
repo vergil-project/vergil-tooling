@@ -1482,6 +1482,8 @@
       
         
       
+        
+      
     
     
     
@@ -1534,6 +1536,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.343/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.343
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18552,8 +18582,9 @@ which is the complete list of entry points. The
   ad-hoc, intake, planning, deferred, hoshin and operations standing epics and their
   per-quarter archives), the epic categories and their derived category
   labels, epic and queue homes, sub-issue linking, rollup,
-  and the parent-based queue-item check that <code>vrg-pr-workflow report-ready</code>
-  and <code>vrg-submit-pr</code> use to refuse intake, planning and deferred items.</li>
+  and the parent-based check that <code>vrg-pr-workflow report-ready</code> and
+  <code>vrg-submit-pr</code> use to refuse intake, planning and deferred items and the
+  ops issues under an operations epic.</li>
 <li><strong><code>proxies.py</code></strong>: the proxy epic's link to its primary, read from the
   proxy's <code>Primary:</code> body line (from a body the trust layer trusts) and the
   primary's trusted <code>Proxy:</code> comments (<code>epics.is_proxy</code> is the label test every development-epic check skips).</li>
@@ -18563,6 +18594,10 @@ which is the complete list of entry points. The
 <li><strong><code>epic_size.py</code></strong>: the epic-size scale, the sizing comment and cleared
   marker formats, and an item's size record, shared by the
   <code>vrg-intake-route</code> <code>size</code> route and the <code>vrg-queue</code> size column.</li>
+<li><strong><code>ops_report.py</code></strong>: <code>vrg-ops-report</code>: the combined result of an
+  unattended job, the lookup of its open ops issue through the trust layer
+  (<code>trust.py</code>), and the failure, cancel and recovery reports. It never
+  closes an issue.</li>
 <li><strong><code>security_records.py</code></strong>: <code>vrg-security-record</code>, including the
   security-records pass of <code>vrg-security-record sync</code> (previewed by the
   read-only <code>vrg-epic-audit</code>).</li>

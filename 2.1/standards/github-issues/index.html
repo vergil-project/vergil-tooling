@@ -1484,6 +1484,8 @@
       
         
       
+        
+      
     
     
     
@@ -1536,6 +1538,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.343/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.343
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19634,7 +19664,7 @@ gate rollup:</p>
 <td><code>Epic (operations): &lt;org&gt;</code></td>
 <td><code>epic</code> + <code>operations</code></td>
 <td>one per org, always in <code>&lt;org&gt;/.github</code></td>
-<td>the ops issues of the org's unattended jobs</td>
+<td>the ops issues of the org's unattended jobs, each in its job's own repo</td>
 </tr>
 </tbody>
 </table>
@@ -19657,10 +19687,13 @@ It is homed in <code>&lt;org&gt;/.github</code>, like the queues, and named for 
 one-off into the hoshin epic, by sentinel or by ref. Its closed children
 drain into per-quarter <code>Archive (hoshin): &lt;org&gt;</code> archives like the other
 standing kinds.</p>
-<p>The <strong>operations epic</strong> is not a queue either: it holds one ops issue per
-failing unattended job, whatever repo the job ran in, and an ops issue is
-closed by hand once the problem is dealt with. It is homed in
-<code>&lt;org&gt;/.github</code> and named for the org, like the hoshin epic.
+<p>The <strong>operations epic</strong> is not a queue either: it holds one open ops issue
+per failing unattended job and repo, and an ops issue is closed by hand once
+the problem is dealt with. The epic is homed in <code>&lt;org&gt;/.github</code> and named for
+the org, like the hoshin epic, but each ops issue lives in the repo its job
+ran in, linked under the org's epic as a sub-issue: a failing <code>branch-sweep</code>
+run in <code>&lt;org&gt;/widget</code> is filed in <code>&lt;org&gt;/widget</code> as
+<code>ops: widget / branch-sweep failing</code>.
 <code>vrg-issue-create</code> and <code>vrg-epic-move</code> accept the <code>operations</code> sentinel, and
 <code>vrg-epic-create --standing operations --org &lt;org&gt;</code> ensures the epic without
 filing a task. Its closed children drain into per-quarter
