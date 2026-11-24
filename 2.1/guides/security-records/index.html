@@ -1484,6 +1484,8 @@
       
         
       
+        
+      
     
     
     
@@ -1536,6 +1538,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.344/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.344
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19015,10 +19045,15 @@ copy and <code>Moved to: &lt;org&gt;/.github &lt;GHSA-id&gt;</code> on the origi
 <code>create</code> and <code>note</code> refuse text holding either line.</p>
 <p>An issue's <code>Security advisory:</code> lines count only in a body the trust
 layer trusts: its author and every editor are trusted authors. A body
-anyone else wrote or edited is never acted on. <code>create --issue</code>,
-<code>retarget</code> and <code>close</code> stop before any write when a body they rely on is
-untrusted, and <code>sync</code> reports it, metadata only, leaves each advisory
-tracking it unchanged, and exits 1 for the human to decide.</p>
+anyone else wrote or edited is never acted on. <code>create --issue</code> and
+<code>retarget</code> stop before any write when a body they rely on is untrusted,
+and <code>sync</code> reports it, metadata only, leaves each advisory tracking it
+unchanged, and exits 1 for the human to decide. <code>close</code> relies on no
+body: the advisory's own <code>Tracking issue:</code> lines pick its issues.</p>
+<p>A write reads only the issues it knows (<code>close</code> the tracked issues,
+<code>retarget</code> those and its <code>--from</code> and <code>--to</code>), with no scan of every
+<code>security</code> issue in the org. Finding an issue that names an advisory
+which does not track it, a broken pair, is <code>sync</code>'s job.</p>
 <h3 id="the-labels">The labels<a class="headerlink" href="#the-labels" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -19170,7 +19205,7 @@ is visible and explained:</p>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--reason<span class="w"> </span><span class="s2">"the work it tracked was dropped with its epic"</span>
 </code></pre></div>
 <p>It posts <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on every issue the
-record tracks, then sets the advisory to <code>closed</code>. Use it when the work a
+record tracks, and only those, then sets the advisory to <code>closed</code>. Use it when the work a
 record tracks is dropped and <code>sync</code> would not close the record, for
 example when its pair is broken or the close guard holds it, or to put
 on record why a record was closed. The issue still drives the record: <code>close</code> refuses while any of

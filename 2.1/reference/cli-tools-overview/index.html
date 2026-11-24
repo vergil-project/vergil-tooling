@@ -1484,6 +1484,8 @@
       
         
       
+        
+      
     
     
     
@@ -1536,6 +1538,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.344/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.344
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -22568,9 +22598,9 @@ issue unless <code>--drop</code> names it, and moves the advisory to another org
 <code>.github</code> when every <code>--to</code> is there (a copy with a <code>Moved from:</code> line;
 the original closed with <code>Moved to:</code>), <code>sync</code> sets each paired advisory's state from its issues and
 reports broken pairs (<code>--dry-run</code> previews it), and <code>close</code> closes a draft
-advisory whose issues are all closed, posting the GHSA ID and a required
+advisory whose tracked issues are all closed, posting the GHSA ID and a required
 <code>--reason</code> on each of them first, and <code>note</code> appends a dated private note
-from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. An issue's <code>Security advisory:</code> lines are read only from a body the trust layer trusts: an untrusted body stops a mark, retarget or close before any write, and <code>sync</code> reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
+from a file to an advisory's description (append-only). Advisory text is printed only by <code>show</code> and <code>list --details</code>. A write reads only the issues it knows: <code>close</code> reads only the issues the advisory tracks, and <code>retarget</code> those plus <code>--from</code> and the <code>--to</code> set, with no scan of the org's <code>security</code> issues (only a <code>retarget</code> re-run after its rewrite landed lists them); finding broken pairs is <code>sync</code>'s job, which reads each <code>security</code> issue's body in batches, bodies only. An issue's <code>Security advisory:</code> lines are read only from a body the trust layer trusts: an untrusted body stops a mark or retarget before any write, and <code>sync</code> reports it, metadata only, leaves the advisories tracking it unchanged and exits 1. See
 <a href="../dev/security-record/">vrg-security-record</a> and
 <a href="../../guides/security-records/">Security Records</a>.</p>
 <table>

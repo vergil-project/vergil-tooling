@@ -1484,6 +1484,8 @@
       
         
       
+        
+      
     
     
     
@@ -1536,6 +1538,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.344/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.344
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19027,10 +19057,19 @@ when that is another org, the retarget is a
 shell: unquoted, the <code>#</code> is a glob operator in zsh with <code>EXTENDED_GLOB</code>
 set. The <code>retarget</code> commands that <code>vrg-intake-route</code> prints for an
 advisory it could not retarget are quoted the same way.</p>
-<p>Two checks run first, after the tracking lines and the org's
-<code>security</code>-labelled issues are read and before anything is written.
-Each refusal exits 1, names the issues the advisory tracks, and prints
-the command that would succeed:</p>
+<p>A retarget reads only the issues it knows: those in the tracking lines,
+<code>--from</code> and the <code>--to</code> set. It does no org-wide scan of the <code>security</code>
+issues (vergil-project/vergil-tooling#5138): an issue whose
+<code>Security advisory:</code> line names the advisory although the advisory does
+not track it is a broken pair, which <a href="#sync"><code>sync</code></a> reports. The one
+exception is a <strong>re-run</strong> after the rewrite landed (the tracking lines
+already name exactly the <code>--to</code> set): the tracking lines no longer name
+the issues the first run dropped, so the re-run alone lists the org's
+<code>security</code>-labelled issues to find any still naming the advisory.</p>
+<p>Two checks run first, after the tracking lines (and, on such a re-run,
+the org's <code>security</code>-labelled issues) are read and before anything is
+written. Each refusal exits 1, names the issues the advisory tracks, and
+prints the command that would succeed:</p>
 <ul>
 <li><strong>Source check.</strong> <code>--from</code> must be an issue a <code>Tracking issue:</code> line
   names:</li>
@@ -19042,13 +19081,15 @@ the command that would succeed:</p>
   still names the advisory (an unmark not yet done) or carries the
   <code>Security record moved to &lt;refs&gt;</code> comment for exactly that set (a
   finished run). Such a re-run moves nothing; it only finishes the
-  unmarks.
+  unmarks, together with those of any other issue its listing finds still
+  naming the advisory (see below).
 - <strong>Open-issue check.</strong> The <strong>dropped</strong> issues are those that are not a
-  <code>--to</code>: the issues in the tracking lines plus every <code>security</code>-labelled
-  issue whose line names this advisory. Each one still open, other than
-  <code>--from</code> (which is being handed on), is refused unless a <code>--drop</code>
-  names it. An issue the listing does not return (one that lost its
-  label) has its state read directly; a failed read fails the run. The
+  <code>--to</code>: the issues in the tracking lines (on a re-run after the
+  rewrite, every listed <code>security</code>-labelled issue whose line names this
+  advisory). Each one still open, other than <code>--from</code> (which is being
+  handed on), is refused unless a <code>--drop</code> names it. An issue the
+  listing does not hold has its state read directly; a failed read
+  fails the run. The
   refusal's command keeps every open dropped issue as a <code>--to</code>, and says
   that leaving one untracked is the human's decision; it never prints a
   <code>--drop</code>:</p>
@@ -19058,10 +19099,11 @@ the command that would succeed:</p>
 <li><strong>Trust check.</strong> Every issue body <code>retarget</code> reads is read through the
   trust layer, never from the REST listing, and each one that decides or
   receives a write must be trusted (its author and every editor trusted).
-  It refuses, exit 1, before anything is written, when any
-  <code>security</code>-labelled issue in the org has an untrusted body (its lines
-  cannot be read, so which issues name this advisory cannot be known),
-  or when a target or an issue to unmark (<code>--from</code> included) has one. A
+  It refuses, exit 1, before anything is written, when a target or an
+  issue to unmark (<code>--from</code> included) has an untrusted body, or, on a
+  re-run that lists them, when any <code>security</code>-labelled issue in the org
+  has one (its lines cannot be read, so which issues name this advisory
+  cannot be known). A
   re-run's source tie by a body still naming the advisory counts only
   from a trusted body; an untrusted one stops the run. The message names
   metadata only, never the body:</li>
@@ -19078,10 +19120,11 @@ succeeded:</p>
 <li><strong>Rewrite</strong> the advisory's description: every <code>Tracking issue:</code> line is
    replaced by one line per target. The rest of the description is kept.
    An unchanged description is not written.</li>
-<li><strong>Unmark</strong> every issue that names this advisory but is no longer a
-   target. These are the issues in the old tracking lines, plus every
-   <code>security</code>-labelled issue in the org whose <code>Security advisory:</code> line
-   names this GHSA ID (found by REST listing, never by search). Each one
+<li><strong>Unmark</strong> every dropped issue that names this advisory. These are the
+   issues in the old tracking lines that are no longer a target (on a
+   re-run after the rewrite, every listed <code>security</code>-labelled issue whose
+   <code>Security advisory:</code> line names this GHSA ID, found by REST listing,
+   never by search). Each one
    gets the comment <code>Security record moved to &lt;refs&gt;</code> (posted once, even on
    a re-run; only a trusted author's copy of it counts as already posted,
    and any other is reported on stderr, metadata only). Then this advisory's line is removed, together with the
@@ -19106,8 +19149,15 @@ run in either order; the label goes only with the last line.</p>
 step. Because a later step never runs before an earlier one succeeds, an
 advisory never ends up tracking an issue that lacks the label and line.
 After a failure at any step, re-run the same command: it finishes the
-job, and once the job is done a re-run writes nothing. An issue that still carries this advisory's line and label is found
-again by the listing, so an interrupted unmark is completed. The one case
+job. An issue that still carries this advisory's line and label is found
+again by the re-run's listing, so an interrupted unmark is completed. The
+re-run cannot tell an issue the first run dropped from any other issue
+that still names the advisory although the advisory does not track it
+(the other half of a broken pair, which a first run leaves alone): it
+treats every such issue as dropped. So a re-run, even of a finished
+retarget, unmarks any such issue that is closed and refuses, by the
+open-issue check, on any that is open; it writes nothing only when no
+such issue exists. The one case
 a re-run cannot reach is an issue whose <code>security</code> label was removed by
 hand while its advisory line stayed; <code>sync</code> reports it as a broken pair.
 On success it prints <code>Retargeted &lt;GHSA-id&gt; to &lt;refs&gt;.</code></p>
@@ -19224,7 +19274,10 @@ listed as <code>- error: &lt;GHSA-id&gt; (&lt;issue ref&gt;): reading its parent
 left unchanged: &lt;error&gt;</code>; the rest are still synced.</p>
 <p><strong>Untrusted bodies.</strong> Each issue's <code>Security advisory:</code> lines are read
 only from a body the trust layer trusts (its author and every editor
-trusted). An untrusted body is reported, never acted on: it is named on
+trusted). The bodies are read in batches, one GraphQL query per repo for
+up to 50 issues, bodies and their edit history only: no comment is read,
+since the pass takes nothing from one (vergil-project/vergil-tooling#5138).
+An untrusted body is reported, never acted on: it is named on
 stderr, metadata only (<code>skipped untrusted content: …</code>; under GitHub
 Actions only a count by cause), its lines are not read, it is not
 reported as a broken pair, and each advisory that tracks it is left
@@ -19283,34 +19336,35 @@ org from the current repo's <code>origin</code> remote, as <code>show</code> and
 </tr>
 </tbody>
 </table>
-<p>The issues are the ones the advisory's <code>Tracking issue:</code> lines name, plus
-any <code>security</code>-labelled issue in the org whose <code>Security advisory:</code> line
-names it (found by REST listing, never by search). An issue that was
-transferred is followed to where it is now. The steps run in order, and
-each starts only once the one before it succeeded:</p>
+<p>The issues are the ones the advisory's <code>Tracking issue:</code> lines name, and
+only those. <code>close</code> reads no other issue and does no org-wide scan of the
+<code>security</code> issues (vergil-project/vergil-tooling#5138), so its cost does
+not grow with the number of security issues in the org. An issue whose
+<code>Security advisory:</code> line names the record although the record does not
+track it is a broken pair: <code>close</code> does not comment on it, and
+<a href="#sync"><code>sync</code></a> reports it. An issue that was transferred is followed to
+where it is now. The steps run in order, and each starts only once the
+one before it succeeded:</p>
 <ol>
 <li><strong>Check.</strong> Refuse, changing nothing, when:</li>
 <li>the advisory does not exist in <code>&lt;org&gt;/.github</code>;</li>
 <li>it is an external report, or in any state other than <code>draft</code> or
      <code>closed</code> (<code>published</code>, <code>withdrawn</code>, <code>triage</code>): those are a human's
      decision, and <code>sync</code> leaves them alone too;</li>
-<li>no issue tracks it and none names it, so no issue could carry the
-     comment;</li>
-<li>any of its issues is still open. <code>sync</code> sets an advisory back to
+<li>it tracks no issue, so no issue could carry the comment;</li>
+<li>any issue it tracks is still open. <code>sync</code> sets an advisory back to
      draft while any issue it tracks is open, so the close would not
      hold: close the issue first (as not planned, for dropped work), or
-     retarget the record;</li>
-<li>any <code>security</code>-labelled issue in the org has a body the trust layer
-     does not trust: the lines that pick the issues naming the record are
-     read only from trusted bodies, so the issues to comment on cannot be
-     known. The message names metadata only, and the human decides.</li>
-<li><strong>Comment.</strong> Post <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on each
+     retarget the record.</li>
+</ol>
+<p>No issue body is read: the tracking lines, in the advisory's own
+   description, pick the issues, so no body can decide the close.
+2. <strong>Comment.</strong> Post <code>Security record &lt;GHSA-id&gt; closed: &lt;reason&gt;</code> on each
    issue, skipping one that already carries that exact comment from a
    trusted author (its author and every editor trusted, judged by the trust
    layer); any other copy is reported on stderr, metadata only, and the
-   comment is posted.</li>
-<li><strong>Close.</strong> Set the advisory's state to <code>closed</code>, unless it already is.</li>
-</ol>
+   comment is posted.
+3. <strong>Close.</strong> Set the advisory's state to <code>closed</code>, unless it already is.</p>
 <p>The comments go first, so a closed record always has its audit trail.
 After a failure at any step, re-run the same command: it posts no
 comment twice and finishes the job. A failure exits 1 with a message
