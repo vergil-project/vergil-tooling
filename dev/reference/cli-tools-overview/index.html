@@ -22603,8 +22603,12 @@ repo and oldest first within each. Each line is
 <code>blocked by &lt;refs&gt;</code> when a blocker is open. The kind is <code>validation</code> or
 <code>deployment</code> from the task's label, else <code>task</code>. The state is <strong>in-flight</strong>
 when any in-flight mark holds (it outranks blocked), else <strong>blocked</strong> while any
-<code>Blocked-by:</code> dependency is open, else <strong>ready</strong>; only the open blockers are
-listed.</p>
+blocker is open, else <strong>ready</strong>; only the open blockers are listed. A task's
+blockers are its body <code>Blocked-by:</code> lines and its native GitHub blocked-by
+relationships, a blocker in another repo or org included: the native ones are
+read with the sub-issue listing, in the same query. A native list that cannot
+be read, or gives fewer blockers than GitHub counts (one the token cannot see,
+or more than 100), fails the run with exit 1, never shows the task ready.</p>
 <p>A task's <strong>marks</strong>, in this order, are: <code>open-pr</code> (an open PR closes it, or has
 a <code>feature/&lt;N&gt;-</code> head branch; only a same-repo PR with a trusted author counts,
 and it closes the task only by a closing line of a trusted body or a hand link
