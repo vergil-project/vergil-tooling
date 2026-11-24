@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from tests.vergil_tooling.conftest import FakeApp
 
 _MOD = "vergil_tooling.lib.cd_runs"
+# CD runs are read through lib/github's runner, which calls subprocess.run.
+_GH_RUN = "vergil_tooling.lib.github.subprocess.run"
 _SHA = "abc123def456"
 _URL = "https://github.com/o/r/actions/runs/12345"
 
@@ -86,7 +88,7 @@ def test_watch_waits_through_queued() -> None:
             _view("completed", "success"),
         ]
     )
-    with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep") as sleep:
+    with patch(_GH_RUN, side_effect=fake), patch(_MOD + ".time.sleep") as sleep:
         assert watch_run("12345", timeout=3600) == "success"
     assert sleep.call_count == 3
     assert all(list(call[:4]) == ["gh", "run", "view", "12345"] for call in fake.calls)
@@ -94,7 +96,7 @@ def test_watch_waits_through_queued() -> None:
 
 def test_watch_timeout_is_timed_out() -> None:
     fake = _FakeGh(views=[_view("in_progress")])
-    with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep"):
+    with patch(_GH_RUN, side_effect=fake), patch(_MOD + ".time.sleep"):
         assert watch_run("12345", timeout=0) == "timed_out"
 
 
@@ -111,7 +113,7 @@ def test_watch_timeout_is_timed_out() -> None:
 )
 def test_watch_maps_conclusions(conclusion: str, state: str) -> None:
     fake = _FakeGh(views=[_view("completed", conclusion)])
-    with patch(_MOD + ".subprocess.run", side_effect=fake):
+    with patch(_GH_RUN, side_effect=fake):
         assert watch_run("12345", timeout=0) == state
 
 
@@ -121,7 +123,7 @@ def test_watch_maps_conclusions(conclusion: str, state: str) -> None:
 def test_watch_tells_a_supersede_from_another_cancel(group: str | None, state: str) -> None:
     fake = _FakeGh(views=[_view("completed", "cancelled")])
     with (
-        patch(_MOD + ".subprocess.run", side_effect=fake),
+        patch(_GH_RUN, side_effect=fake),
         patch(_MOD + "._supersede_group", return_value=group) as lookup,
     ):
         assert watch_run("12345", timeout=0) == state
@@ -131,7 +133,7 @@ def test_watch_tells_a_supersede_from_another_cancel(group: str | None, state: s
 def test_watch_raises_when_a_cancel_cannot_be_checked() -> None:
     fake = _FakeGh(views=[_view("completed", "cancelled")])
     with (
-        patch(_MOD + ".subprocess.run", side_effect=fake),
+        patch(_GH_RUN, side_effect=fake),
         patch(_MOD + "._supersede_group", side_effect=ValueError("no jobs list")),
         pytest.raises(ValueError, match="no jobs list"),
     ):
@@ -144,7 +146,7 @@ def test_watch_raises_when_a_cancel_cannot_be_checked() -> None:
 def test_find_run_matches_by_sha_and_names_the_repo() -> None:
     mine = _run()
     fake = _FakeGh(lists=[[], [_run(sha="deadbeef"), mine]])
-    with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep"):
+    with patch(_GH_RUN, side_effect=fake), patch(_MOD + ".time.sleep"):
         assert find_run("o/r", "develop", _SHA, dispatch_timeout=3600) == mine
     assert list(fake.calls[0][:5]) == ["gh", "run", "list", "--repo", "o/r"]
     assert "develop" in fake.calls[0]
@@ -152,7 +154,7 @@ def test_find_run_matches_by_sha_and_names_the_repo() -> None:
 
 def test_find_run_none_when_no_run_registers() -> None:
     fake = _FakeGh(lists=[[_run(sha="deadbeef")]])
-    with patch(_MOD + ".subprocess.run", side_effect=fake), patch(_MOD + ".time.sleep"):
+    with patch(_GH_RUN, side_effect=fake), patch(_MOD + ".time.sleep"):
         assert find_run("o/r", "develop", _SHA, dispatch_timeout=0) is None
 
 
@@ -167,7 +169,7 @@ def test_find_run_none_when_no_run_registers() -> None:
 def test_find_run_raises_when_runs_cannot_be_listed(response: CompletedProcess) -> None:
     fake = _FakeGh(lists=[response])
     with (
-        patch(_MOD + ".subprocess.run", side_effect=fake),
+        patch(_GH_RUN, side_effect=fake),
         pytest.raises(CDRunLookupError, match="gh run list --repo o/r"),
     ):
         find_run("o/r", "develop", _SHA, dispatch_timeout=0)
@@ -200,7 +202,7 @@ def _token(env: object) -> object:
 def test_run_list_uses_the_current_identitys_token(fake_app: FakeApp) -> None:
     fake_app.cwd_org = "cwd-org"
     fake = _EnvRecorder(lists=[[]])
-    with patch(_MOD + ".subprocess.run", side_effect=fake):
+    with patch(_GH_RUN, side_effect=fake):
         assert cd_runs._list_cd_runs("develop") == []
     assert _token(fake.envs[0]) == "ghs_fake_cwd-org"
 
@@ -208,7 +210,7 @@ def test_run_list_uses_the_current_identitys_token(fake_app: FakeApp) -> None:
 def test_run_list_of_a_named_repo_uses_that_owners_token(fake_app: FakeApp) -> None:
     fake_app.cwd_org = "cwd-org"
     fake = _EnvRecorder(lists=[[]])
-    with patch(_MOD + ".subprocess.run", side_effect=fake):
+    with patch(_GH_RUN, side_effect=fake):
         assert cd_runs._list_cd_runs("develop", repo="target-org/r") == []
     assert _token(fake.envs[0]) == "ghs_fake_target-org"
 
@@ -216,7 +218,7 @@ def test_run_list_of_a_named_repo_uses_that_owners_token(fake_app: FakeApp) -> N
 def test_run_view_uses_the_current_identitys_token(fake_app: FakeApp) -> None:
     fake_app.cwd_org = "cwd-org"
     fake = _EnvRecorder(views=[_view("completed", "success")])
-    with patch(_MOD + ".subprocess.run", side_effect=fake):
+    with patch(_GH_RUN, side_effect=fake):
         assert watch_run("12345", timeout=0) == "success"
     assert _token(fake.envs[0]) == "ghs_fake_cwd-org"
 
@@ -236,7 +238,7 @@ def test_run_list_without_credentials_names_the_cause(
 
     monkeypatch.setattr(github, "get_installation_token", no_token)
     with (
-        patch(_MOD + ".subprocess.run", side_effect=AssertionError("gh must not run")),
+        patch(_GH_RUN, side_effect=AssertionError("gh must not run")),
         pytest.raises(CDRunLookupError, match="no credentials to list the CD runs") as raised,
     ):
         cd_runs._list_cd_runs("develop", repo="o/r")
@@ -253,7 +255,7 @@ def test_run_view_without_credentials_raises(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(github, "get_installation_token", no_token)
     with (
-        patch(_MOD + ".subprocess.run", side_effect=AssertionError("gh must not run")),
+        patch(_GH_RUN, side_effect=AssertionError("gh must not run")),
         pytest.raises(github.AppAuthError, match="the key was rejected"),
     ):
         watch_run("12345", timeout=0)

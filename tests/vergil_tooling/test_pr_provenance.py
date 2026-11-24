@@ -705,8 +705,22 @@ def test_only_the_first_close_after_the_merge_accompanies_it() -> None:
 
 def test_merge_close_without_timestamps_is_violation() -> None:
     # No timestamp to tie the close to the merge: it fails closed.
-    timeline = [{"event": "merged", "actor": _bot(_AGENT)}, {"event": "closed", "actor": _bot(_AGENT)}]
+    timeline = [
+        {"event": "merged", "actor": _bot(_AGENT)},
+        {"event": "closed", "actor": _bot(_AGENT)},
+    ]
     assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_merge_close_without_an_actor_is_violation() -> None:
+    # No actor to compare with the merge's: it fails closed.
+    actor = trust.Identity("a-vergil-user[bot]", "Bot")
+    actions = [
+        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT),
+        Action(_AGENT, Role.USER, "closed", None, at=_MERGED_AT),
+    ]
+    result = pr_provenance.evaluate(actions, author=trust.Identity("app/a-vergil-user", "Bot"))
+    assert _violations(result) == [(_AGENT, "closed")]
 
 
 def test_merge_close_on_another_identitys_pr_is_violation() -> None:
