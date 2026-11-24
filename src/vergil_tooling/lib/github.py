@@ -2807,7 +2807,7 @@ def close_issue(repo: str, number: int, *, comment: str) -> None:
     )
 
 
-def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
+def merge(pr: str, *, strategy: str, match_head: str | None = None, admin: bool = False) -> None:
     """Merge a PR synchronously (without ``--auto``).
 
     ``strategy`` is one of ``"merge"``, ``"squash"``, ``"rebase"`` — passed
@@ -2818,13 +2818,24 @@ def merge(pr: str, *, strategy: str, match_head: str | None = None) -> None:
     after the caller checked it is refused, never merged unchecked (a batch
     PR, epic vergil-project/.github#1019).
 
+    ``admin`` passes ``--admin``: the merge uses the caller's ruleset and
+    branch-protection bypass, which also skips the base branch's required
+    checks and reviews. It requires ``match_head``, so a bypassed merge is
+    always pinned to the head the caller checked; the release PR's merge into
+    ``main`` is its only use (vergil-project/vergil-tooling#5095).
+
     Does not pass ``--delete-branch`` — branch cleanup is the caller's
     own step after the merge completes.
     """
-    if match_head is None:
-        run("pr", "merge", f"--{strategy}", pr)
-        return
-    run("pr", "merge", f"--{strategy}", "--match-head-commit", match_head, pr)
+    if admin and match_head is None:
+        msg = "an --admin merge must be pinned with match_head"
+        raise ValueError(msg)
+    args = ["pr", "merge", f"--{strategy}"]
+    if admin:
+        args.append("--admin")
+    if match_head is not None:
+        args += ["--match-head-commit", match_head]
+    run(*args, pr)
 
 
 #: Upper bound on a ``gh issue list`` / ``gh repo list`` / ``gh search`` lookup

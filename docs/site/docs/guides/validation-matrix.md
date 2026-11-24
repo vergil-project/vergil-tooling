@@ -182,8 +182,8 @@ dev images come from
 1. repo-profile: `vergil.toml` is present and valid, and
    `README.md` follows the structural conventions. See the
    [repo-profile reference](../reference/lint/repo-profile.md).
-2. markdownlint on `docs/site/**/*.md`, `README.md` and `epics/`, in one
-   pass with the canonical config bundled in vergil-tooling. See the
+2. markdownlint on `docs/site/**/*.md`, `docs/security/**/*.md`,
+   `README.md` and `epics/`, in one pass with the canonical config bundled in vergil-tooling. See the
    [Markdown Validation](../reference/lint/markdown-standards.md)
    reference.
 3. docs-links: a link to a mike-versioned Vergil docs site must carry a

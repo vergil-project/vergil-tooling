@@ -12,12 +12,14 @@ Validation targets these files:
 | Source | Pattern |
 | ------ | ------- |
 | Documentation site | `docs/site/**/*.md` |
+| Security records, such as the Scorecard snapshots | `docs/security/**/*.md` |
 | Project README | `README.md` |
 | Epic specs, plans and retrospectives | `epics/**/*.md` |
 
-Other markdown files (changelogs, release notes, internal docs) are
-not validated by this check. The `[markdownlint].ignore` paths in
-`vergil.toml` drop files under `docs/site/` and `epics/`.
+Other markdown files (changelogs, release notes, internal docs, and the
+rest of `docs/`, such as plans and specs) are not validated by this
+check. The `[markdownlint].ignore` paths in `vergil.toml` drop files
+under `docs/site/`, `docs/security/` and `epics/`.
 
 ## Configuration
 
