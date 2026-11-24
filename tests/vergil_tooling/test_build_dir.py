@@ -13,6 +13,7 @@ from vergil_tooling.lib.merge_review.state import (
     StateDirError,
     ensure_issue_dir,
     ensure_private_dir,
+    ensure_task_dir,
     existing_issue_dir,
 )
 
@@ -202,3 +203,99 @@ def test_existing_issue_dir_refuses_a_symlinked_build(tmp_path: Path) -> None:
 def test_existing_issue_dir_refuses_non_positive_issue(tmp_path: Path) -> None:
     with pytest.raises(StateDirError, match="issue number must be positive"):
         existing_issue_dir(tmp_path, 0)
+
+
+# -- any kind's task directory ------------------------------------------------------
+
+
+def _task_levels(root: Path, kind: str = "operational", issue: int = 7) -> list[Path]:
+    state = root / "build" / ".vergil-state"
+    return [state, state / kind, state / kind / str(issue)]
+
+
+@pytest.mark.parametrize("kind", ["operational", "issue-implement", "upstream-report"])
+def test_task_dir_created_mode_700(tmp_path: Path, kind: str) -> None:
+    path = ensure_task_dir(tmp_path, kind, 7)
+    levels = _task_levels(tmp_path, kind)
+    assert path == levels[-1]
+    assert [_mode(level) for level in levels] == [0o700] * 3
+    assert list(path.iterdir()) == []
+
+
+def test_task_dir_issue_implement_is_the_issue_dir(tmp_path: Path) -> None:
+    assert ensure_task_dir(tmp_path, "issue-implement", 7) == ensure_issue_dir(tmp_path, 7)
+
+
+def test_task_dir_existing_levels_accepted(tmp_path: Path) -> None:
+    first = ensure_task_dir(tmp_path, "operational", 7)
+    (first / "security-1.md").write_text("x")
+    assert ensure_task_dir(tmp_path, "operational", 7) == first
+    assert (first / "security-1.md").read_text() == "x"
+
+
+def test_task_dir_mode_is_700_whatever_the_umask(tmp_path: Path) -> None:
+    (tmp_path / "build").mkdir()
+    old = os.umask(0o277)
+    try:
+        ensure_task_dir(tmp_path, "operational", 7)
+    finally:
+        os.umask(old)
+    assert [_mode(level) for level in _task_levels(tmp_path)] == [0o700] * 3
+
+
+def test_task_dir_refuses_symlinked_kind(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    elsewhere.chmod(0o700)
+    state = _task_levels(tmp_path)[0]
+    state.mkdir(parents=True)
+    state.chmod(0o700)
+    (state / "operational").symlink_to(elsewhere)
+    with pytest.raises(StateDirError, match="operational is a symlink, not a directory"):
+        ensure_task_dir(tmp_path, "operational", 7)
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_task_dir_refuses_a_dangling_symlinked_issue_level(tmp_path: Path) -> None:
+    ensure_task_dir(tmp_path, "operational", 8)
+    _task_levels(tmp_path)[2].symlink_to(tmp_path / "missing")
+    with pytest.raises(StateDirError, match="7 is a symlink, not a directory"):
+        ensure_task_dir(tmp_path, "operational", 7)
+    assert not (tmp_path / "missing").exists()
+
+
+def test_task_dir_refuses_a_file_level(tmp_path: Path) -> None:
+    ensure_task_dir(tmp_path, "operational", 8)
+    _task_levels(tmp_path)[2].write_text("not a directory")
+    with pytest.raises(StateDirError, match="7 is not a directory"):
+        ensure_task_dir(tmp_path, "operational", 7)
+
+
+@pytest.mark.parametrize("level", [0, 1, 2])
+def test_task_dir_refuses_a_wrong_mode_at_any_level(tmp_path: Path, level: int) -> None:
+    ensure_task_dir(tmp_path, "operational", 7)
+    _task_levels(tmp_path)[level].chmod(0o750)
+    with pytest.raises(StateDirError, match="has mode 750, not 700"):
+        ensure_task_dir(tmp_path, "operational", 7)
+
+
+def test_task_dir_refuses_public_root_creating_nothing(tmp_path: Path) -> None:
+    state = _task_levels(tmp_path)[0]
+    state.mkdir(parents=True)
+    state.chmod(0o755)
+    with pytest.raises(StateDirError, match=r"\.vergil-state has mode 755, not 700"):
+        ensure_task_dir(tmp_path, "operational", 7)
+    assert list(state.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["design-review", "merge-review", "", "../operational"])
+def test_task_dir_refuses_an_unknown_kind(tmp_path: Path, kind: str) -> None:
+    with pytest.raises(StateDirError, match="unknown state directory kind"):
+        ensure_task_dir(tmp_path, kind, 7)
+    assert not (tmp_path / "build").exists()
+
+
+def test_task_dir_refuses_non_positive_issue(tmp_path: Path) -> None:
+    with pytest.raises(StateDirError, match="issue number must be positive"):
+        ensure_task_dir(tmp_path, "operational", 0)
+    assert not (tmp_path / "build").exists()

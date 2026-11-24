@@ -119,3 +119,35 @@ def test_state_rejects_a_malformed_issue_list(issues: object, message: str) -> N
     payload["issues"] = issues
     with pytest.raises(WorkflowError, match=message):
         WorkflowState.from_json(json.dumps(payload))
+
+
+# --- recorded_by (epic vergil-project/.github#1384, Task 9) ---------------------
+
+
+def test_recorded_by_round_trips_after_status() -> None:
+    state = _state(recorded_by="user")
+    payload = json.loads(state.to_json())
+    keys = list(payload)
+    assert keys[keys.index("status") + 1] == "recorded_by"
+    assert payload["recorded_by"] == "user"
+    assert WorkflowState.from_json(state.to_json()) == state
+
+
+def test_state_without_recorded_by_reads_as_none() -> None:
+    payload = json.loads(_state().to_json())
+    assert "recorded_by" not in payload
+    assert WorkflowState.from_json(json.dumps(payload)).recorded_by is None
+
+
+def test_unknown_recorded_by_is_kept_for_submit_to_judge() -> None:
+    payload = json.loads(_state().to_json())
+    payload["recorded_by"] = "someone-else"
+    assert WorkflowState.from_json(json.dumps(payload)).recorded_by == "someone-else"
+
+
+@pytest.mark.parametrize("value", ["", 7, ["user"]])
+def test_malformed_recorded_by_rejected(value: object) -> None:
+    payload = json.loads(_state().to_json())
+    payload["recorded_by"] = value
+    with pytest.raises(WorkflowError, match="recorded_by"):
+        WorkflowState.from_json(json.dumps(payload))

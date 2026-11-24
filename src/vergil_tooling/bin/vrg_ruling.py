@@ -7,16 +7,12 @@ One round on a task issue is a **request** (posted here), the human's
 - ``request --issue --items`` posts a request from a request items file and
   prints its comment ID. It refuses while the issue has an open exchange,
   naming that request's ID so a resumed run can pick it up.
-- ``request --issue --kind protected-change`` and ``request --issue --kind
-  merge-review-exemption --reason`` post one of the two requests whose reply
-  carries a structured decision (epic .github#1384, :mod:`.approvals`). Each
-  computes its own inputs from the clone it runs in, from ``HEAD`` and its
-  merge base with :data:`BASE_REF`: the first lists the protected files the
-  change touches with their blobs at ``HEAD`` (the protected set read at
-  :data:`BASE_REF`) and links their diff; the second records the change
-  fingerprint. Neither takes a blob or a fingerprint. Each prints the
-  request's comment ID, then (on stderr) the human's two
-  ``vrg-ruling-reply`` commands, one per decision.
+- ``request --issue --kind merge-review-exemption --reason`` posts the
+  request whose reply carries a structured decision (epic .github#1384,
+  :mod:`.approvals`). It computes the change fingerprint itself, from
+  ``HEAD`` and its merge base with :data:`BASE_REF` in the clone it runs in,
+  and takes none. It prints the request's comment ID, then (on stderr) the
+  human's two ``vrg-ruling-reply`` commands, one per decision.
 - ``draft --issue --request --items`` builds the human's reply from a reply
   items file, pushes it to the request's draft ref on the issue's repo
   (``refs/vergil/ruling-draft/<issue>/<request ID>``) and prints the human's
@@ -59,13 +55,11 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import git, github, identity_mode, trust
 from vergil_tooling.lib.change_fingerprint import FingerprintError, change_fingerprint
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.protected_paths import ProtectedPathsError, changed_protected
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
 from vergil_tooling.lib.rulings.approvals import (
     DECISION_LINES,
     REQUEST_KINDS,
     render_exemption_request,
-    render_protected_change_request,
 )
 from vergil_tooling.lib.rulings.exchange import (
     FatalCheck,
@@ -100,7 +94,6 @@ from vergil_tooling.lib.trusted_authors import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vergil_tooling.lib.protected_paths import ProtectedChange
     from vergil_tooling.lib.rulings.approvals import RequestKind
 
 _PROG = "vrg-ruling"
@@ -111,8 +104,8 @@ EXIT_USAGE = 2
 EXIT_NO_REPLY = 3
 EXIT_FATAL = 4
 
-#: The base a typed request's change is taken against, and the ref its
-#: protected set is read at: the clone's ``origin/develop``, as last fetched.
+#: The base a typed request's change is taken against: the clone's
+#: ``origin/develop``, as last fetched.
 BASE_REF = "origin/develop"
 
 
@@ -192,19 +185,13 @@ def _request(ctx: _Context, items_path: Path) -> int:
 
 
 def _typed_request(ctx: _Context, kind: RequestKind, reason: str | None) -> int:
-    """Post a protected-change or exemption request, its inputs computed from ``HEAD``."""
-    if kind == "merge-review-exemption":
-        if reason is None:
-            # parse_args requires it; checked again here so nothing posts without it.
-            msg = "--kind merge-review-exemption needs --reason"
-            raise RulingError(msg)
-        head, _merge_base, repo_root = _change_range()
-        body = render_exemption_request(reason, _fingerprint(repo_root, head))
-    else:
-        head, merge_base, repo_root = _change_range()
-        body = render_protected_change_request(
-            _protected_changes(repo_root, head), _diff_url(repo_root, merge_base, head)
-        )
+    """Post an exemption request, its fingerprint computed from ``HEAD``."""
+    if reason is None:
+        # parse_args requires it; checked again here so nothing posts without it.
+        msg = "--kind merge-review-exemption needs --reason"
+        raise RulingError(msg)
+    head, repo_root = _change_head()
+    body = render_exemption_request(reason, _fingerprint(repo_root, head))
     _check_body(body, Marker("request", None, None, kind), ctx, f"{kind} request")
     comment_id = _post_request(ctx, body)
     print(comment_id)
@@ -222,27 +209,19 @@ def _typed_request(ctx: _Context, kind: RequestKind, reason: str | None) -> int:
     return EXIT_OK
 
 
-def _change_range() -> tuple[str, str, Path]:
-    """``HEAD``'s commit, its merge base with :data:`BASE_REF`, and the clone's root."""
+def _change_head() -> tuple[str, Path]:
+    """``HEAD``'s commit and the clone's root; ``HEAD`` must share a base with :data:`BASE_REF`."""
     try:
         repo_root = git.repo_root()
         head = git.commit_sha("HEAD")
-        merge_base = git.merge_base(BASE_REF, head)
+        git.merge_base(BASE_REF, head)
     except (subprocess.CalledProcessError, ValueError) as exc:
         msg = (
             f"cannot take the change from HEAD and its merge base with {BASE_REF}"
             f" in this clone: {exc}; nothing was posted"
         )
         raise RulingError(msg) from exc
-    return head, merge_base, repo_root
-
-
-def _protected_changes(repo_root: Path, head: str) -> list[ProtectedChange]:
-    try:
-        return changed_protected(repo_root, BASE_REF, head, BASE_REF)
-    except ProtectedPathsError as exc:
-        msg = f"cannot list the protected files the change touches: {exc}; nothing was posted"
-        raise RulingError(msg) from exc
+    return head, repo_root
 
 
 def _fingerprint(repo_root: Path, head: str) -> str:
@@ -251,20 +230,6 @@ def _fingerprint(repo_root: Path, head: str) -> str:
     except FingerprintError as exc:
         msg = f"cannot compute the change fingerprint: {exc}; nothing was posted"
         raise RulingError(msg) from exc
-
-
-def _diff_url(repo_root: Path, merge_base: str, head: str) -> str:
-    """The GitHub compare link from the merge base to ``HEAD``, on ``origin``'s repo."""
-    try:
-        url = git.remote_url("origin", repo_root)
-    except subprocess.CalledProcessError as exc:
-        msg = f"cannot read this clone's origin to link the diff: {exc}; nothing was posted"
-        raise RulingError(msg) from exc
-    code_repo = github.github_remote_repo(url)
-    if code_repo is None:
-        msg = "this clone's origin is not a GitHub repo, so the diff cannot be linked"
-        raise RulingError(msg)
-    return f"https://github.com/{code_repo}/compare/{merge_base}...{head}"
 
 
 def _post_request(ctx: _Context, body: str) -> int:
@@ -454,7 +419,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     request = sub.add_parser(
         "request",
-        help="Post a request from an items file, or a protected-change or exemption request",
+        help="Post a request from an items file, or a merge-review exemption request",
     )
     request.add_argument("--issue", required=True, help="The task issue, owner/repo#N")
     what = request.add_mutually_exclusive_group(required=True)
@@ -463,10 +428,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--kind",
         choices=tuple(REQUEST_KINDS),
         help=(
-            "Post a request whose reply carries one Decision line, its inputs computed"
-            f" from HEAD and its merge base with {BASE_REF}: protected-change lists the"
-            " protected files the change touches with their blobs and links the diff;"
-            " merge-review-exemption records the change fingerprint"
+            "Post a request whose reply carries one Decision line:"
+            " merge-review-exemption records the change fingerprint, computed"
+            f" from HEAD and its merge base with {BASE_REF}"
         ),
     )
     request.add_argument(

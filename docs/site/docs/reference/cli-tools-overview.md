@@ -280,7 +280,8 @@ Any other issue, and a batch, prints no `planning_close`.
 
 The batch hard rules are: 2 to 8 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
-directly Blocked-by an open deployment task and opened by a trusted author,
+directly blocked by an open deployment task (through a `Blocked-by:` line or a
+native GitHub blocked-by relationship) and opened by a trusted author,
 and all with the same parent epic (a finite epic or the repo's ad-hoc epic).
 The one-commit-per-issue check holds the branch, from its base, to exactly
 one commit per issue in the listed order, each subject ending in a space and
@@ -1443,8 +1444,12 @@ repo and oldest first within each. Each line is
 `blocked by <refs>` when a blocker is open. The kind is `validation` or
 `deployment` from the task's label, else `task`. The state is **in-flight**
 when any in-flight mark holds (it outranks blocked), else **blocked** while any
-`Blocked-by:` dependency is open, else **ready**; only the open blockers are
-listed.
+blocker is open, else **ready**; only the open blockers are listed. A task's
+blockers are its body `Blocked-by:` lines and its native GitHub blocked-by
+relationships, a blocker in another repo or org included: the native ones are
+read with the sub-issue listing, in the same query. A native list that cannot
+be read, or gives fewer blockers than GitHub counts (one the token cannot see,
+or more than 100), fails the run with exit 1, never shows the task ready.
 
 A task's **marks**, in this order, are: `open-pr` (an open PR closes it, or has
 a `feature/<N>-` head branch; only a same-repo PR with a trusted author counts,
@@ -1901,6 +1906,33 @@ makes there, and writes only to the path it prints.
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments, 3 a check's `--fix-base` is not an ancestor of `HEAD` (the branch was rebased) |
 | Status | Active |
 
+### vrg-state-dir
+
+Create and check a task's private state directory,
+`build/.vergil-state/<kind>/<N>/` in the main clone, as
+[doctrine §1.5](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)
+requires, and print its absolute path. `--kind` is `operational` (the
+security items of `issue-validate` and `issue-deploy`), `issue-implement` or
+`upstream-report`. `build` must be a real directory (it is created when
+absent), and each level from `.vergil-state` down to `<N>` must be a real
+directory, not a symlink, with mode exactly 700; an absent level is created
+mode 700. A level that fails stops the command before anything is created
+below it. These are the checks
+[`vrg-merge-review-request --ensure-dir`](#vrg-merge-review-request) makes,
+through the same code. Before it creates or checks anything, it refuses
+unless the current clone's `origin` is the `--issue` repository, naming both
+repositories. The caller runs it before every write it makes there, and
+writes only to the path it prints.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_state_dir` (library: `lib/merge_review/state.py`, `lib/build_dir.py`) |
+| Args | `--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure` |
+| Preconditions | Run in a clone (or worktree) of the `--issue` repository |
+| Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
+| Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments |
+| Status | Active |
+
 ### vrg-epic-audit
 
 Report epic/task drift and invariant violations for an org, as Markdown on
@@ -1917,7 +1949,10 @@ child, orphans, retired kind labels, body-only `Parent:` links, and a
 misplaced archive (one with a parent, one without its `archive` label, or one
 labelled `archive` whose title is not a stamped archive title). It also
 lists open epics with operational tasks still pending (an operational task is
-runnable or blocked by the `Blocked-by:` lines of its body, which count only
+runnable or blocked by the `Blocked-by:` lines of its body and its native
+GitHub blocked-by relationships, a blocker in another repo or org included;
+a native list that cannot be read in full fails the audit, never reads as
+runnable. The `Blocked-by:` lines count only
 from a body the trust layer trusts; a task whose body is untrusted or cannot
 be read in full is **stopped**, not the audit: its epic's line ends
 `stopped: <K> (see stderr)`, a count only, each stop is named on stderr,
@@ -2398,6 +2433,32 @@ See the [GitHub Config Audit reference](config-audit.md).
 | Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity or a sync PR that did not merge) |
 | Status | Active |
 
+### vrg-agent-audit
+
+The daily audit of agent merges
+([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384),
+spec §4.8). It checks every merge into `develop` and `main` since the
+audit's markers, the `vergil/agent-audit/develop` and
+`vergil/agent-audit/main` branches. For every PR, whoever merged it or
+turned auto-merge on must be the human, or the user agent or the
+automation App on its own PR (into `main`, the human only), and its
+provenance must be clean. For an agent-involved PR merged into `develop`,
+its change must be covered by a merge-review record or an approved
+merge-review exemption. It then moves each
+marker to where its audit reached; a read failure stops there, so the next
+run checks the rest again. A missing marker is a finding, never
+re-created. It is a security-signal job: it files no issue and posts
+nothing.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_agent_audit` |
+| Args | `--repo OWNER/REPO` (required); `--init` creates each missing marker at its branch's tip and audits nothing (repo init and the one-time go-live only) |
+| Preconditions | Run in a full-history clone whose `origin` is the repo; the trusted-authors configuration, naming one human; a token that can move the markers (the admin role or the org automation App) |
+| Failure mode | One finding per line on stdout; one `vrg-agent-audit:` diagnostic on stderr when it cannot start |
+| Exit codes | 0 clean, 1 any finding or read failure, 2 usage error |
+| Status | Active |
+
 ### vrg-dependabot-audit
 
 Fail on any open Dependabot alert, at any severity: the gate for the
@@ -2423,7 +2484,7 @@ the managed `.gitignore` fence, the canonical report-only
 `.github/dependabot.yml`), scaffolds the language skeleton
 (born-green — see below), generates
 CI/CD/epic-rollup/`ops.yml` workflows, the docs site, branch structure,
-GitHub config, and Pages. The scaffolded `base + <language>`
+GitHub config, the agent audit markers, and Pages. The scaffolded `base + <language>`
 `.gitignore` fence, canonical `dependabot.yml` and staggered-cron
 `ops.yml` make a new repo pass the config audit's checks for those
 files from day one.
@@ -2746,9 +2807,12 @@ to `scorecard`.
 
 Create, start, stop, update, rebuild and enter the identity agent VMs,
 Lima on the Mac or off-platform (cloud). Subcommands: `create`, `start`,
-`stop`, `restart`, `update`, `destroy`, `destroy-volume`, `rebuild`,
-`list`, `volumes`, `session` (launch a Claude session in the VM) and `cp`
-(copy files between the host and a VM). `vrg-vm update` reinstalls
+`stop`, `restart`, `update`, `grow-disk`, `destroy`, `destroy-volume`,
+`rebuild`, `list`, `volumes`, `session` (launch a Claude session in the
+VM) and `cp` (copy files between the host and a VM). `vrg-vm grow-disk`
+grows a Lima VM's disk in place to its configured size and refuses a
+shrink (see [VM Spec](vm-spec.md#growing-a-lima-disk-in-place)).
+`vrg-vm update` reinstalls
 vergil-tooling, copies the host's `~/.claude` config in and refreshes and
 verifies the plugins in a running VM in place; `--all` updates every
 configured identity's boxes, and one box's failure does not stop the rest.
@@ -2888,7 +2952,11 @@ the `vergil-actions` reusable workflows, the custom stage as
 for every check and where it runs. Every pipeline run, pass or fail,
 writes `.vergil/vrg-validate-last.json`: the commit at the start, the exit
 code, whether the run was full (no `--check`) and the tree clean at the
-start, and each stage's status. `vrg-merge-review-request` reads it.
+start, and each stage's status. A stage skipped because the repository
+is not bootstrapped yet also carries a `skip` object: the reason
+`not-bootstrapped`, the language and the missing manifests. A run that
+skips no stage records none. `vrg-merge-review-request` reads it; a
+release from before `skip` existed refuses a record that carries one.
 
 `--markdown FILE...` is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as

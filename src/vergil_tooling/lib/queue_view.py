@@ -48,8 +48,9 @@ advisory: then the home is listed anyway, and a failed read fails the view.
 The ad-hoc view is not a review queue: it is the open tasks under every live
 ``Epic (ad hoc): <repo>`` epic (``epic`` + ``ad-hoc``) in a home, grouped by
 repo and oldest first within each, each with its kind (``task``,
-``validation`` or ``deployment``), its open ``Blocked-by:`` refs and its
-state: ``in-flight`` when any in-flight mark holds for it (see
+``validation`` or ``deployment``), its open blockers (its ``Blocked-by:``
+refs and its native blocked-by relationships) and its state: ``in-flight``
+when any in-flight mark holds for it (see
 :mod:`vergil_tooling.lib.in_flight`; it outranks ``blocked``), else
 ``blocked`` while any blocker is open, else ``ready``. An in-flight task
 carries its marks and its disposition (``handed-off`` or ``resume``). The
@@ -83,6 +84,13 @@ body is untrusted, or cannot be read in full, stops that task only (#4971):
 it is left out and recorded in the caller's
 :class:`~vergil_tooling.lib.trust.BatchStops` with its cause, and the view
 carries on with the rest.
+
+They also count each task's native blocked-by relationships (#5094), a
+blocker in another repo or org included, read with the sub-issue listing
+(:func:`epics.child_states_with_blockers`; a reflink-fallback child's are
+read on their own with :func:`epics.native_blockers_of`). A read of them
+that fails, or gives fewer blockers than GitHub counts, fails the whole
+view: a task is never shown ready on a blocker list it could not read.
 
 The planning view reads each item's ``Security advisory:`` lines, for the
 hold and the broken-pair note, from its body in the same trust-layer read as
@@ -775,7 +783,8 @@ def adhoc_items(
     repo roots). A task whose body is untrusted, or cannot be read in full
     by the trust layer, is left out and added to *stops* (spec §5.3: a batch
     run stops the item, not the run). A failed read of the epics, a
-    sub-issue list, a task, a blocker's state or any in-flight source
+    sub-issue list, a task, a blocker's state, a native blocked-by list
+    (an incomplete one included) or any in-flight source
     raises, as does a truncated epic search or a repo with no main clone;
     nothing is shown short or wrongly ready.
     """
@@ -814,6 +823,35 @@ def _bare_name(repo: str) -> str:
     return repo.split("/", 1)[1]
 
 
+def _open_blockers(
+    body: Sequence[IssueRef], native: Sequence[epics.BlockerState]
+) -> tuple[IssueRef, ...]:
+    """The open blockers among *body*'s ``Blocked-by:`` refs and the *native* ones.
+
+    Body refs come first, in their order, then native blockers not already
+    named (GitHub names ignore case). A body ref's state is read
+    (:func:`epics.issue_state`, a failed read raises); a native blocker's
+    came with its relationship.
+    """
+    seen: set[str] = set()
+    found: list[IssueRef] = []
+    for dep in body:
+        key = dep.slug.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        if epics.issue_state(dep) != "CLOSED":
+            found.append(dep)
+    for blocker in native:
+        key = blocker.ref.slug.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        if blocker.state != "CLOSED":
+            found.append(blocker.ref)
+    return tuple(found)
+
+
 def _standing_items(
     epic_refs: Sequence[IssueRef],
     *,
@@ -828,21 +866,32 @@ def _standing_items(
     is read (GitHub names ignore case). A child whose body the trust layer
     does not trust, or cannot read in full, is a stop on that child only
     (:func:`epics.blockers_or_stop`): it is left out, added to *stops*, and
-    the rest are read. Every other read failure raises.
+    the rest are read. A child's open blockers are its body ``Blocked-by:``
+    refs and its native blocked-by relationships (:func:`_open_blockers`).
+    Only a child the view keeps has its native list checked, so a closed or
+    filtered-out child never fails the view. Every other read failure raises.
     """
+
+    def wanted(child: epics.ChildState) -> bool:
+        if child.state != "OPEN":
+            return False
+        return repo is None or _repo_of(child.ref).casefold() == repo.casefold()
+
     found: list[tuple[IssueRef, dict[str, Any], tuple[IssueRef, ...]]] = []
     for epic in epic_refs:
-        for child in epics.child_states(epic):
-            if child.state != "OPEN":
-                continue
-            if repo is not None and _repo_of(child.ref).casefold() != repo.casefold():
+        for child in epics.child_states_with_blockers(epic, wanted=wanted):
+            if not wanted(child):
                 continue
             view = _view(child.ref, "title,createdAt,labels")
             blockers = epics.blockers_or_stop(child.ref, stops)
             if blockers is None:
                 continue
-            open_blockers = tuple(dep for dep in blockers if epics.issue_state(dep) != "CLOSED")
-            found.append((child.ref, view, open_blockers))
+            native = (
+                child.native_blockers
+                if child.native_blockers is not None
+                else epics.native_blockers_of(child.ref)
+            )
+            found.append((child.ref, view, _open_blockers(blockers, native)))
     signals = _in_flight_signals([ref for ref, _, _ in found], roots)
     items: list[AdhocItem] = []
     for ref, view, open_blockers in found:

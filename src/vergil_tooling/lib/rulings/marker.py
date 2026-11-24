@@ -2,11 +2,11 @@
 
 A request ends with ``<!-- vrg-ruling kind=request -->`` and a response with
 ``<!-- vrg-ruling kind=response request=<id> reply=<id> -->``. A request of
-one of the two kinds whose reply carries a structured decision (epic
-vergil-project/.github#1384, spec §4.5 and §4.6) names its kind with a
-``type`` attribute: ``<!-- vrg-ruling kind=request type=protected-change -->``
-or ``<!-- vrg-ruling kind=request type=merge-review-exemption -->``. A request
-with no ``type`` is an ordinary ruling request, as every earlier request is.
+the kind whose reply carries a structured decision (epic
+vergil-project/.github#1384, spec §4.6) names its kind with a ``type``
+attribute: ``<!-- vrg-ruling kind=request type=merge-review-exemption -->``. A
+request with no ``type`` is an ordinary ruling request, as every earlier
+request is.
 A marker counts only when:
 
 - the comment's author is the derived agent login (a marker anywhere else,
@@ -40,11 +40,10 @@ if TYPE_CHECKING:
 MARKER_PREFIX = "<!-- vrg-ruling"
 
 #: The kind of a request whose reply carries a structured decision.
-type RequestKind = Literal["protected-change", "merge-review-exemption"]
+type RequestKind = Literal["merge-review-exemption"]
 
 #: Every :data:`RequestKind`, by its text in the marker.
 REQUEST_KINDS: dict[str, RequestKind] = {
-    "protected-change": "protected-change",
     "merge-review-exemption": "merge-review-exemption",
 }
 

@@ -354,28 +354,64 @@ class OperationalStatus:
         return self.runnable + self.blocked + self.stopped
 
 
+def _is_open(child: epics.ChildState) -> bool:
+    return child.state == "OPEN"
+
+
+def _blockers_closed(child: epics.ChildState, blockers: list[epics.IssueRef]) -> bool:
+    """True iff every issue *child* is blocked by is closed, body and native alike.
+
+    *blockers* are its ``Blocked-by:`` refs, already read
+    (:func:`epics.blockers_or_stop`). Its native blocked-by relationships, a
+    blocker in another repo or org included, come from the listing
+    (:func:`epics.child_states_with_blockers`) or, for a reflink-fallback
+    child, from their own read (:func:`epics.native_blockers_of`) (#5109). A
+    native read that fails, or gives fewer blockers than GitHub counts,
+    raises: a child is never runnable on a list that could not be read.
+    """
+    native = (
+        child.native_blockers
+        if child.native_blockers is not None
+        else epics.native_blockers_of(child.ref)
+    )
+    if any(blocker.state != "CLOSED" for blocker in native):
+        return False
+    return epics.all_blockers_closed(blockers)
+
+
 def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> OperationalStatus:
     """Classify *epic*'s open operational children as runnable vs blocked, by kind.
 
-    An operational child (validation, deployment, …) is runnable when every task
-    it is ``Blocked-by`` is closed; otherwise it is blocked. This
-    runnable-vs-blocked split, tagged by kind, is the honest "what still has to
-    run" signal — and the seed of a future automator that runs operational tasks
-    as their dependencies land.
+    An operational child (validation, deployment, …) is runnable when every
+    issue it is blocked by, through a ``Blocked-by:`` line or a native
+    relationship (:func:`_blockers_closed`), is closed; otherwise it is
+    blocked. This runnable-vs-blocked split, tagged by kind, is the honest
+    "what still has to run" signal — and the seed of a future automator that
+    runs operational tasks as their dependencies land.
 
     A child whose body is untrusted, or cannot be read in full, is a stop on
     that child only (:func:`epics.blockers_or_stop`): it is added to *stops*,
     listed as ``stopped`` (still pending, with its kind), and the rest are
-    classified.
+    classified. A native blocked-by list that cannot be read in full raises
+    :class:`epics.NativeBlockersReadError`, never "runnable"; only an open
+    operational child's list is checked, so no other child fails the read.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
     stopped: list[epics.IssueRef] = []
     by_kind: dict[epics.IssueRef, str] = {}
-    for child in epics.child_states(epic):
+    kinds: dict[epics.IssueRef, str | None] = {}
+
+    def kind_of(child: epics.ChildState) -> str | None:
+        """*child*'s operational kind, or None for a closed or plain child (read once)."""
         if child.state != "OPEN":
-            continue
-        kind = epics.operational_kind(child.ref)
+            return None
+        if child.ref not in kinds:
+            kinds[child.ref] = epics.operational_kind(child.ref)
+        return kinds[child.ref]
+
+    for child in epics.child_states_with_blockers(epic, wanted=lambda c: kind_of(c) is not None):
+        kind = kind_of(child)
         if kind is None:
             continue
         by_kind[child.ref] = kind
@@ -383,7 +419,7 @@ def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> Oper
         if blockers is None:
             stopped.append(child.ref)
             continue
-        target = runnable if epics.all_blockers_closed(blockers) else blocked
+        target = runnable if _blockers_closed(child, blockers) else blocked
         target.append(child.ref)
     return OperationalStatus(
         epic=epic,
@@ -396,7 +432,7 @@ def operational_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> Oper
 
 @dataclass(frozen=True)
 class ChildStatus:
-    """An epic's open children, split runnable vs blocked by their Blocked-by deps.
+    """An epic's open children, split runnable vs blocked by their blockers.
 
     ``stopped`` holds the open children whose body is untrusted or cannot be
     read in full, so their dependencies are unknown (#4971).
@@ -414,23 +450,25 @@ def child_status(epic: epics.IssueRef, *, stops: trust.BatchStops) -> ChildStatu
     Where :func:`operational_status` is scoped to operational children (its
     runnable/blocked split feeds the "operation-pending" report), this classifies
     *all* open children — plain tasks included — by their ``Blocked-by:``
-    lines. It makes an epic driver's plain-task frontier (the open tasks whose
-    every ``Blocked-by`` dependency is closed) machine-derivable instead of
-    inferred from plan prose (#2269). A child whose body is untrusted, or
-    cannot be read in full, is added to *stops* and listed as ``stopped``,
-    never as runnable; the rest are classified.
+    lines and native blocked-by relationships (:func:`_blockers_closed`). It
+    makes an epic driver's plain-task frontier (the open tasks whose every
+    dependency is closed) machine-derivable instead of inferred from plan
+    prose (#2269). A child whose body is untrusted, or cannot be read in full,
+    is added to *stops* and listed as ``stopped``, never as runnable; the rest
+    are classified. An open child's native list that cannot be read in full
+    raises :class:`epics.NativeBlockersReadError`, never "runnable".
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
     stopped: list[epics.IssueRef] = []
-    for child in epics.child_states(epic):
-        if child.state != "OPEN":
+    for child in epics.child_states_with_blockers(epic, wanted=_is_open):
+        if not _is_open(child):
             continue
         blockers = epics.blockers_or_stop(child.ref, stops)
         if blockers is None:
             stopped.append(child.ref)
             continue
-        target = runnable if epics.all_blockers_closed(blockers) else blocked
+        target = runnable if _blockers_closed(child, blockers) else blocked
         target.append(child.ref)
     return ChildStatus(
         epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), stopped=tuple(stopped)

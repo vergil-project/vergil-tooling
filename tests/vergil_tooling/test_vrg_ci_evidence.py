@@ -874,3 +874,70 @@ def test_unparseable_remote_config_fails_loudly(
     assert rc == 1
     err = capsys.readouterr().err
     assert err.startswith("ERROR: vergil.toml of o/r@cafef00d could not be parsed:")
+
+
+# -- Skip records (issue #5034) ------------------------------------------------
+
+
+def _skip_download(head: str) -> Any:
+    """A download fixture whose ``test`` gate holds only a skip record of *head*."""
+
+    def _download(
+        _repo: str, _run_id: int, dest: Path, _required: tuple[EvidenceGate, ...]
+    ) -> list[Path]:
+        gate_dir = dest / "test"
+        gate_dir.mkdir(parents=True)
+        (gate_dir / "evidence.json").write_text(
+            json.dumps({"gate": "test", "tools": [], "metrics": {}}), encoding="utf-8"
+        )
+        record = {
+            "gate": "test",
+            "language": "python",
+            "version": "3.15",
+            "skipped": True,
+            "reason": "not-bootstrapped",
+            "head": head,
+            "missing_manifests": ["pyproject.toml", "uv.lock"],
+        }
+        (gate_dir / "test-not-bootstrapped-3.15.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+        return [gate_dir]
+
+    return _download
+
+
+def test_bundle_records_a_skipped_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _wire_github_stages(
+        monkeypatch,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_skip_download("cafef00d"),
+    )
+    out_dir = tmp_path / "out"
+
+    assert main(_argv(out_dir)) == 0
+
+    manifest = json.loads((out_dir / "v2.1.129-ci-evidence-manifest.json").read_text())
+    (gate,) = manifest["gates"]
+    assert [skip["leg"] for skip in gate["skipped"]] == ["test"]
+    assert gate["skipped"][0]["path"] == "gates/test/test-not-bootstrapped-3.15.json"
+
+
+def test_harvest_refuses_a_skip_record_of_another_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _wire_github_stages(
+        monkeypatch,
+        required=(EvidenceGate(name="test", checks=("test / unit",)),),
+        conclusions={"test / unit": "success"},
+        download=_skip_download("0ldc0mm1t"),
+    )
+    staging = tmp_path / "staging"
+
+    assert main(_harvest_argv(staging)) == 1
+
+    err = capsys.readouterr().err
+    assert "skip records not of the validated head cafef00d" in err
+    assert "Traceback" not in err
+    assert not (staging / "harvest-state.json").exists()

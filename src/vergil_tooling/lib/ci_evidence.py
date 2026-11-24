@@ -149,14 +149,161 @@ def render_readme(staging_dir: Path) -> str:
 
 
 @dataclass(frozen=True)
+class SkipRecord:
+    """One gate leg's record that ``vrg-validate`` skipped it (issue #5034).
+
+    vergil-actions' report staging (``actions/ci/evidence/reports``,
+    vergil-actions#1294) writes it in place of the leg's reports when the
+    repository is not bootstrapped yet: *leg* is the gate the leg ran
+    (``test``, ``audit``, or the quality gate's ``lint`` and ``typecheck``),
+    *head* the commit it checked out, and *path* the file in the gate
+    directory.
+    """
+
+    leg: str
+    language: str
+    version: str
+    reason: str
+    head: str
+    missing_manifests: tuple[str, ...]
+    path: Path
+
+
+@dataclass(frozen=True)
 class GateEvidence:
-    """Harvested evidence for one CI gate, staged under ``gates/<name>/``."""
+    """Harvested evidence for one CI gate, staged under ``gates/<name>/``.
+
+    *skips* holds the gate's skip records (:class:`SkipRecord`), which are
+    also among its *files*.
+    """
 
     name: str
     conclusion: str
     tools: tuple[dict[str, Any], ...]
     metrics: dict[str, Any]
     files: tuple[Path, ...]
+    skips: tuple[SkipRecord, ...] = ()
+
+
+# --- Skip records (issue #5034) ------------------------------------------
+#
+# A gate leg vrg-validate skipped because the repository is not bootstrapped
+# yet writes no report. vergil-actions' report staging (vergil-actions#1294,
+# ``actions/ci/evidence/reports/reports.sh``) proves the skip and stages a
+# skip record in its place, named ``<leg>-not-bootstrapped-<version>.json``
+# (``quality-<leg>-not-bootstrapped-<version>.json`` for a quality leg): a
+# JSON object giving the leg as ``gate``, its ``language``, ``version`` and
+# ``head``, ``skipped: true``, the ``not-bootstrapped`` ``reason`` and the
+# ``missing_manifests``. The harvester recognises each one, refuses one that
+# is not exactly that (:func:`load_skip_record`), and records the leg as
+# skipped in the manifest, so the release evidence says the gate was skipped
+# instead of passing a skip record off as a report.
+
+#: The reason a skip record carries, the one reason vergil-actions stages.
+SKIP_REASON_NOT_BOOTSTRAPPED = "not-bootstrapped"
+
+# The legs whose skip records each evidence gate's directory may hold.
+_SKIP_LEGS: dict[str, tuple[str, ...]] = {
+    "test": ("test",),
+    "audit": ("audit",),
+    "quality": ("lint", "typecheck"),
+}
+
+# The name marker that makes a gate file a skip record.
+_SKIP_MARKER = f"-{SKIP_REASON_NOT_BOOTSTRAPPED}-"
+
+_SKIP_FIELDS = frozenset(
+    {"gate", "language", "version", "skipped", "reason", "head", "missing_manifests"}
+)
+
+
+class SkipRecordError(ValueError):
+    """A gate file named as a skip record is not a valid one for its gate.
+
+    Substantive harvest failure surfaced by the CLI as a single-line error:
+    a skip record that cannot be read, or that names another leg, version or
+    commit, is never taken as evidence that a gate was skipped.
+    """
+
+
+def is_skip_record(path: Path) -> bool:
+    """True when *path* is named as a skip record (``…-not-bootstrapped-<version>.json``)."""
+    return path.suffix == ".json" and _SKIP_MARKER in path.name
+
+
+def _skip_record_name(leg: str, version: str) -> str:
+    """The name vergil-actions gives *leg*'s skip record for *version*."""
+    prefix = "quality-" if leg in _SKIP_LEGS["quality"] else ""
+    return f"{prefix}{leg}{_SKIP_MARKER}{version}.json"
+
+
+def load_skip_record(path: Path, gate: str) -> SkipRecord:
+    """Read the skip record at *path* in *gate*'s directory.
+
+    Raises :class:`SkipRecordError` unless it is a JSON object with every
+    field vergil-actions writes, ``skipped: true``, the ``not-bootstrapped``
+    reason, a leg of *gate* and a name that matches its leg and version.
+    """
+    bad = f"skip record {path.name} of gate {gate!r}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        msg = f"{bad} cannot be read: {exc}"
+        raise SkipRecordError(msg) from exc
+    if not isinstance(data, dict) or not set(data) >= _SKIP_FIELDS:
+        msg = f"{bad} must be a JSON object holding {', '.join(sorted(_SKIP_FIELDS))}"
+        raise SkipRecordError(msg)
+    strings = ("gate", "language", "version", "reason", "head")
+    if not all(isinstance(data[key], str) and data[key] for key in strings):
+        msg = f"{bad} must give {', '.join(strings)} as non-empty strings"
+        raise SkipRecordError(msg)
+    manifests = data["missing_manifests"]
+    if (
+        not isinstance(manifests, list)
+        or not manifests
+        or not all(isinstance(m, str) and m for m in manifests)
+    ):
+        msg = f"{bad} must list its missing_manifests"
+        raise SkipRecordError(msg)
+    if data["skipped"] is not True or data["reason"] != SKIP_REASON_NOT_BOOTSTRAPPED:
+        msg = f"{bad} must be skipped: true with reason {SKIP_REASON_NOT_BOOTSTRAPPED!r}"
+        raise SkipRecordError(msg)
+    leg = data["gate"]
+    legs = _SKIP_LEGS.get(gate, ())
+    if leg not in legs:
+        allowed = ", ".join(legs) if legs else "none"
+        msg = f"{bad} is of leg {leg!r}, but gate {gate!r} has skippable legs: {allowed}"
+        raise SkipRecordError(msg)
+    expected = _skip_record_name(leg, data["version"])
+    if path.name != expected:
+        msg = f"{bad} records leg {leg!r} version {data['version']!r}, so must be named {expected}"
+        raise SkipRecordError(msg)
+    return SkipRecord(
+        leg=leg,
+        language=data["language"],
+        version=data["version"],
+        reason=data["reason"],
+        head=data["head"],
+        missing_manifests=tuple(manifests),
+        path=path,
+    )
+
+
+def validate_skip_heads(harvested: Mapping[str, GateEvidence], head_sha: str) -> None:
+    """Raise :class:`SkipRecordError` for a skip record not of *head_sha*.
+
+    A skip record proves a leg was skipped on the commit it names, so one of
+    any commit but the release PR's validated head is no evidence for it.
+    """
+    stale = [
+        f"{gate.name}/{skip.path.name} ({skip.head})"
+        for gate in harvested.values()
+        for skip in gate.skips
+        if skip.head != head_sha
+    ]
+    if stale:
+        msg = f"skip records not of the validated head {head_sha}: {', '.join(stale)}"
+        raise SkipRecordError(msg)
 
 
 @dataclass(frozen=True)
@@ -236,7 +383,11 @@ def sha256_file(path: Path) -> str:
 
 
 def _gate_manifest_entry(gate: GateEvidence, evidence_root: Path) -> dict[str, Any]:
-    """Render one gate's manifest entry, hashing each staged file once."""
+    """Render one gate's manifest entry, hashing each staged file once.
+
+    ``skipped`` lists each leg the gate's skip records show skipped (empty
+    when none was), with the record's path, which ``files`` also lists.
+    """
     return {
         "name": gate.name,
         "conclusion": gate.conclusion,
@@ -248,6 +399,17 @@ def _gate_manifest_entry(gate: GateEvidence, evidence_root: Path) -> dict[str, A
                 "sha256": sha256_file(file),
             }
             for file in gate.files
+        ],
+        "skipped": [
+            {
+                "leg": skip.leg,
+                "language": skip.language,
+                "version": skip.version,
+                "reason": skip.reason,
+                "missing_manifests": list(skip.missing_manifests),
+                "path": skip.path.relative_to(evidence_root).as_posix(),
+            }
+            for skip in gate.skips
         ],
     }
 
@@ -504,6 +666,10 @@ def validate_completeness(
     - **missing** — no harvested :class:`GateEvidence` for the gate at all.
     - **empty payload** — present but every staged file is ``evidence.json``
       (no real report), the empty-envelope bug this guard exists to catch.
+
+    A skip record (:class:`SkipRecord`) counts as payload: it is the gate's
+    evidence that ``vrg-validate`` skipped it, and the manifest records the
+    gate's legs as ``skipped``.
     """
     missing = [gate.name for gate in required if gate.name not in harvested]
     empty_payload = [
@@ -1004,15 +1170,23 @@ def load_gate_evidence(gate_dir: Path, *, conclusion: str) -> GateEvidence:
     come from the fragment (spec §7); ``conclusion`` is injected by the caller
     (derived from the check-runs API, not the fragment); ``files`` is every
     staged file in the gate directory, sorted for a deterministic manifest.
+    Each top-level file named as a skip record is read as one
+    (:func:`load_skip_record`, which refuses a bad one) into ``skips``.
     """
     fragment = json.loads((gate_dir / "evidence.json").read_text(encoding="utf-8"))
     files = tuple(sorted(path for path in gate_dir.rglob("*") if path.is_file()))
+    skips = tuple(
+        load_skip_record(path, gate_dir.name)
+        for path in files
+        if path.parent == gate_dir and is_skip_record(path)
+    )
     return GateEvidence(
         name=gate_dir.name,
         conclusion=conclusion,
         tools=tuple(dict(tool) for tool in fragment.get("tools", [])),
         metrics=dict(fragment.get("metrics", {})),
         files=files,
+        skips=skips,
     )
 
 
@@ -1072,7 +1246,8 @@ def run_harvest(
     SHA and the qualifying CI run; derive the required gates and the check-run
     conclusions; download and parse the evidence artifacts; enforce completeness
     (raises :class:`IncompleteEvidenceError` before any state is persisted on a
-    missing gate). The harvested ``evidence/gates/`` tree and a
+    missing gate) and refuse a skip record not of the validated head
+    (:func:`validate_skip_heads`). The harvested ``evidence/gates/`` tree and a
     :class:`HarvestState` file are written into ``staging_dir`` so a later
     :func:`run_assemble` needs no network. Returns the persisted state.
     """
@@ -1095,6 +1270,7 @@ def run_harvest(
     gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest, required)
     harvested = load_harvested_gates(gate_dirs, required, conclusions)
     validate_completeness(required, harvested)
+    validate_skip_heads(harvested, head_sha)
 
     state = HarvestState(
         repo=repo,

@@ -126,7 +126,7 @@ directory to the first one named `<org>`. Pass `--target-dir <parent>`
 to name the clone's parent directory explicitly. The clone uses SSH
 (`git@github.com:<org>/<name>.git`).
 
-The wizard runs ten steps, each committed as `chore(init): step N - …`
+The wizard runs eleven steps, each committed as `chore(init): step N - …`
 so an interrupted run resumes where it stopped:
 
 1. Create the GitHub repository, always public.
@@ -149,7 +149,10 @@ so an interrupted run resumes where it stopped:
    Any still missing after a short wait stop the run, named. A resumed
    run checks again.
 9. Apply the GitHub settings, rulesets and labels.
-10. Configure GitHub Pages (when docs publishing is on).
+10. Create the agent audit markers, `vergil/agent-audit/develop` and
+    `vergil/agent-audit/main`, at the tips of `develop` and `main`. A
+    marker that already exists is left as it is.
+11. Configure GitHub Pages (when docs publishing is on).
 
 Every prompt has a matching flag (`--description`,
 `--repository-type`, `--language`, `--branching-model`,
@@ -179,7 +182,8 @@ Adopt is an idempotent "make it canonical" run. It overwrites every
 Vergil-managed file — `vergil.toml`, `CLAUDE.md`,
 `.claude/settings.json`, `.claude/hooks/guard.sh`, `LICENSE`,
 `README.md`, `.gitignore`, the CI/CD workflows and the docs site
-config — and applies the GitHub settings, rulesets and labels. It asks
+config — applies the GitHub settings, rulesets and labels, and creates
+any agent audit marker that is missing. It asks
 for confirmation first (`--non-interactive` accepts it). Values in an
 existing `vergil.toml` become the prompt defaults, and any table the
 wizard does not own (`[package]`, `[container]`, `[validation]`, …)
@@ -563,6 +567,13 @@ Alongside it:
   release. A later push to `main` with no release PR still fails the
   release's CI-evidence gate.
 
+The jobs of these three that call a workflow reading the automation
+App's keys pass `secrets: inherit` in a `vergil-project` repo. In a repo
+of any other organization they pass the keys by name, since GitHub
+passes `inherit` only to a reusable workflow in the caller's own
+organization or enterprise (see
+[CD and ops: reusable-workflow secrets](ci-architecture.md#cd-and-ops-reusable-workflow-secrets)).
+
 To regenerate them after a `vergil.toml` change, re-run
 `vrg-github-repo-init --adopt`. See the
 [CI Architecture](ci-architecture.md) guide for the CI tiers.
@@ -576,8 +587,11 @@ To ship signed `.deb`/`.rpm` packages from releases:
 2. Re-run `vrg-github-repo-init --adopt` from the repo root. It keeps
    `[package]` (and any other hand-written table) and regenerates the
    workflows: `ci.yml` gains a `package` job calling `ci-package.yml`. The
-   `cd.yml` `release` job already passes `secrets: inherit`, which carries the
-   signing secrets. The GitHub config step then makes `package / evidence` a
+   `cd.yml` `release` job of a `vergil-project` repo already passes
+   `secrets: inherit`, which carries the signing secrets. In a repo of any
+   other organization the job passes only the App keys (and a rust repo's
+   `CARGO_REGISTRY_TOKEN`) by name, so it does not carry the signing
+   secrets. The GitHub config step then makes `package / evidence` a
    required check.
 3. Create a `package-signing` environment, restricted to `main`, holding
    `PACKAGE_SIGNING_KEY` and `PACKAGE_SIGNING_PASSPHRASE`.

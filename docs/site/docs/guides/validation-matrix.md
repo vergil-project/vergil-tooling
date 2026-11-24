@@ -260,7 +260,11 @@ audit stages do not run. Each is recorded as a warning (⚠) whose reason names
 the missing manifests, for example `skipped: no Cargo.toml, Cargo.lock (rust repo
 not bootstrapped yet)`, on its row and in the run summary. The common
 checks and the custom validator still run. A warning counts as passed,
-so the run can reach merge review. The skip applies only when every
+so the run can reach merge review. The run record,
+`.vergil/vrg-validate-last.json`, gives each skipped stage a `skip`
+object with the reason `not-bootstrapped`, the language and the missing
+manifests, so CI's evidence staging can tell this skip from any other
+warning ([skip records](ci-evidence-convention.md#skip-records-a-gate-skipped-as-not-bootstrapped)). The skip applies only when every
 manifest is missing: a repository with some of them, such as a
 `pyproject.toml` with no `uv.lock`, runs the stages and fails on the
 gap, as does a `Cargo.toml` with no `Cargo.lock`, or one that

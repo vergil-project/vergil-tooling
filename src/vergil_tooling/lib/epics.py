@@ -25,7 +25,7 @@ import logging
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
@@ -69,13 +69,34 @@ class ChildState:
     #2538); it defaults to ``""`` so state-only consumers construct a
     ``ChildState`` without supplying it. ``closed_at`` is the ISO-8601
     ``closedAt`` string (``""`` when open), so ad-hoc archiving can bucket a
-    closed child by its close-quarter (issue #2678).
+    closed child by its close-quarter (issue #2678). ``native_blockers`` is
+    the child's native blocked-by list when the read that listed it read that
+    too (:func:`child_states_with_blockers`), and ``None`` when it did not.
     """
 
     ref: IssueRef
     state: str  # "OPEN" | "CLOSED"
     title: str = ""
     closed_at: str = ""  # ISO-8601 closedAt; "" when open
+    native_blockers: tuple[BlockerState, ...] | None = None
+
+
+@dataclass(frozen=True)
+class BlockerState:
+    """An issue a task is natively blocked by, and its ``OPEN``/``CLOSED`` state."""
+
+    ref: IssueRef
+    state: str  # "OPEN" | "CLOSED"
+
+
+class NativeBlockersReadError(RuntimeError):
+    """A task's native blocked-by list could not be read in full.
+
+    Raised when the ``blockedBy`` list is missing or malformed, holds more
+    relationships than one read takes, or gives fewer readable issues than its
+    ``totalCount`` (a blocker the token cannot see). It is never taken as "no
+    blockers".
+    """
 
 
 def _quarter_str(dt: datetime) -> str:
@@ -156,6 +177,38 @@ query($id: ID!) {
     }
   }
 }
+"""
+
+#: The most native blocked-by relationships one read takes; a longer list is refused.
+NATIVE_BLOCKERS_LIMIT = 100
+
+_BLOCKED_BY_SELECTION = (
+    f"blockedBy(first: {NATIVE_BLOCKERS_LIMIT}) "
+    "{ totalCount nodes { number state repository { name owner { login } } } }"
+)
+
+# The sub-issue listing with each child's native blockers, in the one query.
+_SUBISSUES_WITH_BLOCKERS_QUERY = f"""
+query($id: ID!) {{
+  node(id: $id) {{
+    ... on Issue {{
+      subIssues(first: 100) {{
+        nodes {{
+          number state title closedAt repository {{ name owner {{ login }} }}
+          {_BLOCKED_BY_SELECTION}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+_NATIVE_BLOCKERS_QUERY = f"""
+query($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    issue(number: $number) {{ {_BLOCKED_BY_SELECTION} }}
+  }}
+}}
 """
 
 _PARENT_QUERY = """
@@ -326,6 +379,96 @@ def child_states(epic: IssueRef) -> list[ChildState]:
     return native if native else _reflink_child_states(epic)
 
 
+def _native_blockers(connection: Any, task: IssueRef) -> tuple[BlockerState, ...]:
+    """Every blocker in *task*'s ``blockedBy`` *connection*, or a raise.
+
+    A missing or malformed connection, a list longer than one read takes, and
+    a blocker the token cannot read (a ``null`` node, or fewer nodes than
+    ``totalCount``) all raise :class:`NativeBlockersReadError`: a blocker is
+    never dropped.
+    """
+    if not isinstance(connection, dict):
+        raise NativeBlockersReadError(f"no blockedBy list for {task.slug}: {connection!r}")
+    total = connection.get("totalCount")
+    nodes = connection.get("nodes")
+    if not isinstance(total, int) or not isinstance(nodes, list):
+        raise NativeBlockersReadError(f"malformed blockedBy list for {task.slug}: {connection!r}")
+    if total > NATIVE_BLOCKERS_LIMIT:
+        raise NativeBlockersReadError(
+            f"{task.slug} has {total} native blockers, more than the "
+            f"{NATIVE_BLOCKERS_LIMIT} one read takes"
+        )
+    blockers: list[BlockerState] = []
+    for node in nodes:
+        try:
+            blockers.append(BlockerState(_ref_from_node(node), str(node["state"]).upper()))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise NativeBlockersReadError(
+                f"unreadable native blocker of {task.slug}: {node!r}"
+            ) from exc
+    if len(blockers) != total:
+        raise NativeBlockersReadError(
+            f"{task.slug} has {total} native blockers but only {len(blockers)} could be read"
+        )
+    return tuple(blockers)
+
+
+def native_blockers_of(task: IssueRef) -> tuple[BlockerState, ...]:
+    """*task*'s native blocked-by relationships, each with its blocker's state.
+
+    One GraphQL read of the task's ``blockedBy`` list; a blocker in any repo
+    or org counts. The relationships are GitHub metadata, which only someone
+    with triage rights on the task's repo can set, and they only ever hold a
+    task back, so no body trust applies. A failed read raises, and an
+    incomplete one raises :class:`NativeBlockersReadError`: never "no
+    blockers".
+    """
+    data: Any = github.graphql(
+        _NATIVE_BLOCKERS_QUERY, owner=task.owner, repo=task.repo, number=task.number
+    )
+    issue = ((data or {}).get("repository") or {}).get("issue")
+    if not isinstance(issue, dict):
+        raise NativeBlockersReadError(f"no issue {task.slug} in the blockedBy read: {data!r}")
+    return _native_blockers(issue.get("blockedBy"), task)
+
+
+def child_states_with_blockers(
+    epic: IssueRef, *, wanted: Callable[[ChildState], bool] | None = None
+) -> list[ChildState]:
+    """:func:`child_states`, with each native child's blocked-by list read too.
+
+    The native sub-issue listing reads every child's ``blockedBy`` list in the
+    same query, so each child carries ``native_blockers``. A reflink-fallback
+    child carries ``None``, since its blockers were not read: a caller that
+    needs them reads them with :func:`native_blockers_of`. An incomplete list
+    raises :class:`NativeBlockersReadError` for the whole listing.
+
+    With *wanted*, only the children it accepts (judged on their ref, state,
+    title and close time, before any blocker is taken) are returned, and only
+    their lists are checked: a child the caller would discard, such as a
+    closed one, never fails the listing over a list it does not need.
+    """
+    data: Any = github.graphql(_SUBISSUES_WITH_BLOCKERS_QUERY, id=_node_id(epic))
+    nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
+    if not nodes:
+        reflinked = _reflink_child_states(epic)
+        return reflinked if wanted is None else [c for c in reflinked if wanted(c)]
+    states: list[ChildState] = []
+    for n in nodes:
+        child = ChildState(
+            ref=_ref_from_node(n),
+            state=str(n["state"]).upper(),
+            title=str(n.get("title") or ""),
+            closed_at=str(n.get("closedAt") or ""),
+        )
+        if wanted is not None and not wanted(child):
+            continue
+        states.append(
+            replace(child, native_blockers=_native_blockers(n.get("blockedBy"), child.ref))
+        )
+    return states
+
+
 def native_children(epic: IssueRef) -> list[IssueRef]:
     """*epic*'s native sub-issues only, never the body ``Parent:`` reflinks.
 
@@ -351,10 +494,11 @@ def blockers_of(task: IssueRef) -> list[IssueRef]:
     """Deps *task* is blocked by, parsed from its ``Blocked-by:`` body reflinks.
 
     Storage is the portable body reflink — the mirror of the ``Parent:``
-    sub-issue fallback — chosen by the storage spike (#2184) because GitHub's
-    native issue dependencies are REST-only and out of the sanctioned tooling's
-    reach. If native dependencies become reachable later, this is the one place
-    that would prefer them over the reflink.
+    sub-issue fallback — chosen by the storage spike (#2184), when GitHub's
+    native issue dependencies were REST-only. They are now readable through
+    GraphQL (:func:`native_blockers_of`, :func:`child_states_with_blockers`),
+    and ``vrg-queue``'s task views count both (#5094); this reader is the
+    body lines alone.
 
     The lines count only from a trusted body: an untrusted one is a stop
     (:class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only),

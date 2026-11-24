@@ -57,7 +57,14 @@ selection, then opens each PR in turn. There is no confirmation prompt
 and no PR-body preview (vergil-tooling#4744): the arguments already
 chose the selection, and each body is on its opened PR:
 
-1. For a batch PR, re-check its rules (see
+1. Run the **merge-review gate**: fetch `origin/develop` and check that
+   the change from it to the head is covered by a merge-review record or
+   a merge-review exemption the human approved, matched by the change's
+   fingerprint, on its task issue (on a batch, on each issue for its own
+   commit, or on any issue for the whole change). It runs on every
+   submission, the human's included, and nothing skips it. A change it
+   does not cover fails that PR's submit with the reasons, with nothing
+   pushed and no PR opened. For a batch PR, then re-check its rules (see
    [Batch PRs](#batch-prs-one-pr-closing-several-issues)).
 2. Push the branch, in the modes that push.
 3. Hold origin's tip to the head the PR must open at, then open the PR
@@ -288,6 +295,8 @@ says why it is gone:
 | `--install`, `--no-install` | Install is part of every release |
 | `--allow-provenance-violation` | A provenance violation always fails: fix its cause, or fix the classifier if the violation is a false one |
 | `--yes` / `-y` | There is no confirmation left to answer: drop the flag |
+| `--override-merge-review` | The merge-review gate is met only by a merge-review record or an approved merge-review exemption (`vrg-ruling request --kind merge-review-exemption`) |
+| `--human-only` | The merge-review gate runs on every submission; nothing skips it |
 
 ### Linkage Keywords
 

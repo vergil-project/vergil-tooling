@@ -734,6 +734,358 @@ class TestRestart:
         mock_inject.assert_called_once()
 
 
+_GIB = 1024**3
+
+
+class TestGrowDisk:
+    """`vrg-vm grow-disk` (#5030): stop, `limactl edit --disk`, start; never shrink."""
+
+    @pytest.fixture()
+    def lima(self) -> Iterator[dict[str, MagicMock]]:
+        mod = "vergil_tooling.bin.vrg_vm."
+        names = (
+            "vm_status",
+            "vm_disk_bytes",
+            "stop_vm",
+            "edit_disk",
+            "start_vm",
+            "inject_credentials",
+            "inject_trusted_authors",
+            "root_fs_bytes",
+            "read_fingerprint",
+            "stamp_fingerprint",
+        )
+        patches = {n: patch(mod + n) for n in names}
+        mocks = {n: p.start() for n, p in patches.items()}
+        mocks["vm_status"].return_value = "Running"
+        mocks["root_fs_bytes"].return_value = 99 * _GIB
+        yield mocks
+        for p in patches.values():
+            p.stop()
+
+    def test_grows_the_base_vm_to_its_configured_size(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The base VM is configured at the 100GiB default and has a 50GiB disk.
+        lima["vm_disk_bytes"].side_effect = [50 * _GIB, 100 * _GIB]
+        order = MagicMock()
+        for n in ("stop_vm", "edit_disk", "start_vm", "inject_credentials"):
+            order.attach_mock(lima[n], n)
+        assert main(["grow-disk", "--config", str(config_file)]) == 0
+        assert [c[0] for c in order.mock_calls] == [
+            "stop_vm",
+            "edit_disk",
+            "start_vm",
+            "inject_credentials",
+        ]
+        lima["stop_vm"].assert_called_once_with("vergil-agent")
+        lima["edit_disk"].assert_called_once_with("vergil-agent", 100)
+        lima["start_vm"].assert_called_once_with("vergil-agent", timeout="30m")
+        out = capsys.readouterr().out
+        assert "from 50GiB to 100GiB" in out
+        assert "disk grown to 100GiB; root filesystem is 99GiB" in out
+        # The base VM carries no fingerprint: nothing is read or stamped.
+        lima["read_fingerprint"].assert_not_called()
+        lima["stamp_fingerprint"].assert_not_called()
+
+    def test_refuses_a_shrink(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].return_value = 200 * _GIB
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        err = capsys.readouterr().err
+        assert "has a 200GiB disk, larger than its configured 100GiB" in err
+        assert "never shrink" in err
+        assert "vrg-vm rebuild --identity vergil" in err
+        lima["stop_vm"].assert_not_called()
+        lima["edit_disk"].assert_not_called()
+        lima["start_vm"].assert_not_called()
+
+    def test_nothing_to_do_at_the_configured_size(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].return_value = 100 * _GIB
+        assert main(["grow-disk", "--config", str(config_file)]) == 0
+        assert "nothing to grow" in capsys.readouterr().out
+        lima["stop_vm"].assert_not_called()
+        lima["edit_disk"].assert_not_called()
+        # The base VM carries no fingerprint: nothing is read or stamped.
+        lima["read_fingerprint"].assert_not_called()
+        lima["stamp_fingerprint"].assert_not_called()
+
+    def test_refuses_a_vm_that_does_not_exist(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_status"].return_value = ""
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        assert "does not exist" in capsys.readouterr().err
+        lima["vm_disk_bytes"].assert_not_called()
+
+    def test_refuses_when_lima_reports_no_size(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].return_value = None
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        assert "reports no disk size" in capsys.readouterr().err
+        lima["stop_vm"].assert_not_called()
+
+    def test_a_failed_edit_says_the_vm_is_stopped(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].return_value = 50 * _GIB
+        lima["edit_disk"].side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        err = capsys.readouterr().err
+        assert "the VM is stopped" in err
+        assert "vrg-vm start --identity vergil" in err
+        lima["start_vm"].assert_not_called()
+
+    def test_a_failed_start_is_reported(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].return_value = 50 * _GIB
+        lima["start_vm"].side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        assert "starting it failed" in capsys.readouterr().err
+
+    def test_fails_when_lima_does_not_report_the_new_size(
+        self, lima: dict[str, MagicMock], config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lima["vm_disk_bytes"].side_effect = [50 * _GIB, 50 * _GIB]
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        assert "reports 50GiB after the grow, not 100GiB" in capsys.readouterr().err
+
+    def test_refuses_an_agent(
+        self,
+        lima: dict[str, MagicMock],
+        config_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: True)
+        assert main(["grow-disk", "--config", str(config_file)]) == 1
+        assert "vrg-vm grow-disk is a human action" in capsys.readouterr().err
+        lima["vm_status"].assert_not_called()
+
+    def test_refuses_an_off_platform_box(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        assert main(["grow-disk", "lmf/cloud", "--config", str(cfg)]) == 1
+        assert "grows a Lima VM's disk" in capsys.readouterr().err
+        lima["vm_status"].assert_not_called()
+
+    def _dedicated(self, tmp_path: Path) -> tuple[Path, Target]:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)  # declares a 300GiB disk
+        cfg = _identities(tmp_path, projects)
+        return cfg, _resolve_target(_args(cfg, "lmf/mq"))
+
+    def test_dedicated_disk_only_drift_is_restamped(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from dataclasses import replace
+
+        from vergil_tooling.lib.vm_spec import spec_fingerprint
+
+        cfg, target = self._dedicated(tmp_path)
+        assert target.spec.disk == "300GiB"
+        # Stamped when the VM was built at 200GiB: the disk is the only drift.
+        lima["read_fingerprint"].return_value = spec_fingerprint(
+            replace(target.spec, disk="200GiB")
+        )
+        lima["vm_disk_bytes"].side_effect = [200 * _GIB, 300 * _GIB]
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["edit_disk"].assert_called_once_with(target.instance, 300)
+        stamped = lima["stamp_fingerprint"].call_args.args
+        assert stamped[1] == target.fingerprint
+        assert "fingerprint is re-stamped" in capsys.readouterr().out
+
+    def test_dedicated_other_drift_is_left_for_a_rebuild(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cfg, _target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].return_value = "f" * 64  # some other spec
+        lima["vm_disk_bytes"].side_effect = [200 * _GIB, 300 * _GIB]
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["stamp_fingerprint"].assert_not_called()
+        err = capsys.readouterr().err
+        assert "still differs from its spec in more than its disk" in err
+        assert "vrg-vm rebuild lmf/mq" in err
+
+    def test_dedicated_already_matching_is_left_alone(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cfg, target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].return_value = target.fingerprint
+        lima["vm_disk_bytes"].side_effect = [200 * _GIB, 300 * _GIB]
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["stamp_fingerprint"].assert_not_called()
+        assert "meets its spec." in capsys.readouterr().out
+
+    def test_dedicated_unreachable_after_the_grow_fails(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from vergil_tooling.lib.vm_guest import VmUnreachableError
+
+        cfg, _target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].side_effect = VmUnreachableError
+        lima["vm_disk_bytes"].side_effect = [200 * _GIB, 300 * _GIB]
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 1
+        assert "not reachable over SSH" in capsys.readouterr().err
+        lima["stamp_fingerprint"].assert_not_called()
+
+    # A dedicated VM already at its configured size (#5104): grown by hand, or
+    # its re-stamp failed after a grow. Its disk is never touched.
+
+    def _assert_disk_untouched(self, lima: dict[str, MagicMock]) -> None:
+        lima["stop_vm"].assert_not_called()
+        lima["edit_disk"].assert_not_called()
+        lima["start_vm"].assert_not_called()
+
+    def test_at_size_disk_only_drift_is_restamped(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from dataclasses import replace
+
+        from vergil_tooling.lib.vm_spec import spec_fingerprint
+
+        cfg, target = self._dedicated(tmp_path)
+        # Built at 200GiB, then grown by hand to the configured 300GiB.
+        lima["read_fingerprint"].return_value = spec_fingerprint(
+            replace(target.spec, disk="200GiB")
+        )
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        self._assert_disk_untouched(lima)
+        stamped = lima["stamp_fingerprint"].call_args.args
+        assert stamped[1] == target.fingerprint
+        out = capsys.readouterr().out
+        assert "nothing to grow" in out
+        assert "fingerprint is re-stamped" in out
+
+    def test_at_size_drift_beyond_the_disk_is_left_for_a_rebuild(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from dataclasses import replace
+
+        from vergil_tooling.lib.vm_spec import spec_fingerprint
+
+        cfg, target = self._dedicated(tmp_path)
+        # Built at 200GiB with another cpus count: the disk is not the only drift.
+        lima["read_fingerprint"].return_value = spec_fingerprint(
+            replace(target.spec, disk="200GiB", cpus=target.spec.cpus + 1)
+        )
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        self._assert_disk_untouched(lima)
+        lima["stamp_fingerprint"].assert_not_called()
+        err = capsys.readouterr().err
+        assert "still differs from its spec in more than its disk" in err
+        assert "vrg-vm rebuild lmf/mq" in err
+
+    def test_at_size_a_stamp_at_a_larger_disk_is_not_restamped(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from dataclasses import replace
+
+        from vergil_tooling.lib.vm_spec import spec_fingerprint
+
+        cfg, target = self._dedicated(tmp_path)
+        # Lima never shrinks a disk, so a stamp from a larger one is not disk-only drift.
+        lima["read_fingerprint"].return_value = spec_fingerprint(
+            replace(target.spec, disk="400GiB")
+        )
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["stamp_fingerprint"].assert_not_called()
+        assert "more than its disk" in capsys.readouterr().err
+
+    def test_at_size_already_matching_is_left_alone(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cfg, target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].return_value = target.fingerprint
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["stamp_fingerprint"].assert_not_called()
+        assert "meets its spec." in capsys.readouterr().out
+
+    def test_at_size_a_missing_stamp_is_left_for_a_rebuild(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cfg, _target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].return_value = None
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 0
+        lima["stamp_fingerprint"].assert_not_called()
+        assert "more than its disk" in capsys.readouterr().err
+
+    def test_at_size_a_stopped_vm_is_refused(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        cfg, _target = self._dedicated(tmp_path)
+        lima["vm_status"].return_value = "Stopped"
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 1
+        self._assert_disk_untouched(lima)
+        lima["read_fingerprint"].assert_not_called()
+        lima["stamp_fingerprint"].assert_not_called()
+        err = capsys.readouterr().err
+        assert "is stopped, so its spec fingerprint cannot be checked" in err
+        assert "vrg-vm start lmf/mq" in err
+
+    def test_at_size_unreachable_fails(
+        self,
+        lima: dict[str, MagicMock],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from vergil_tooling.lib.vm_guest import VmUnreachableError
+
+        cfg, _target = self._dedicated(tmp_path)
+        lima["read_fingerprint"].side_effect = VmUnreachableError
+        lima["vm_disk_bytes"].return_value = 300 * _GIB
+        assert main(["grow-disk", "lmf/mq", "--config", str(cfg)]) == 1
+        assert "not reachable over SSH" in capsys.readouterr().err
+        lima["stamp_fingerprint"].assert_not_called()
+
+
 # Invented logins only — never a real one in a fixture (spec 4.4).
 _TRUSTED = TrustedAuthors(
     human=("example-human",),
@@ -1176,6 +1528,21 @@ class TestList:
         assert "base" in output  # SCOPE column
         assert "Running" in output  # STATUS column
         assert "AGENTS" in output  # new observability header
+
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_shows_the_actual_disk_and_marks_a_mismatch(
+        self, mock_list: MagicMock, config_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The base box was created at 50GiB; its configured size is the 100GiB base
+        # default. DISK reads Lima's size, marked, and the column widens to fit it.
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Stopped", "disk": str(50 * 1024**3)}
+        ]
+        assert main(["list", "--config", str(config_file)]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        row = next(line for line in lines if line.startswith("vergil "))
+        assert "50GiB≠100GiB" in row
+        assert lines[0].index("AGENTS") == row.index("50GiB≠100GiB") + len("50GiB≠100GiB") + 1
 
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_not_created(
@@ -3952,6 +4319,48 @@ class TestListRows:
         probes = {"vergil-user.o.gone": (1, 0, None)}
         rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "o/gone")["agents"] == "1"
+
+    def test_disk_shows_the_actual_lima_size_when_it_matches(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")  # configured 50GiB
+        rows = _list_rows("vergil-user", ident, [], {}, {}, {"vergil-user": 50 * 1024**3})
+        assert self._row(rows, "base")["disk"] == "50GiB"
+
+    def test_disk_marks_an_actual_size_that_differs_from_the_configured(
+        self, tmp_path: Path
+    ) -> None:
+        # A base box created at 50GiB before its identity moved to 100GiB: list
+        # must not claim the configured 100GiB it does not have (#5031).
+        ident = self._identity(tmp_path / "projects", disk="100GiB")
+        rows = _list_rows("vergil-user", ident, [], {}, {}, {"vergil-user": 50 * 1024**3})
+        assert self._row(rows, "base")["disk"] == "50GiB≠100GiB"
+
+    def test_disk_marks_a_dedicated_vm_whose_disk_differs(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)  # the mq repo declares 300GiB
+        dedic = self._present(projects)
+        disks = {"vergil-user.lmf.mq": 200 * 1024**3}
+        rows = _list_rows("vergil-user", ident, dedic, {}, {}, disks)
+        assert self._row(rows, "lmf/mq")["disk"] == "200GiB≠300GiB"
+
+    def test_disk_shows_a_fractional_size_to_one_decimal(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        disks = {"vergil-user": 50 * 1024**3 + 512 * 1024**2}
+        rows = _list_rows("vergil-user", ident, [], {}, {}, disks)
+        assert self._row(rows, "base")["disk"] == "50.5GiB≠50GiB"
+
+    def test_disk_is_the_configured_size_without_a_lima_record(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        rows = _list_rows("vergil-user", ident, [], {}, {})  # VM never created
+        assert self._row(rows, "base")["disk"] == "50GiB"
+
+    def test_orphaned_disk_shows_the_actual_size(self, tmp_path: Path) -> None:
+        # An orphaned VM has no configured size; its actual one is still shown.
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
+        rows = _list_rows("vergil-user", ident, dedic, {}, {}, {"vergil-user.o.gone": 30 * 1024**3})
+        assert self._row(rows, "o/gone")["disk"] == "30GiB"
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
+        assert self._row(rows, "o/gone")["disk"] == "—"
 
     def _rebuilt_named(
         self, tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
@@ -7403,6 +7812,7 @@ _SUBCOMMAND_ARGV: dict[str, list[str]] = {
     "stop": ["stop"],
     "restart": ["restart"],
     "update": ["update"],
+    "grow-disk": ["grow-disk"],
     "destroy": ["destroy"],
     "destroy-volume": ["destroy-volume"],
     "rebuild": ["rebuild"],

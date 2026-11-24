@@ -192,9 +192,10 @@ path = "lib/pr_provenance.py"
 function = "_collect_actions"
 fields = ["reviews", "timelineItems"]
 judge = ["lib/trust.py:role_of"]
-reason = """Only each approving review's author and each timeline event's actor are \
-read, never review text, and each identity's role comes from the trust layer \
-(classify, trust.role_of)."""
+reason = """Only each review's author and each timeline event's actor or user are \
+read, never review text. Each acting identity's role comes from the trust layer \
+(classify, trust.role_of); the actors pr_actors returns feed only \
+agent_gates.agent_involved, which can only make a PR more agent-involved."""
 
 [[judged]]
 path = "lib/release/preflight.py"

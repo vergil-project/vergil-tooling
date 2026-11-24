@@ -78,8 +78,23 @@ pushes only when it falls back to the local path for a branch that never
 reached origin; the relay path itself never pushes — the branch is
 already on origin.
 
-Agent identities are blocked — PR submission is a Chief Steward
-(human) operation.
+**Who may submit** (epic vergil-project/.github#1384, spec §4.6). The human
+may use every mode. The user agent may submit only in the modes
+``report-ready`` drives, the template mode and its ``--all``/``--select``
+batch: it is refused with ``--release``, in the CLI emergency mode
+(``--issue``/``--summary``/``--title``) and on the named-branch relay path.
+The audit agent is refused outright.
+
+**The gate** (:mod:`vergil_tooling.lib.agent_gates`). For every PR, a
+single-issue one included, the submit rollup runs one more step after the
+trust-layer preflight and before any push or ``gh pr create``: it fetches
+``origin/develop`` (and the branch on the relay path, which never pushes) and
+applies the merge-review rule to ``origin/develop...<head>``. A failure
+refuses that PR with every reason and leaves nothing pushed and no PR open,
+so a re-run once the cause is fixed (a merge review closed, or a
+merge-review exemption approved) submits normally. The gate runs on every
+submission, whoever submits it and whoever recorded the ready-state, and
+nothing skips it.
 
 **Finalize always** (spec §6.2). Once every PR in the selection has been
 tried, submit runs **one** ``vrg-finalize-pr <pr>,<pr>,…`` over the PRs whose
@@ -125,6 +140,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
+    agent_gates,
     auto_merge,
     epics,
     finalize_watch,
@@ -139,7 +155,11 @@ from vergil_tooling.lib import (
     worktrees,
 )
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
+from vergil_tooling.lib.identity_mode import IdentityMode
+from vergil_tooling.lib.linkage import (
+    ALLOWED_LINKAGES,
+    normalize_linkage,
+)
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import batch_rules, freeze, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
@@ -147,15 +167,33 @@ from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
-from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
-_AGENT_REFUSAL = (
-    "vrg-submit-pr: PR submission requires a human maintainer. Agents cannot submit PRs; "
-    "record the PR metadata with 'vrg-pr-workflow report-ready' and hand off to the human."
+_AUDIT_REFUSAL = (
+    "vrg-submit-pr: the audit agent cannot submit PRs; only the user agent, through "
+    "'vrg-pr-workflow report-ready' and then vrg-submit-pr, and the human may."
+)
+_AGENT_RELEASE_REFUSAL = (
+    "vrg-submit-pr: --release is human-only: releases and promotion need a human "
+    "maintainer. Submit without --release; the human releases."
+)
+_AGENT_CLI_REFUSAL = (
+    "vrg-submit-pr: the --issue/--summary/--title mode is the human maintainer's "
+    "emergency path. An agent records the PR metadata with 'vrg-pr-workflow "
+    "report-ready' and then runs vrg-submit-pr from the worktree (or --all/--select "
+    "from the repo root)."
+)
+_AGENT_RELAY_REFUSAL = (
+    "vrg-submit-pr: the named-branch relay path is for the human maintainer. An agent "
+    "records the PR metadata with 'vrg-pr-workflow report-ready' and then runs "
+    "vrg-submit-pr from the worktree (or --all/--select from the repo root)."
 )
 
 
@@ -164,10 +202,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     # The identity gate runs after parsing, so --help prints the full usage to
-    # any identity (issue #4178): an agent reads it to give the human a correct
-    # command line, and the help itself says the command is human-only.
-    if identity_mode.is_agent():
-        print(_AGENT_REFUSAL, file=sys.stderr)
+    # any identity (issue #4178): an agent reads it to see which modes it may
+    # use, and the help itself says which are human-only.
+    refusal = _identity_refusal(args)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
         return 1
 
     # The installed version heads every run, so its output (and the run log,
@@ -243,15 +282,41 @@ def main(argv: list[str] | None = None) -> int:
     return _run_template_mode(args)
 
 
+def _identity_refusal(args: argparse.Namespace) -> str | None:
+    """The refusal for the current identity and these *args*, or ``None`` (spec §4.6).
+
+    The audit agent is refused outright. The user agent is refused with
+    ``--release``, the named-branch relay path and the CLI emergency mode,
+    and allowed in the
+    template and batch modes, which ``report-ready`` drives. Any other use by
+    the human or the automation App is not refused here.
+    """
+    mode = identity_mode.current_mode()
+    if mode is IdentityMode.AUDIT:
+        return _AUDIT_REFUSAL
+    if mode is not IdentityMode.USER:
+        return None
+    if args.release:
+        return _AGENT_RELEASE_REFUSAL
+    if args.branches:
+        return _AGENT_RELAY_REFUSAL
+    if any(f is not None for f in (args.issue, args.summary, args.title)):
+        return _AGENT_CLI_REFUSAL
+    return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description=(
-            "Create a standards-compliant pull request. A human-only command: PR "
-            "submission is a Chief Steward operation, and agent identities are refused. "
-            "Agents hand the PR off instead: record the PR metadata with "
+            "Create a standards-compliant pull request against develop, then finalize "
+            "it. The user agent may submit only what report-ready recorded: run "
             "'vrg-pr-workflow report-ready --issue <N> --title <title> --summary "
-            "<summary> --notes <notes>', then stop; the human runs vrg-submit-pr."
+            "<summary> --notes <notes>', then vrg-submit-pr from the worktree (or "
+            "--all/--select from the repo root). The branch arguments, the "
+            "--issue/--summary/--title mode and --release are human-only, and the "
+            "audit agent is refused. Every PR must pass the merge-review gate before "
+            "anything is pushed or opened."
         ),
     )
     parser.add_argument(
@@ -283,9 +348,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--release",
         action="store_true",
-        help="Pass --release to vrg-finalize-pr, which chains into vrg-release "
-        "(install is part of every release) only on full success. Dropped when "
-        "any PR failed to submit.",
+        help="Human-only. Pass --release to vrg-finalize-pr, which chains into "
+        "vrg-release (install is part of every release) only on full success. "
+        "Dropped when any PR failed to submit.",
     )
     # Removed flags. Kept hidden so main can refuse each by name, naming the
     # reason, rather than argparse rejecting it as unknown (spec §6.10).
@@ -294,6 +359,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-install", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--allow-provenance-violation", action="store_true", help=argparse.SUPPRESS)
+    # The two removed human skips of the merge-review gate took a reason; they
+    # still do, so the reason is never read as a branch argument.
+    parser.add_argument("--override-merge-review", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--human-only", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--all",
         dest="all_worktrees",
@@ -323,6 +392,13 @@ ALLOW_PROVENANCE_VIOLATION_REMOVED = (
     "violation always fails. Fix its cause, or fix the classifier if the "
     "violation is a false one"
 )
+_GATE_ONLY = (
+    "the merge-review gate runs on every submission and is met only by a merge-review "
+    "record or a merge-review exemption the human approved "
+    "(vrg-ruling request --kind merge-review-exemption)"
+)
+OVERRIDE_MERGE_REVIEW_REMOVED = f"vrg-submit-pr: --override-merge-review was removed; {_GATE_ONLY}"
+HUMAN_ONLY_REMOVED = f"vrg-submit-pr: --human-only was removed; {_GATE_ONLY}"
 YES_REMOVED = (
     "vrg-submit-pr: --yes was removed; submit no longer asks for confirmation, so drop the flag"
 )
@@ -345,6 +421,10 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
         return NO_INSTALL_REMOVED
     if args.allow_provenance_violation:
         return ALLOW_PROVENANCE_VIOLATION_REMOVED
+    if args.override_merge_review is not None:
+        return OVERRIDE_MERGE_REVIEW_REMOVED
+    if args.human_only is not None:
+        return HUMAN_ONLY_REMOVED
     if args.yes:
         return YES_REMOVED
     return None
@@ -655,15 +735,64 @@ def _merge_method(issue_refs: list[str]) -> auto_merge.MergeMethod:
     return "REBASE" if batch_rules.is_batch(issue_refs) else "SQUASH"
 
 
+def _qualified(issue_ref: str) -> str:
+    """*issue_ref* as ``owner/repo#N``; a bare ``#N`` is scoped to this clone's repo.
+
+    A ref that cannot be qualified is returned as given, and the gates refuse it.
+    """
+    try:
+        return epics.parse_issue_ref(issue_ref, default_repo=github.current_repo()).slug
+    except ValueError:
+        return issue_ref
+
+
+def _run_gates(sub: _Submission) -> None:
+    """Apply the merge-review gate to *sub* (spec §4.6).
+
+    Runs for every submission, before any push or ``gh pr create``.
+    ``origin/<base>`` is fetched, and the branch too when *sub.push* is false
+    (a pushing submit must not move the ``--force-with-lease`` ref, and its
+    head is the local commit); then :func:`agent_gates.evaluate` judges
+    ``origin/<base>...<head>``. A failure raises :class:`_SubmitFailedError`
+    naming every reason, with nothing pushed or opened.
+    """
+    authors = load_trusted_authors()
+    refs = (sub.base,) if sub.push else (sub.branch, sub.base)
+    try:
+        git.run("fetch", "origin", *refs)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"could not fetch {', '.join(refs)} from origin for the gates: "
+            f"{error_text(exc)}. No PR was opened."
+        )
+        raise _SubmitFailedError(msg) from exc
+    repo = Path(git.repo_root())
+    base = f"origin/{sub.base}"
+    issue_refs = [_qualified(ref) for ref in sub.issue_refs]
+    print(f"Checking the gates for {', '.join(issue_refs)} at {sub.expected_head[:12]}...")
+    result = agent_gates.evaluate(
+        repo, base=base, head=sub.expected_head, issue_refs=issue_refs, authors=authors
+    )
+    if not result.ok:
+        msg = (
+            "the gates refused the change: "
+            + "; ".join(result.reasons)
+            + ". Nothing was pushed and no PR was opened; submit again once fixed."
+        )
+        raise _SubmitFailedError(msg)
+
+
 def _open_one(sub: _Submission) -> str:
     """Open *sub*'s PR at its expected head, record the submission, return the URL.
 
-    A batch is re-checked at the head first, before anything is pushed; then
-    the branch is pushed (when *sub.push*), origin's tip is held to the head,
-    and the PR is opened. The submission is recorded as soon as the PR
-    exists, so a later step that fails leaves the worktree marked with the
-    PR it opened rather than ready for a second one.
+    The gate runs first (:func:`_run_gates`), then a batch is re-checked at
+    the head, both before anything is pushed; then the branch is pushed (when
+    *sub.push*), origin's tip is held to the head, and the PR is opened. The
+    submission is recorded as soon as the PR exists, so a later step that
+    fails leaves the worktree marked with the PR it opened rather than ready
+    for a second one.
     """
+    _run_gates(sub)
     _recheck_batch(
         sub.issue_refs, branch=sub.branch, target=sub.base, head=sub.expected_head, push=sub.push
     )
@@ -1095,6 +1224,8 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     # batch is handed off only through report-ready (epic .github#1019).
     issue_ref = resolve_issue_ref(args.issue)
     links = _checked_links([issue_ref], args.linkage)
+    # No ready-state records who prepared the change, so it counts as recorded
+    # by its submitter: always the human, since agents are refused this mode.
     branch = git.current_branch()
     target = _target_branch(args.base)
     pr_body = build_pr_body(
@@ -1493,6 +1624,7 @@ def _metadata_from_state(state: WorkflowState, branch: str) -> dict[str, str]:
         "summary": meta["summary"],
         "notes": meta.get("notes", ""),
         "linkage": meta.get("linkage", "Ref"),
+        "recorded_by": state.recorded_by or "",
     }
 
 
@@ -1747,7 +1879,12 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
         if not push:
             _verify_origin_tip(branch, state)
     return _prepare(
-        branch, base, metadata, push=push, expected_head=expected_head, record_in=wt_path
+        branch,
+        base,
+        metadata,
+        push=push,
+        expected_head=expected_head,
+        record_in=wt_path,
     )
 
 

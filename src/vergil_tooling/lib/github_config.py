@@ -177,10 +177,13 @@ def desired_repo_settings() -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         # Mechanized sync PRs on automation branches merge through GitHub
-        # auto-merge (epic vergil-project/.github#1064, spec §6.4). Agents
-        # still cannot turn it on for a PR, and the automation-branch ruleset
-        # keeps every identity but the automation App and the admin role off
-        # those branches.
+        # auto-merge (epic vergil-project/.github#1064, spec §6.4), and so do
+        # the PRs vrg-submit-pr opens. The user agent turns it on only for its
+        # own PR, through vrg-submit-pr once the PR has passed the
+        # merge-review gate (epic
+        # vergil-project/.github#1384); raw gh stays denied to it. The
+        # automation-branch ruleset keeps every identity but the automation
+        # App and the admin role off those branches.
         allow_auto_merge=True,
         delete_branch_on_merge=True,
         allow_merge_commit=True,

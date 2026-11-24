@@ -3291,7 +3291,7 @@ def test_settle_once_after_mixed_batch(tmp_path: Path, capsys: pytest.CaptureFix
     with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch", watch):
         rc = main([f"{_PR_A},{_PR_B},{_PR_C}"])
     assert rc == 3
-    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C])
+    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C], clone=tmp_path)
     assert calls == _SETTLED
     assert "Validate: passed" in capsys.readouterr().out
 
@@ -3618,6 +3618,10 @@ def test_report_title_is_truncated() -> None:
         ("timed out", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("failed: auto-merge off", "investigate before re-enabling auto-merge"),
         ("failed: provenance", "investigate before re-enabling auto-merge"),
+        (
+            "failed: gates",
+            "get the missing merge review for its head, then re-enable auto-merge",
+        ),
         ("failed: not a develop PR", "finalize watches develop PRs only"),
     ],
 )
@@ -3752,7 +3756,7 @@ def test_merged_violation_blocks_release(
         patch(_MOD + ".subprocess.run", run),
     ):
         assert main([_PR_A, "--release"]) == 3
-    watch.assert_called_once_with([_PR_A])
+    watch.assert_called_once_with([_PR_A], clone=tmp_path)
     assert calls == _SETTLED  # develop still settles: the PR is merged
     run.assert_not_called()
     out = capsys.readouterr().out
@@ -3789,7 +3793,7 @@ def test_open_pr_failed_on_provenance_is_3(tmp_path: Path) -> None:
         patch(_MOD + ".subprocess.run", run),
     ):
         assert main([_PR_A, "--release"]) == 3
-    watch.assert_called_once_with([_PR_A])
+    watch.assert_called_once_with([_PR_A], clone=tmp_path)
     run.assert_not_called()
 
 
@@ -3841,7 +3845,7 @@ def test_all_selects_worktree_prs(tmp_path: Path) -> None:
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged) as watch,
     ):
         assert main(["--all"]) == 0
-    watch.assert_called_once_with([_PR7.url, _PR8.url])
+    watch.assert_called_once_with([_PR7.url, _PR8.url], clone=tmp_path)
 
 
 def test_all_with_no_open_prs_returns_zero(
@@ -4237,6 +4241,64 @@ def test_release_cascade_refused_when_repo_not_released(
     mock_run.assert_not_called()
     err = capsys.readouterr().err
     assert f"vrg-finalize-pr {flag}: this repo is not released" in err
+
+
+def test_watch_runs_in_the_main_clone(tmp_path: Path) -> None:
+    """The watch re-checks the gates in the clone finalize runs from."""
+    watch = MagicMock(side_effect=_all_merged)
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([_PR_A]) == 0
+    watch.assert_called_once_with([_PR_A], clone=tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["user", "audit"])
+def test_agent_release_refused_before_watch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Releasing is a human action: an agent's --release stops before any watch."""
+    monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+    calls: list[str] = []
+    with (
+        _settle_env(tmp_path, calls),
+        patch(_MOD + ".gate.unreleased_refusal") as m_gate,
+        patch(_MOD + ".finalize_watch.watch") as m_watch,
+        patch(_MOD + ".subprocess.run") as m_run,
+    ):
+        assert main([_PR_A, "--release"]) == 1
+    m_watch.assert_not_called()
+    m_gate.assert_not_called()
+    m_run.assert_not_called()
+    assert calls == []
+    assert "vrg-finalize-pr --release: releasing is a human maintainer action" in (
+        capsys.readouterr().err
+    )
+
+
+def test_agent_cleanup_only_release_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--cleanup-only --release is refused for an agent before the settle phase."""
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    calls: list[str] = []
+    with _settle_env(tmp_path, calls), patch(_MOD + ".subprocess.run") as m_run:
+        assert main(["--cleanup-only", "--release"]) == 1
+    assert calls == []
+    m_run.assert_not_called()
+    assert "Agents cannot chain into vrg-release" in capsys.readouterr().err
+
+
+def test_agent_without_release_still_finalizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only --release is refused: an agent's plain finalize settles as before."""
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+    calls: list[str] = []
+    with _settle_env(tmp_path, calls):
+        assert main(["--cleanup-only"]) == 0
+    assert calls
 
 
 def test_finalize_without_release_ignores_unreleased_repo(tmp_path: Path) -> None:

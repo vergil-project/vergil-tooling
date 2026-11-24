@@ -32,6 +32,8 @@ from vergil_tooling.lib.vm_guest import (
     link_claude_dirs,
     prune_cache_images,
     read_fingerprint,
+    root_fs_bytes,
+    stamp_fingerprint,
     update_plugins,
     update_tooling,
     vm_occupancy,
@@ -1168,6 +1170,38 @@ class TestFingerprintHelpers:
         # telling the user to rebuild when the real problem is reachability.
         mock_read.side_effect = VmUnreachableError
         assert vm_spec_status(_transport(), "abc123") == "unreachable"
+
+    def test_stamp_fingerprint_writes_the_marker_through_sudo(self) -> None:
+        transport = _transport()
+        stamp_fingerprint(transport, "a" * 64)
+        cmd = transport.run.call_args.args
+        assert cmd[:2] == ("bash", "-c")
+        assert cmd[2] == (
+            f"printf '%s\\n' {'a' * 64} | sudo tee /etc/vergil/vm-spec.fingerprint >/dev/null"
+        )
+
+    def test_stamp_fingerprint_refuses_a_non_digest(self) -> None:
+        transport = _transport()
+        with pytest.raises(ValueError, match="not a spec fingerprint"):
+            stamp_fingerprint(transport, "abc; rm -rf /")
+        transport.run.assert_not_called()
+
+    def test_stamp_fingerprint_surfaces_a_failed_write(self) -> None:
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(1, "bash")
+        with pytest.raises(subprocess.CalledProcessError):
+            stamp_fingerprint(transport, "b" * 64)
+
+
+class TestRootFsBytes:
+    def test_parses_df_output(self) -> None:
+        transport = _transport("    1B-blocks\n107374182400\n")
+        assert root_fs_bytes(transport) == 107374182400
+        transport.run.assert_called_once_with("df", "-B1", "--output=size", "/")
+
+    def test_raises_when_df_prints_no_size(self) -> None:
+        with pytest.raises(ValueError, match="cannot read the root filesystem size"):
+            root_fs_bytes(_transport("1B-blocks\n"))
 
 
 class TestOccupancy:

@@ -85,8 +85,8 @@ agent:  vrg-ruling respond --issue 'OWNER/REPO#N' --request ID --reply ID --item
 ### Where the response states the agent's reading
 
 A reply has no grammar: the skill that reads it interprets it. The one
-exception is a reply to a protected-change or merge-review exemption request
-(`vrg-ruling request --kind`, see [the reference](../reference/dev/ruling.md#protected-change-and-exemption-requests)),
+exception is a reply to a merge-review exemption request
+(`vrg-ruling request --kind`, see [the reference](../reference/dev/ruling.md#exemption-requests)),
 which must carry exactly one decision line, `Decision: approve` or
 `Decision: refuse`; `vrg-ruling-reply` refuses to post one without it. The response
 says, item by item, how the agent read the reply and what it did, so the
@@ -98,7 +98,7 @@ never by guessing.
 
 | Command | What it does | Exit codes |
 |---|---|---|
-| `vrg-ruling request` | Posts a request from an items file, or with `--kind` a protected-change or exemption request computed from `HEAD`, and prints its comment ID. Refuses while the issue has an open exchange, naming that request. | 0, 1, 2 |
+| `vrg-ruling request` | Posts a request from an items file, or with `--kind` an exemption request computed from `HEAD`, and prints its comment ID. Refuses while the issue has an open exchange, naming that request. | 0, 1, 2 |
 | `vrg-ruling draft` | Pushes the reply drafted for the human to the request's draft ref and prints the human's command. Posts nothing. | 0, 1, 2, 4 |
 | `vrg-ruling read` | Runs every check on the reply to a request and prints the reply. | 0, 1, 2, 3, 4 |
 | `vrg-ruling respond` | Re-runs `read`'s checks and posts the response, recording the request and reply comment IDs. | 0, 1, 2, 4 |

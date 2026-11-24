@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -55,6 +55,7 @@ from vergil_tooling.lib.identity import (
 from vergil_tooling.lib.lima import (
     create_vm,
     delete_vm,
+    edit_disk,
     fetch_template,
     list_vms,
     nested_virt_unsupported_reason,
@@ -63,6 +64,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     vm_age_days,
+    vm_disk_bytes,
     vm_status,
     write_instance_meta,
 )
@@ -73,6 +75,7 @@ from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_guest import (
+    VmUnreachableError,
     check_tooling,
     copy_claude_config,
     get_tooling_version,
@@ -81,6 +84,9 @@ from vergil_tooling.lib.vm_guest import (
     install_tooling,
     link_claude_dirs,
     prune_cache_images,
+    read_fingerprint,
+    root_fs_bytes,
+    stamp_fingerprint,
     update_plugins,
     update_tooling,
     vm_probe,
@@ -189,6 +195,31 @@ def main(argv: list[str] | None = None) -> int:
     )
     progress.add_progress_args(p_update, ())
 
+    p_grow_disk = sub.add_parser(
+        "grow-disk",
+        help="Grow a Lima VM's disk in place to its configured size (never shrinks)",
+        description=(
+            "Grow an existing Lima VM's disk to the size its spec configures, keeping "
+            "the VM and its data: stop it, set the size with 'limactl edit --disk', "
+            "and start it, which grows the disk image and, through cloud-init, the "
+            "root filesystem (Lima 1.1 or later). Refuses a configured size smaller "
+            "than the disk: Lima never shrinks one, so a smaller disk needs "
+            "'vrg-vm rebuild'. The VM is left running. A dedicated VM whose only spec "
+            "drift was its disk size has its fingerprint re-stamped, so 'vrg-vm list' "
+            "no longer shows it NEEDS-REBUILD; this includes a running dedicated VM "
+            "whose disk is already at its configured size (grown by hand, or not "
+            "re-stamped after an earlier grow). Lima VMs only."
+        ),
+    )
+    _add_identity_args(p_grow_disk)
+    _add_workspace_arg(p_grow_disk)
+    _add_name_arg(p_grow_disk)
+    p_grow_disk.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for the VM to reach running status (default: 30m)",
+    )
+
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
     _add_workspace_arg(p_destroy)
@@ -250,7 +281,10 @@ def main(argv: list[str] | None = None) -> int:
         help="List all identity VMs and their status",
         description=(
             "List each identity's base and dedicated VMs with configured footprint "
-            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
+            "(CPUS/MEM), disk size, live occupancy, and SPEC health. DISK is the size "
+            "Lima reports for the VM's disk (the configured size for a VM not yet "
+            "created); a disk that differs from its configured size shows as "
+            "<actual>≠<configured>. Dedicated rows enumerate "
             "existing VM instances only; a spec'd repo whose VM was never built is "
             "surfaced by the session/start preflight gate, not here. AGENTS counts "
             "harness instances (Claude Code sessions); HUMANS counts open human-held "
@@ -417,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop": _cmd_stop,
         "restart": _cmd_restart,
         "update": _cmd_update,
+        "grow-disk": _cmd_grow_disk,
         "destroy": _cmd_destroy,
         "destroy-volume": _cmd_destroy_volume,
         "rebuild": _cmd_rebuild,
@@ -1580,6 +1615,157 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_grow_disk(args: argparse.Namespace) -> int:
+    """Grow a Lima VM's disk in place to its configured size; never shrink it.
+
+    The steps a human ran by hand before (vergil-vm#427): stop the VM, set the
+    size with ``limactl edit --disk``, start it. Lima (v1.1 and later) grows the
+    disk image on that start and refuses to shrink one; cloud-init's growpart
+    and resizefs fill the larger disk on the boot. A dedicated VM whose stamped
+    fingerprint differed from its spec only by the disk has it re-stamped, so
+    ``list`` stops showing it ``NEEDS-REBUILD``; so does one already at its
+    configured size, grown by hand or left stamped by a failed re-stamp.
+    """
+    target = _resolve_target(args)
+    if target.spec.off_platform:
+        print(
+            "ERROR: vrg-vm grow-disk grows a Lima VM's disk; an off-platform box's "
+            "disks are sized by 'volume' and 'boot_disk'",
+            file=sys.stderr,
+        )
+        return 1
+    instance = target.instance
+    ref = _target_ref(target)
+    status = vm_status(instance)
+    if not status:
+        print(
+            f"ERROR: VM '{instance}' does not exist — run 'vrg-vm create' first",
+            file=sys.stderr,
+        )
+        return 1
+    current = vm_disk_bytes(instance)
+    if current is None:
+        print(f"ERROR: Lima reports no disk size for VM '{instance}'", file=sys.stderr)
+        return 1
+    configured = target.spec.disk
+    wanted = _gib_bytes(configured)
+    if wanted < current:
+        print(
+            f"ERROR: VM '{instance}' has a {_format_gib(current)} disk, larger than its "
+            f"configured {configured}. Lima can grow a disk but never shrink it; "
+            f"for a smaller disk, rebuild the VM: vrg-vm rebuild {ref}",
+            file=sys.stderr,
+        )
+        return 1
+    if wanted == current:
+        print(f"VM '{instance}' already has its configured {configured} disk; nothing to grow.")
+        if not target.spec.dedicated:
+            return 0
+        return _restamp_at_size(target, status, wanted // _GIB)
+
+    print(f"Growing VM '{instance}' disk from {_format_gib(current)} to {configured}...")
+    try:
+        stop_vm(instance)
+        edit_disk(instance, wanted // _GIB)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"ERROR: failed to set VM '{instance}' disk to {configured} "
+            f"(exit status {exc.returncode}); the VM is stopped. "
+            f"Start it again: vrg-vm start {ref}",
+            file=sys.stderr,
+        )
+        return 1
+    transport = LimaTransport(instance)
+    try:
+        start_vm(instance, timeout=args.timeout)
+        print("Injecting credentials...")
+        inject_credentials(transport, target.identity)
+        inject_trusted_authors(transport, target.config.trusted_authors)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"ERROR: VM '{instance}' disk is set to {configured}, but starting it "
+            f"failed (exit status {exc.returncode}); inspect it with 'limactl list' "
+            f"and start it: vrg-vm start {ref}",
+            file=sys.stderr,
+        )
+        return 1
+
+    grown = vm_disk_bytes(instance)
+    if grown != wanted:
+        shown = _format_gib(grown) if grown is not None else "no size"
+        print(
+            f"ERROR: VM '{instance}' reports {shown} after the grow, not {configured}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"VM '{instance}' disk grown to {configured}; root filesystem is "
+        f"{_format_gib(root_fs_bytes(transport))}."
+    )
+    if target.spec.dedicated:
+        return _restamp_disk_drift(target, transport, (_format_gib(current),))
+    return 0
+
+
+def _restamp_at_size(target: Target, status: str, size_gib: int) -> int:
+    """Clear the disk-only drift of a dedicated VM already at its configured size.
+
+    A VM whose disk was grown by hand (the vergil-vm#427 steps) or whose
+    re-stamp failed after a grow (the VM was unreachable) is at its configured
+    size but keeps the fingerprint it was built with. The size it was built at
+    is not recorded, but Lima never shrinks a disk, so it was a whole-GiB size
+    below the current one: each is tried as the old disk. Only a stamp that
+    matches the current spec with one of them is re-stamped.
+    """
+    if status != "Running":
+        print(
+            f"ERROR: VM '{target.instance}' is {status.lower()}, so its spec fingerprint "
+            "cannot be checked for disk-only drift; start it and run grow-disk again: "
+            f"vrg-vm start {_target_ref(target)}",
+            file=sys.stderr,
+        )
+        return 1
+    old_disks = tuple(f"{n}GiB" for n in range(1, size_gib))
+    return _restamp_disk_drift(target, LimaTransport(target.instance), old_disks)
+
+
+def _restamp_disk_drift(target: Target, transport: Transport, old_disks: tuple[str, ...]) -> int:
+    """Clear a dedicated VM's disk-only drift by re-stamping its fingerprint.
+
+    Called once Lima reports the VM's configured disk size. The VM was stamped
+    with the fingerprint of the spec it was built from. If that is the current
+    spec with the disk at one of *old_disks*, the disk was the only difference,
+    and it is gone: stamp the current fingerprint. Any other stamp means the
+    spec drifted in some other field too, which only a rebuild fixes, so it is
+    left as it is and reported.
+    """
+    ref = _target_ref(target)
+    try:
+        stamped = read_fingerprint(transport)
+    except VmUnreachableError:
+        print(
+            f"ERROR: VM '{target.instance}' is not reachable over SSH to check its spec "
+            "fingerprint; 'vrg-vm list' shows whether it needs a rebuild.",
+            file=sys.stderr,
+        )
+        return 1
+    if stamped == target.fingerprint:
+        print(f"VM '{target.instance}' meets its spec.")
+        return 0
+    if stamped is not None and any(
+        stamped == spec_fingerprint(replace(target.spec, disk=disk)) for disk in old_disks
+    ):
+        stamp_fingerprint(transport, target.fingerprint)
+        print(f"VM '{target.instance}' meets its spec again: its fingerprint is re-stamped.")
+        return 0
+    print(
+        f"WARNING: VM '{target.instance}' still differs from its spec in more than its "
+        f"disk; rebuild it: vrg-vm rebuild {ref}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _update_over_transport(
     transport: Transport,
     label: str,
@@ -2250,14 +2436,56 @@ def _present_spec_state(
     return state
 
 
+_GIB = 1024**3
+
+
+def _gib_bytes(size: str) -> int:
+    """Bytes in a configured ``"<N>GiB"`` size (the only form vm sizes take)."""
+    return int(size.removesuffix("GiB")) * _GIB
+
+
+def _format_gib(size_bytes: int) -> str:
+    """A Lima byte count as ``<N>GiB``, with one decimal when it is not whole GiB."""
+    if size_bytes % _GIB == 0:
+        return f"{size_bytes // _GIB}GiB"
+    return f"{size_bytes / _GIB:.1f}GiB"
+
+
+def _lima_disks(vms: list[dict[str, str]]) -> dict[str, int]:
+    """Each Lima instance's disk size in bytes, from ``list_vms()``; unsized ones omitted."""
+    return {vm["name"]: int(vm["disk"]) for vm in vms if vm.get("disk")}
+
+
+def _disk_cell(actual: int | None, configured: str | None) -> str:
+    """The DISK column: the VM's actual Lima disk, marked when it is not the configured size.
+
+    With no Lima record (the VM was never created) the configured size is shown.
+    A disk that differs from its configured size reads ``<actual>≠<configured>``:
+    after an in-place grow, or for a box created before its size changed.
+    """
+    if actual is None:
+        return configured or "—"
+    shown = _format_gib(actual)
+    if configured is None or actual == _gib_bytes(configured):
+        return shown
+    return f"{shown}≠{configured}"
+
+
 def _list_rows(
     identity_name: str,
     identity: Identity,
     dedicated: list[DedicatedRow],
     status: dict[str, str],
     probes: Mapping[str, ProbeResult],
+    disks: Mapping[str, int] | None = None,
 ) -> list[dict[str, object]]:
-    """Build display rows for one identity: the base VM plus each dedicated row."""
+    """Build display rows for one identity: the base VM plus each dedicated row.
+
+    ``disks`` maps a Lima instance to its actual disk size in bytes
+    (:func:`_lima_disks`); the DISK column shows that size, marked when it
+    differs from the configured one (:func:`_disk_cell`).
+    """
+    disks = disks or {}
     base = _base_footprint(identity)
     rows: list[dict[str, object]] = []
 
@@ -2270,7 +2498,7 @@ def _list_rows(
             "status": status.get(identity.vm_instance, "Not Created"),
             "cpus": cast("int", base["cpus"]),
             "memory": str(base["memory"]),
-            "disk": str(base["disk"]),
+            "disk": _disk_cell(disks.get(identity.vm_instance), str(base["disk"])),
             "agents": b_agents,
             "humans": b_humans,
             "spec": "ok",
@@ -2290,7 +2518,7 @@ def _list_rows(
                     "status": st,
                     "cpus": "—",
                     "memory": "—",
-                    "disk": "—",
+                    "disk": _disk_cell(disks.get(d.instance), None),
                     "agents": agents,
                     "humans": humans,
                     "spec": "orphaned",
@@ -2317,7 +2545,7 @@ def _list_rows(
                 "status": st,
                 "cpus": spec.cpus,
                 "memory": spec.memory,
-                "disk": spec.disk,
+                "disk": _disk_cell(disks.get(d.instance), spec.disk),
                 "agents": agents,
                 "humans": humans,
                 "spec": _present_spec_state(d.instance, spec, probes),
@@ -2625,7 +2853,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
     if args.sessions:
         return _list_sessions(config, args)
 
-    status = {vm["name"]: vm["status"] for vm in list_vms()}
+    vms = list_vms()
+    status = {vm["name"]: vm["status"] for vm in vms}
+    disks = _lima_disks(vms)
     instances = list(status)
 
     discovered = {
@@ -2637,24 +2867,26 @@ def _cmd_list(args: argparse.Namespace) -> int:
     local_rows = [
         (id_name, r)
         for id_name, identity in config.identities.items()
-        for r in _list_rows(id_name, identity, discovered[id_name], status, probes)
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes, disks)
     ]
     cloud_rows = _cloud_list_rows(config)
 
-    # SCOPE and STATUS carry the only variable-length values — long org/repo handles
-    # and the wide 'unknown (no gcp creds)' placeholder — so size each to its widest
-    # value with the prior fixed widths as floors. A value that overruns a fixed
-    # field shoves every later column out of alignment, which is exactly what a long
-    # handle did to SCOPE (#1866).
-    scopes = [str(r["scope"]) for _id, r in local_rows] + [str(r["scope"]) for r in cloud_rows]
-    statuses = [str(r["status"]) for _id, r in local_rows] + [str(r["status"]) for r in cloud_rows]
+    # SCOPE, STATUS and DISK carry the only variable-length values — long org/repo
+    # handles, the wide 'unknown (no gcp creds)' placeholder and a marked
+    # '<actual>≠<configured>' disk — so size each to its widest value with the prior
+    # fixed widths as floors. A value that overruns a fixed field shoves every later
+    # column out of alignment, which is exactly what a long handle did to SCOPE (#1866).
+    all_rows = [r for _id, r in local_rows] + cloud_rows
+    scopes = [str(r["scope"]) for r in all_rows]
+    statuses = [str(r["status"]) for r in all_rows]
     scope_w = max(40, *(len(s) for s in scopes)) if scopes else 40
     status_w = max(11, *(len(s) for s in statuses)) if statuses else 11
+    disk_w = max(7, *(len(str(r["disk"])) for r in all_rows)) if all_rows else 7
 
     header = (
         f"{'IDENTITY':<14} {'SCOPE':<{scope_w}} {'INSTANCE':<11} {'BACKEND':<13} "
-        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} "
-        f"{'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} "
+        f"{'DISK':<{disk_w}} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -2663,7 +2895,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print(
             f"{id_name:<14} {r['scope']!s:<{scope_w}} {r.get('instance', '—')!s:<11} "
             f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {'—':<15} "
-            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<{disk_w}} "
             f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
         )
 
@@ -2671,7 +2903,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         print(
             f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['instance']!s:<11} "
             f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {r['external_ip']!s:<15} "
-            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
+            f"{'—':<5} {'—':<7} {r['disk']!s:<{disk_w}} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 
     return 0

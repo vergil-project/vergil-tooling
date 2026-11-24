@@ -10,6 +10,17 @@ A batch PR (epic vergil-project/.github#1019) records its ordered issue list in
 the optional ``issues`` field, still at schema version 2: ``issue`` is its first
 issue, and a single-issue record carries no ``issues`` key, so it reads and
 writes exactly as before. Read ``all_issues`` for the list either way.
+
+``recorded_by`` (epic vergil-project/.github#1384, Task 9) is the identity
+mode (an :class:`~vergil_tooling.lib.identity_mode.IdentityMode` value) that
+ran the ``report-ready`` recording the state. The file is writable by the
+agent that prepared the branch, so the field is a hint that can only make a
+change more agent-involved, never skip a gate: the finalize watch reads it,
+and ``vrg-submit-pr`` runs its gate on every submission whatever it says. It
+is optional, still at schema version 2: a record with none (written before the
+field existed) reads as before and carries no ``recorded_by`` key, and the
+watch counts it, as it does any value it does not recognise, as
+agent-involved.
 """
 
 from __future__ import annotations
@@ -56,6 +67,10 @@ class WorkflowState:
     # always the first of them. ``None`` for a single-issue record, whose JSON
     # carries no ``issues`` key, so it is byte-for-byte what it was before.
     issues: list[str] | None = None
+    # The identity mode that recorded the ready state (an ``IdentityMode``
+    # value); ``None`` when no report-ready recorded one, and then the JSON
+    # carries no ``recorded_by`` key.
+    recorded_by: str | None = None
 
     @property
     def all_issues(self) -> list[str]:
@@ -66,9 +81,10 @@ class WorkflowState:
         """Return a JSON-faithful dict with a stable key order.
 
         A batch's ``issues`` follows ``issue``; a single-issue record has no
-        ``issues`` key at all.
+        ``issues`` key at all. ``recorded_by`` follows ``status`` when set.
         """
         batch = {"issues": list(self.issues)} if self.issues is not None else {}
+        recorded = {"recorded_by": self.recorded_by} if self.recorded_by is not None else {}
         return {
             "schema_version": self.schema_version,
             "issue": self.issue,
@@ -76,6 +92,7 @@ class WorkflowState:
             "branch": self.branch,
             "base": self.base,
             "status": self.status,
+            **recorded,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "git": self.git,
@@ -108,6 +125,7 @@ class WorkflowState:
             submitted=data.get("submitted"),
             schema_version=version,
             issues=data.get("issues"),
+            recorded_by=data.get("recorded_by"),
         )
         state.validate()
         return state
@@ -122,10 +140,21 @@ class WorkflowState:
         return cls.from_dict(data)
 
     def validate(self) -> None:
-        """Raise ``WorkflowError`` on an out-of-range status or a malformed issue list."""
+        """Raise ``WorkflowError`` on an out-of-range status, a malformed issue list
+        or a ``recorded_by`` that is not a non-empty string.
+
+        Any non-empty string is kept: whether submit recognises it is submit's
+        decision, and one it does not recognise keeps the gates there.
+        """
         if self.status not in STATUSES:
             raise WorkflowError(f"invalid status {self.status!r}; must be one of {STATUSES}")
         self._validate_issues()
+        if self.recorded_by is not None and (
+            not isinstance(self.recorded_by, str) or not self.recorded_by
+        ):
+            raise WorkflowError(
+                f"workflow state 'recorded_by' must be a non-empty string, got {self.recorded_by!r}"
+            )
 
     def _validate_issues(self) -> None:
         """A batch's ``issues``: a list of 2 or more refs whose first is ``issue``."""

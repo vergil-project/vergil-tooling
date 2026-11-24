@@ -48,8 +48,8 @@ In order, it:
    (no draft is a refusal);
 7. refuses a reply that is not plain text (printable ASCII, U+0020 to
    U+007E, plus newline, with no `<!-- vrg-ruling` marker prefix) or that is
-   blank, and, when the request is a protected-change or merge-review
-   exemption request, a reply that does not carry exactly one decision line,
+   blank, and, when the request is a merge-review exemption request, a
+   reply that does not carry exactly one decision line,
    `Decision: approve` or `Decision: refuse`, spelt exactly so (any other
    line starting with `Decision:` in any case counts as a second, or as a
    wrong one);
