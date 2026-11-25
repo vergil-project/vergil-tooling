@@ -692,25 +692,55 @@ def test_render_epic_drift_only() -> None:
     assert out.count("_none_") == 1  # task section is empty
 
 
-def test_close_drift_closes_tasks_in_repo_and_epics_in_dot_github() -> None:
-    tasks = [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
-    epics = [roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40")]
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        closed = epic_audit.close_drift(tasks, epics, org="vergil-project")
-    assert closed == ["vergil-project/vergil-tooling#1947", "vergil-project/.github#40"]
-    task_call = run.call_args_list[0]
-    assert task_call.args[:5] == (
-        "issue",
-        "close",
-        "1947",
-        "--repo",
-        "vergil-project/vergil-tooling",
+def _close_drift_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """The open task vergil-tooling#1947 and the open epic .github#40, its chain the head alone."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(epics.IssueRef("vergil-project", "vergil-tooling", 1947), title="task")
+    graph.add_issue(
+        epics.IssueRef("vergil-project", ".github", 40), title="Convention", labels=["epic"]
     )
-    assert "PR #1948 merged" in task_call.args[-1]
-    epic_call = run.call_args_list[1]
-    assert epic_call.args[:5] == ("issue", "close", "40", "--repo", "vergil-project/.github")
-    assert "all 9 child tasks" in epic_call.args[-1]
+    return graph
+
+
+def test_close_drift_closes_tasks_in_repo_and_epics_in_dot_github(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = _close_drift_graph(monkeypatch)
+    task, epic = (
+        epics.IssueRef("vergil-project", "vergil-tooling", 1947),
+        epics.IssueRef("vergil-project", ".github", 40),
+    )
+    drift = [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
+    summaries = [roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40")]
+    closed = epic_audit.close_drift(drift, summaries, org="vergil-project")
+    assert closed == ["vergil-project/vergil-tooling#1947", "vergil-project/.github#40"]
+    assert [event[:2] for event in graph.events] == [
+        ("close", task),
+        ("close", epic),
+        ("comment", epic),
+    ]
+    assert "PR #1948 merged" in graph.comments[task][0]
+    assert "all 9 child tasks" in graph.comments[epic][0]
+
+
+def test_close_drift_closes_whole_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every close closes the chain (spec §4.6 of .github#1609): the head first,
+    # then each continuation, and the comment goes on the head.
+    graph = _close_drift_graph(monkeypatch)
+    head = epics.IssueRef("vergil-project", ".github", 40)
+    c2 = graph.add_continuation(epics.IssueRef("vergil-project", ".github", 41), head, head)
+    c3 = graph.add_continuation(epics.IssueRef("vergil-project", ".github", 42), head, c2, k=3)
+    graph.clear_log()
+    summaries = [roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40")]
+    closed = epic_audit.close_drift([], summaries, org="vergil-project")
+    assert closed == [head.slug, c2.slug, c3.slug]
+    assert [event[:2] for event in graph.events] == [
+        ("close", head),
+        ("close", c2),
+        ("close", c3),
+        ("comment", head),
+    ]
+    assert all(graph.issues[ref].state == "CLOSED" for ref in (head, c2, c3))
 
 
 def test_close_drift_empty_is_noop() -> None:
@@ -1625,135 +1655,181 @@ def _intake_epic(home: str) -> epics.IssueRef:
     return epics.IssueRef(owner, repo, 100 if owner == "org" else 7)
 
 
-@pytest.fixture
-def trusted_reads() -> Any:
-    """Read every orphan through the real trust layer as opened by the trusted human."""
-    items = trust_stubs.FakeItems()
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=items),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-    ):
-        yield items
+_ORG_INTAKE = epics.IssueRef("org", ".github", 100)
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("org", "tool", 6), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("other", "tool", 3), home="other/.github", name="other"),
-    ]
-    with (
-        patch(
-            "vergil_tooling.lib.epics.ensure_standing_epic",
-            side_effect=lambda _kind, home, _name: _intake_epic(home),
-        ) as ensure,
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as cs,
-        patch("vergil_tooling.lib.epics.add_child") as add,
-    ):
+def _intake_graph(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    homes: tuple[str, ...] = ("org/.github",),
+    open_items: int = 0,
+    closed_items: int = 0,
+) -> tuple[FakeSubIssueGraph, MagicMock]:
+    """A graph holding each home's intake epic, the org's with *open_items* and *closed_items*.
+
+    ``ensure_standing_epic`` is patched to find each home's intake epic
+    (:func:`_intake_epic`); the mock is returned with the graph.
+    """
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    for home in homes:
+        owner = home.split("/", 1)[0]
+        graph.add_issue(
+            _intake_epic(home), title=f"Epic (intake): {owner}", labels=["epic", "intake"]
+        )
+    for i in range(open_items + closed_items):
+        item = graph.add_issue(
+            epics.IssueRef("org", "tool", 1000 + i),
+            title=f"item {i}",
+            state="OPEN" if i < open_items else "CLOSED",
+        )
+        graph.link(_ORG_INTAKE, item)
+    ensure = MagicMock(side_effect=lambda _kind, home, _name: _intake_epic(home))
+    monkeypatch.setattr(epics, "ensure_standing_epic", ensure)
+    return graph, ensure
+
+
+def _orphans_in(
+    graph: FakeSubIssueGraph, repo: str, numbers: tuple[int, ...]
+) -> list[epic_audit.Orphan]:
+    """Open, unparented issues *numbers* of *repo* in *graph*, each an orphan of its org's queue."""
+    owner, name = repo.split("/", 1)
+    orphans: list[epic_audit.Orphan] = []
+    for number in numbers:
+        ref = epics.IssueRef(owner, name, number)
+        if ref not in graph.issues:
+            graph.add_issue(ref, title=f"orphan {number}")
+        orphans.append(epic_audit.Orphan(ref, home=f"{owner}/.github", name=owner))
+    return orphans
+
+
+def test_attach_orphans_attaches_each_under_its_intake_epic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, ensure = _intake_graph(monkeypatch, homes=("org/.github", "other/.github"))
+    orphans = _orphans_in(graph, "org/tool", (5, 6)) + _orphans_in(graph, "other/tool", (3,))
+    with patch("vergil_tooling.lib.epics.child_states", wraps=epics.child_states) as cs:
         assert _attach(orphans) == epic_audit.LinkPass(linked=3)
     assert ensure.call_count == 2  # resolved once per home
     assert ensure.call_args_list[0].args == (epics.INTAKE, "org/.github", "org")
-    assert cs.call_count == 2  # open-children count fetched once per epic
-    assert [c.args for c in add.call_args_list] == [
-        (epics.IssueRef("org", ".github", 100), epics.IssueRef("org", "tool", 5)),
-        (epics.IssueRef("org", ".github", 100), epics.IssueRef("org", "tool", 6)),
-        (epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3)),
+    assert cs.call_count == 2  # open-items count fetched once per epic
+    other = epics.IssueRef("other", ".github", 7)
+    assert graph.mutations == [
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 5)),
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 6)),
+        ("add", other, epics.IssueRef("other", "tool", 3)),
     ]
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_is_idempotent() -> None:
+def test_attach_orphans_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     # After the attach, each issue has a native parent, so a re-run finds nothing.
-    intake = epics.IssueRef("org", ".github", 100)
+    graph, _ = _intake_graph(monkeypatch)
+    _orphans_in(graph, "org/tool", (5,))
     before = [_issue("org/tool", 5)]
-    with (
-        patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.epics.add_child"),
-    ):
+    with patch("vergil_tooling.lib.epics.queue_home", side_effect=_homes):
         assert _attach(_orphan_drift(before)) == epic_audit.LinkPass(linked=1)
-    after = [_issue("org/tool", 5, native_parent=intake)]
+    assert graph.parent_of(epics.IssueRef("org", "tool", 5)) == _ORG_INTAKE
+    after = [_issue("org/tool", 5, native_parent=_ORG_INTAKE)]
     assert _orphan_drift(after) == []
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_stops_at_cap() -> None:
-    intake = epics.IssueRef("org", ".github", 100)
-    full = [
-        epics.ChildState(epics.IssueRef("org", "tool", 1000 + i), "OPEN", "c")
-        for i in range(epics._ADHOC_ARCHIVE_SEGMENT_CAP)
-    ] + [epics.ChildState(epics.IssueRef("org", "tool", 1), "CLOSED", "done")]
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
-        for n in (5, 6, 7)
-    ]
-    with (
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=full),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-        pytest.raises(epic_audit.StandingEpicFull) as excinfo,
-    ):
-        _attach(orphans)
-    add.assert_not_called()
-    exc = excinfo.value
-    assert exc.epic == intake
-    assert exc.open_children == 95
-    assert exc.pending == [o.ref for o in orphans]
-    assert str(exc) == (
-        "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
-        "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake."
+def test_orphan_pass_past_95_links_and_nudges(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The cap of 95 open items is the review nudge, never a stop (spec §4.7 of
+    # .github#1609): every orphan is linked through the chain, and the result
+    # names the queue and its open items once the pass is done. A closed item
+    # is not an open one.
+    cap = epics._ADHOC_ARCHIVE_SEGMENT_CAP
+    graph, _ = _intake_graph(monkeypatch, open_items=cap, closed_items=1)
+    orphans = _orphans_in(graph, "org/tool", (5, 6, 7))
+    assert _attach(orphans) == epic_audit.LinkPass(
+        linked=3,
+        nudges=("intake queue org/.github#100 holds 98 open items; run epic-review intake",),
+    )
+    assert [graph.parent_of(o.ref) for o in orphans] == [_ORG_INTAKE] * 3
+
+
+def test_attach_orphans_nudges_when_attaching_reaches_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, _ = _intake_graph(monkeypatch, open_items=epics._ADHOC_ARCHIVE_SEGMENT_CAP - 2)
+    first = _attach(_orphans_in(graph, "org/tool", (5,)))
+    assert first == epic_audit.LinkPass(linked=1)  # 94 open: under the cap, no nudge
+    second = _attach(_orphans_in(graph, "org/tool", (6,)))
+    assert second.nudges == (
+        "intake queue org/.github#100 holds 95 open items; run epic-review intake",
     )
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_stops_when_attaching_reaches_cap() -> None:
-    intake = epics.IssueRef("org", ".github", 100)
-    near = [
-        epics.ChildState(epics.IssueRef("org", "tool", 1000 + i), "OPEN", "c")
-        for i in range(epics._ADHOC_ARCHIVE_SEGMENT_CAP - 1)
+def test_orphan_pass_rollover_disabled_reports_full_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Rollover off and the intake head at GitHub's 100: each of its orphans is
+    # reported with RolloverDisabledError's message, as a closed epic is;
+    # nothing is linked or created there, and another home still attaches.
+    assert not epic_chain.ROLLOVER_ENABLED
+    graph, _ = _intake_graph(
+        monkeypatch, homes=("org/.github", "other/.github"), open_items=90, closed_items=10
+    )
+    graph.clear_log()
+    orphans = _orphans_in(graph, "org/tool", (5, 6)) + _orphans_in(graph, "other/tool", (3,))
+    result = _attach(orphans)
+    message = (
+        "epic org/.github#100 is at GitHub's limit of 100 sub-issues, and rollover into a"
+        " continuation is not enabled yet"
+    )
+    assert result == epic_audit.LinkPass(
+        linked=1,
+        refused=(f"org/tool#5 not linked: {message}", f"org/tool#6 not linked: {message}"),
+    )
+    assert graph.events == [
+        ("add", epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3))
     ]
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
-        for n in (5, 6)
-    ]
-    with (
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=near),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-        pytest.raises(epic_audit.StandingEpicFull) as excinfo,
-    ):
-        _attach(orphans)
-    assert add.call_count == 1  # the first fits; the second would exceed the cap
-    assert excinfo.value.pending == [epics.IssueRef("org", "tool", 6)]
 
 
-def _outsider_orphans() -> tuple[list[epic_audit.Orphan], trust_stubs.FakeItems]:
-    """Orphans #5-#9: #5 and #7 outsider-opened, #9 a User named like the agent App.
+def test_attach_orphans_rolls_a_full_queue_over(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With rollover on, an orphan past the head's 99 items goes into a new
+    # continuation, and the queue's rollover is the review nudge.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph, _ = _intake_graph(monkeypatch, open_items=10, closed_items=epic_chain.ITEM_CAP - 10)
+    orphan = _orphans_in(graph, "org/tool", (5,))[0]
+    assert _attach([orphan]) == epic_audit.LinkPass(
+        linked=1,
+        nudges=(),
+    )
+    continuation = graph.parent_of(orphan.ref)
+    assert continuation is not None
+    assert graph.parent_of(continuation) == _ORG_INTAKE
+    assert f"queue org/.github#100 rolled over into continuation {continuation.slug}" in (
+        capsys.readouterr().out
+    )
+
+
+def _outsider_orphans(
+    graph: FakeSubIssueGraph,
+) -> list[epic_audit.Orphan]:
+    """Orphans #5-#9 in *graph*: #5 and #7 outsider-opened, #9 a User named like the agent App.
 
     #6 is the trusted human's; #8 is too, its body and a comment an outsider's.
+    Every read of an issue *graph* does not hold fails the test.
     """
     spam = trust_stubs.SPAM_TEXT
-    items = trust_stubs.FakeItems(
-        {
-            ("org/tool", 5): trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
-            ("org/tool", 6): trust_stubs.item(),
-            ("org/tool", 7): trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
-            ("org/tool", 8): trust_stubs.item(
-                body=spam,
-                editor=trust_stubs.OUTSIDER,
-                nodes=[trust_stubs.comment(1, spam, trust_stubs.OUTSIDER)],
-            ),
-            ("org/tool", 9): trust_stubs.item(body=spam, author=trust_stubs.IMPOSTOR),
-        },
-        strict=True,
-    )
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
-        for n in (5, 6, 7, 8, 9)
-    ]
-    return orphans, items
+    answers = {
+        5: trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
+        6: trust_stubs.item(),
+        7: trust_stubs.item(body=spam, author=trust_stubs.OUTSIDER),
+        8: trust_stubs.item(
+            body=spam,
+            editor=trust_stubs.OUTSIDER,
+            nodes=[trust_stubs.comment(1, spam, trust_stubs.OUTSIDER)],
+        ),
+        9: trust_stubs.item(body=spam, author=trust_stubs.IMPOSTOR),
+    }
+    orphans = _orphans_in(graph, "org/tool", tuple(answers))
+    for number, answer in answers.items():
+        graph.layer.items[("org/tool", number)] = answer
+    graph.layer.strict = True
+    return orphans
 
 
 def test_attach_orphans_skips_outsider_issue_clean_exit(
@@ -1762,22 +1838,14 @@ def test_attach_orphans_skips_outsider_issue_clean_exit(
     # An outsider-opened orphan is never attached: it is reported, metadata
     # only, and left out of the count, and the pass exits clean. Only the
     # author decides it, so #8 (an outsider's edit and comment) is attached.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    orphans, items = _outsider_orphans()
-    intake = epics.IssueRef("org", ".github", 100)
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=items),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-    ):
-        assert _attach(orphans) == epic_audit.LinkPass(linked=2)
-    assert [c.args for c in add.call_args_list] == [
-        (intake, epics.IssueRef("org", "tool", 6)),
-        (intake, epics.IssueRef("org", "tool", 8)),
+    graph, _ = _intake_graph(monkeypatch)
+    orphans = _outsider_orphans(graph)
+    assert _attach(orphans) == epic_audit.LinkPass(linked=2)
+    assert graph.mutations == [
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 6)),
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 8)),
     ]
-    assert items.reads == [("org/tool", n) for n in (5, 6, 7, 8, 9)]
+    assert graph.layer.reads == [("org/tool", n) for n in (5, 6, 7, 8, 9)]
     err = capsys.readouterr().err
     created = trust_stubs.CREATED
     assert err == (
@@ -1792,42 +1860,36 @@ def test_attach_orphans_skips_outsider_issue_clean_exit(
 def test_attach_orphans_outsider_issues_under_actions_are_counts(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    graph, _ = _intake_graph(monkeypatch)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    orphans, items = _outsider_orphans()
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=items),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-        patch(
-            "vergil_tooling.lib.epics.ensure_standing_epic",
-            return_value=epics.IssueRef("org", ".github", 100),
-        ),
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.epics.add_child"),
-    ):
-        assert _attach(orphans) == epic_audit.LinkPass(linked=2)
+    orphans = _outsider_orphans(graph)
+    assert _attach(orphans) == epic_audit.LinkPass(linked=2)
     err = capsys.readouterr().err
     assert err == "skipped 3 untrusted item(s) (untrusted: 2, wrong-type: 1)\n"
 
 
-def test_attach_orphans_outsider_issues_stay_out_of_the_cap() -> None:
-    # One slot left: the outsider-opened orphans before the trusted one take
-    # none of it, so the trusted one is attached and nothing is pending.
-    intake = epics.IssueRef("org", ".github", 100)
-    near = [
-        epics.ChildState(epics.IssueRef("org", "tool", 1000 + i), "OPEN", "c")
-        for i in range(epics._ADHOC_ARCHIVE_SEGMENT_CAP - 1)
-    ]
-    orphans, items = _outsider_orphans()
+def test_attach_orphans_outsider_issues_stay_out_of_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One below the cap: the outsider-opened orphans before the trusted one
+    # are never counted, so the queue's count is 95 once #6 is linked.
+    graph, _ = _intake_graph(monkeypatch, open_items=epics._ADHOC_ARCHIVE_SEGMENT_CAP - 1)
+    orphans = _outsider_orphans(graph)
     del orphans[3]  # keep #6 as the only trusted orphan
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=items),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=near),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-    ):
-        assert _attach(orphans) == epic_audit.LinkPass(linked=1)
-    assert [c.args for c in add.call_args_list] == [(intake, epics.IssueRef("org", "tool", 6))]
+    assert _attach(orphans) == epic_audit.LinkPass(
+        linked=1,
+        nudges=("intake queue org/.github#100 holds 95 open items; run epic-review intake",),
+    )
+    assert graph.parent_of(epics.IssueRef("org", "tool", 6)) == _ORG_INTAKE
+
+
+class _FailingItems(trust_stubs.FakeItems):
+    """The trust layer's reads, with #9's item unreadable."""
+
+    def __call__(self, query: str, **variables: Any) -> dict[str, Any]:
+        if variables.get("number") == 9:
+            return {"repository": {"issueOrPullRequest": None}}
+        return super().__call__(query, **variables)
 
 
 def test_attach_orphans_read_failure_is_a_per_item_stop(
@@ -1836,28 +1898,14 @@ def test_attach_orphans_read_failure_is_a_per_item_stop(
     # A read the layer cannot complete stops that orphan alone: it is never
     # attached, the trusted orphans are, and the stop is recorded for the
     # run's exit status (spec §5.3 of epic .github#1467).
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    orphans, items = _outsider_orphans()
-    del items.items[("org/tool", 9)]
-    items.strict = False
-
-    def failing(query: str, **variables: Any) -> dict[str, Any]:
-        if int(variables["number"]) == 9:
-            return {"repository": {"issueOrPullRequest": None}}
-        return items(query, **variables)
-
+    graph, _ = _intake_graph(monkeypatch)
+    orphans = _outsider_orphans(graph)
+    graph.layer = _FailingItems(graph.layer.items, strict=True)
     stops = trust.BatchStops()
-    intake = epics.IssueRef("org", ".github", 100)
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=failing),
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-    ):
-        assert _attach(orphans, stops) == epic_audit.LinkPass(linked=2)
-    assert [c.args for c in add.call_args_list] == [
-        (intake, epics.IssueRef("org", "tool", 6)),
-        (intake, epics.IssueRef("org", "tool", 8)),
+    assert _attach(orphans, stops) == epic_audit.LinkPass(linked=2)
+    assert graph.mutations == [
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 6)),
+        ("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 8)),
     ]
     assert stops.stopped == (
         trust.Skipped("org/tool", 9, "issue", None, "", "body", trust.READ_FAILURE),
@@ -1883,19 +1931,18 @@ def test_retired_label_drift_lists_kind_labelled_issues() -> None:
 
 def test_strip_retired_labels_keeps_existing_parent() -> None:
     # .github#428 is already routed under #139 and carries "idea": the strip
-    # only removes the label — it never re-parents.
+    # only removes the label — it never re-parents, so no sub-issue query or
+    # mutation is sent.
     drift = [epic_audit.RetiredLabels(epics.IssueRef("vergil-project", ".github", 428), ("idea",))]
     with (
         patch("vergil_tooling.lib.github.run") as run,
-        patch("vergil_tooling.lib.epics.reparent_child") as reparent,
-        patch("vergil_tooling.lib.epics.add_child") as add,
+        patch("vergil_tooling.lib.github.graphql") as gql,
     ):
         assert epic_audit.strip_retired_labels(drift) == 1
     run.assert_called_once_with(
         "issue", "edit", "428", "--repo", "vergil-project/.github", "--remove-label", "idea"
     )
-    reparent.assert_not_called()
-    add.assert_not_called()
+    gql.assert_not_called()
 
 
 def test_strip_retired_labels_removes_every_retired_label() -> None:
@@ -1927,26 +1974,28 @@ def test_body_only_parents_pairs_task_with_body_epic() -> None:
     assert parents.held == frozenset()
 
 
-def test_nativize_skips_closed_epic_and_continues() -> None:
+def _nativize_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """A graph with the open epic org/.github#41, the closed #40, and tasks org/tool#5 and #6."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(
+        epics.IssueRef("org", ".github", 40), title="Done", labels=["epic"], state="CLOSED"
+    )
+    graph.add_issue(epics.IssueRef("org", ".github", 41), title="Live", labels=["epic"])
+    for number in (5, 6):
+        graph.add_issue(epics.IssueRef("org", "tool", number), title=f"task {number}")
+    return graph
+
+
+def test_nativize_skips_closed_epic_and_continues(monkeypatch: pytest.MonkeyPatch) -> None:
     # Closed is closed (.github#1609): the task naming a closed epic is reported
     # naming both, the next task is still linked, and nothing is reopened.
+    graph = _nativize_graph(monkeypatch)
     closed_task, closed_epic = (
         epics.IssueRef("org", "tool", 5),
         epics.IssueRef("org", ".github", 40),
     )
     open_task, open_epic = epics.IssueRef("org", "tool", 6), epics.IssueRef("org", ".github", 41)
-    linked: list[tuple[epics.IssueRef, epics.IssueRef]] = []
-
-    def add_child(epic: epics.IssueRef, task: epics.IssueRef) -> None:
-        if epic == closed_epic:
-            raise epics.ClosedEpicError(epic)
-        linked.append((epic, task))
-
-    with (
-        patch("vergil_tooling.lib.epics.add_child", side_effect=add_child),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        result = epic_audit.nativize_parents([(closed_task, closed_epic), (open_task, open_epic)])
+    result = epic_audit.nativize_parents([(closed_task, closed_epic), (open_task, open_epic)])
     assert result == epic_audit.LinkPass(
         linked=1,
         refused=(
@@ -1954,32 +2003,38 @@ def test_nativize_skips_closed_epic_and_continues() -> None:
             "reopened by the tooling",
         ),
     )
-    assert linked == [(open_epic, open_task)]
-    mock_run.assert_not_called()
+    assert graph.events == [("add", open_epic, open_task)]
+    assert graph.issues[closed_epic].state == "CLOSED"
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_reports_closed_intake_epic() -> None:
+def test_nativize_links_a_continuation_ref_into_its_head_chain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A Parent: line naming a continuation means its head (spec §4.1): the
+    # task goes into the head's chain by first fit, here the head itself.
+    graph = _nativize_graph(monkeypatch)
+    head = epics.IssueRef("org", ".github", 41)
+    continuation = graph.add_continuation(epics.IssueRef("org", ".github", 42), head, head)
+    graph.clear_log()
+    task = epics.IssueRef("org", "tool", 5)
+    assert epic_audit.nativize_parents([(task, continuation)]) == epic_audit.LinkPass(linked=1)
+    assert graph.events == [("add", head, task)]
+    assert "org/.github#42 is a continuation of org/.github#41" in capsys.readouterr().err
+
+
+def test_attach_orphans_reports_closed_intake_epic(monkeypatch: pytest.MonkeyPatch) -> None:
     # A home whose only intake epic is closed links nothing there and reopens
     # nothing; each of its orphans is named, and another home's still attaches.
-    closed = epics.ClosedStandingEpicError(epics.IssueRef("org", ".github", 100))
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("org", "tool", 6), home="org/.github", name="org"),
-        epic_audit.Orphan(epics.IssueRef("other", "tool", 3), home="other/.github", name="other"),
-    ]
+    graph, _ = _intake_graph(monkeypatch, homes=("other/.github",))
+    closed = epics.ClosedStandingEpicError(_ORG_INTAKE)
+    orphans = _orphans_in(graph, "org/tool", (5, 6)) + _orphans_in(graph, "other/tool", (3,))
 
     def ensure(_kind: object, home: str, _name: str) -> epics.IssueRef:
         if home == "org/.github":
             raise closed
         return _intake_epic(home)
 
-    with (
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", side_effect=ensure) as mock_ensure,
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch("vergil_tooling.lib.epics.add_child") as add,
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
+    with patch("vergil_tooling.lib.epics.ensure_standing_epic", side_effect=ensure) as mock_ensure:
         result = _attach(orphans)
     message = (
         "epic org/.github#100 is closed; closed epics are not reopened by the tooling; "
@@ -1990,43 +2045,38 @@ def test_attach_orphans_reports_closed_intake_epic() -> None:
         refused=(f"org/tool#5 not linked: {message}", f"org/tool#6 not linked: {message}"),
     )
     assert mock_ensure.call_count == 2  # the closed home is looked up once
-    assert [c.args for c in add.call_args_list] == [
-        (epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3))
+    assert graph.events == [
+        ("add", epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3))
     ]
-    mock_run.assert_not_called()
 
 
-@pytest.mark.usefixtures("trusted_reads")
-def test_attach_orphans_epic_closed_at_link_time_is_reported() -> None:
+def test_attach_orphans_epic_closed_at_link_time_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The epic closes between the lookup and the link: the refusal is reported
-    # for that orphan and the rest of its home, never raised out of the pass.
-    intake = epics.IssueRef("org", ".github", 100)
-    orphans = [
-        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
-        for n in (5, 6)
-    ]
-    with (
-        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
-        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
-        patch(
-            "vergil_tooling.lib.epics.add_child", side_effect=epics.ClosedEpicError(intake)
-        ) as add,
-    ):
+    # for that orphan and the rest of its home, never raised out of the pass,
+    # and the epic is read once.
+    graph, _ = _intake_graph(monkeypatch)
+    graph.close(_ORG_INTAKE)
+    orphans = _orphans_in(graph, "org/tool", (5, 6))
+    with patch("vergil_tooling.lib.epic_chain.link_into", wraps=epic_chain.link_into) as link:
         result = _attach(orphans)
     assert result.linked == 0
     assert [line.split(" not linked: ")[0] for line in result.refused] == [
         "org/tool#5",
         "org/tool#6",
     ]
-    add.assert_called_once()
+    link.assert_called_once()
+    assert graph.events == []
 
 
-def test_nativize_parents_adds_native_link() -> None:
+def test_nativize_parents_adds_native_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = _nativize_graph(monkeypatch)
     task = epics.IssueRef("org", "tool", 5)
-    epic = epics.IssueRef("org", ".github", 40)
-    with patch("vergil_tooling.lib.epics.add_child") as add:
-        assert epic_audit.nativize_parents([(task, epic)]) == epic_audit.LinkPass(linked=1)
-    add.assert_called_once_with(epic, task)
+    epic = epics.IssueRef("org", ".github", 41)
+    assert epic_audit.nativize_parents([(task, epic)]) == epic_audit.LinkPass(linked=1)
+    assert graph.parent_of(task) == epic
+    assert graph.mutations == [("add", epic, task)]
 
 
 def _one_pr_reffing_8() -> list[dict[str, object]]:
@@ -3128,26 +3178,47 @@ def _proxy_closures(  # noqa: PLR0913 - each a knob of the faked reads
         )
 
 
-def test_proxy_closed_when_primary_closed_and_no_open_task() -> None:
+def test_proxy_closed_when_primary_closed_and_no_open_task(monkeypatch: pytest.MonkeyPatch) -> None:
     closures, errors = _proxy_closures(
         primary_state="CLOSED", children=[_child("logical-minds-foundry", "x", 1, "CLOSED")]
     )
     assert errors == []
     assert closures == [epic_audit.ProxyClosure(_PROXY, _PRIMARY, 0)]
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        drift = epic_audit.close_proxies(closures)
+    graph = _proxy_graph(monkeypatch)
+    drift = epic_audit.close_proxies(closures)
     assert drift == []
-    run.assert_called_once_with(
-        "issue",
-        "close",
-        "320",
-        "--repo",
-        "logical-minds-foundry/.github",
-        "--comment",
-        "Closed by `vrg-epic-audit`: its primary epic vergil-project/.github#1417 is closed"
-        " and no task under this proxy is open.",
+    assert graph.events == [
+        ("close", _PROXY, "completed"),
+        (
+            "comment",
+            _PROXY,
+            "Closed by `vrg-epic-audit`: its primary epic vergil-project/.github#1417 is closed"
+            " and no task under this proxy is open.",
+        ),
+    ]
+
+
+def _proxy_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """A graph holding the open proxy :data:`_PROXY`, its chain the head alone."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_PROXY, title="Proxy", labels=["epic", "proxy"])
+    return graph
+
+
+def test_close_proxies_closes_whole_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A proxy closes with its chain, head first (spec §4.6 of .github#1609).
+    graph = _proxy_graph(monkeypatch)
+    c2 = graph.add_continuation(
+        epics.IssueRef("logical-minds-foundry", ".github", 321), _PROXY, _PROXY
     )
+    graph.clear_log()
+    drift = epic_audit.close_proxies([epic_audit.ProxyClosure(_PROXY, _PRIMARY, 0)])
+    assert drift == []
+    assert [event[:2] for event in graph.events] == [
+        ("close", _PROXY),
+        ("close", c2),
+        ("comment", _PROXY),
+    ]
 
 
 def test_proxy_with_open_task_after_primary_closed_is_drift() -> None:
@@ -3650,9 +3721,11 @@ def test_nativize_skips_untrusted_body_parent(
         orphans = epic_audit.orphan_drift("org", parents=parents, issues=issues)
     task, epic = epics.IssueRef("org", "tool", 7), epics.IssueRef("org", ".github", 40)
     assert parents.pairs == ((task, epic),)
-    with patch("vergil_tooling.lib.epics.add_child") as add:
-        assert epic_audit.nativize_parents(list(parents.pairs)) == epic_audit.LinkPass(linked=1)
-    add.assert_called_once_with(epic, task)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(epic, title="Live", labels=["epic"])
+    graph.add_issue(task, title="task 7")
+    assert epic_audit.nativize_parents(list(parents.pairs)) == epic_audit.LinkPass(linked=1)
+    assert graph.mutations == [("add", epic, task)]
     assert [o.ref.number for o in orphans] == [5, 6]
     err = capsys.readouterr().err
     assert err == (
@@ -3863,7 +3936,7 @@ def test_epic_drift_unreadable_close_is_per_item_stop() -> None:
     )
 
 
-def test_close_drift_ignores_outsider_closed_child() -> None:
+def test_close_drift_ignores_outsider_closed_child(monkeypatch: pytest.MonkeyPatch) -> None:
     # A child's close counts only when close_judgement gives a role: the epic
     # whose child an outsider closed is never closed by the drift close.
     items = trust_stubs.FakeItems(closers={("org/tool", 51): trust_stubs.OUTSIDER})
@@ -3873,11 +3946,13 @@ def test_close_drift_ignores_outsider_closed_child() -> None:
         patch("vergil_tooling.lib.github.graphql", side_effect=items),
     ):
         drift = _epic_drift("org")
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        closed = epic_audit.close_drift([], drift, org="org")
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    for number in (4, 5):
+        graph.add_issue(epics.IssueRef("org", ".github", number), title="E", labels=["epic"])
+    closed = epic_audit.close_drift([], drift, org="org")
     assert closed == ["org/.github#4"]
-    assert run.call_args.args[:5] == ("issue", "close", "4", "--repo", "org/.github")
+    assert graph.issues[epics.IssueRef("org", ".github", 4)].state == "CLOSED"
+    assert graph.issues[epics.IssueRef("org", ".github", 5)].state == "OPEN"
 
 
 def _reopened_timeline(actor: Any) -> dict[str, Any]:
@@ -4430,3 +4505,361 @@ def test_audit_unlinked_continuation_without_epic_label_is_drift(
     found = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
     assert found == [epic_audit.ChainDrift(_C2, "drift", (_C2,), "label")]
     assert graph.events == []
+
+
+# -- The sweep's chain heals (epic vergil-project/.github#1609, Task 9b) ---------
+
+
+def _heal(graph: FakeSubIssueGraph) -> epic_audit.ChainHeals:
+    """heal_chains of the home's chain drift, as *graph* holds it, with the log cleared first."""
+    drift = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    graph.clear_log()
+    return epic_audit.heal_chains(drift)
+
+
+def test_sweep_heals_full_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _drift_fixture(graph, "full-tail")
+    heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("healed the full tail org/.github#40 of epic org/.github#40",)
+    )
+    chain = epic_chain.containers(_HEAD)
+    assert [c.item_count for c in chain] == [epic_chain.ITEM_CAP, 1]
+    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
+
+
+def test_sweep_heals_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _drift_fixture(graph, "duplicate")
+    heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("healed the duplicate continuations of epic org/.github#40 under org/.github#40",)
+    )
+    assert graph.children_of(_HEAD) == [_C2]
+    assert graph.issues[_C3].state == "CLOSED"
+    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
+
+
+def test_sweep_closes_open_continuations_of_closed_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _drift_fixture(graph, "closed-head-open-continuation")
+    heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("closed the open continuation(s) org/.github#50 of the closed epic org/.github#40",)
+    )
+    assert graph.events == [("close", _C2, "completed")]
+    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
+
+
+def test_sweep_adopts_orphan_and_reruns_rollup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The orphan held the chain's last open item, now closed: that close fired
+    # no rollup the head could see, so once the orphan is adopted the rollup
+    # runs again and closes the whole chain.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.link(
+        _HEAD, graph.add_issue(epics.IssueRef("org", "tool", 1), title="first", state="CLOSED")
+    )
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.link(_C2, graph.add_issue(epics.IssueRef("org", "tool", 2), title="last", state="CLOSED"))
+    heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",)
+    )
+    assert graph.parent_of(_C2) == _HEAD
+    assert graph.issues[_HEAD].state == "CLOSED"
+    assert graph.issues[_C2].state == "CLOSED"
+    assert "Rolling up epic org/.github#40" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("first_state", ["OPEN", "CLOSED"])
+def test_sweep_adopted_orphan_with_open_item_holds_the_epic_open(
+    monkeypatch: pytest.MonkeyPatch, first_state: str
+) -> None:
+    # With no closed item there is nothing to roll up; with one, the rollup
+    # runs and finds the orphan's open item.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.link(
+        _HEAD, graph.add_issue(epics.IssueRef("org", "tool", 1), title="first", state=first_state)
+    )
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.link(_C2, graph.add_issue(epics.IssueRef("org", "tool", 2), title="open"))
+    heals = _heal(graph)
+    assert heals.healed == (
+        "adopted the orphaned continuation org/.github#50 into epic org/.github#40",
+    )
+    assert graph.parent_of(_C2) == _HEAD
+    assert graph.issues[_HEAD].state == "OPEN"
+
+
+def test_sweep_reports_orphan_of_closed_head_without_adopting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Closed is closed: the orphan is reported, naming it and its closed head,
+    # nothing is linked, and the other heals still run.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: done", labels=["epic"], state="CLOSED")
+    graph.add_continuation(_C2, _HEAD, None)
+    live = graph.add_issue(
+        epics.IssueRef("org", ".github", 41), title="Epic: live", labels=["epic"]
+    )
+    graph.add_continuation(_C3, live, live)
+    graph.close(live)  # its open continuation is healed
+    heals = _heal(graph)
+    assert heals.unhealed == (
+        "epic org/.github#40 is closed, but org/.github#50 is an orphaned continuation of it;"
+        " not adopted, since closed epics are not written to",
+    )
+    assert heals.healed == (
+        "closed the open continuation(s) org/.github#60 of the closed epic org/.github#41",
+    )
+    assert graph.parent_of(_C2) is None
+    assert graph.issues[_C2].state == "OPEN"
+    assert graph.events == [("close", _C3, "completed")]
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "orphan"])
+def test_sweep_heals_no_continuation_while_rollover_is_off(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    # While rollover is off nothing may merge or adopt a continuation: the
+    # drift is reported unhealed, saying so, and nothing is written.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    drift = _drift_fixture(graph, kind)
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", False)
+    graph.clear_log()
+    heals = epic_audit.heal_chains(drift)
+    assert heals.healed == ()
+    assert len(heals.unhealed) == 1
+    assert "rollover into a continuation is not enabled yet" in heals.unhealed[0]
+    assert graph.events == []
+
+
+def test_sweep_full_tail_is_unhealed_while_rollover_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    drift = _drift_fixture(graph, "full-tail")
+    graph.clear_log()
+    heals = epic_audit.heal_chains(drift)
+    assert heals.unhealed == (
+        "epic org/.github#40: its tail org/.github#40 holds 100 sub-issues and no continuation;"
+        " not healed: rollover into a continuation is not enabled yet",
+    )
+    assert graph.events == []
+
+
+def test_sweep_reports_drift_and_notes_unhealed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A broken rule is never guessed past; a closed continuation is a note.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    drift = _drift_fixture(graph, "drift")
+    note = epic_audit.ChainDrift(_HEAD, "closed-continuation", (_C3,))
+    graph.clear_log()
+    heals = epic_audit.heal_chains([*drift, note])
+    assert heals == epic_audit.ChainHeals(
+        unhealed=(epic_audit.chain_drift_line(drift[0]),),
+        notes=(epic_audit.chain_drift_line(note),),
+    )
+    assert graph.events == []
+
+
+def test_sweep_heal_failure_is_one_unhealed_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A heal that fails is reported; the other heals still run.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    drift = _drift_fixture(graph, "closed-head-open-continuation")
+    failing = epic_audit.ChainDrift(epics.IssueRef("org", ".github", 41), "full-tail", (_C3,))
+    orphan = epic_audit.ChainDrift(epics.IssueRef("org", ".github", 42), "orphan", (_C3,))
+    with (
+        patch.object(epic_chain, "heal_full_tail", side_effect=RuntimeError("boom")),
+        patch.object(epics, "issue_state", side_effect=RuntimeError("no state")),
+    ):
+        heals = epic_audit.heal_chains([failing, *drift, orphan])
+    assert heals.unhealed == (
+        f"{epic_audit.chain_drift_line(failing)}; not healed: boom",
+        "epic org/.github#42: the orphaned continuation(s) org/.github#60 not adopted: no state",
+    )
+    assert heals.healed == (
+        "closed the open continuation(s) org/.github#50 of the closed epic org/.github#40",
+    )
+
+
+def test_sweep_raced_heal_writes_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A racing writer healed it first: nothing to do and nothing reported.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    drift = [
+        epic_audit.ChainDrift(_HEAD, "full-tail", (_HEAD,)),
+        epic_audit.ChainDrift(_HEAD, "duplicate", (_HEAD,), "two-continuations"),
+        epic_audit.ChainDrift(_HEAD, "closed-head-open-continuation", (_C2,)),
+    ]
+    graph.close(_HEAD)
+    assert epic_audit.heal_chains(drift) == epic_audit.ChainHeals()
+    assert graph.events == []
+
+
+def test_sweep_reports_chained_development_epics(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Each open development or proxy epic with a continuation is a report
+    # line; a standing epic's chain, an unchained epic, a closed one and a
+    # drifted chain are not.
+    graph = _chain_graph(monkeypatch)
+    proxy = graph.add_issue(
+        epics.IssueRef("org", ".github", 41), title="Epic (proxy): x", labels=["epic", "proxy"]
+    )
+    graph.add_continuation(epics.IssueRef("org", ".github", 51), proxy, proxy)
+    intake = graph.add_issue(
+        epics.IssueRef("org", ".github", 42), title="Epic (intake): org", labels=["epic", "intake"]
+    )
+    graph.add_continuation(epics.IssueRef("org", ".github", 52), intake, intake)
+    graph.add_issue(epics.IssueRef("org", ".github", 43), title="Epic: small", labels=["epic"])
+    done = graph.add_issue(
+        epics.IssueRef("org", ".github", 44), title="Epic: done", labels=["epic"], state="CLOSED"
+    )
+    graph.add_continuation(epics.IssueRef("org", ".github", 54), done, done)
+    drifted = graph.add_issue(
+        epics.IssueRef("org", ".github", 45), title="Epic: drifted", labels=["epic"]
+    )
+    graph.add_continuation(
+        epics.IssueRef("org", ".github", 55), drifted, drifted, author=trust_stubs.OUTSIDER
+    )
+    graph.clear_log()
+    lines = epic_audit.chained_epics(_HOME, listing=_home_listing(graph))
+    assert lines == [
+        "epic org/.github#40 spans 2 containers (2 items); consider splitting it",
+        "epic org/.github#41 spans 2 containers (0 items); consider splitting it",
+    ]
+    assert graph.events == []
+
+
+def test_chained_epics_lists_the_home_when_not_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = _chain_graph(monkeypatch)
+    with patch.object(epic_audit, "list_home_epics", return_value=_home_listing(graph)) as listing:
+        lines = epic_audit.chained_epics(_HOME)
+    listing.assert_called_once_with(_HOME)
+    assert len(lines) == 1
+
+
+def test_render_closed_lists_chain_heals_and_chained_epics() -> None:
+    heals = epic_audit.ChainHeals(healed=("healed A",), unhealed=("broken B",), notes=("note C",))
+    out = epic_audit.render_closed(
+        [], org="org", window_days=30, chain_heals=heals, chained=["epic D spans 2"]
+    )
+    assert "## Chains healed\n\n- healed A\n" in out
+    assert "## Chain notes\n\n- note C\n" in out
+    assert "## Chained epics (report only)\n\n- epic D spans 2\n" in out
+    assert "## Needs a human (report only)" in out
+    assert (
+        "**Chain drift the sweep could not heal** — the run fails; settle each:\n- broken B" in out
+    )
+    assert "_No drift" not in out
+
+
+def test_render_closed_chained_epics_alone_is_not_no_drift() -> None:
+    out = epic_audit.render_closed([], org="org", window_days=30, chained=["epic D spans 2"])
+    assert "_No drift" not in out
+    assert "## Needs a human" not in out
+
+
+def test_heal_chains_refuses_an_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="chain drift kind 'other' has no heal"):
+        epic_audit.heal_chains([epic_audit.ChainDrift(_HEAD, "other", (_HEAD,))])
+
+
+def test_attach_orphans_other_chain_refusal_is_that_orphan_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A refusal that does not shut the epic (here its depth limit) refuses
+    # that orphan alone: the next orphan of the same home is still linked.
+    graph, _ = _intake_graph(monkeypatch)
+    orphans = _orphans_in(graph, "org/tool", (5, 6))
+    real = epic_chain.link_into
+
+    def link_into(head: epics.IssueRef, task: epics.IssueRef) -> epics.IssueRef:
+        if task.number == 5:
+            raise epic_chain.ChainDepthError(head, items=1, containers=8)
+        return real(head, task)
+
+    with patch.object(epic_chain, "link_into", side_effect=link_into):
+        result = _attach(orphans)
+    assert result.linked == 1
+    assert result.refused == (
+        "org/tool#5 not linked: epic org/.github#100 cannot grow: 1 item in 8 containers, at"
+        " GitHub's nesting limit of 8; split the epic",
+    )
+    assert graph.mutations == [("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 6))]
+
+
+def test_sweep_orphan_adopted_by_full_tail_heal_is_not_adopted_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A full tail and an orphan of one head: the tail's heal adopts the
+    # orphan first, so the adoption finds none left, creates no continuation
+    # and reports none (R1 of the merge review of #5166).
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _drift_fixture(graph, "full-tail")
+    graph.add_continuation(_C2, _HEAD, None)
+    drift = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    assert [d.kind for d in drift] == ["full-tail", "orphan"]
+    graph.clear_log()
+    heals = epic_audit.heal_chains(drift)
+    assert heals == epic_audit.ChainHeals(
+        healed=("healed the full tail org/.github#40 of epic org/.github#40",)
+    )
+    assert not [event for event in graph.events if event[0] == "create"]
+    assert graph.parent_of(_C2) == _HEAD
+    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
+
+
+def test_sweep_rollup_failure_keeps_the_adoption(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The adoption has landed when the rollup fails: it is reported as
+    # adopted, and the rollup's failure is its own unhealed line (R2).
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.link(_C2, graph.add_issue(epics.IssueRef("org", "tool", 2), title="t", state="CLOSED"))
+    with patch.object(epics, "rollup", side_effect=RuntimeError("boom")):
+        heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",),
+        unhealed=("epic org/.github#40: its rollup after the adoption did not run: boom",),
+    )
+    assert graph.parent_of(_C2) == _HEAD
+
+
+def test_sweep_failed_adoption_keeps_earlier_adoptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.add_continuation(_C3, _HEAD, None, k=3)
+    drift = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    real = epic_chain.find_or_create_continuation
+    calls: list[int] = []
+
+    def find_or_create(head: epics.IssueRef, tail: epics.IssueRef) -> epics.IssueRef:
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return real(head, tail)
+
+    with patch.object(epic_chain, "find_or_create_continuation", side_effect=find_or_create):
+        heals = epic_audit.heal_chains(drift)
+    assert heals == epic_audit.ChainHeals(
+        healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",),
+        unhealed=(
+            "epic org/.github#40: the orphaned continuation(s) org/.github#60 not adopted: boom",
+        ),
+    )

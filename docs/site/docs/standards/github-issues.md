@@ -396,8 +396,10 @@ partway) is an orphan. A reader resolves an item in one to the head its
 trusted `Continues:` line names and reports the drift, writing nothing.
 Before the rollup judges an epic it adopts each orphan of the head that passes
 the trust rules, linking it into the chain's last slot, and it refuses to
-close the epic while an orphan it cannot adopt exists. An orphan of a closed
-head is reported, never adopted.
+close the epic while an orphan it cannot adopt exists. The daily sweep adopts
+the orphans of open heads the same way (see
+[The chain heals](#the-chain-heals)). An orphan of a closed head is reported,
+never adopted.
 
 **First fit and rollover.** A link goes into the first open container, in
 chain order, with fewer than 99 items, so a slot a drain or a move frees is
@@ -824,13 +826,47 @@ naming a closed epic, or a home whose only intake epic is closed): it is named
 on stderr with that epic and left unlinked, the epic is never reopened, the
 rest of the pass runs, and the run exits 1.
 
-The pass is idempotent and never closes an item. Before each link it checks the
-target queue epic's open children against the cap (95, under GitHub's
-100-sub-issue limit); a full queue epic **stops the pass** with
-exit 1, listing every item it did not link — never a silent skip. A full intake
-queue is a signal to run intake review. The same pass, dispatched once by hand
-through `ops-epic-sweep`'s `workflow_dispatch`, is the one-time migration of an
-org's existing backlog.
+The pass is idempotent and never closes an item. Every link goes into the
+epic's chain by first fit (see [Chained epics](#chained-epics)), so a full
+queue epic never stops the pass. The cap of 95 open items is the signal to run
+intake review: an intake queue that holds 95 open items or more once the pass
+is done is a report line, not a failure:
+
+```text
+intake queue <head> holds <n> open items; run epic-review intake
+```
+
+While rollover is off, a link into a queue epic already at GitHub's 100
+sub-issues is refused like a closed epic's: the item is named on stderr with
+the refusal, the rest of the pass runs, and the run exits 1. The same pass,
+dispatched once by hand through `ops-epic-sweep`'s `workflow_dispatch`, is the
+one-time migration of an org's existing backlog.
+
+#### The chain heals
+
+Before its drains and the orphan pass, `vrg-epic-audit --close` closes each
+rolled-up epic and each finished proxy with its whole chain, head first, then
+heals the chain drift of the home's epics:
+
+- **A full tail with no continuation** (two writers took its last slot): one
+  item moves into a new continuation, which is linked into the freed slot.
+- **Two continuations under one container**: the lower-numbered is kept, the
+  other's items move into it, and the other is unlinked and closed as not
+  planned.
+- **A closed epic with an open continuation** (a close stopped partway, or a
+  close by hand): the open continuations are closed. Closing is not a reopen.
+- **An orphaned continuation of an open epic**: it is adopted into the
+  chain's last slot, then the rollup runs again for the epic, since an item
+  that closed inside the orphan fired no rollup the epic could see.
+
+Each heal is listed under **Chains healed**. An orphan of a closed epic is
+never adopted, and a broken chain rule is never guessed past: each is listed
+under **Needs a human**, named on stderr, and the run exits 1 once every pass
+has run. So is a heal that fails, and, while rollover is off, a duplicate or
+an orphan, which only a rollover can mend. A closed continuation in an open
+chain is listed under **Chain notes**. Each open development or proxy epic with
+a continuation is listed under **Chained epics**, every run, as a prompt to
+consider splitting it; it is not a failure.
 
 #### The security-records pass
 
