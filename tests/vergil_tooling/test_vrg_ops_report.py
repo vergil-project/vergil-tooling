@@ -84,7 +84,9 @@ def test_epic_refusal_exits_1_in_one_line(
     monkeypatch: pytest.MonkeyPatch, recorder: Recorder, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A refusal of the chain layer is named on stderr in one line (epic .github#1609)."""
-    error = epic_chain.RolloverDisabledError(epics.IssueRef("acme", ".github", 900))
+    error = epic_chain.ChainDepthError(
+        epics.IssueRef("acme", ".github", 900), items=693, containers=7
+    )
 
     def refused(*_args: Any, **_kwargs: Any) -> ops_report.Outcome:
         raise error

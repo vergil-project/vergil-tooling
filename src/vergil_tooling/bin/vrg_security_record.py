@@ -279,8 +279,8 @@ def _create(args: argparse.Namespace) -> int:
             if attach is None:
                 # The chain layer's capacity check before anything is created
                 # (epic vergil-project/.github#1609, spec §4.5): a refusal of
-                # the intake epic (closed, full while rollover is off, at the
-                # depth limit) leaves neither an advisory nor an issue behind.
+                # the intake epic (closed, or at the depth limit) leaves
+                # neither an advisory nor an issue behind.
                 epic_chain.check_capacity(intake)
             duplicate = security_records.find_duplicate(
                 home, summary=summary, affected_repo=args.repo

@@ -242,7 +242,6 @@ def test_epic_link_into_full_epic_rolls_over(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     _epic_labels.side_effect = _REAL_LABELS
     _epic_is_top_level.side_effect = _REAL_CONTAINER_PARENT
     _fill(graph, _EPIC, epic_chain.ITEM_CAP)
@@ -262,22 +261,3 @@ def test_epic_link_into_full_epic_rolls_over(
     assert out.endswith(
         f"Linked {_TASK.slug} under epic {_EPIC.slug} (in continuation {c2.slug}).\n"
     )
-
-
-def test_epic_link_into_full_epic_refused_while_rollover_off(
-    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Rollover is off by default: an epic at GitHub's limit is refused by name.
-    _fill(graph, _EPIC, epic_chain.SUBISSUE_LIMIT)
-    graph.clear_log()
-    with (
-        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        pytest.raises(SystemExit) as exit_info,
-    ):
-        main(["--epic", _EPIC.slug, "--task", "#42"])
-    assert exit_info.value.code == 1
-    assert capsys.readouterr().err == (
-        f"vrg-epic-link: {epic_chain.RolloverDisabledError(_EPIC)}\n"
-    )
-    assert graph.events == []
-    assert graph.parent_of(_TASK) is None

@@ -2832,8 +2832,7 @@ def _adopt_orphans(head: IssueRef) -> None:
     lowest number first, and reported. One that fails them raises
     :class:`~vergil_tooling.lib.epic_chain.ChainDriftError`, so the epic is
     never closed past it. An orphan of a closed head is reported as drift and
-    never adopted (closed is closed). While rollover is off nothing may link
-    a continuation, so an orphan raises :class:`OrphanedContinuationError`.
+    never adopted (closed is closed).
     """
     orphans = epic_chain.find_orphans(head)
     if not orphans:
@@ -2846,10 +2845,6 @@ def _adopt_orphans(head: IssueRef) -> None:
                 file=sys.stderr,
             )
         return
-    if not epic_chain.ROLLOVER_ENABLED:
-        raise OrphanedContinuationError(
-            head, orphans, "since rollover into a continuation is not enabled yet"
-        )
     remaining = orphans
     for _ in range(len(orphans)):
         # Each call adopts the lowest-numbered orphan into the current tail.

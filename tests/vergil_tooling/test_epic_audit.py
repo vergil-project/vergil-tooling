@@ -1759,38 +1759,11 @@ def test_attach_orphans_nudges_when_attaching_reaches_cap(
     )
 
 
-def test_orphan_pass_rollover_disabled_reports_full_head(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Rollover off and the intake head at GitHub's 100: each of its orphans is
-    # reported with RolloverDisabledError's message, as a closed epic is;
-    # nothing is linked or created there, and another home still attaches.
-    assert not epic_chain.ROLLOVER_ENABLED
-    graph, _ = _intake_graph(
-        monkeypatch, homes=("org/.github", "other/.github"), open_items=90, closed_items=10
-    )
-    graph.clear_log()
-    orphans = _orphans_in(graph, "org/tool", (5, 6)) + _orphans_in(graph, "other/tool", (3,))
-    result = _attach(orphans)
-    message = (
-        "epic org/.github#100 is at GitHub's limit of 100 sub-issues, and rollover into a"
-        " continuation is not enabled yet"
-    )
-    assert result == epic_audit.LinkPass(
-        linked=1,
-        refused=(f"org/tool#5 not linked: {message}", f"org/tool#6 not linked: {message}"),
-    )
-    assert graph.events == [
-        ("add", epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3))
-    ]
-
-
 def test_attach_orphans_rolls_a_full_queue_over(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # With rollover on, an orphan past the head's 99 items goes into a new
+    # An orphan past the head's 99 items goes into a new
     # continuation, and the queue's rollover is the review nudge.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph, _ = _intake_graph(monkeypatch, open_items=10, closed_items=epic_chain.ITEM_CAP - 10)
     orphan = _orphans_in(graph, "org/tool", (5,))[0]
     assert _attach([orphan]) == epic_audit.LinkPass(
@@ -4334,7 +4307,6 @@ def _drift_fixture(graph: FakeSubIssueGraph, kind: str) -> list[epic_audit.Chain
 
 @pytest.mark.parametrize("kind", epic_audit.CHAIN_DRIFT_KINDS)
 def test_audit_reports_each_drift_kind(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     expected = _drift_fixture(graph, kind)
     graph.clear_log()
@@ -4346,17 +4318,6 @@ def test_audit_reports_each_drift_kind(monkeypatch: pytest.MonkeyPatch, kind: st
     assert section in report
     assert f"- {epic_audit.chain_drift_line(found[0])}" in report
     assert "_No drift" not in report
-
-
-def test_audit_full_head_is_no_drift_while_rollover_is_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # While rollover is off a head at 100 is today's limit, refused by name
-    # at link time: no continuation can be made, so nothing is left to heal.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", False)
-    graph = FakeSubIssueGraph().install(monkeypatch)
-    _drift_fixture(graph, "full-tail")
-    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
 
 
 def test_audit_whole_chain_is_clean(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4518,7 +4479,6 @@ def _heal(graph: FakeSubIssueGraph) -> epic_audit.ChainHeals:
 
 
 def test_sweep_heals_full_tail(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     _drift_fixture(graph, "full-tail")
     heals = _heal(graph)
@@ -4531,7 +4491,6 @@ def test_sweep_heals_full_tail(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sweep_heals_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     _drift_fixture(graph, "duplicate")
     heals = _heal(graph)
@@ -4560,7 +4519,6 @@ def test_sweep_adopts_orphan_and_reruns_rollup(
     # The orphan held the chain's last open item, now closed: that close fired
     # no rollup the head could see, so once the orphan is adopted the rollup
     # runs again and closes the whole chain.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
     graph.link(
@@ -4584,7 +4542,6 @@ def test_sweep_adopted_orphan_with_open_item_holds_the_epic_open(
 ) -> None:
     # With no closed item there is nothing to roll up; with one, the rollup
     # runs and finds the orphan's open item.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
     graph.link(
@@ -4605,7 +4562,6 @@ def test_sweep_reports_orphan_of_closed_head_without_adopting(
 ) -> None:
     # Closed is closed: the orphan is reported, naming it and its closed head,
     # nothing is linked, and the other heals still run.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: done", labels=["epic"], state="CLOSED")
     graph.add_continuation(_C2, _HEAD, None)
@@ -4627,38 +4583,6 @@ def test_sweep_reports_orphan_of_closed_head_without_adopting(
     assert graph.events == [("close", _C3, "completed")]
 
 
-@pytest.mark.parametrize("kind", ["duplicate", "orphan"])
-def test_sweep_heals_no_continuation_while_rollover_is_off(
-    monkeypatch: pytest.MonkeyPatch, kind: str
-) -> None:
-    # While rollover is off nothing may merge or adopt a continuation: the
-    # drift is reported unhealed, saying so, and nothing is written.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
-    graph = FakeSubIssueGraph().install(monkeypatch)
-    drift = _drift_fixture(graph, kind)
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", False)
-    graph.clear_log()
-    heals = epic_audit.heal_chains(drift)
-    assert heals.healed == ()
-    assert len(heals.unhealed) == 1
-    assert "rollover into a continuation is not enabled yet" in heals.unhealed[0]
-    assert graph.events == []
-
-
-def test_sweep_full_tail_is_unhealed_while_rollover_is_off(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    graph = FakeSubIssueGraph().install(monkeypatch)
-    drift = _drift_fixture(graph, "full-tail")
-    graph.clear_log()
-    heals = epic_audit.heal_chains(drift)
-    assert heals.unhealed == (
-        "epic org/.github#40: its tail org/.github#40 holds 100 sub-issues and no continuation;"
-        " not healed: rollover into a continuation is not enabled yet",
-    )
-    assert graph.events == []
-
-
 def test_sweep_reports_drift_and_notes_unhealed(monkeypatch: pytest.MonkeyPatch) -> None:
     # A broken rule is never guessed past; a closed continuation is a note.
     graph = FakeSubIssueGraph().install(monkeypatch)
@@ -4675,7 +4599,6 @@ def test_sweep_reports_drift_and_notes_unhealed(monkeypatch: pytest.MonkeyPatch)
 
 def test_sweep_heal_failure_is_one_unhealed_line(monkeypatch: pytest.MonkeyPatch) -> None:
     # A heal that fails is reported; the other heals still run.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     drift = _drift_fixture(graph, "closed-head-open-continuation")
     failing = epic_audit.ChainDrift(epics.IssueRef("org", ".github", 41), "full-tail", (_C3,))
@@ -4696,7 +4619,6 @@ def test_sweep_heal_failure_is_one_unhealed_line(monkeypatch: pytest.MonkeyPatch
 
 def test_sweep_raced_heal_writes_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
     # A racing writer healed it first: nothing to do and nothing reported.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
     drift = [
@@ -4806,7 +4728,6 @@ def test_sweep_orphan_adopted_by_full_tail_heal_is_not_adopted_twice(
     # A full tail and an orphan of one head: the tail's heal adopts the
     # orphan first, so the adoption finds none left, creates no continuation
     # and reports none (R1 of the merge review of #5166).
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     _drift_fixture(graph, "full-tail")
     graph.add_continuation(_C2, _HEAD, None)
@@ -4825,7 +4746,6 @@ def test_sweep_orphan_adopted_by_full_tail_heal_is_not_adopted_twice(
 def test_sweep_rollup_failure_keeps_the_adoption(monkeypatch: pytest.MonkeyPatch) -> None:
     # The adoption has landed when the rollup fails: it is reported as
     # adopted, and the rollup's failure is its own unhealed line (R2).
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
     graph.add_continuation(_C2, _HEAD, None)
@@ -4840,7 +4760,6 @@ def test_sweep_rollup_failure_keeps_the_adoption(monkeypatch: pytest.MonkeyPatch
 
 
 def test_sweep_failed_adoption_keeps_earlier_adoptions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
     graph.add_continuation(_C2, _HEAD, None)

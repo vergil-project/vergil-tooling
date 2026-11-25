@@ -72,8 +72,8 @@ class LinkPass:
     """What one of the orphan pass's link passes did.
 
     *linked* counts the items linked. *refused* holds one line per item not
-    linked because its epic refused it (it is closed, or it is full while
-    rollover is off), naming the item and the epic: closed is closed, so the
+    linked because its epic refused it (it is closed, or at the depth limit),
+    naming the item and the epic: closed is closed, so the
     pass reports it and goes on, and the run exits non-zero at the end (epic
     vergil-project/.github#1609). *nudges* holds one line per intake queue
     the pass left at or past the review cap: a report line, never a failure.
@@ -999,11 +999,6 @@ class _QueueCapacity:
         )
 
 
-#: The refusals that leave an epic unable to take any orphan for the rest of
-#: the pass: a closed epic, and a full one while rollover is off.
-_TARGET_REFUSALS = (epics.ClosedEpicError, epic_chain.RolloverDisabledError)
-
-
 def attach_orphans(
     orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
 ) -> LinkPass:
@@ -1018,9 +1013,9 @@ def attach_orphans(
     §4.7 of epic vergil-project/.github#1609). Writes to GitHub; the caller
     gates it and scopes the org token.
 
-    A home whose intake epic refuses a link (only a closed one exists, the
-    epic is closed by the time of the link, or it is full while rollover is
-    off) attaches nothing more there and reopens nothing: each of its
+    A home whose intake epic refuses a link because it is closed (only a
+    closed one exists, or the epic is closed by the time of the link)
+    attaches nothing more there and reopens nothing: each of its
     orphans is a refused line in the result naming the orphan and the epic,
     with the refusal's message, and the other homes' orphans are still
     attached (closed is closed). Any other refusal of the chain layer (its
@@ -1053,7 +1048,7 @@ def attach_orphans(
             continue
         try:
             epic_chain.link_into(target, orphan.ref)
-        except _TARGET_REFUSALS as exc:
+        except epics.ClosedEpicError as exc:
             targets[key] = exc
             refused.append(_refusal(orphan.ref, exc))
             continue
@@ -1219,7 +1214,7 @@ def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> Link
     The epic a ``Parent:`` line names is the chain's head when it names a
     continuation (:func:`epics.epic_head`), and the task is linked by first
     fit (:func:`epic_chain.link_into`). A task whose epic refuses it (it is
-    closed, full while rollover is off, or at the depth limit) is not linked
+    closed, or at the depth limit) is not linked
     and the epic is not reopened: it is a refused line in the result naming
     the task and the epic, and the other tasks are still linked (closed is
     closed, epic vergil-project/.github#1609).
@@ -1750,8 +1745,7 @@ def chain_drift(
     :func:`epic_chain.close_chain` leaves, is ``closed-head-open-continuation``;
     a closed continuation in an open chain is the note ``closed-continuation``.
     A tail holding GitHub's 100 sub-issues and no continuation is
-    ``full-tail``, reported only while rollover is on: while it is off a full
-    head is today's limit, which every link refuses by name.
+    ``full-tail``.
 
     Then every open issue of *home* labelled ``continuation``
     (:func:`epic_chain.open_continuations`, which lists one that lost its
@@ -1823,7 +1817,7 @@ def _chain_problems(head: epics.IssueRef, chain: list[epic_chain.Container]) -> 
         ChainDrift(head, "closed-continuation", (c.ref,)) for c in rest if c.state == "CLOSED"
     ]
     tail = chain[-1]
-    if epic_chain.ROLLOVER_ENABLED and tail.item_count >= epic_chain.SUBISSUE_LIMIT:
+    if tail.item_count >= epic_chain.SUBISSUE_LIMIT:
         problems.append(ChainDrift(head, "full-tail", (tail.ref,)))
     return problems
 
@@ -1877,8 +1871,6 @@ class ChainHeals:
 # GitHub refuses. Each is one unhealed line; the other heals still run.
 _HEAL_ERRORS = (epics.EpicRefusalError, RuntimeError, github.GitHubAPIError)
 
-_ROLLOVER_OFF = "rollover into a continuation is not enabled yet"
-
 
 def heal_chains(drift: list[ChainDrift]) -> ChainHeals:
     """Heal what the sweep can of *drift*, :func:`chain_drift`'s list (spec §4.4, §4.6, §4.7).
@@ -1899,9 +1891,7 @@ def heal_chains(drift: list[ChainDrift]) -> ChainHeals:
     - ``drift``: a broken rule is never guessed past; it is unhealed.
     - ``closed-continuation``: a note.
 
-    While rollover is off nothing may create, adopt or merge a continuation,
-    so a duplicate or an orphan is unhealed, saying so. A heal that fails is
-    one unhealed line and the rest still run. Each heal also prints its own
+    A heal that fails is one unhealed line and the rest still run. Each heal also prints its own
     line as it writes. Writes to GitHub; the caller gates it and scopes the
     org token.
     """
@@ -1921,7 +1911,7 @@ def heal_chains(drift: list[ChainDrift]) -> ChainHeals:
             continue
         try:
             line = _heal_one(item)
-        except (*_HEAL_ERRORS, _CannotHealError) as exc:
+        except _HEAL_ERRORS as exc:
             unhealed.append(f"{chain_drift_line(item)}; not healed: {exc}")
             continue
         if line:
@@ -1933,27 +1923,19 @@ def heal_chains(drift: list[ChainDrift]) -> ChainHeals:
     return ChainHeals(healed=tuple(healed), unhealed=tuple(unhealed), notes=tuple(notes))
 
 
-class _CannotHealError(Exception):
-    """A drift the sweep cannot heal now; its message says why."""
-
-
 def _heal_one(item: ChainDrift) -> str:
     """Heal one ``full-tail``, ``duplicate`` or ``closed-head-open-continuation`` *item*.
 
     Returns the heal's line, or ``""`` when a racing writer already healed
-    it. Raises :class:`_CannotHealError` when it cannot be healed now.
+    it.
     """
     head = item.head
     names = ", ".join(ref.slug for ref in item.containers)
     if item.kind == "full-tail":
-        if not epic_chain.ROLLOVER_ENABLED:
-            raise _CannotHealError(_ROLLOVER_OFF)
         if epic_chain.heal_full_tail(head):
             return f"healed the full tail {names} of epic {head.slug}"
         return ""
     if item.kind == "duplicate":
-        if not epic_chain.ROLLOVER_ENABLED:
-            raise _CannotHealError(_ROLLOVER_OFF)
         if epic_chain.heal_duplicate_continuations(head):
             return f"healed the duplicate continuations of epic {head.slug} under {names}"
         return ""
@@ -1987,11 +1969,6 @@ def _adopt_orphans(head: IssueRef, found: list[IssueRef]) -> tuple[list[str], li
             return [], [
                 f"epic {head.slug} is closed, but {names} is an orphaned continuation of it;"
                 " not adopted, since closed epics are not written to"
-            ]
-        if not epic_chain.ROLLOVER_ENABLED:
-            return [], [
-                f"epic {head.slug}: {names} is an orphaned continuation; not adopted, since"
-                f" {_ROLLOVER_OFF}"
             ]
         for _ in found:
             if not epic_chain.find_orphans(head):

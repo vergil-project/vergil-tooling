@@ -390,8 +390,8 @@ def _apply_orphan_pass(
     main() scopes the whole audit to. Every link goes through the epic's chain
     (epic vergil-project/.github#1609): an intake queue at or past the cap of
     95 open items is a nudge line on stdout to run intake review, never a
-    stop. An item whose epic refuses it (closed, or full while rollover is
-    off) is not linked and the epic is not reopened: it is named on stderr
+    stop. An item whose epic refuses it (closed, or at the depth limit) is
+    not linked and the epic is not reopened: it is named on stderr
     with the epic, the pass goes on, and it exits 1 at the end (closed is
     closed). An issue the trust layer cannot read is a stop on that issue
     alone, added to *stops*.
@@ -493,8 +493,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "remove the retired triage/idea/research labels, and attach every "
             "orphan to its intake epic through its chain (an intake queue at 95 "
             "open items or more is a line to run intake review; exit 1, after the "
-            "rest of the pass, naming each item whose epic is closed or full while "
-            "rollover is off). --close makes no security-advisory call: it does "
+            "rest of the pass, naming each item whose epic refuses it, as a closed "
+            "epic does). --close makes no security-advisory call: it does "
             "not sync advisory states or check advisory/issue pairs; run "
             "'vrg-security-record sync' for that. A "
             "human action (or the scheduled reconciliation sweep) — refused in "
