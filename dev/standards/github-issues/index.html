@@ -20502,7 +20502,9 @@ ops App needs no Repository security advisories access (see
 <code>vrg-security-record sync</code>, which the human or the user agent runs over the
 draft advisories in the org's <code>.github</code>, under an identity that holds
 Repository security advisories: Read and write (see
-<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).</p>
+<a href="../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>).
+<code>vrg-finalize-pr</code> also syncs, by the same rules, the advisories of the
+<code>security</code> issues a merged PR closes.</p>
 <ul>
 <li><strong>State sync.</strong> Each paired advisory follows its <code>security</code> issues: closed
   once every issue it tracks is closed as completed and none is a queue item,

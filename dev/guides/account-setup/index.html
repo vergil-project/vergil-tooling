@@ -19213,7 +19213,9 @@ permissions exactly as documented.</p>
        and retarget them (see <a href="../security-records/">Security Records</a>).
        The user App, or a human, also runs <code>vrg-security-record sync</code>,
        which closes and reopens advisories to follow their issues, and
-       <code>vrg-security-record close</code>, which closes one with a reason. Each
+       <code>vrg-security-record close</code>, which closes one with a reason.
+       <code>vrg-finalize-pr</code> also syncs the advisories of the <code>security</code>
+       issues a merged PR closes. Each
        org's automation App (<code>&lt;org&gt;-automation</code>, see
        <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>)
        does not need the grant: the scheduled sweep makes no

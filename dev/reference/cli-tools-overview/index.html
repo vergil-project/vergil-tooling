@@ -21794,8 +21794,11 @@ turned auto-merge on, and GitHub merges each PR once its required checks
 pass. The watch follows every listed PR until it has merged or failed (CI,
 a conflict, closed, auto-merge off, provenance, not a develop PR), or the
 batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>, default 7200s) passes. If any PR
-merged, the settle phase closes any issue GitHub left open, then, under the
-checkout lock, switches to the target branch, fast-forwards it, deletes the
+merged, the settle phase closes any issue GitHub left open and syncs the
+security advisories that the closed <code>security</code> issues name (a broken pair or
+a failed sync exits 1; see
+<a href="../dev/finalize-pr/#sync-the-advisories-of-the-closed-issues">vrg-finalize-pr</a>),
+then, under the checkout lock, switches to the target branch, fast-forwards it, deletes the
 merged PRs' branches and worktrees and other merged local branches, deletes
 each merged branch's PR-workflow relay ref
 (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>) and sweeps any orphaned relay ref

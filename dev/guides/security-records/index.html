@@ -19285,6 +19285,12 @@ that holds Repository security advisories: Read and write (see
 <a href="#permissions">Permissions</a>); <code>--dry-run</code> previews it and changes nothing.
 The scheduled sweep (<code>vrg-epic-audit --close</code>) does not run it: the sweep
 makes no security-advisory call, so its token needs no advisories access.
+<code>vrg-finalize-pr</code> syncs the advisories of the issues a merged PR closes, by
+the same rules, once the merge has closed them (see
+<a href="../../reference/dev/finalize-pr/#sync-the-advisories-of-the-closed-issues">vrg-finalize-pr</a>),
+so a fix task's record usually closes at its merge. Run <code>sync</code> for
+everything else: a reopened issue, an issue closed another way, and the
+broken-pair check across the org.
 On each run of <code>sync</code>:</p>
 <ul>
 <li>the advisory is <strong>closed</strong> when <strong>every</strong> issue it tracks is closed as
@@ -19717,9 +19723,10 @@ identity's App token or, in human mode, the human's own <code>gh</code> login. I
 does not go through <code>vrg-gh api</code>, which stays denied to the user agent.</p>
 <p>Every user App (<code>&lt;username&gt;-vergil-user</code>) needs <strong>Repository security
 advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code>, <code>close</code> and
-<code>note</code> included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
-running <code>vrg-security-record</code> in human mode needs the same access through
-their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read. A move to another
+<code>note</code> included), the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>, and the
+advisory sync in <code>vrg-finalize-pr</code> when a merged PR closes a <code>security</code>
+issue. A human running <code>vrg-security-record</code> or <code>vrg-finalize-pr</code> in human
+mode needs the same access through their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read. A move to another
 org (<code>retarget</code> with every <code>--to</code> there) needs Read and write in both
 orgs' <code>.github</code>, and <code>sync</code> of an org with a moved advisory also needs Read
 in the org it moved to.</p>
