@@ -5,4 +5,4 @@ This system is not registered with an entitlement server. You can use subscripti
 
 vergil packages (capture)                       101 kB/s | 335  B     00:00    
 vergil packages (capture)                       3.8 MB/s | 3.9 kB     00:00    
-vergil packages (capture)                        74 kB/s | 335  B     00:00    
+vergil packages (capture)                       100 kB/s | 335  B     00:00    

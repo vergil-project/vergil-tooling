@@ -339,7 +339,9 @@ def test_deb_and_staged_products_do_not_refresh_dnf_metadata(
     python_repo = _repo_with_python_package(tmp_path)
     arts = _arts(tmp_path, "vergil-tooling_2.1.240-1_amd64.deb", "vergil-thing-1.0.0-1.x86_64.rpm")
     run = _fake_run([], listing=_TOOLING_LISTING)
-    install_test.run_install_test(python_repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "a", run=run)
+    install_test.run_install_test(
+        python_repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "a", run=run
+    )
     staged = tmp_path / "staged"
     staged.mkdir()
     staged_repo = _repo_with_staged_package(staged)

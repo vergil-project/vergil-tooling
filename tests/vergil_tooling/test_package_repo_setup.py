@@ -695,7 +695,9 @@ _RELEASES = ("el9", "el10")
 _REFRESH = "dnf -y makecache --refresh --repo vergil"
 
 
-def _dnf_failure(release: str, case: str, argv: tuple[str, ...] = ()) -> subprocess.CalledProcessError:
+def _dnf_failure(
+    release: str, case: str, argv: tuple[str, ...] = ()
+) -> subprocess.CalledProcessError:
     """The ``CalledProcessError`` dnf's captured run of ``case`` on ``release`` raises (exit 1)."""
     out = (_DNF_FIXTURES / f"{release}-{case}.stdout.txt").read_text()
     err = (_DNF_FIXTURES / f"{release}-{case}.stderr.txt").read_text()
@@ -822,7 +824,9 @@ def test_refresh_sleeps_and_logs_by_default(
 def test_bootstrap_refreshes_the_bootstrap_repo_through_the_helper_before_the_keyring_install(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    race = _dnf_failure("el10", "mismatch-makecache").stderr.replace("'vergil'", "'vergil-bootstrap'")
+    race = _dnf_failure("el10", "mismatch-makecache").stderr.replace(
+        "'vergil'", "'vergil-bootstrap'"
+    )
     slept: list[float] = []
     monkeypatch.setattr(repo_setup.time, "sleep", slept.append)
     calls: list[str] = []

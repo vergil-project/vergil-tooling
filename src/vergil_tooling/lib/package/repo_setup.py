@@ -199,34 +199,39 @@ def dnf_refresh(
     say = _stderr if log is None else log
     argv = (*(("sudo",) if sudo else ()), "dnf", "-y", "makecache", "--refresh", "--repo", repo)
     attempts = len(DNF_REFRESH_DELAYS) + 1
-    for attempt in range(1, attempts + 1):
+    for attempt, delay in enumerate(DNF_REFRESH_DELAYS, start=1):
         try:
             run(*argv)
         except subprocess.CalledProcessError as exc:
-            output = _dnf_output(exc)
-            race = _REPOMD_SIGNATURE.search(output)
-            if race is None or race["repo"] != repo:
-                raise
-            if attempt == attempts:
-                window = sum(DNF_REFRESH_DELAYS)
-                msg = (
-                    f"dnf could not refresh the {repo} repository: repomd.xml failed its "
-                    f"signature check on all {attempts} attempts over {window:.0f}s. Just after "
-                    "a package index publish, GitHub Pages can serve repomd.xml and "
-                    "repomd.xml.asc from different publishes for up to 600s; a mismatch "
-                    "lasting longer is not that publish cache race. "
-                    f"dnf's last output:\n{output}"
-                )
-                raise PackageError(msg) from exc
-            delay = DNF_REFRESH_DELAYS[attempt - 1]
-            say(
-                f"vrg-package: dnf refresh of {repo}, attempt {attempt}/{attempts}: repomd.xml "
-                "does not match its signature (GitHub Pages may still be serving a file from "
-                f"an earlier package index publish); retrying in {delay:.0f}s"
-            )
-            pause(delay)
+            _raise_unless_signature_race(exc, repo)
         else:
             return
+        say(
+            f"vrg-package: dnf refresh of {repo}, attempt {attempt}/{attempts}: repomd.xml "
+            "does not match its signature (GitHub Pages may still be serving a file from "
+            f"an earlier package index publish); retrying in {delay:.0f}s"
+        )
+        pause(delay)
+    try:
+        run(*argv)
+    except subprocess.CalledProcessError as exc:
+        _raise_unless_signature_race(exc, repo)
+        msg = (
+            f"dnf could not refresh the {repo} repository: repomd.xml failed its "
+            f"signature check on all {attempts} attempts over "
+            f"{sum(DNF_REFRESH_DELAYS):.0f}s. Just after a package index publish, GitHub "
+            "Pages can serve repomd.xml and repomd.xml.asc from different publishes for up "
+            "to 600s; a mismatch lasting longer is not that publish cache race. "
+            f"dnf's last output:\n{_dnf_output(exc)}"
+        )
+        raise PackageError(msg) from exc
+
+
+def _raise_unless_signature_race(exc: subprocess.CalledProcessError, repo: str) -> None:
+    """Re-raise ``exc`` unless it is ``repo``'s ``repomd.xml`` failing its signature check."""
+    race = _REPOMD_SIGNATURE.search(_dnf_output(exc))
+    if race is None or race["repo"] != repo:
+        raise exc
 
 
 def deb_source_path(org: OrgRepo) -> str:
