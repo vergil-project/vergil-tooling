@@ -18794,7 +18794,9 @@ which is the complete list of entry points. The
   <code>updaters/</code>.</li>
 <li><strong><code>package/</code></strong>: binary package builds for <code>vrg-package</code>: the matrix, the
   python and staged builders, nFPM, install-test, repository bootstrap, and
-  <code>index/</code> for the signed apt/dnf site.</li>
+  <code>index/</code> for the signed apt/dnf site. <code>repo_setup.dnf_refresh</code> refreshes
+  a repository's dnf metadata through the cache window after an index
+  publish (<a href="../package-config/#index-generations-and-by-hash-files">Index generations and by-hash files</a>).</li>
 <li><strong><code>host_*.py</code></strong>: <code>vrg-host</code>: manifest loading (<code>host_deps</code>),
   install-method handlers (<code>host_methods</code>), host pins (<code>host_pins</code>),
   classification and rendering (<code>host_status</code>), and version ordering

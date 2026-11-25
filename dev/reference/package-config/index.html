@@ -19985,6 +19985,17 @@ asks of a by-hash repository. A site with no <code>index-generations.json</code>
 starts with no earlier generation. Any other failure to read the live site, a
 malformed <code>index-generations.json</code>, or a listed file that is missing or does
 not match its digest, fails the index build.</p>
+<p><code>repomd.xml</code> and its detached signature <code>repomd.xml.asc</code> are not named by
+their digest, and each is cached on its own. For up to ten minutes after a
+publish, a CDN edge can serve one from the new index and the other from the
+old. dnf's <code>repo_gpgcheck=1</code> then fails its signature check, on RHEL 9 with
+<code>repomd.xml GPG signature verification error: Bad GPG signature</code> (RHEL 10
+says <code>Bad PGP signature</code>). apt is unaffected, because <code>InRelease</code> carries
+its signature inline. The dnf metadata refreshes that the repository
+bootstrap, the python builder's runtime install and <code>vrg-package
+install-test</code> run retry through the window, on that error alone, for up to
+750 seconds. On your own RHEL host, wait about
+ten minutes, then run <code>sudo dnf makecache --refresh</code>.</p>
 <h3 id="checking-packagestoml-without-building">Checking <code>packages.toml</code> without building<a class="headerlink" href="#checking-packagestoml-without-building" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>vrg-package<span class="w"> </span>index<span class="w"> </span>--check-config<span class="w"> </span>--config<span class="w"> </span>packages.toml
 </code></pre></div>
