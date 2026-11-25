@@ -2301,7 +2301,9 @@ def _diff_environments(
         _diff_dataclass(f"environments.{env.name}", env, live, items, skipped)
 
 
-def _diff_rolling_tag_branches(desired: list[str], actual: list[str], items: list[DiffItem]) -> None:
+def _diff_rolling_tag_branches(
+    desired: list[str], actual: list[str], items: list[DiffItem]
+) -> None:
     """Report each live branch named like a rolling tag as its own drift item.
 
     The item is ``rolling_tag_branches.<name>``, expected absent. ``apply``

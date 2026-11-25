@@ -377,24 +377,32 @@ def test_fetch_actual_state_malformed_matching_ref_raises() -> None:
         _fetch_with_matching_refs([{"object": {"sha": "a"}}])
 
 
-def test_fetch_actual_state_unreadable_matching_refs_is_not_checked() -> None:
-    """A permission-gap 403 on the branch listing is not checked, never clean."""
+def _fetch_with_matching_refs_403(message: str) -> FetchResult:
+    """Fetch o/r with the rolling-tag branch listing refused with a 403 *message*."""
 
-    def forbidden(endpoint: str, key: str | None = None) -> list[object]:
+    def paginated(endpoint: str, key: str | None = None) -> list[object]:
         if endpoint == "repos/o/r/git/matching-refs/heads/v":
-            raise GitHubAPIError(
-                1, ("gh", "api", endpoint), "", "gh: Resource not accessible by integration (HTTP 403)"
-            )
+            raise GitHubAPIError(1, ("gh", "api", endpoint), "", f"gh: {message} (HTTP 403)")
         return _paginated_via_read_json(endpoint, key)
 
     with patch(
-        "vergil_tooling.lib.github_config.github.read_json_paginated", side_effect=forbidden
+        "vergil_tooling.lib.github_config.github.read_json_paginated", side_effect=paginated
     ):
-        result = _fetch_with_matching_refs([])
+        return _fetch_with_matching_refs([])
+
+
+def test_fetch_actual_state_unreadable_matching_refs_is_not_checked() -> None:
+    """A permission-gap 403 on the branch listing is not checked, never clean."""
+    result = _fetch_with_matching_refs_403("Resource not accessible by integration")
     assert NotChecked(field="rolling_tag_branches", permission="contents=read") in (
         result.not_checked
     )
     assert result.state.rolling_tag_branches == []
+
+
+def test_fetch_actual_state_matching_refs_non_permission_403_propagates() -> None:
+    with pytest.raises(GitHubAPIError, match="rate limit"):
+        _fetch_with_matching_refs_403("API rate limit exceeded")
 
 
 def test_compute_diff_reports_each_rolling_tag_branch_as_drift() -> None:
@@ -412,6 +420,15 @@ def test_compute_diff_reports_each_rolling_tag_branch_as_drift() -> None:
 def test_compute_diff_no_rolling_tag_branch_is_clean() -> None:
     desired = _state(_vergil_config())
     assert compute_diff(desired=desired, actual=dataclasses.replace(desired)).is_compliant()
+
+
+def test_compute_diff_rolling_tag_branch_in_desired_is_not_drift() -> None:
+    # Only a branch the desired state does not hold is drift; the real desired
+    # state holds none.
+    desired = dataclasses.replace(_state(_vergil_config()), rolling_tag_branches=["v2"])
+    actual = dataclasses.replace(desired, rolling_tag_branches=["v2", "v3"])
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [i.field for i in diff.items] == ["rolling_tag_branches.v3"]
 
 
 # ---------------------------------------------------------------------------
