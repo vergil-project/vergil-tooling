@@ -573,12 +573,16 @@ def run(
     check: bool = True,
     stdin: int | None = None,
     cwd: Path | None = None,
+    transcript: IO[str] | None = None,
 ) -> int:
     """Run *cmd*, streaming each output line through the active pipeline.
 
     ``stdin`` is forwarded to Popen — pass ``subprocess.DEVNULL`` for
     children that must never block on a terminal read. ``cwd`` is the
-    child's working directory (default: this process's).
+    child's working directory (default: this process's). Each line of
+    stdout and stderr is also written to *transcript*, when given, in the
+    order the lines arrive; a write that fails stops the writing, and its
+    ``OSError`` is raised once the command has exited.
 
     Raises CalledProcessError (carrying captured stdout/stderr) on nonzero
     exit when ``check`` is true; otherwise returns the exit code.
@@ -593,11 +597,20 @@ def run(
         cwd=cwd,
     )
     captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+    transcript_lock = threading.Lock()
+    transcript_errors: list[OSError] = []
 
     def _pump(stream: IO[str], name: str) -> None:
         for raw in stream:
             line = raw.rstrip("\n")
             captured[name].append(line)
+            if transcript is not None:
+                with transcript_lock:
+                    if not transcript_errors:
+                        try:
+                            transcript.write(line + "\n")
+                        except OSError as exc:
+                            transcript_errors.append(exc)
             emit(line)
 
     threads = [
@@ -614,6 +627,8 @@ def run(
         raise
     for thread in threads:
         thread.join()
+    if transcript_errors:
+        raise transcript_errors[0]
     if check and returncode != 0:
         raise subprocess.CalledProcessError(
             returncode,

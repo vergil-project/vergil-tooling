@@ -229,8 +229,10 @@ them:
 
 | Gate    | Report file at the workspace root | Written by                                                         |
 | ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `quality` (lint) | `quality-rustfmt.log` (transcript) | vrg-validate, around the gating `cargo fmt --all -- --check` run (see [Transcripts](#transcripts-tools-that-write-no-report)) |
 | `quality` (lint) | `quality-clippy.json` (JSON Lines) | the gating `cargo clippy --all-targets --locked --workspace --message-format=json -- -D warnings` run, its stdout |
 | `quality` (typecheck) | `quality-cargo-check.json` (JSON Lines) | the gating `cargo check --locked --workspace --message-format=json` run, its stdout |
+| `quality` (build) | `quality-build.log` (transcript) | vrg-validate, around the gating `cargo build --release --locked --workspace` run |
 | `test`  | `coverage.xml` (Cobertura)        | the gating `cargo llvm-cov report --cobertura --output-path coverage.xml` run |
 | `test`  | `junit.xml` (JUnit)               | the gating `cargo llvm-cov nextest` run, copied from `target/nextest/vergil/junit.xml` |
 | `audit` | `cargo-deny.json` (JSON Lines)    | the gating `cargo deny --format json … --locked --workspace check --show-stats` run, its stderr |
@@ -266,8 +268,10 @@ fails:
 
 | Gate    | Report file at the workspace root | Written by                                                         |
 | ------- | --------------------------------- | ------------------------------------------------------------------ |
+| `quality` (lint) | `quality-prettier.log` (transcript) | vrg-validate, around the gating `prettier --check .` run (see [Transcripts](#transcripts-tools-that-write-no-report)) |
 | `quality` (lint) | `quality-eslint.json` (ESLint's JSON formatter) | the gating `node_modules/.bin/eslint . --format json --output-file quality-eslint.json` run |
 | `quality` (typecheck) | `quality-tsc.txt` (text) | the gating `node_modules/.bin/tsc --noEmit --pretty false --diagnostics` run, its stdout |
+| `quality` (build) | `quality-build.log` (transcript) | vrg-validate, around the gating `npm ci --ignore-scripts && npm run build` run |
 | `test`  | `coverage.xml` (Cobertura)        | the gating `node_modules/.bin/vitest run --coverage …` run, copied from `coverage/cobertura-coverage.xml` |
 | `test`  | `junit.xml` (JUnit)               | the same Vitest run, its JUnit reporter |
 | `audit` | `npm-audit.json` (JSON)           | the gate's `npm audit --audit-level=high --json` run, its stdout, unfiltered (`vrg-npm-audit-gate` judges it) |
@@ -281,9 +285,10 @@ console output and coverage table; `--coverage.reportOnFailure` makes Vitest
 write the coverage report when a test fails. The license gate writes
 `licenses.json` whenever it can read the lockfile, so a failing run's
 report records the failure. `TYPESCRIPT_REPORT_FILES` in
-vergil-tooling's `languages.py` names all six, and a TypeScript repository's
-managed `.gitignore` ignores them, with Vitest's `coverage/` directory, so a
-second local `vrg-validate` never lints the first run's reports.
+vergil-tooling's `languages.py` names all eight, and a TypeScript repository's
+managed `.gitignore` ignores them (the two transcripts through its `*.log`
+pattern), with Vitest's `coverage/` directory, so a second local
+`vrg-validate` never lints the first run's reports.
 
 `ci-quality.yml`, `ci-test.yml` and `ci-audit.yml` stage each leg's reports
 with version-suffixed names, as for Python and Rust:
@@ -300,6 +305,47 @@ captured once per run by the `quality / common` and `quality / custom` jobs.
 Every repository emits both, so even a language-less repository's quality
 gate carries real reports. A repository with no custom validator still
 ships `quality-custom.log`, holding the one "no custom validator" line.
+
+### Transcripts: tools that write no report
+
+Some gate tools write no report of their own, and some print nothing when
+they pass, so they would leave nothing in the bundle to show they ran.
+vrg-validate records a **transcript** for each of them, at the workspace
+root, whether the gate passes or fails:
+
+| Language   | Gate                   | Tool       | Transcript             |
+| ---------- | ---------------------- | ---------- | ---------------------- |
+| Python     | `quality` (typecheck)  | `ty`       | `quality-ty.log`       |
+| Rust       | `quality` (lint)       | `rustfmt`  | `quality-rustfmt.log`  |
+| Rust       | `quality` (build)      | `cargo`    | `quality-build.log`    |
+| TypeScript | `quality` (lint)       | `prettier` | `quality-prettier.log` |
+| TypeScript | `quality` (build)      | `npm`      | `quality-build.log`    |
+
+A transcript starts with a `# vrg-validate transcript: <tool>` line. Then
+come the tool's version commands (for example `cargo fmt --version`, or
+`node --version` and `npm --version` for the TypeScript build), each with
+its output, then the gate command, every line it printed and its
+`exit status: <n>`. So a clean `cargo fmt --check`, which prints nothing,
+still writes real data. vrg-validate rewrites the transcript on every run.
+A version command that cannot run or exits non-zero fails the gate command,
+since the evidence would not name the tool's version. A transcript that
+cannot be written fails it too. The build transcript records the release
+build command unchanged, so the release job still runs the same command.
+Every transcript is a `*.log`, which the managed `.gitignore`'s base
+fragment ignores.
+
+`TOOL_EVIDENCE` in vergil-tooling's `languages.py` names, for each language
+with a report contract (Python, Rust and TypeScript) and each of its gates,
+every tool the gate runs and that tool's evidence files. Its tests fail when
+a tool has no evidence file, or when a file is neither a transcript of the
+gate nor named by one of the gate's commands. They also fail when a
+language's report files and its tools' evidence differ.
+
+The transcripts reach the bundle only once vergil-actions' report table
+([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/))
+stages them, names `ty` among the Python typecheck tools and has the
+`quality / build` job upload `quality-build.log`. Until then the bundle
+lacks them, as it did before.
 
 Producers emit these files today: the check registry runs `pytest --cov …
 --cov-report=xml --junitxml=…`, `pip-audit` / license checks write `--output`
