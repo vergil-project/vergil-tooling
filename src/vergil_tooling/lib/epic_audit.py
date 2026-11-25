@@ -1749,7 +1749,9 @@ def chain_drift(
     ``full-tail``, reported only while rollover is on: while it is off a full
     head is today's limit, which every link refuses by name.
 
-    Then every open continuation no walk reached is resolved to its head
+    Then every open issue of *home* labelled ``continuation``
+    (:func:`epic_chain.open_continuations`, which lists one that lost its
+    ``epic`` label too) that no walk reached is resolved to its head
     (:func:`epic_chain.head_of`): one whose head's chain is whole is an
     ``orphan``, of an open or a closed head; one whose head's walk already
     broke is that drift, reported once; one that cannot be resolved, or
@@ -1785,10 +1787,7 @@ def chain_drift(
         for record in ordered:
             if not epics.is_continuation(set(record["labels"])):
                 walk(epics.IssueRef(owner, repo, record["number"]))
-        for record in ordered:
-            if record["state"] != "OPEN" or not epics.is_continuation(set(record["labels"])):
-                continue
-            continuation = epics.IssueRef(owner, repo, record["number"])
+        for continuation, _ in epic_chain.open_continuations(home):
             if continuation in reached:
                 continue
             try:

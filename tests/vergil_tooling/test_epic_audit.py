@@ -4414,3 +4414,19 @@ def test_audit_orphan_naming_no_epic_of_the_home_is_drift(
 def test_chain_drift_line_refuses_an_unknown_kind() -> None:
     with pytest.raises(ValueError, match="unknown chain drift kind 'other'"):
         epic_audit.chain_drift_line(epic_audit.ChainDrift(_HEAD, "other", (_HEAD,)))
+
+
+def test_audit_unlinked_continuation_without_epic_label_is_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unlinked issue labelled `continuation` that lost its `epic` label is
+    # in no epic listing and no walk reaches it: it is still found, and
+    # reported as drift on the label rule.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.issues[_C2].labels = [epics.CONTINUATION_LABEL]
+    graph.clear_log()
+    found = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    assert found == [epic_audit.ChainDrift(_C2, "drift", (_C2,), "label")]
+    assert graph.events == []

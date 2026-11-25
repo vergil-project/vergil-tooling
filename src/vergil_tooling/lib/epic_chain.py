@@ -626,19 +626,13 @@ def _continuation_body(head: IssueRef, k: int) -> str:
     )
 
 
-def find_orphans(head: IssueRef) -> list[IssueRef]:
-    """The open continuations of *head* that its chain does not reach, lowest number first.
+def open_continuations(repo: str) -> list[tuple[IssueRef, frozenset[str]]]:
+    """Every open ``continuation``-labelled issue of *repo*, with its labels, lowest first.
 
-    Lists the open ``continuation``-labelled issues in *head*'s repo. One
-    whose trusted ``Continues:`` line names *head*, with no native parent and
-    not reached by :func:`chain_of`, is an orphan (spec §4.3). One that
-    names *head* but breaks another rule (the ``epic`` label missing, or
-    linked outside the chain) raises :class:`ChainDriftError`. So does an
-    unparented one whose body is untrusted or has no single ``Continues:``
-    line: it could be this head's orphan, and is never guessed past. One
-    that is linked elsewhere, or names another head, is not this head's.
+    The label alone is enough to be listed, so a continuation that lost its
+    ``epic`` label is listed too; its readers raise the ``label`` rule on it.
+    A listing that may be cut short raises.
     """
-    repo = f"{head.owner}/{head.repo}"
     rows: Any = github.read_json(
         "issue",
         "list",
@@ -656,13 +650,34 @@ def find_orphans(head: IssueRef) -> list[IssueRef]:
     epics.refuse_truncated(rows, epics.LISTING_LIMIT, f"the open continuations of {repo}")
     if not isinstance(rows, list):
         raise RuntimeError(f"listing the open continuations of {repo} returned no list")
+    owner, name = repo.split("/", 1)
+    return [
+        (
+            IssueRef(owner=owner, repo=name, number=int(row["number"])),
+            frozenset(str(label.get("name", "")) for label in row.get("labels") or []),
+        )
+        for row in sorted(rows, key=lambda r: int(r["number"]))
+    ]
+
+
+def find_orphans(head: IssueRef) -> list[IssueRef]:
+    """The open continuations of *head* that its chain does not reach, lowest number first.
+
+    Lists the open ``continuation``-labelled issues in *head*'s repo. One
+    whose trusted ``Continues:`` line names *head*, with no native parent and
+    not reached by :func:`chain_of`, is an orphan (spec §4.3). One that
+    names *head* but breaks another rule (the ``epic`` label missing, or
+    linked outside the chain) raises :class:`ChainDriftError`. So does an
+    unparented one whose body is untrusted or has no single ``Continues:``
+    line: it could be this head's orphan, and is never guessed past. One
+    that is linked elsewhere, or names another head, is not this head's.
+    """
+    listed = open_continuations(f"{head.owner}/{head.repo}")
     reached = set(chain_of(head))
     orphans: list[IssueRef] = []
-    for row in sorted(rows, key=lambda r: int(r["number"])):
-        ref = IssueRef(owner=head.owner, repo=head.repo, number=int(row["number"]))
+    for ref, labels in listed:
         if ref in reached:
             continue
-        labels = {str(label.get("name", "")) for label in row.get("labels") or []}
         parent = epics._container_parent(ref)
         body = epics._trusted_body(ref)
         named = parse_continues(body) if body is not None else None
