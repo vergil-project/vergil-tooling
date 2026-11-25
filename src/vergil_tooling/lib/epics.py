@@ -221,6 +221,27 @@ query($id: ID!) {
 }
 """
 
+# One container of an epic's chain (epic vergil-project/.github#1609): its own
+# state, its sub-issue total (GitHub's count of every child, open and closed),
+# and each child with its labels, so the chain layer can tell a continuation
+# from an item without a read per child.
+_CONTAINER_QUERY = """
+query($id: ID!) {
+  node(id: $id) {
+    ... on Issue {
+      state
+      subIssues(first: 100) {
+        totalCount
+        nodes {
+          number state title closedAt repository { name owner { login } }
+          labels(first: 100) { totalCount nodes { name } }
+        }
+      }
+    }
+  }
+}
+"""
+
 _ADD_SUBISSUE = """
 mutation($parent: ID!, $child: ID!) {
   addSubIssue(input: {issueId: $parent, subIssueId: $child}) {
@@ -557,6 +578,19 @@ def blockers_or_stop(task: IssueRef, stops: trust.BatchStops) -> list[IssueRef] 
     return None
 
 
+def _container_parent(task: IssueRef) -> IssueRef | None:
+    """*task*'s native sub-issue parent, raw: the one container it is linked in.
+
+    The per-container read the chain layer (:mod:`vergil_tooling.lib.epic_chain`)
+    walks with; nothing outside ``epics`` and ``epic_chain`` calls it.
+    """
+    data: Any = github.graphql(_PARENT_QUERY, id=_node_id(task))
+    parent = ((data or {}).get("node") or {}).get("parent")
+    if isinstance(parent, dict):
+        return _ref_from_node(parent)
+    return None
+
+
 def native_parent_of(task: IssueRef) -> IssueRef | None:
     """*task*'s native sub-issue parent, or None — never the body ``Parent:`` line.
 
@@ -564,11 +598,70 @@ def native_parent_of(task: IssueRef) -> IssueRef | None:
     whose sole link is a body ``Parent:`` reference is not attached on GitHub,
     so it must read as unparented here (unlike :func:`parent_of`).
     """
-    data: Any = github.graphql(_PARENT_QUERY, id=_node_id(task))
-    parent = ((data or {}).get("node") or {}).get("parent")
-    if isinstance(parent, dict):
-        return _ref_from_node(parent)
-    return None
+    return _container_parent(task)
+
+
+@dataclass(frozen=True)
+class _ContainerChild:
+    """One child in a container's listing: its state and its labels."""
+
+    child: ChildState
+    labels: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _ContainerListing:
+    """One container's raw read: its state, its sub-issue total and its children."""
+
+    state: str  # "OPEN" | "CLOSED"
+    total: int  # every child, open and closed, as GitHub counts them
+    children: tuple[_ContainerChild, ...]
+
+
+def _container_listing(container: IssueRef) -> _ContainerListing:
+    """Read *container*'s state, sub-issue total and children with their labels.
+
+    The raw per-container read of the chain layer. A missing issue node, or a
+    child listing or label list shorter than its total, raises: a partial read
+    is never taken as the container's whole.
+    """
+    data: Any = github.graphql(_CONTAINER_QUERY, id=_node_id(container))
+    node = (data or {}).get("node")
+    if not isinstance(node, dict) or not isinstance(node.get("subIssues"), dict):
+        raise RuntimeError(f"the sub-issue read of {container.slug} returned no issue")
+    connection = node["subIssues"]
+    nodes = connection.get("nodes") or []
+    total = int(connection.get("totalCount") or 0)
+    if total > len(nodes):
+        raise RuntimeError(
+            f"the sub-issue read of {container.slug} listed {len(nodes)} of its {total} children"
+        )
+    children: list[_ContainerChild] = []
+    for n in nodes:
+        ref = _ref_from_node(n)
+        label_connection = n.get("labels") or {}
+        names = [str(label.get("name", "")) for label in label_connection.get("nodes") or []]
+        if int(label_connection.get("totalCount") or 0) > len(names):
+            raise RuntimeError(f"the label read of {ref.slug} in {container.slug} was truncated")
+        children.append(
+            _ContainerChild(
+                child=ChildState(
+                    ref=ref,
+                    state=str(n["state"]).upper(),
+                    title=str(n.get("title") or ""),
+                    closed_at=str(n.get("closedAt") or ""),
+                ),
+                labels=frozenset(names),
+            )
+        )
+    return _ContainerListing(
+        state=str(node.get("state") or "").upper(), total=total, children=tuple(children)
+    )
+
+
+def _container_child_states(container: IssueRef) -> list[ChildState]:
+    """*container*'s own native children, raw: no chain walk and no reflink fallback."""
+    return [entry.child for entry in _container_listing(container).children]
 
 
 def parent_of(task: IssueRef) -> IssueRef | None:
@@ -1394,6 +1487,17 @@ PROXY_LABEL = "proxy"
 def is_proxy(labels: Collection[str]) -> bool:
     """True iff *labels* mark a proxy epic (``epic`` + ``proxy``)."""
     return "epic" in labels and PROXY_LABEL in labels
+
+
+# A continuation (vergil-project/.github#1609, spec §4.1): a container of an
+# epic's chain past its head, labelled ``epic`` + ``continuation`` and no kind
+# label. Its kind is always its head's (lib/epic_chain.py).
+CONTINUATION_LABEL = "continuation"
+
+
+def is_continuation(labels: Collection[str]) -> bool:
+    """True iff *labels* mark a continuation (``epic`` + ``continuation``)."""
+    return "epic" in labels and CONTINUATION_LABEL in labels
 
 
 # An epic's category (vergil-project/.github#1450): management (a queue, the
