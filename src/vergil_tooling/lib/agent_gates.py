@@ -9,7 +9,7 @@ one rule to the change from the merge base of *base* and *head* to *head*:
   (:mod:`~vergil_tooling.lib.change_fingerprint`). A single-issue change
   needs, on its issue, a merge-review record
   (:func:`~vergil_tooling.lib.merge_review.record.records`; both outcomes,
-  ``eligible`` and ``not-eligible (<reason>)``, pass), a verified, approving
+  ``eligible`` and ``not-eligible (<reason>)``, pass), or a verified, approving
   ``merge-review-exemption`` exchange
   (:func:`~vergil_tooling.lib.rulings.approvals.verified_approvals`) whose
   fingerprint equals the change's. A batch change is covered when either
@@ -26,10 +26,14 @@ comment stream or configured login) gives ``ok=False`` with the error as
 the reason, as does a change with no resolvable task issue. Nothing passes
 for want of an answer.
 
-**Agent involvement.** The rule applies to an agent-involved change only; a
-change done entirely by the human carries the human's own decision.
-:func:`agent_involved` is the one shared test of that, and :func:`evaluate`
-does not apply it: the caller asks first.
+**Agent involvement.** :func:`evaluate` does not ask whether a change is
+agent-involved; each caller decides when to call it. Submit
+(:mod:`vergil_tooling.bin.vrg_submit_pr`) calls it on every submission,
+whoever submits it and whoever recorded the ready-state. The finalize watch
+(:mod:`vergil_tooling.lib.finalize_watch`) and the daily audit
+(:mod:`vergil_tooling.lib.agent_audit`) call it on an agent-involved PR
+(for the audit, one merged into ``develop``), asking :func:`agent_involved`
+first, the one shared test of that.
 """
 
 from __future__ import annotations
@@ -113,9 +117,10 @@ def agent_involved(
 
     Give exactly one piece of evidence:
 
-    - *recorded_by*, at submit, where no PR exists yet: the identity mode
-      that recorded the ready-state. It is agent-involved when that is an
-      agent identity (:data:`AGENT_MODES`); nothing else is consulted.
+    - *recorded_by*, from a ready state (the finalize watch reads it from
+      the relay ref): the identity mode that recorded the ready-state. It
+      is agent-involved when that is an agent identity
+      (:data:`AGENT_MODES`); nothing else is consulted.
     - *actors*, for an open or merged PR (the watch and the audit): the
       identities GitHub records for it, its author and every actor of an
       action on it. It is agent-involved when any of them is an agent login

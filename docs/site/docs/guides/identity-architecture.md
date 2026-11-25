@@ -18,16 +18,17 @@ user account:
 
 | Identity | Role | Backed by |
 |---|---|---|
-| `<username>` | Human — review, approval, merge, admin (Chief Steward) | The human's own GitHub account |
+| `<username>` | Human — rulings, releases and promotion, admin (Chief Steward) | The human's own GitHub account |
 | `<username>-vergil-user` | Daily development (Driver) | GitHub App, write-shaped permissions |
 | `<username>-vergil-audit` | PR review (Officials) | GitHub App, read-shaped permissions (inverted) |
 | `<username>-vergil-admin` | Reserved — **not provisioned** | — |
 | `<org>-automation` | CI automation: nightly ops (including the automatic fleet sync), the scheduled upstream refresh, epic roll-up, package-index dispatch | GitHub App owned by the org, one per org |
 
-The human account owns the decision-making authority: code review,
-PR approval, merge, and administrative operations. The two agent
-Apps do the bounded work — the user App writes code, the audit App
-reviews PRs. Each org's automation App runs scheduled and
+The human account owns the decision-making authority: rulings,
+merge-review exemptions, releases and promotion to `main`, and
+administrative operations. The two agent Apps do the bounded work —
+the user App writes code and submits its own PRs into `develop`, the
+audit App reviews PRs. Each org's automation App runs scheduled and
 event-driven CI work that needs neither human judgment nor a
 per-contributor identity (see
 [The org automation Apps](#the-org-automation-apps)).
@@ -45,7 +46,7 @@ not a control: the credential the process holds is the boundary.
 | Mode | Identity | How it resolves | Rights in the tooling |
 |---|---|---|---|
 | `human` | The human's own `gh` login | The fall-through when no other signal is present | Everything, including submitting and merging PRs |
-| `user` | `<username>-vergil-user` | `VRG_IDENTITY_MODE`, the mode file, or the provisioned App key or ID in an agent VM | The narrowest: stops at `vrg-pr-workflow report-ready`, never submits or merges |
+| `user` | `<username>-vergil-user` | `VRG_IDENTITY_MODE`, the mode file, or the provisioned App key or ID in an agent VM | Submits and finalizes its own PRs into `develop` in template mode, after `vrg-pr-workflow report-ready` and the merge-review gate; refused the CLI and relay branch modes and `--release` |
 | `audit` | `<username>-vergil-audit` | As for `user` | Dormant (see the note below) |
 | `automation` | The org automation App, `<org>-automation` | Only when `VRG_AUTOMATION_APP` is set and the token verifies as that App's installation token; no mode signal selects it | A subset of the human's: `vrg-github-repo-config update`, which converges a repo and merges its own sync PR, and `vrg-upstream-refresh publish`, which opens a refresh PR on `automation/upstream-refresh/<run-id>` and merges it once CI passes |
 
@@ -93,37 +94,46 @@ directly from the App — there is nothing else to configure.
 ## Inverted permission shapes
 
 The user and audit Apps have deliberately **inverted** repository
-permission shapes. This split is the core of the model:
+permission shapes on code: the user App writes it, the audit App only
+reads it. This split is the core of the model:
 
 | Permission | `<username>-vergil-user` | `<username>-vergil-audit` |
 |---|---|---|
 | Contents | Read and write | **Read-only** |
 | Issues | Read and write | Read-only |
-| Pull requests | **Read-only** | Read and write |
+| Pull requests | Read and write | Read and write |
 | Metadata | Read-only | Read-only |
-| Workflows | No access | No access |
+| Workflows | Read and write | No access |
 
-The user App can write code but only read PRs. The audit App can
-only read code but can write (review/comment on) PRs. Neither holds
-Workflows access, so neither can push changes under
-`.github/workflows/`.
+The user App writes code, workflow files included, and opens and
+merges its own PRs into `develop`; the audit App can only read code
+but can write (review/comment on) PRs. Epic
+[vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384)
+raised the user App's Pull requests from read and its Workflows from
+none. Every secret that can write or act lives in each repo's
+`automation` environment, limited to `develop` and `main`, so a
+workflow the user agent pushes on a feature branch runs without them.
 
 ### What the user agent can do
 
-- Commit and push to feature branches (`contents: write`)
+- Commit and push to feature branches, workflow files included
+  (`contents: write`, `workflows: write`)
 - Create and comment on issues (`issues: write`)
-- Read PR and CI status (`pull_requests: read`, plus `checks: read`,
-  `statuses: read` and `actions: read`)
-- Record PR metadata in `.vergil/pr-workflow.json` (via `vrg-pr-workflow`)
-  to stage a PR for the human
+- Read PR and CI status (`checks: read`, `statuses: read` and
+  `actions: read`)
+- Submit and finalize its own PRs into `develop` (`pull_requests:
+  write`): it records the PR metadata with `vrg-pr-workflow
+  report-ready`, then runs `vrg-submit-pr`, which opens the PR and
+  turns its auto-merge on once the merge-review gate passes
 
 ### What the user agent cannot do
 
-- **Open, edit, comment on, approve, or merge PRs** — its App holds
-  `pull_requests: read`. Its workflow ends at "ready for PR"; the
-  human submits the PR from the host.
-- **Push changes under `.github/workflows/`** — no Workflows access,
-  so GitHub rejects such a push server-side.
+- **Open or merge a PR outside `vrg-submit-pr`** — `vrg-gh` denies
+  `pr create`, `pr edit` and `pr merge` to it, and `vrg-submit-pr`
+  refuses its CLI mode, its relay branch mode and `--release`.
+- **Update `main`** — the "Main updates" ruleset lets only the human
+  admin update it, so releases and promotion stay with the human. This
+  is a server-side hard gate.
 - Access admin settings or manage org membership.
 
 ### What the audit agent can do
@@ -222,8 +232,16 @@ repositories** in that org:
 
 These Apps are an automation identity, not a per-contributor one, and
 they are separate from the agent Apps above. Workflows reach an org's
-App through the `APP_CLIENT_ID` and `APP_PRIVATE_KEY` Actions secrets
-and mint a short-lived installation token with
+App through the `APP_CLIENT_ID` and `APP_PRIVATE_KEY` secrets, which
+live only in each repo's `automation` environment, limited to `develop`
+and `main` (epic
+[vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384)).
+A caller in `vergil-project` passes them to the vergil-actions
+workflows with `secrets: inherit`; a caller in any other organization
+passes them by name, as does a call job to its repo's own local
+reusable workflow (see
+[CI Architecture](ci-architecture.md#cd-and-ops-reusable-workflow-secrets)).
+The workflows mint a short-lived installation token with
 `actions/create-github-app-token`. The `vergil-actions` reusable
 workflows use it for:
 
@@ -251,8 +269,13 @@ workflows use it for:
 The App's full permission set, and the scoped permissions each job's
 token requests, are in the vergil-actions
 [configuration reference](https://vergil-project.github.io/vergil-actions/latest/configuration/).
-Four of the App's permissions matter to the tooling in this repo:
+Five of the App's permissions matter to the tooling in this repo:
 
+- **Actions: Read.** `vrg-github-repo-config` needs it to read the
+  repo's `automation` environment and its deployment branch policies
+  (vergil-project/vergil-tooling#4773). Without it, or until an
+  installation accepts it, `update` reports the environment as not
+  checked.
 - **Dependabot alerts: Read.** `vrg-dependabot-audit` needs it to list
   a repo's open alerts (epic
   [vergil-project/.github#420](https://github.com/vergil-project/.github/issues/420)).

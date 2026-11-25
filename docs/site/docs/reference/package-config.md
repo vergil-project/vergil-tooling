@@ -443,17 +443,18 @@ fatal before tagging. The caller has two requirements:
 - **A `package-signing` environment**, restricted to `main`, holding
   `PACKAGE_SIGNING_KEY` and `PACKAGE_SIGNING_PASSPHRASE`. Only `package-sign`
   uses it, so repos without `[package]` never reference it.
-- **`secrets: inherit`** on the `cd-release` caller. Environment secrets reach
-  a job in a cross-repo reusable workflow only with `inherit`; an explicit
-  secrets map leaves `package-sign` with an empty key (proven by
-  vergil-project/packages#6). `vrg-github-repo-init` generates it for a
-  `vergil-project` repo, since the App keys reach `cd-release` the same way,
-  and `vrg-validate`'s `secrets-inherit` check allows it for
+- **`secrets: inherit`** on the `cd-release` caller, in a `vergil-project`
+  repo. It carries the App keys from the `automation` environment and the
+  `package-signing` secrets `package-sign` declares. `vrg-github-repo-init`
+  generates it, and `vrg-validate`'s `secrets-inherit` check allows it for
   `cd-release.yml`. GitHub passes `inherit` only within the caller's own
   organization, so in a repo of any other organization repo-init passes the
   App keys by name instead, and that `release` job does not carry the
-  package-signing secrets (see
-  [CD and ops: reusable-workflow secrets](../guides/ci-architecture.md#cd-and-ops-reusable-workflow-secrets)):
+  package-signing secrets:
+  [vergil-project/.github#1592](https://github.com/vergil-project/.github/issues/1592)
+  tracks passing them by name (see
+  [CD and ops: reusable-workflow secrets](../guides/ci-architecture.md#cd-and-ops-reusable-workflow-secrets)).
+  The `vergil-project` caller:
 
 ```yaml
   release:
@@ -461,8 +462,10 @@ fatal before tagging. The caller has two requirements:
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python
-    # `inherit` is required: environment secrets reach a job in a cross-repo
-    # reusable workflow only with `secrets: inherit`. The callee is first-party.
+    # `inherit` within vergil-project: it carries the App keys from the
+    # `automation` environment and any signing or registry secrets the
+    # callee declares. Allowed only for the App-key workflows (vrg-validate's
+    # secrets-inherit check).
     secrets: inherit
 ```
 

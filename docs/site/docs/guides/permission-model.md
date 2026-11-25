@@ -206,9 +206,9 @@ a bare "not recognized":
 | `repo delete` | every identity | Destructive |
 | `workflow run` | every identity | Dispatching a workflow can start CD or a release, which is a human action |
 | `auth` | every identity | Credential management |
-| `pr create` | every identity | Agents are told PR creation needs a human; a human is pointed to `vrg-submit-pr` |
-| `pr edit` | `user`, `audit` | PR edit requires a human maintainer |
-| `pr merge` | `user`, `audit` | PR merge requires a human maintainer |
+| `pr create` | every identity | The user agent opens a PR only through the gated path, `vrg-pr-workflow report-ready` then `vrg-submit-pr`; a human is pointed to `vrg-submit-pr` |
+| `pr edit` | `user`, `audit` | No agent edits a PR with `gh`; the user agent corrects the PR metadata with `report-ready` before `vrg-submit-pr` opens the PR |
+| `pr merge` | `user`, `audit` | The user agent merges only through the gated path: `vrg-submit-pr` turns auto-merge on |
 | `pr review --approve` | `user` | Approval is restricted to the `audit` identity or a human |
 | `api` | `user` | Broad, write-capable escape hatch |
 | `api` (non-GET) | `audit` | Restricted to read-only GET calls |
@@ -456,20 +456,30 @@ and branch protection rulesets.
 
 - Each agent is a GitHub App whose installation token is bounded by
   its declared permission shape. The user App holds
-  `pull_requests: read`, so it physically cannot open, approve, or
-  merge a PR; the audit App holds `contents: read`, so it cannot
-  write code or merge (merging through the API requires
-  `contents: write`). Neither App holds Workflows access, so neither
-  can push under `.github/workflows/`. GitHub rejects the API call
-  regardless of what happens locally.
+  `pull_requests: write` and `workflows: write`
+  ([epic vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384)),
+  so it can open its own PRs, turn their auto-merge on and push
+  changes under `.github/workflows/`; it takes the PR path only through
+  `vrg-submit-pr`, whose gate requires a merge-review record or a
+  merge-review exemption the human approved. The audit App holds
+  `contents: read`, so it cannot write code or merge (merging through
+  the API requires `contents: write`). Every secret that can write or
+  act lives in each repo's `automation` environment, limited to
+  `develop` and `main`, so a workflow pushed on a feature branch runs
+  without them.
 - Branch protection rulesets require a pull request to change
   `develop` or `main`, with its required CI checks passing; only
   `main`'s ruleset also requires the branch to be up to date. They
-  require no approving review. Who can merge is set by the identity's
-  permissions: the human, whose `vrg-submit-pr` turns a development
-  PR's auto-merge on, and the org automation App for the mechanized
-  `automation/` PRs that merge once CI passes (the repo-config sync and
-  the upstream refresh). No client-side manipulation changes this.
+  require no approving review. A development PR merges into `develop`
+  through the auto-merge `vrg-submit-pr` turns on, whether the user
+  agent or the human submitted it, and the org automation App merges the
+  mechanized `automation/` PRs once CI passes (the repo-config sync and
+  the upstream refresh). The "Main updates" ruleset lets only the human
+  admin update `main`, so no agent can merge a release, and the daily
+  agent audit checks the merges into `develop` and `main` (see
+  [the rulesets](../reference/config-audit.md#github-checks-rulesets)).
+  No client-side
+  manipulation changes this.
 - An App can only act on accounts it is installed on and repos that
   installation covers.
 
@@ -544,9 +554,9 @@ keeps untrusted content from driving behaviour.
 | `vrg-commit` | allowed | n/a | n/a | allows | push accepted |
 | `vrg-git push` | allowed | validates: no `--force` | n/a | n/a | push accepted |
 | `git push` | denied | n/a | blocked | n/a | push accepted (if layers bypassed) |
-| `vrg-gh pr merge` | allowed | rejected | blocked | n/a | **API rejected** (no merge permission) |
+| `vrg-gh pr merge` | allowed | rejected | blocked | n/a | into `develop`, merged once its required checks pass (if layers bypassed); into `main`, **refused** by the "Main updates" ruleset |
 | `gh pr create` | denied | n/a | blocked | n/a | PR created (if layers bypassed) |
-| `gh pr merge` (raw) | denied | n/a | blocked | n/a | **API rejected** (no merge permission) |
+| `gh pr merge` (raw) | denied | n/a | blocked | n/a | into `develop`, merged once its required checks pass (if layers bypassed); into `main`, **refused** by the "Main updates" ruleset |
 | `vrg-gh issue view <N> --comments` (agent) | allowed | allowed | n/a | blocked, naming `vrg-issue-read` | read allowed (if layers bypassed) |
 | `rm -rf .` | prompts human | n/a | n/a | n/a | n/a |
 | `vrg-git reset --hard` | allowed | rejected on a protected or frozen branch | n/a | n/a | n/a |

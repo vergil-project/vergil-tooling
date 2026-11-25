@@ -8,7 +8,7 @@ Opens standards-compliant pull requests against `develop` with GitHub
 auto-merge on, then always runs one
 [`vrg-finalize-pr`](finalize-pr.md) over them, which watches them merge
 and settles `develop` once (epic vergil-project/.github#1218). Submitting
-a PR is the human's decision to merge it: GitHub merges it once its
+a PR is the decision to merge it: GitHub merges it once its
 required checks pass. Has three modes:
 
 - **Template mode** (no arguments): the normal path. Reads
@@ -25,9 +25,13 @@ required checks pass. Has three modes:
 - **CLI mode** (`--issue/--summary/--title`): direct invocation for
   human emergency use. It stays single-issue.
 
-!!! warning "Human-run tool"
-    PR submission is a human action. Agent identities are refused;
-    agents hand off with `vrg-pr-workflow report-ready` instead.
+!!! warning "Who may submit"
+    The user agent may submit in template mode (with `--all`/`--select`
+    from the repo root), after it records the PR metadata with
+    `vrg-pr-workflow report-ready` (epic vergil-project/.github#1384).
+    The CLI mode, the relay branch mode and `--release` are refused to
+    every agent identity, and the audit agent is refused outright.
+    Releases and promotion stay with the human.
 
 ## Prerequisites
 
@@ -404,7 +408,7 @@ failed to submit it returns at least 3, and a tool error from finalize
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted |
-| 1 | A usage error or a refusal before anything opened (a removed flag, an agent identity, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
+| 1 | A usage error or a refusal before anything opened (a removed flag, the audit agent, the user agent in the CLI or relay branch mode or with `--release`, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
 | 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |
