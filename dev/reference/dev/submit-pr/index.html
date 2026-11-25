@@ -19175,8 +19175,7 @@ agent's <code>report-ready</code> mirrors its ready-state onto the reserved ref
    branch is already on origin.</li>
 </ol>
 <p>When a branch has a local worktree ready-state <strong>and</strong> origin lacks the
-branch (for example a workflow-file change the agent's token could not
-push), it is pushed with the human's credentials and opened locally
+branch, it is pushed with the human's credentials and opened locally
 instead (issue #2794).</p>
 <p>The PRs then follow the one submit path and the same finalize as
 any other mode: finalizing, releasing and installing act on the PRs and

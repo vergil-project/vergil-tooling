@@ -20960,13 +20960,11 @@ state submitted; from then on the open PR's branch takes fixes, rebases and
 lease pushes again (the <code>pr-watch</code> skill). <code>report-ready</code> pushes the branch itself, to
 <code>origin/&lt;branch&gt;</code> with upstream set, <strong>before</strong> recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
-no-op push. When the delta touches <code>.github/workflows/**</code> GitHub refuses the
-agent push: <code>report-ready</code> reports that as expected, records the state anyway,
-and the human's <code>vrg-submit-pr</code> pushes the branch. A stale branch, whose own
-commits change no workflow file but whose tree carries an outdated one, gets
-the same refusal: <code>report-ready</code> tells it apart as <code>vrg-git push</code> does and
-fails with the rebase steps, recording nothing (#4077). Any other push failure
-fails <code>report-ready</code> with no local state and no relay ref written. A branch
+no-op push. Any push failure fails <code>report-ready</code> with no local state and no
+relay ref written. A push GitHub refuses for <code>.github/workflows/**</code> changes is
+such a failure, in <code>report-ready</code> and in <code>vrg-git push</code> alike: the App lacks
+<code>workflows: write</code> in the repository's installation, and the human must accept
+that permission on the installation (#5176). A branch
 with no commits ahead of <code>--base</code> is refused before any push, with nothing
 recorded and no freeze (#3870). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
