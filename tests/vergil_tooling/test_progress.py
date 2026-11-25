@@ -466,7 +466,9 @@ def test_run_raises_a_transcript_write_error_once_the_command_exits() -> None:
             raise OSError(msg)
 
     with pytest.raises(OSError, match="disk full"):
-        progress.run((sys.executable, "-c", "print('a'); print('b')"), check=False, transcript=_Full())
+        progress.run(
+            (sys.executable, "-c", "print('a'); print('b')"), check=False, transcript=_Full()
+        )
 
 
 def test_run_stdin_devnull_gives_child_eof() -> None:

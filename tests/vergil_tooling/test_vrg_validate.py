@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -297,9 +298,7 @@ def _version(stdout: str = "ty 0.0.9\n", rc: int = 0) -> subprocess.CompletedPro
     return subprocess.CompletedProcess(["ty", "--version"], rc, stdout=stdout, stderr="")
 
 
-def test_run_transcribed_records_version_command_output_and_status(
-    tmp_path: Path
-) -> None:
+def test_run_transcribed_records_version_command_output_and_status(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".subprocess.run", return_value=_version()) as m_version,
         patch(_MOD + ".progress.run", side_effect=_fake_progress_run(["All checks passed!"], 0)),
@@ -316,9 +315,7 @@ def test_run_transcribed_records_version_command_output_and_status(
     )
 
 
-def test_run_transcribed_records_a_silent_command(
-    tmp_path: Path
-) -> None:
+def test_run_transcribed_records_a_silent_command(tmp_path: Path) -> None:
     """A tool that prints nothing (``cargo fmt --check`` when clean) still leaves data."""
     with (
         patch(_MOD + ".subprocess.run", return_value=_version()),
@@ -328,9 +325,7 @@ def test_run_transcribed_records_a_silent_command(
     assert (tmp_path / "quality-ty.log").read_text().endswith("$ ty check\nexit status: 0\n")
 
 
-def test_run_transcribed_keeps_the_command_status(
-    tmp_path: Path
-) -> None:
+def test_run_transcribed_keeps_the_command_status(tmp_path: Path) -> None:
     (tmp_path / "quality-ty.log").write_text("stale\n")
     with (
         patch(_MOD + ".subprocess.run", return_value=_version()),
@@ -357,9 +352,7 @@ def test_run_transcribed_fails_a_version_command_that_exits_non_zero(
     assert "does not name its version" in out
 
 
-def test_run_transcribed_fails_a_version_command_that_cannot_run(
-    tmp_path: Path
-) -> None:
+def test_run_transcribed_fails_a_version_command_that_cannot_run(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".subprocess.run", side_effect=FileNotFoundError("no ty")),
         patch(_MOD + ".progress.run", side_effect=_fake_progress_run([], 0)),
@@ -369,7 +362,7 @@ def test_run_transcribed_fails_a_version_command_that_cannot_run(
 
 
 def test_run_transcribed_keeps_a_failed_command_status_over_a_version_failure(
-    tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     with (
         patch(_MOD + ".subprocess.run", return_value=_version(rc=1)),
@@ -390,6 +383,45 @@ def test_run_transcribed_fails_when_the_transcript_cannot_be_written(
     m_run.assert_not_called()
     report = tmp_path / "quality-ty.log"
     assert f"could not write the ty transcript {report}" in capsys.readouterr().out
+
+
+class _FailingWrites(io.StringIO):
+    """A transcript file whose writes fail from the *fail_from*-th call on."""
+
+    def __init__(self, fail_from: int) -> None:
+        super().__init__()
+        self.calls = 0
+        self.fail_from = fail_from
+
+    def _count(self) -> None:
+        self.calls += 1
+        if self.calls >= self.fail_from:
+            msg = "disk full"
+            raise OSError(msg)
+
+    def writelines(self, lines: Any) -> None:
+        self._count()
+        super().writelines(lines)
+
+    def write(self, s: str) -> int:
+        self._count()
+        return super().write(s)
+
+
+@pytest.mark.parametrize(("fail_from", "ran"), [(1, False), (2, True)])
+def test_run_transcribed_fails_when_a_transcript_write_fails(
+    fail_from: int, ran: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The header failing stops before the command; the closing status failing, after it."""
+    root = MagicMock()
+    root.__truediv__.return_value.open.return_value = _FailingWrites(fail_from)
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()),
+        patch(_MOD + ".progress.run", return_value=0) as m_run,
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, root) == 1
+    assert m_run.called is ran
+    assert "could not write the ty transcript" in capsys.readouterr().out
 
 
 def test_run_gate_command_transcribes_only_a_command_with_a_transcript(tmp_path: Path) -> None:

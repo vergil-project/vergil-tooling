@@ -1215,9 +1215,7 @@ _REPORT_FILES = {
     "typescript": TYPESCRIPT_REPORT_FILES,
 }
 
-_EVIDENCE_GATES = [
-    (language, kind) for language, gates in TOOL_EVIDENCE.items() for kind in gates
-]
+_EVIDENCE_GATES = [(language, kind) for language, gates in TOOL_EVIDENCE.items() for kind in gates]
 
 
 def test_tool_evidence_covers_every_language_with_a_report_contract() -> None:
@@ -1261,7 +1259,10 @@ def test_every_evidence_file_is_written_by_its_gate(language: str, kind: CheckKi
 def test_report_files_are_the_tools_evidence(language: str) -> None:
     """A language's report files are exactly its tools' evidence, so none is unattributed."""
     evidence = {
-        name for tools in TOOL_EVIDENCE[language].values() for files in tools.values() for name in files
+        name
+        for tools in TOOL_EVIDENCE[language].values()
+        for files in tools.values()
+        for name in files
     }
     assert evidence == set(_REPORT_FILES[language])
 
@@ -1270,9 +1271,7 @@ def test_report_files_are_the_tools_evidence(language: str) -> None:
     ("language", "kind"),
     [(language, kind) for language, gates in languages._TRANSCRIPTS.items() for kind in gates],
 )
-def test_every_transcript_records_exactly_one_gate_command(
-    language: str, kind: CheckKind
-) -> None:
+def test_every_transcript_records_exactly_one_gate_command(language: str, kind: CheckKind) -> None:
     """Each declared transcript matches one command of its gate, and its tool lists it."""
     cmds = language_commands(language, kind)
     for transcript in language_transcripts(language, kind):
