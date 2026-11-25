@@ -10,7 +10,8 @@ issue's body (trusted unless added with an untrusted *author*);
 id, state, title, close time and labels, and the listing of a repo's open
 issues by label. The writes the chain layer makes besides links are faked
 too: ``github.create_issue`` adds an issue, and ``github.run`` answers
-``issue edit`` (title and body), ``issue comment`` and ``label create``.
+``issue edit`` (title and body), ``issue comment``, ``issue close`` and
+``label create``.
 Every write, links included, is recorded in order in
 :attr:`FakeSubIssueGraph.events`.
 
@@ -83,7 +84,8 @@ class FakeSubIssueGraph:
     succeeded, in order, as ``(op, parent, child)`` with *op* ``"add"``,
     ``"reparent"`` or ``"remove"``. ``events`` records every write in order:
     each mutation as in ``mutations``, ``("create", ref)``, ``("edit", ref)``,
-    ``("comment", ref, body)`` and ``("label", repo, name)``. ``comments``
+    ``("comment", ref, body)``, ``("close", ref, reason)`` and
+    ``("label", repo, name)``. ``comments``
     holds each issue's comment bodies.
     """
 
@@ -339,7 +341,7 @@ class FakeSubIssueGraph:
         return f"https://github.com/{repo}/issues/{number}"
 
     def run(self, *args: str) -> None:
-        """``github.run``: ``issue edit`` (title, body), ``issue comment`` and ``label create``."""
+        """``github.run``: ``issue edit``, ``issue comment``, ``issue close`` and ``label create``."""
         if args[:2] == ("label", "create"):
             self._record(("label", args[args.index("--repo") + 1], args[2]))
             return
@@ -351,6 +353,13 @@ class FakeSubIssueGraph:
             assert set(flags) == {"--body"}, args
             self.comments.setdefault(ref, []).append(flags["--body"])
             self._record(("comment", ref, flags["--body"]))
+            return
+        if args[1] == "close":
+            assert set(flags) <= {"--reason", "--comment"}, args
+            self.issues[ref].state = "CLOSED"
+            if "--comment" in flags:
+                self.comments.setdefault(ref, []).append(flags["--comment"])
+            self._record(("close", ref, flags.get("--reason", "completed")))
             return
         assert args[1] == "edit" and set(flags) <= {"--title", "--body"}, args
         if "--title" in flags:
