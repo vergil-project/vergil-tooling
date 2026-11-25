@@ -997,10 +997,15 @@ def test_confirm_main_records_failed_release_run(write_state: MagicMock) -> None
 # vergil-fixture-ts-lib release 0.1.10 (#5153): the release PR's CI run passed
 # at attempt 1, before the merge; attempt 2, re-run after it, failed version-bump.
 _PASSED_LATEST = ci_evidence.PassedAttempt(
-    run_id=111, attempt=1, latest_attempt=1, url="https://run/111"
+    run_id=111, attempt=1, latest_attempt=1, url="https://run/111", check_suite_id=5
 )
 _PASSED_BEFORE_RERUN = ci_evidence.PassedAttempt(
-    run_id=111, attempt=1, latest_attempt=2, url="https://run/111/attempts/1"
+    run_id=111,
+    attempt=1,
+    latest_attempt=2,
+    url="https://run/111/attempts/1",
+    check_suite_id=5,
+    next_started_at="2026-11-24T23:09:08Z",
 )
 
 

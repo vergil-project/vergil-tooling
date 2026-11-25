@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -22,7 +23,6 @@ from vergil_tooling.lib.ci_evidence import (
     download_evidence_artifacts,
     read_gate_conclusions,
     resolve_release_pr,
-    select_ci_run,
 )
 from vergil_tooling.lib.github_config import GHAS_INTEGRATION_ID, GITHUB_ACTIONS_INTEGRATION_ID
 from vergil_tooling.lib.trust import PRRef, Role, Skipped
@@ -265,207 +265,6 @@ def test_resolve_release_pr_trust_read_failure_propagates(monkeypatch: pytest.Mo
         resolve_release_pr("o/r", "abc")
 
 
-# --- select_ci_run ------------------------------------------------------
-
-
-def test_select_ci_run_ignores_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "cancelled",
-                "head_repository": _OWN,
-                "run_started_at": "2026-07-12T00:00:00Z",
-                "id": 1,
-            },
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "2026-07-12T00:05:00Z",
-                "id": 42,
-            },
-        ],
-    )
-    assert select_ci_run("o/r", "abc")["id"] == 42
-
-
-def test_select_ci_run_picks_latest_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "2026-07-12T00:00:00Z",
-                "id": 1,
-            },
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "2026-07-12T00:09:00Z",
-                "id": 2,
-            },
-        ],
-    )
-    assert select_ci_run("o/r", "abc")["id"] == 2
-
-
-def test_select_ci_run_ignores_other_workflow_and_in_progress(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "Nightly",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "t",
-                "id": 1,
-            },
-            {
-                "name": "CI",
-                "status": "in_progress",
-                "conclusion": None,
-                "head_repository": _OWN,
-                "run_started_at": "t",
-                "id": 2,
-            },
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "t",
-                "id": 3,
-            },
-        ],
-    )
-    assert select_ci_run("o/r", "abc")["id"] == 3
-
-
-def test_select_ci_run_honors_workflow_argument(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "Release",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "t",
-                "id": 7,
-            },
-        ],
-    )
-    assert select_ci_run("o/r", "abc", workflow="Release")["id"] == 7
-
-
-def test_select_ci_run_none_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "CI",
-                "status": "completed",
-                "conclusion": "cancelled",
-                "head_repository": _OWN,
-                "run_started_at": "t",
-            },
-        ],
-    )
-    with pytest.raises(NoQualifyingRunError) as exc:
-        select_ci_run("o/r", "deadbeef")
-    assert exc.value.head_sha == "deadbeef"
-    assert exc.value.visible is True
-
-
-def test_select_ci_run_empty_lookup_is_not_visible(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No CI run at all (only another workflow) marks the miss as not-visible (#3434)."""
-    monkeypatch.setattr(
-        github,
-        "read_json_paginated",
-        lambda *a, **k: [
-            {
-                "name": "Docs",
-                "status": "completed",
-                "conclusion": "success",
-                "head_repository": _OWN,
-                "run_started_at": "t",
-            },
-        ],
-    )
-    with pytest.raises(NoQualifyingRunError) as exc:
-        select_ci_run("o/r", "deadbeef")
-    assert exc.value.visible is False
-    assert str(exc.value) == "no completed+success CI run for head SHA deadbeef"
-
-
-def test_select_ci_run_ignores_fork_run_of_the_same_commit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A fork's newer green CI run of the same commit never attests the release."""
-    own = {
-        "id": 1,
-        "name": "CI",
-        "status": "completed",
-        "conclusion": "success",
-        "head_repository": _OWN,
-        "run_started_at": "2026-07-12T00:00:00Z",
-    }
-    fork = {**own, "id": 2, "head_repository": {"full_name": "drive-by/r"}}
-    fork["run_started_at"] = "2026-07-12T00:09:00Z"
-    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [own, fork])
-    assert select_ci_run("o/r", "abc")["id"] == 1
-
-
-def test_select_ci_run_only_fork_run_is_not_visible(monkeypatch: pytest.MonkeyPatch) -> None:
-    fork = {
-        "id": 2,
-        "name": "CI",
-        "status": "completed",
-        "conclusion": "success",
-        "head_repository": {"full_name": "drive-by/r"},
-        "run_started_at": "t",
-    }
-    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [fork])
-    with pytest.raises(NoQualifyingRunError) as exc:
-        select_ci_run("o/r", "abc")
-    assert exc.value.visible is False
-
-
-def test_select_ci_run_skips_run_without_head_repository(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A run with no head repository (its fork deleted) is skipped, never a stop."""
-    own = {
-        "id": 1,
-        "name": "CI",
-        "status": "completed",
-        "conclusion": "success",
-        "head_repository": _OWN,
-        "run_started_at": "2026-07-12T00:00:00Z",
-    }
-    gone = {**own, "id": 3, "head_repository": None, "run_started_at": "2026-07-12T00:09:00Z"}
-    bare = {k: v for k, v in gone.items() if k != "head_repository"} | {"id": 4}
-    monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [own, gone, bare])
-    assert select_ci_run("o/r", "abc")["id"] == 1
-
-
 # --- select_passed_attempt (issue #5153) --------------------------------
 #
 # Modelled on vergil-fixture-ts-lib's release 0.1.10: the release PR's CI run
@@ -490,6 +289,7 @@ def _ci_run(
         "run_attempt": attempt,
         "run_started_at": started,
         "html_url": f"https://github.com/o/r/actions/runs/{run_id}",
+        "check_suite_id": _SUITE,
         **extra,
     }
 
@@ -520,10 +320,78 @@ def test_select_passed_attempt_latest_attempt_passed(monkeypatch: pytest.MonkeyP
     calls = _attempts_api(monkeypatch, [run], {})
     found = ci_evidence.select_passed_attempt("o/r", _HEAD)
     assert found == ci_evidence.PassedAttempt(
-        run_id=45505436055, attempt=1, latest_attempt=1, url=_RUN_URL
+        run_id=45505436055, attempt=1, latest_attempt=1, url=_RUN_URL, check_suite_id=_SUITE
     )
     assert found.is_latest
+    assert found.next_started_at is None
     assert calls == []
+
+
+def test_select_passed_attempt_skips_a_cancelled_run_for_a_passing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled = _ci_run(1, 1, "cancelled", "2026-07-12T00:00:00Z")
+    passing = _ci_run(42, 1, "success", "2026-07-12T00:05:00Z")
+    _attempts_api(monkeypatch, [cancelled, passing], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD).run_id == 42
+
+
+def test_select_passed_attempt_picks_the_latest_passing_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    older = _ci_run(1, 1, "success", "2026-07-12T00:00:00Z")
+    newer = _ci_run(2, 1, "success", "2026-07-12T00:09:00Z")
+    _attempts_api(monkeypatch, [older, newer], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD).run_id == 2
+
+
+def test_select_passed_attempt_ignores_other_workflows_and_in_progress_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nightly = _ci_run(1, 1, "success", "2026-07-12T00:09:00Z", name="Nightly")
+    running = _ci_run(2, 1, None, "2026-07-12T00:08:00Z")
+    passing = _ci_run(3, 1, "success", "2026-07-12T00:00:00Z")
+    _attempts_api(monkeypatch, [nightly, running, passing], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD).run_id == 3
+
+
+def test_select_passed_attempt_honors_the_workflow_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = _ci_run(7, 1, "success", "t", name="Release")
+    _attempts_api(monkeypatch, [release], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD, workflow="Release").run_id == 7
+
+
+def test_select_passed_attempt_ignores_a_fork_run_of_the_same_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fork's newer green CI run of the same commit never attests the release."""
+    own = _ci_run(1, 1, "success", "2026-07-12T00:00:00Z")
+    fork = _ci_run(2, 1, "success", "2026-07-12T00:09:00Z")
+    fork["head_repository"] = {"full_name": "drive-by/r"}
+    _attempts_api(monkeypatch, [own, fork], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD).run_id == 1
+
+
+def test_select_passed_attempt_skips_a_run_without_head_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run with no head repository (its fork deleted) is skipped, never a stop."""
+    own = _ci_run(1, 1, "success", "2026-07-12T00:00:00Z")
+    gone = _ci_run(3, 1, "success", "2026-07-12T00:09:00Z", head_repository=None)
+    bare = {k: v for k, v in gone.items() if k != "head_repository"} | {"id": 4}
+    _attempts_api(monkeypatch, [own, gone, bare], {})
+    assert ci_evidence.select_passed_attempt("o/r", _HEAD).run_id == 1
+
+
+def test_select_passed_attempt_refuses_a_passing_run_with_no_check_suite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = {k: v for k, v in _ci_run(9, 1, "success", "t").items() if k != "check_suite_id"}
+    _attempts_api(monkeypatch, [run], {})
+    with pytest.raises(ValueError, match="has no check suite"):
+        ci_evidence.select_passed_attempt("o/r", _HEAD)
 
 
 def test_select_passed_attempt_takes_the_attempt_that_passed_before_a_failed_rerun(
@@ -536,7 +404,12 @@ def test_select_passed_attempt_takes_the_attempt_that_passed_before_a_failed_rer
     calls = _attempts_api(monkeypatch, [latest], {(45505436055, 1): first})
     found = ci_evidence.select_passed_attempt("o/r", _HEAD)
     assert found == ci_evidence.PassedAttempt(
-        run_id=45505436055, attempt=1, latest_attempt=2, url=f"{_RUN_URL}/attempts/1"
+        run_id=45505436055,
+        attempt=1,
+        latest_attempt=2,
+        url=f"{_RUN_URL}/attempts/1",
+        check_suite_id=_SUITE,
+        next_started_at="2026-11-24T23:09:08Z",
     )
     assert not found.is_latest
     assert calls == [("api", "repos/o/r/actions/runs/45505436055/attempts/1")]
@@ -554,6 +427,8 @@ def test_select_passed_attempt_takes_the_most_recent_passing_attempt(
     calls = _attempts_api(monkeypatch, [latest], attempts)
     found = ci_evidence.select_passed_attempt("o/r", _HEAD)
     assert (found.run_id, found.attempt, found.latest_attempt) == (7, 2, 4)
+    # The window of attempt 2 ends where attempt 3, not the latest, began.
+    assert found.next_started_at == "2026-11-24T23:20:00Z"
     # It stops at the newest attempt that passed and reads no older one.
     assert [c[1].rsplit("/", 1)[1] for c in calls] == ["3", "2"]
 
@@ -635,7 +510,364 @@ def test_select_passed_attempt_refuses_a_non_object_attempt(
         ci_evidence.select_passed_attempt("o/r", _HEAD)
 
 
-# --- wait_for_ci_run (issue #3434) --------------------------------------
+# --- attempt_scope / attempt-scoped harvest (issue #5153) ---------------
+#
+# Attempt 1 of vergil-fixture-ts-lib's CI run 45505436055 (release 0.1.10),
+# as its attempt-jobs list reports it (a subset, real times); attempt 2, a
+# re-run after the release PR merged, began at 23:09:08 and failed
+# "version / version-bump".
+
+_NEXT_START = "2026-11-24T23:09:08Z"
+_EARLIER = ci_evidence.PassedAttempt(
+    run_id=45505436055,
+    attempt=1,
+    latest_attempt=2,
+    url=f"{_RUN_URL}/attempts/1",
+    check_suite_id=501,
+    next_started_at=_NEXT_START,
+)
+
+
+def _job(
+    name: str, started: str | None, completed: str, conclusion: str = "success", **extra: Any
+) -> dict[str, Any]:
+    return {
+        "id": abs(hash(name)) % 10**9,
+        "name": name,
+        "status": "completed",
+        "conclusion": conclusion,
+        "head_sha": _HEAD,
+        "started_at": started,
+        "completed_at": completed,
+        **extra,
+    }
+
+
+_ATTEMPT_1_JOBS = [
+    _job("audit / matrix", "2026-11-24T22:55:52Z", "2026-11-24T22:56:09Z"),
+    _job("security / codeql", "2026-11-24T22:57:52Z", "2026-11-24T22:59:05Z"),
+    _job("security / evidence", "2026-11-24T22:59:40Z", "2026-11-24T22:59:56Z"),
+    _job("version / version-bump", "2026-11-24T22:58:11Z", "2026-11-24T22:59:00Z"),
+    _job("test / unit / node-26", "2026-11-24T22:59:51Z", "2026-11-24T23:00:28Z"),
+]
+
+
+def _serve_pages(monkeypatch: pytest.MonkeyPatch, pages: dict[str, list[Any]]) -> list[str]:
+    """Serve ``read_json_paginated`` by endpoint prefix; record each endpoint read."""
+    seen: list[str] = []
+
+    def _read(endpoint: str, key: str | None = None, **_k: Any) -> list[Any]:
+        seen.append(endpoint)
+        for prefix, items in pages.items():
+            if endpoint.startswith(prefix):
+                return items
+        msg = f"unexpected endpoint {endpoint}"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(github, "read_json_paginated", _read)
+    return seen
+
+
+_JOBS_ENDPOINT = "repos/o/r/actions/runs/45505436055/attempts/1/jobs"
+
+
+def test_attempt_scope_reads_the_attempts_own_jobs_and_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    seen = _serve_pages(monkeypatch, {_JOBS_ENDPOINT: _ATTEMPT_1_JOBS})
+    scope = ci_evidence.attempt_scope("o/r", _HEAD, _EARLIER)
+    assert seen == [_JOBS_ENDPOINT]
+    # Attempt 1's version-bump passed, whatever attempt 2's check run says.
+    assert scope.job_conclusions["version / version-bump"] == "success"
+    assert scope.start == datetime(2026, 11, 24, 22, 55, 52, tzinfo=UTC)
+    assert scope.end == datetime(2026, 11, 24, 23, 9, 8, tzinfo=UTC)
+    assert scope.holds(datetime(2026, 11, 24, 23, 0, 0, tzinfo=UTC))
+    assert not scope.holds(scope.end)
+    assert not scope.holds(datetime(2026, 11, 24, 22, 55, 0, tzinfo=UTC))
+
+
+def test_attempt_scope_keeps_a_carried_over_jobs_own_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-run of failed jobs lists the jobs it carried over with their first start."""
+    from datetime import UTC, datetime
+
+    carried = _job("docs / docs", "2026-11-24T23:01:02Z", "2026-11-24T23:01:40Z")
+    rerun = _job("release / release", "2026-11-24T23:27:32Z", "2026-11-24T23:28:00Z")
+    passed = replace(_EARLIER, next_started_at="2026-11-24T23:40:00Z")
+    _serve_pages(monkeypatch, {_JOBS_ENDPOINT: [carried, rerun]})
+    scope = ci_evidence.attempt_scope("o/r", _HEAD, passed)
+    assert scope.start == datetime(2026, 11, 24, 23, 1, 2, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("jobs", "match"),
+    [
+        ([], "lists no jobs"),
+        (["job"], "not an object"),
+        ([_job("", "2026-11-24T22:56:00Z", "2026-11-24T22:57:00Z")], "with no name"),
+        (
+            [_job("a", "2026-11-24T22:56:00Z", "2026-11-24T22:57:00Z", head_sha="0" * 40)],
+            "is for head",
+        ),
+        (
+            [_job("a", "2026-11-24T22:56:00Z", "2026-11-24T22:57:00Z", status="in_progress")],
+            "not completed",
+        ),
+        (
+            [_job("a", "2026-11-24T22:56:00Z", "2026-11-24T23:09:08Z")],
+            "after the next attempt began",
+        ),
+        ([_job("a", "2026-11-24T22:56:00Z", "soon")], "unreadable timestamp"),
+        ([_job("a", "2026-11-24T22:56:00Z", "2026-11-24T22:57:00")], "no time zone"),
+        ([_job("a", None, "2026-11-24T22:57:00Z")], "has no timestamp"),
+        (
+            [
+                _job("a", "2026-11-24T22:56:00Z", "2026-11-24T22:57:00Z"),
+                _job("a", "2026-11-24T22:58:00Z", "2026-11-24T22:59:00Z"),
+            ],
+            "more than once",
+        ),
+    ],
+)
+def test_attempt_scope_refuses_a_job_it_cannot_tie_to_the_attempt(
+    monkeypatch: pytest.MonkeyPatch, jobs: list[Any], match: str
+) -> None:
+    _serve_pages(monkeypatch, {_JOBS_ENDPOINT: jobs})
+    with pytest.raises(ci_evidence.AttemptScopeError, match=match):
+        ci_evidence.attempt_scope("o/r", _HEAD, _EARLIER)
+
+
+def test_attempt_scope_refuses_a_latest_attempt() -> None:
+    latest = replace(_EARLIER, attempt=2, next_started_at=None)
+    with pytest.raises(ci_evidence.AttemptScopeError, match="latest attempt"):
+        ci_evidence.attempt_scope("o/r", _HEAD, latest)
+
+
+def test_attempt_scope_error_is_an_evidence_artifact_error() -> None:
+    """The CLI reports it as a one-line substantive failure, like its parent."""
+    assert issubclass(ci_evidence.AttemptScopeError, ci_evidence.EvidenceArtifactError)
+
+
+def _scanner(
+    name: str, started: str, conclusion: str = "success", *, run_id: int = 1
+) -> dict[str, Any]:
+    """A GitHub Advanced Security scanner check run on the commit."""
+    return {
+        "id": run_id,
+        "name": name,
+        "conclusion": conclusion,
+        "started_at": started,
+        "app": {"id": GHAS_INTEGRATION_ID},
+        "check_suite": {"id": 777},
+    }
+
+
+def _scope(monkeypatch: pytest.MonkeyPatch) -> ci_evidence.AttemptScope:
+    _serve_pages(monkeypatch, {_JOBS_ENDPOINT: _ATTEMPT_1_JOBS})
+    return ci_evidence.attempt_scope("o/r", _HEAD, _EARLIER)
+
+
+def test_read_attempt_gate_conclusions_reads_the_attempt_not_the_latest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    scope = _scope(monkeypatch)
+    check_runs = [
+        # Attempt 2's failed version-bump check run is the latest on the commit.
+        {**_check("version / version-bump", "failure"), "started_at": "2026-11-24T23:10:00Z"},
+        _scanner("CodeQL", "2026-11-24T22:59:10Z", run_id=138840877066),
+        _scanner("CodeQL", "2026-11-24T22:59:20Z", "neutral", run_id=138840877070),
+        # A scanner check run of attempt 2 is out of the window.
+        _scanner("Trivy", "2026-11-24T23:10:30Z", "failure", run_id=138846500000),
+        _scanner("Trivy", "2026-11-24T22:58:30Z", run_id=138840418634),
+        # A check run with a scanner's name from another App never counts.
+        {**_check("Semgrep OSS", "success", app_id=999), "started_at": "2026-11-24T22:59:00Z"},
+    ]
+    seen = _serve_pages(monkeypatch, {"repos/o/r/commits/": check_runs})
+    required = (
+        EvidenceGate(name="security", checks=("security / codeql", "CodeQL", "Trivy")),
+        EvidenceGate(name="version", checks=("version / version-bump",)),
+    )
+    result = ci_evidence.read_attempt_gate_conclusions("o/r", _HEAD, scope, required)
+    assert seen == [f"repos/o/r/commits/{_HEAD}/check-runs?filter=all"]
+    assert result["version / version-bump"] == "success"
+    assert result["CodeQL"] == "neutral"
+    assert result["Trivy"] == "success"
+    assert "Semgrep OSS" not in result
+
+
+def test_read_attempt_gate_conclusions_refuses_a_required_check_out_of_the_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    scope = _scope(monkeypatch)
+    later = [_scanner("Semgrep OSS", "2026-11-24T23:10:30Z")]
+    _serve_pages(monkeypatch, {"repos/o/r/commits/": later})
+    required = (EvidenceGate(name="security", checks=("security / codeql", "Semgrep OSS")),)
+    with pytest.raises(
+        ci_evidence.AttemptScopeError,
+        match=r"required checks \['Semgrep OSS'\] cannot be tied to attempt 1 of CI run",
+    ):
+        ci_evidence.read_attempt_gate_conclusions("o/r", _HEAD, scope, required)
+
+
+def test_download_evidence_artifacts_in_scope_takes_the_attempts_copy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Attempt 2's newer copy of a gate's artifact is never consumed for attempt 1."""
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    scope = _scope(monkeypatch)
+    artifacts = [
+        {"name": "ci-evidence-security", "id": 11, "created_at": "2026-11-24T22:59:50Z"},
+        {"name": "ci-evidence-security", "id": 22, "created_at": "2026-11-24T23:10:40Z"},
+        {"name": "ci-evidence-version", "id": 33, "created_at": "2026-11-24T22:59:01Z"},
+    ]
+    _serve_pages(monkeypatch, {"repos/o/r/actions/runs/45505436055/artifacts": artifacts})
+    calls = _fake_downloads(monkeypatch)
+    required = (
+        EvidenceGate(name="security", checks=()),
+        EvidenceGate(name="version", checks=()),
+    )
+    result = download_evidence_artifacts(
+        "o/r", 45505436055, tmp_path / "gates", required, scope=scope
+    )
+    assert result == [tmp_path / "gates" / "security", tmp_path / "gates" / "version"]
+    assert calls == [
+        "repos/o/r/actions/artifacts/11/zip",
+        "repos/o/r/actions/artifacts/33/zip",
+    ]
+
+
+def test_download_evidence_artifacts_in_scope_refuses_a_gate_with_no_copy_of_the_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    scope = _scope(monkeypatch)
+    artifacts = [{"name": "ci-evidence-version", "id": 44, "created_at": "2026-11-24T23:10:40Z"}]
+    _serve_pages(monkeypatch, {"repos/o/r/actions/runs/45505436055/artifacts": artifacts})
+    calls = _fake_downloads(monkeypatch)
+    required = (EvidenceGate(name="version", checks=()),)
+    with pytest.raises(
+        ci_evidence.AttemptScopeError,
+        match=r"gate 'version' has evidence artifacts \(ids \[44\]\), but none was created",
+    ):
+        download_evidence_artifacts("o/r", 45505436055, tmp_path / "gates", required, scope=scope)
+    assert calls == []
+
+
+def test_download_evidence_artifacts_in_scope_refuses_a_copy_with_no_creation_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    scope = _scope(monkeypatch)
+    artifacts = [{"name": "ci-evidence-version", "id": 55}]
+    _serve_pages(monkeypatch, {"repos/o/r/actions/runs/45505436055/artifacts": artifacts})
+    _fake_downloads(monkeypatch)
+    with pytest.raises(ci_evidence.AttemptScopeError, match="artifact 55 has no timestamp"):
+        download_evidence_artifacts(
+            "o/r",
+            45505436055,
+            tmp_path / "gates",
+            (EvidenceGate(name="version", checks=()),),
+            scope=scope,
+        )
+
+
+def test_run_harvest_of_an_earlier_attempt_reads_it_scoped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The 0.1.10 case end to end: attempt 1's checks and artifacts, named in the state."""
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    required = (EvidenceGate(name="version", checks=("version / version-bump",)),)
+    monkeypatch.setattr(ci_evidence, "resolve_release_pr", lambda _repo, _sha: 98)
+    monkeypatch.setattr(github, "head_sha", lambda _pr: _HEAD)
+    monkeypatch.setattr(ci_evidence, "wait_for_passed_attempt", lambda *_a, **_k: _EARLIER)
+    monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _ref: required)
+
+    def _latest_only(*_a: Any, **_k: Any) -> Any:
+        msg = "the latest attempt's check runs must not be read"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(ci_evidence, "read_gate_conclusions", _latest_only)
+    _serve_pages(
+        monkeypatch,
+        {
+            _JOBS_ENDPOINT: _ATTEMPT_1_JOBS,
+            "repos/o/r/commits/": [],
+            "repos/o/r/actions/runs/45505436055/artifacts": [
+                {"name": "ci-evidence-version", "id": 33, "created_at": "2026-11-24T22:59:01Z"},
+                {"name": "ci-evidence-version", "id": 66, "created_at": "2026-11-24T23:10:40Z"},
+            ],
+        },
+    )
+    archive = _zip_bytes(
+        {
+            "evidence.json": json.dumps({"gate": "version", "tools": [], "metrics": {}}).encode(),
+            "version.txt": b"0.1.10",
+        }
+    )
+    calls = _fake_downloads(monkeypatch, {"repos/o/r/actions/artifacts/33/zip": archive})
+
+    with caplog.at_level("WARNING", logger="vergil_tooling.lib.ci_evidence"):
+        state = ci_evidence.run_harvest("o/r", "10586fe76d3f", tmp_path / "staging")
+
+    assert calls == ["repos/o/r/actions/artifacts/33/zip"]
+    assert state.ci_run_urls == (f"{_RUN_URL}/attempts/1",)
+    assert state.gate_conclusions == {"version": "success"}
+    assert state.checks["version / version-bump"] == "success"
+    assert "latest attempt, 2, did not pass; harvesting attempt 1" in caplog.text
+
+
+def test_run_harvest_of_a_latest_attempt_reads_as_before(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run whose latest attempt passed is harvested exactly as it was."""
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    latest = replace(_EARLIER, latest_attempt=1, url=_RUN_URL, next_started_at=None)
+    required = (EvidenceGate(name="version", checks=("version / version-bump",)),)
+    monkeypatch.setattr(ci_evidence, "resolve_release_pr", lambda _repo, _sha: 98)
+    monkeypatch.setattr(github, "head_sha", lambda _pr: _HEAD)
+    monkeypatch.setattr(ci_evidence, "wait_for_passed_attempt", lambda *_a, **_k: latest)
+    monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _ref: required)
+    suites: list[int] = []
+
+    def _conclusions(_repo: str, _sha: str, *, check_suite_id: int) -> dict[str, str]:
+        suites.append(check_suite_id)
+        return {"version / version-bump": "success"}
+
+    def _scoped(*_a: Any, **_k: Any) -> Any:
+        msg = "a latest attempt is never scoped"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(ci_evidence, "read_gate_conclusions", _conclusions)
+    monkeypatch.setattr(ci_evidence, "attempt_scope", _scoped)
+    _serve_pages(
+        monkeypatch,
+        {
+            "repos/o/r/actions/runs/45505436055/artifacts": [
+                {"name": "ci-evidence-version", "id": 66, "created_at": "2026-11-24T23:10:40Z"},
+            ],
+        },
+    )
+    archive = _zip_bytes({"evidence.json": b'{"gate": "version"}', "version.txt": b"0.1.10"})
+    calls = _fake_downloads(monkeypatch, {"repos/o/r/actions/artifacts/66/zip": archive})
+    state = ci_evidence.run_harvest("o/r", "10586fe76d3f", tmp_path / "staging")
+    assert suites == [501]
+    assert calls == ["repos/o/r/actions/artifacts/66/zip"]
+    assert state.ci_run_urls == (_RUN_URL,)
+
+
+# --- wait_for_passed_attempt (issue #3434) ------------------------------
 
 _SUCCESS_RUN = {
     "id": 9,
@@ -644,6 +876,9 @@ _SUCCESS_RUN = {
     "conclusion": "success",
     "head_repository": _OWN,
     "run_started_at": "t",
+    "run_attempt": 1,
+    "html_url": "https://github.com/o/r/actions/runs/9",
+    "check_suite_id": 501,
 }
 
 
@@ -675,23 +910,27 @@ def _pages(monkeypatch: pytest.MonkeyPatch, *pages: list[dict[str, Any]]) -> lis
     return calls
 
 
-def test_wait_for_ci_run_returns_at_once_when_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_passed_attempt_returns_at_once_when_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _pages(monkeypatch, [_SUCCESS_RUN])
     fake = _FakeClock()
-    run = ci_evidence.wait_for_ci_run("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
-    assert run["id"] == 9
+    passed = ci_evidence.wait_for_passed_attempt("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
+    assert passed.run_id == 9
     assert calls[0] == 1
     assert fake.sleeps == []
 
 
-def test_wait_for_ci_run_passes_once_lagging_run_appears(
+def test_wait_for_passed_attempt_passes_once_lagging_run_appears(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A run the head-SHA index shows only on a later query passes the gate."""
     calls = _pages(monkeypatch, [], [], [_SUCCESS_RUN])
     fake = _FakeClock()
-    run = ci_evidence.wait_for_ci_run("o/r", "abc", grace=300, sleep=fake.sleep, clock=fake.clock)
-    assert run["id"] == 9
+    passed = ci_evidence.wait_for_passed_attempt(
+        "o/r", "abc", grace=300, sleep=fake.sleep, clock=fake.clock
+    )
+    assert passed.run_id == 9
     assert calls[0] == 3
     assert len(fake.sleeps) == 2
     retries = [r.getMessage() for r in caplog.records if "not visible yet" in r.getMessage()]
@@ -700,12 +939,14 @@ def test_wait_for_ci_run_passes_once_lagging_run_appears(
     assert "up to 300s total" in retries[0]
 
 
-def test_wait_for_ci_run_fails_loudly_after_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_passed_attempt_fails_loudly_after_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     """A run that never appears fails after the bounded grace, naming the wait."""
     calls = _pages(monkeypatch, [])
     fake = _FakeClock()
     with pytest.raises(NoQualifyingRunError) as exc:
-        ci_evidence.wait_for_ci_run("o/r", "abc", grace=30, sleep=fake.sleep, clock=fake.clock)
+        ci_evidence.wait_for_passed_attempt(
+            "o/r", "abc", grace=30, sleep=fake.sleep, clock=fake.clock
+        )
     assert exc.value.head_sha == "abc"
     assert exc.value.visible is False
     assert str(exc.value) == (
@@ -717,38 +958,44 @@ def test_wait_for_ci_run_fails_loudly_after_grace(monkeypatch: pytest.MonkeyPatc
     assert calls[0] == len(fake.sleeps) + 1
 
 
-def test_wait_for_ci_run_zero_grace_fails_on_first_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_passed_attempt_zero_grace_fails_on_first_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _pages(monkeypatch, [])
     fake = _FakeClock()
     with pytest.raises(NoQualifyingRunError):
-        ci_evidence.wait_for_ci_run("o/r", "abc", grace=0, sleep=fake.sleep, clock=fake.clock)
+        ci_evidence.wait_for_passed_attempt(
+            "o/r", "abc", grace=0, sleep=fake.sleep, clock=fake.clock
+        )
     assert calls[0] == 1
     assert fake.sleeps == []
 
 
-def test_wait_for_ci_run_visible_failed_run_fails_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_passed_attempt_visible_failed_run_fails_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A visible but failed run is a real verdict, not index lag: no retry."""
     failed = {**_SUCCESS_RUN, "conclusion": "failure"}
     calls = _pages(monkeypatch, [failed])
     fake = _FakeClock()
     with pytest.raises(NoQualifyingRunError) as exc:
-        ci_evidence.wait_for_ci_run("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
+        ci_evidence.wait_for_passed_attempt("o/r", "abc", sleep=fake.sleep, clock=fake.clock)
     assert exc.value.visible is True
     assert "may lag" not in str(exc.value)
     assert calls[0] == 1
     assert fake.sleeps == []
 
 
-def test_wait_for_ci_run_defaults_to_real_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_passed_attempt_defaults_to_real_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without injection it uses ``time.sleep``/``time.monotonic``."""
     _pages(monkeypatch, [], [_SUCCESS_RUN])
     slept: list[float] = []
     monkeypatch.setattr(ci_evidence.time, "sleep", slept.append)
-    assert ci_evidence.wait_for_ci_run("o/r", "abc")["id"] == 9
+    assert ci_evidence.wait_for_passed_attempt("o/r", "abc").run_id == 9
     assert len(slept) == 1
 
 
-def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_select_passed_attempt_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) -> None:
     """The runs query must reach ``GET /actions/runs`` — never a POST (issue #2335).
 
     ``gh api`` switches to POST the instant any ``-f``/``-F`` field is present,
@@ -770,11 +1017,14 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
                 "head_repository": _OWN,
                 "run_started_at": "t",
                 "id": 5,
+                "run_attempt": 1,
+                "html_url": "https://github.com/o/r/actions/runs/5",
+                "check_suite_id": 501,
             },
         ]
 
     monkeypatch.setattr(github, "read_json_paginated", _record)
-    assert select_ci_run("o/r", "abc")["id"] == 5
+    assert ci_evidence.select_passed_attempt("o/r", "abc").run_id == 5
 
     args = seen["args"]
     field_flags = {"-f", "-F", "--field", "--raw-field"}
@@ -784,7 +1034,7 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
         for i, flag in enumerate(args[:-1])
     )
     assert not uses_field or forces_get, (
-        f"select_ci_run must not POST to a GET-only endpoint: {args!r}"
+        f"select_passed_attempt must not POST to a GET-only endpoint: {args!r}"
     )
     # The head_sha filter must ride the URL, otherwise it was dropped entirely.
     assert any("head_sha=abc" in str(arg) for arg in args), args

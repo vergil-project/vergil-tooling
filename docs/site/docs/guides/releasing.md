@@ -415,6 +415,9 @@ before judging it:
    the CD run is touched.
 3. It re-runs the failed CD run, and only it, and watches it.
 4. It judges the CD run's new attempt through the same release-job gate.
+   That job's CI evidence gate takes the same attempt and harvests only
+   what that attempt produced (see the
+   [CI evidence convention](ci-evidence-convention.md)).
    A release job that passes clears the recorded run; one that fails
    again keeps it recorded, and the next resume recovers it again. Once
    it passes, the stages after `confirm-main` run as in any release.
