@@ -18275,6 +18275,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#operational-task-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational task close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19109,6 +19120,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#operational-task-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational task close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19719,7 +19741,7 @@ rejected as not recognized.</p>
 <td>yes</td>
 <td>yes</td>
 <td>—</td>
-<td>Closing is mechanical and reversible</td>
+<td>Closing is mechanical and reversible; an agent's completed close of an operational task waits for its result (see <a href="#operational-task-close">Operational task close</a>)</td>
 </tr>
 <tr>
 <td><code>issue reopen</code></td>
@@ -20022,6 +20044,23 @@ a bare "not recognized":</p>
 create</code>, <code>workflow enable</code>/<code>disable</code>, <code>cache delete</code>, <code>variable
 set</code>/<code>delete</code> and so on)
 are rejected by the allowlist's deny-by-default.</p>
+<h3 id="operational-task-close">Operational task close<a class="headerlink" href="#operational-task-close" title="Permanent link">&para;</a></h3>
+<p>An operational task (a <code>validation</code> or <code>deployment</code> issue) is accepted
+by a recorded <code>Outcome: SUCCESS</code> comment, and closes only once that
+result has posted. For an agent identity, <code>vrg-gh issue close</code> makes
+that order mechanical: before it closes an issue as completed (gh's
+default reason), it reads the issue's labels and, for an operational
+task, its trusted comments through the trust layer. It refuses the
+close while no trusted comment carries an <code>Outcome: SUCCESS</code> line
+(<code>Outcome: PASS</code> is the legacy alias), so a close sent in one batch
+with a result comment that failed cannot close the task with no result
+above it. The close's own <code>--comment</code> does not count as the result.</p>
+<p>A close as <code>not planned</code> or a duplicate claims no result and is not
+gated, and a human's close is not gated either. A target the wrapper
+cannot resolve (a positional that is not one issue number or URL, or a
+<code>--repo</code> that is not <code>OWNER/REPO</code>) and a read that cannot complete
+refuse the close rather than let it through unchecked. The success
+marker is the one <code>vrg-epic-audit</code> checks on closed operational tasks.</p>
 <h3 id="gh-api-by-identity"><code>gh api</code> by Identity<a class="headerlink" href="#gh-api-by-identity" title="Permanent link">&para;</a></h3>
 <p><code>gh api</code> can perform any GitHub API operation — create repos,
 delete branches, modify settings, push code via the Contents API.
