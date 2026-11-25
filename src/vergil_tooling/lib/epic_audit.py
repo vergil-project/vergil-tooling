@@ -44,6 +44,7 @@ from vergil_tooling.lib import (
     epics,
     github,
     linkage,
+    operational_close,
     pending_release,
     proxies,
     release,
@@ -510,16 +511,6 @@ def operational_pending(org: str, *, stops: trust.BatchStops) -> list[Operationa
     return pending
 
 
-# An operational task records its result as a comment; the unified success marker
-# is ``Outcome: SUCCESS`` (``Outcome: PASS`` is recognized as a legacy alias, so
-# validations closed before the unification are not falsely flagged). Kept narrow
-# so an unresolved ``Outcome: SUCCESS / FAILURE`` template line does not read as a
-# success.
-_OPERATIONAL_SUCCESS_RE = re.compile(
-    r"^\s*[-*]?\s*Outcome:\s*(?:SUCCESS|PASS)\s*$", re.MULTILINE | re.IGNORECASE
-)
-
-
 def closed_operational_without_success(org: str) -> list[str]:
     """Closed operational tasks with no recorded success comment (invariant).
 
@@ -560,8 +551,7 @@ def closed_operational_without_success(org: str) -> list[str]:
             number = int(item["number"])
             owner, repo = name_with_owner.split("/", 1)
             ref = epics.IssueRef(owner, repo, number)
-            bodies = "\n".join(trusted_comments.bodies(ref, authors))
-            if not _OPERATIONAL_SUCCESS_RE.search(bodies):
+            if not operational_close.records_success(trusted_comments.bodies(ref, authors)):
                 violations.append(f"{name_with_owner}#{number}")
     return violations
 

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
-from vergil_tooling.lib import gh_version, github, identity_mode
+from vergil_tooling.lib import epics, gh_version, github, identity_mode, trust
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -944,11 +948,15 @@ class TestAgentDenials:
                 "vergil_tooling.bin.vrg_gh.github.get_installation_token",
                 return_value=None,
             ),
+            patch(
+                "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None
+            ) as gate,
             patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed()
-            rc = main(["issue", "close", "42"])
+            rc = main(["issue", "close", "42", "--repo", "org/repo"])
         assert rc == 0
+        gate.assert_called_once_with(epics.IssueRef("org", "repo", 42))
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "close"]
 
@@ -1115,6 +1123,117 @@ class TestAgentDenials:
         assert "denied" in err.lower()
         assert "vrg-pr-workflow report-ready" in err
         assert "vrg-submit-pr" in err
+
+
+class TestOperationalCloseGate:
+    """An agent closes an operational task as completed only after its result (#4997)."""
+
+    @pytest.fixture(autouse=True)
+    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+
+    @pytest.fixture
+    def gh(self) -> Iterator[MagicMock]:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            yield mock_run
+
+    @pytest.mark.parametrize(
+        ("args", "ref"),
+        [
+            (["42", "--repo", "org/repo"], epics.IssueRef("org", "repo", 42)),
+            (["-R", "org/repo", "#42"], epics.IssueRef("org", "repo", 42)),
+            (["42", "--repo=github.com/org/repo"], epics.IssueRef("org", "repo", 42)),
+            (["https://github.com/org/repo/issues/42"], epics.IssueRef("org", "repo", 42)),
+            (
+                ["42", "-R", "org/repo", "--reason", "completed", "-c", "done"],
+                epics.IssueRef("org", "repo", 42),
+            ),
+        ],
+    )
+    def test_refused_without_outcome(
+        self,
+        gh: MagicMock,
+        args: list[str],
+        ref: epics.IssueRef,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value="post it first"
+        ) as gate:
+            assert main(["issue", "close", *args]) == 1
+        gate.assert_called_once_with(ref)
+        gh.assert_not_called()
+        assert "issue close is refused. post it first" in capsys.readouterr().err
+
+    def test_number_resolves_against_cwd_repo(self, gh: MagicMock) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.current_repo", return_value="org/here"),
+            patch(
+                "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None
+            ) as gate,
+        ):
+            assert main(["issue", "close", "9", "--comment", "Validated"]) == 0
+        gate.assert_called_once_with(epics.IssueRef("org", "here", 9))
+        assert gh.call_args[0][0][:3] == ["gh", "issue", "close"]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["42", "--reason", "not planned"],
+            ["42", "-r", "Not Planned"],
+            ["42", "--reason=duplicate"],
+            ["42", "--duplicate-of", "41"],
+            ["--help"],
+        ],
+    )
+    def test_not_gated(self, gh: MagicMock, args: list[str]) -> None:
+        with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
+            assert main(["issue", "close", *args]) == 0
+        gate.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("args", "detail"),
+        [
+            ([], "exactly one issue number or URL"),
+            (["1", "2"], "exactly one issue number or URL"),
+            (["my-branch"], "not an issue number or URL"),
+            (["1", "--repo", "justone"], "--repo value is not OWNER/REPO"),
+        ],
+    )
+    def test_unresolvable_target_refused(
+        self, gh: MagicMock, args: list[str], detail: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["issue", "close", *args]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "does not close it" in err
+        assert detail in err
+
+    def test_failed_read_refused(self, gh: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.operational_close.refusal",
+            side_effect=trust.TrustReadError("comments unreadable"),
+        ):
+            assert main(["issue", "close", "42", "--repo", "org/repo"]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "does not close it: comments unreadable" in err
+
+    def test_human_close_not_gated(
+        self, gh: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
+            assert main(["issue", "close", "42", "--repo", "org/repo"]) == 0
+        gate.assert_not_called()
 
 
 class TestHumanAllowlist:

@@ -112,7 +112,11 @@ than one owner (see
 [Credential management](../guides/credential-management.md)). Raw `gh issue create`, `gh auth`,
 `pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
 `gh api` is full for a human, read-only `GET` for the audit identity, and
-denied for the user identity. Its own `run job-log --repo <owner>/<repo> --job
+denied for the user identity. An agent's `issue close` of an operational
+task as completed is refused until a trusted comment on it records
+`Outcome: SUCCESS` (see
+[Operational task close](../guides/permission-model.md#operational-task-close)).
+Its own `run job-log --repo <owner>/<repo> --job
 <job-id>` prints one Actions job's log from the read-only per-job log endpoint,
 for every identity, with terminal control sequences stripped (see
 [`run job-log`](../guides/permission-model.md#run-job-log)). `vrg-gh --help`
