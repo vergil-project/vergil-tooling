@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.348] - 2026-11-25
+
+### Bug fixes
+
+- fail a refused workflow push, naming the missing workflows: write grant (#5177)
+- allow the own-merge close GitHub times up to 5 seconds after the merge (#5180)
+
+### Documentation
+
+- sweep vergil-tooling's docs for the agent-submitted PR boundary (#5179)
+
+### Features
+
+- make closed epics final: refuse to link, move or reuse a closed epic instead of reopening it (#5181)
+
 ## [2.1.347] - 2026-11-25
 
 ### Bug fixes
