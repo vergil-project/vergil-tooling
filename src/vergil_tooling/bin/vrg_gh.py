@@ -470,15 +470,15 @@ def _raw_subissue_flag(args: list[str]) -> str | None:
     The epic chain owns every sub-issue write (spec §4.2 of epic
     vergil-project/.github#1609), so ``--parent``, ``--add-sub-issue`` and
     ``--remove-sub-issue`` are refused for every identity, in the
-    separate-value and ``=`` forms alike. A token after ``--`` is a
-    positional, never a flag.
+    separate-value and ``=`` forms alike. The args are parsed as gh parses
+    them (:func:`_parse_args`), so a value-taking flag's value is never read
+    as a flag, and a ``--`` taken as such a value (``--title -- --parent 7``)
+    does not end the flags.
     """
-    for arg in args:
-        if arg == "--":
-            return None
-        name = arg.partition("=")[0]
-        if name in _RAW_SUBISSUE_FLAGS:
-            return name
+    parsed = _parse_args(args, _VALUE_FLAGS[("issue", "edit")])
+    for flag, _value in parsed.flag_values:
+        if flag in _RAW_SUBISSUE_FLAGS:
+            return flag
     return None
 
 

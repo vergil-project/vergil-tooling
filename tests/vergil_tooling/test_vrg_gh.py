@@ -264,6 +264,11 @@ def test_pr_close_denied(capsys: pytest.CaptureFixture[str]) -> None:
         ("--add-sub-issue", ["issue", "edit", "42", "--add-sub-issue=o/r#7"]),
         ("--remove-sub-issue", ["issue", "edit", "42", "--remove-sub-issue", "7"]),
         ("--remove-sub-issue", ["issue", "edit", "--remove-sub-issue=7", "42"]),
+        # A `--` taken as a value-taking flag's value does not end the flags:
+        # gh reads it as the title and still applies the raw flag after it.
+        ("--parent", ["issue", "edit", "42", "--title", "--", "--parent", "7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "-t", "--", "--add-sub-issue", "7"]),
+        ("--remove-sub-issue", ["issue", "edit", "42", "--body", "--", "--remove-sub-issue", "7"]),
     ],
 )
 def test_issue_edit_refuses_raw_subissue_flags(
@@ -295,6 +300,8 @@ def test_issue_edit_refuses_raw_subissue_flags(
         ["issue", "edit", "--title", "t", "--", "--parent"],
         # The flag's name inside another flag's value is not the flag.
         ["issue", "edit", "42", "--body", "use --parent with care"],
+        # A value that is exactly a raw flag's name is a value, not the flag.
+        ["issue", "edit", "42", "--body", "--parent"],
     ],
 )
 def test_issue_edit_without_raw_subissue_flags_runs(argv: list[str]) -> None:
