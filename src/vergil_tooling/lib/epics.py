@@ -790,6 +790,88 @@ def parent_of(task: IssueRef) -> IssueRef | None:
     return None
 
 
+#: The :attr:`TaskEpic.kind` of a task with no native parent.
+NO_PARENT_KIND = "none"
+#: The :attr:`TaskEpic.kind` of a task whose native parent lacks the ``epic`` label.
+NOT_EPIC_KIND = "not-epic"
+#: The :attr:`TaskEpic.kind` of a task whose native parent is an archive.
+ARCHIVE_KIND = "archive"
+#: The :attr:`TaskEpic.kind` of a task under an epic of no other kind.
+DEVELOPMENT_KIND = "development"
+
+
+@dataclass(frozen=True)
+class TaskEpic:
+    """Where a task stands, read through the chain (:func:`task_epic`).
+
+    ``container`` is the task's native parent: the head, a continuation that
+    holds it, an archive or a plain issue, or ``None``. ``epic`` is the
+    chain's head for an epic parent, the archive for an archive parent, and
+    ``None`` otherwise. ``kind`` is :data:`NO_PARENT_KIND`,
+    :data:`NOT_EPIC_KIND`, :data:`ARCHIVE_KIND`, ``"proxy"``, a standing
+    kind's key, or :data:`DEVELOPMENT_KIND`.
+    """
+
+    task: IssueRef
+    epic: IssueRef | None
+    kind: str
+    container: IssueRef | None
+
+
+def _head_kind(head: IssueRef, labels: set[str]) -> str:
+    """The kind of the epic *head*, whose labels are *labels*; no kind is guessed.
+
+    A head that lacks ``epic``, is itself a continuation, or carries the
+    markers of more than one kind raises.
+    """
+    if "epic" not in labels:
+        raise RuntimeError(f"the chain head {head.slug} lacks the 'epic' label")
+    if is_continuation(labels):
+        raise RuntimeError(f"the chain head {head.slug} is itself a continuation")
+    markers = sorted(labels & ({kind.key for kind in STANDING_KINDS} | {PROXY_LABEL}))
+    if len(markers) > 1:
+        raise AmbiguousEpicCategoryError(
+            f"the epic {head.slug} carries more than one kind marker ({', '.join(markers)}); "
+            "an epic has exactly one kind"
+        )
+    return markers[0] if markers else DEVELOPMENT_KIND
+
+
+def task_epic(task: IssueRef) -> TaskEpic:
+    """*task*'s epic and kind, keyed off its **native** parent and read through the chain.
+
+    The chain-aware form of reading a task's native parent and that parent's
+    labels (epic vergil-project/.github#1609, ``vrg-epic-parent``): a task
+    linked in a continuation is reported under its chain's head, with the
+    head's kind. Like :func:`native_parent_of` and the PR refusal
+    (:func:`unbuildable_parent_kind`), it never falls back to a body
+    ``Parent:`` line: a task whose only link is that line is not attached on
+    GitHub. A parent without ``epic`` (nor ``continuation``, which makes it a
+    broken continuation and raises drift) is :data:`NOT_EPIC_KIND`, and an
+    archive (its ``archive`` label) is :data:`ARCHIVE_KIND`; neither is a
+    chain, so neither is walked. Chain drift and failed reads raise.
+    """
+    data: Any = github.graphql(_PARENT_WITH_LABELS_QUERY, id=_node_id(task))
+    parent = ((data or {}).get("node") or {}).get("parent")
+    if not isinstance(parent, dict):
+        return TaskEpic(task=task, epic=None, kind=NO_PARENT_KIND, container=None)
+    container = _ref_from_node(parent)
+    labels = _label_names(parent.get("labels"), container.slug)
+    if ARCHIVE_KIND in labels:
+        return TaskEpic(task=task, epic=container, kind=ARCHIVE_KIND, container=container)
+    # A parent that lost its ``epic`` label but keeps ``continuation`` is a
+    # broken continuation, never a plain issue: _chain_head raises its drift.
+    if "epic" not in labels and CONTINUATION_LABEL not in labels:
+        return TaskEpic(task=task, epic=None, kind=NOT_EPIC_KIND, container=container)
+    if "parent" not in parent:
+        raise RuntimeError(
+            f"the parent read of {task.slug} did not say whether {container.slug} has one"
+        )
+    head = _chain_head(container, labels, nested=isinstance(parent["parent"], dict))
+    head_labels = labels if head == container else _labels(head)
+    return TaskEpic(task=task, epic=head, kind=_head_kind(head, head_labels), container=container)
+
+
 class EpicRefusalError(Exception):
     """The base of every refusal to write to an epic (epic vergil-project/.github#1609).
 

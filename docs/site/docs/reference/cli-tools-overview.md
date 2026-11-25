@@ -1154,6 +1154,25 @@ its chain's head, with a line saying so.
 | Exit codes | 0 linked, 1 error |
 | Status | Active |
 
+### vrg-epic-parent
+
+Print a task's epic and the epic's kind, read through the epic's
+[chain](../standards/github-issues.md#chained-epics): a task linked in a
+continuation is reported under the chain's head, with the head's kind. One
+line, `<epic ref> <kind>`; `--json` adds the native parent as `container`.
+A task with no native parent prints `none`, a plain-issue parent
+`<parent ref> not-epic`, and an archive `<archive ref> archive`. Read-only.
+See [vrg-epic-parent](dev/epic-parent.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_epic_parent` |
+| Args | `<owner>/<repo>#<N>` or `#<N>` (required), `--json` |
+| Preconditions | GitHub App credentials for the task's org |
+| Failure mode | A bad ref, a failed read or chain drift on stderr |
+| Exit codes | 0 answered, 1 error |
+| Status | Active |
+
 ### vrg-epic-move
 
 Move a task under a different epic in one atomic re-parent, so a failed

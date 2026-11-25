@@ -283,7 +283,7 @@ token `gh` runs with:
 `vrg-branch-sweep`, `vrg-ci-evidence`,
 `vrg-container-docs`, `vrg-dependabot-audit`, `vrg-docs-stage`,
 `vrg-ensure-label`, `vrg-epic-audit`, `vrg-epic-create`,
-`vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
+`vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-parent`, `vrg-epic-rollup`,
 `vrg-finalize-pr`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
 `vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,
