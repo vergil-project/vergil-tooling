@@ -749,7 +749,6 @@ def test_ops_report_links_through_chain(
     gh: FakeGitHub, links: Links, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     """An ops issue goes into the operations epic's chain; one already in it stays put."""
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     # The operations epic is full: 99 items and its continuation, which has room.
     _fill(gh, OPS_EPIC, 99)
     gh.graph.add_continuation(OPS_CONTINUATION, OPS_EPIC, OPS_EPIC)
@@ -784,7 +783,7 @@ def _cli_report(monkeypatch: pytest.MonkeyPatch) -> int:
     )
 
 
-@pytest.mark.parametrize("refusal", ["depth", "rollover-off"])
+@pytest.mark.parametrize("refusal", ["depth", "closed"])
 def test_ops_report_refusal_creates_nothing(
     gh: FakeGitHub,
     links: Links,
@@ -803,9 +802,8 @@ def test_ops_report_refusal_creates_nothing(
 
         monkeypatch.setattr(epic_chain, "check_capacity", refuse)
     else:
-        assert epic_chain.ROLLOVER_ENABLED is False
-        _fill(gh, OPS_EPIC, 100)
-        error = epic_chain.RolloverDisabledError(OPS_EPIC)
+        gh.graph.close(OPS_EPIC)
+        error = epics.ClosedEpicError(OPS_EPIC)
     gh.graph.clear_log()
 
     with pytest.raises(type(error)) as excinfo:

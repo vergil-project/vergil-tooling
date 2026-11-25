@@ -77,9 +77,8 @@ A fresh `create` runs these steps in order:
 
 1. **Capacity.** Check the intake epic's
    [chain](../../standards/github-issues.md#chained-epics) can take the
-   issue: a closed intake epic, one at GitHub's nesting limit and a full one
-   while rollover is off are refused by name (exit 1) before anything is
-   created. The check runs again just before the issue is created (step 4).
+   issue: a closed intake epic and one at GitHub's nesting limit are refused
+   by name (exit 1) before anything is created. The check runs again just before the issue is created (step 4).
 2. **Duplicate guard.** Look for a draft in `<org>/.github` with the same
    summary and the same affected repo. If one exists, refuse, naming its
    GHSA ID and the command that finishes its pair.

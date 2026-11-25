@@ -439,8 +439,8 @@ def _create(
     """
     epic = epics.ensure_operations_epic(repo)
     # The chain layer's capacity check, before the create (epic
-    # vergil-project/.github#1609, spec §4.5): a closed epic, a full one while
-    # rollover is off and the depth limit raise an EpicRefusalError with
+    # vergil-project/.github#1609, spec §4.5): a closed epic and the depth
+    # limit raise an EpicRefusalError with
     # nothing created, so a refused link never orphans an ops issue.
     epic_chain.check_capacity(epic)
     previous = previous_occurrence(repo, job, authors=authors)

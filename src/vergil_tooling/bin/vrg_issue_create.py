@@ -17,8 +17,8 @@ written (#3409, #3411).
 If the issue is created but the link fails, the created issue's URL is reported
 so it is never a silent orphan; recover with ``vrg-epic-move``. The link goes
 through the chain layer (:mod:`~vergil_tooling.lib.epic_chain`), and its
-capacity check runs before the issue is created: a closed epic, a full epic
-while rollover is off and an epic at GitHub's nesting limit are refused with
+capacity check runs before the issue is created: a closed epic and an epic
+at GitHub's nesting limit are refused with
 nothing created (epic vergil-project/.github#1609).
 """
 
@@ -163,9 +163,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 1
             # The chain layer's capacity check (.github#1609, spec §4.5): a
-            # closed epic (closed is closed), a full head while rollover is off
-            # and the depth limit are all refused before the issue is created,
-            # so a refused link never orphans a new issue.
+            # closed epic (closed is closed) and the depth limit are both
+            # refused before the issue is created, so a refused link never
+            # orphans a new issue.
             try:
                 epic_chain.check_capacity(epic)
             except epics.EpicRefusalError as exc:

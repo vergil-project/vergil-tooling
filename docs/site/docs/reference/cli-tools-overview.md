@@ -796,8 +796,8 @@ comments `ops-report: recovered` only on the first green run after a
 failure or cancel, and otherwise does nothing. Two open ops issues for one
 key get the report on the oldest, naming the others. The capacity of the operations epic's
 [chain](../standards/github-issues.md#chained-epics) is checked
-before an issue is created, so a refusal (the nesting limit, a full epic while
-rollover is off) creates nothing. An issue found or
+before an issue is created, so a refusal (a closed epic, the nesting limit)
+creates nothing. An issue found or
 created that is not linked in the operations epic's chain is linked. After a
 create it waits until the lookup lists the new issue, so the next run finds
 it. It **never closes an issue**. Every read goes through the trust layer:
@@ -838,9 +838,8 @@ from a file's `## Intro`, `## Preconditions`, `## Procedure` and
 `## Human-run steps`; the scaffold keeps its frame. `--kind retrospective`
 refuses `--body-file`. The issue is linked into the epic's
 [chain](../standards/github-issues.md#chained-epics), and the chain's capacity
-is checked before the issue is created: a closed epic (never reopened), an
-epic at GitHub's nesting limit and a full epic while rollover is off are
-refused by name with nothing created. If the link fails after creation, the
+is checked before the issue is created: a closed epic (never reopened) and an
+epic at GitHub's nesting limit are refused by name with nothing created. If the link fails after creation, the
 created issue's URL is reported for recovery with `vrg-epic-move`, or, when
 the chain refused the link, with a note that `vrg-epic-move` would be refused
 the same way.
@@ -1154,8 +1153,8 @@ the current list's order, `removed` in the block's.
 
 Link a task under an epic as a native GitHub sub-issue, into the first
 container of the epic's [chain](../standards/github-issues.md#chained-epics)
-with a free slot. A closed epic is refused by name and never reopened, as are
-an epic at GitHub's nesting limit and a full epic while rollover is off. Used when creating a task under an epic
+with a free slot. A closed epic is refused by name and never reopened, as is
+an epic at GitHub's nesting limit. Used when creating a task under an epic
 and to backfill reflink-only children. A bare `#N` epic ref resolves to the
 task's epic home. An `--epic` without the `epic` label is refused, and a
 [continuation](../standards/github-issues.md#chained-epics)'s ref resolves to
@@ -1195,8 +1194,8 @@ Move a task under a different epic in one atomic re-parent, so a failed
 move leaves the task under its old epic; a task with no epic is linked.
 `--epic` accepts `adhoc`, `intake`, `planning`, `hoshin`, `operations`,
 `#N` or `owner/repo#N`, read against the task's repo. A closed target epic
-is refused by name, since the tooling never reopens a closed epic, as are a
-target at GitHub's nesting limit and a full target while rollover is off. The
+is refused by name, since the tooling never reopens a closed epic, as is a
+target at GitHub's nesting limit. The
 task lands in the first container of the target's
 [chain](../standards/github-issues.md#chained-epics) with a free slot. Moving
 a task already linked anywhere in an open target's chain is a no-op. The deferred queue is
@@ -1256,8 +1255,8 @@ that home's `Epic (intake): <name>` as it is created, so there is no unlinked
 path. It carries no kind label. The intake epic is resolved (created if
 absent) and its [chain](../standards/github-issues.md#chained-epics)'s
 capacity checked *before* the issue is created, so a refusal (a closed queue,
-the nesting limit, a full queue while rollover is off) creates nothing; a full
-queue with rollover on rolls over with the review nudge. If linking the
+the nesting limit) creates nothing; a full queue rolls over with the review
+nudge. If linking the
 created issue fails, the tool exits 1 naming its URL and the `vrg-epic-move`
 command that links it, or, when the chain refused the link, a note that
 `vrg-epic-move` would be refused the same way. Used
@@ -2096,7 +2095,7 @@ A **Chain drift** section lists each epic of the home whose
 containers: a container that breaks a chain rule (with the rule), a container
 holding two continuations, a closed epic with an open continuation, an
 orphaned continuation (open, and not reached from the head its `Continues:`
-line names), and, once rollover is enabled, a last container holding 100
+line names), and a last container holding 100
 sub-issues and no continuation. A **Chain notes** section names each
 continuation closed by hand in an open chain, which is not drift: its items
 are still read, and nothing is linked into it. Both are report-only and do

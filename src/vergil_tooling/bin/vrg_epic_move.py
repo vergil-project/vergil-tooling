@@ -7,8 +7,8 @@ moves in one atomic re-parent (:func:`epic_chain.move_into`, ``addSubIssue``
 with ``replaceParent: true``), never unlink-then-link, so a failed move leaves
 the task under its old epic; a task with no parent is linked with
 :func:`epic_chain.link_into`. A closed target epic is refused by name before any
-write: closed epics are not reopened by the tooling. So are a full target while
-rollover is off and one at GitHub's nesting limit. The target epic is resolved
+write: closed epics are not reopened by the tooling. So is one at GitHub's
+nesting limit. The target epic is resolved
 via :func:`epics.resolve_epic_ref` (accepting the ``adhoc``, ``intake``,
 ``planning``, ``hoshin`` and ``operations`` sentinels and validating
 epic-ness); moving a task already linked anywhere in the open target epic's
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                 # in one line. The write is a single call, so no earlier
                 # unlink has to be undone. A missing token keeps cli_main's
                 # own message, and a refusal of the chain layer (the depth
-                # limit, a full epic while rollover is off) its own one line.
+                # limit, a container GitHub kept refusing as full) its own one line.
                 if isinstance(exc, (github.MissingGitHubTokenError, epics.EpicRefusalError)):
                     raise
                 print(

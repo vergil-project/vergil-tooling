@@ -3717,7 +3717,6 @@ INTAKE_C2 = IssueRef("org", ".github", 70)
 @pytest.fixture
 def chained_intake(env: Env, monkeypatch: pytest.MonkeyPatch) -> Env:
     """Rollover on, and the intake epic a chain: a full head, then an empty INTAKE_C2."""
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     env.fill(INTAKE, epic_chain.ITEM_CAP, start=1000)
     env.add_continuation(INTAKE_C2, INTAKE, INTAKE)
     return env
@@ -3743,7 +3742,6 @@ def test_route_into_full_planning_rolls_over(
 ) -> None:
     # A planning epic holding 99 items rolls over: the route's link creates its
     # continuation, links it into the head's last slot, then links the item.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     env.fill(PLANNING, epic_chain.ITEM_CAP, start=1000)
     env.native_parent[ITEM] = INTAKE
     env.create_issue.side_effect = env.graph.create_issue

@@ -46,11 +46,6 @@ def graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
     return fake
 
 
-@pytest.fixture
-def rollover(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
-
-
 def _under(graph: FakeSubIssueGraph, parent: epics.IssueRef, task: epics.IssueRef) -> None:
     """Link *task* under *parent* as the starting state, leaving the write log empty."""
     graph.link(parent, task)
@@ -425,9 +420,7 @@ def test_epic_operations_sentinel_accepted(
 # -- The chain layer: continuations and its refusals (epic .github#1609) ------
 
 
-def test_epic_move_into_chain(
-    graph: FakeSubIssueGraph, rollover: None, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_epic_move_into_chain(graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]) -> None:
     """A move lands in the target's chain; a task already in a continuation stays put."""
     # NEW is full: 99 items and its continuation, which already holds `linked`.
     _fill(graph, NEW, 99)
@@ -468,21 +461,24 @@ def test_epic_move_into_chain(
 
 
 def test_epic_move_chain_refusal_leaves_task_in_place(
-    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+    graph: FakeSubIssueGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A full target while rollover is off is refused in one line; the task stays under A."""
-    assert epic_chain.ROLLOVER_ENABLED is False
-    _fill(graph, NEW, 100)
+    """A target at the nesting limit is refused in one line; the task stays under A."""
+    monkeypatch.setattr(epic_chain, "MAX_DEPTH", 1)
+    _fill(graph, NEW, 3)
     _under(graph, OLD, TASK)
     with pytest.raises(SystemExit) as excinfo:
         _run_move()
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
-    assert err == f"vrg-epic-move: {epic_chain.RolloverDisabledError(NEW)}\n"
+    refusal = epic_chain.ChainDepthError(NEW, items=3, containers=1)
+    assert err == f"vrg-epic-move: {refusal}\n"
     assert "Traceback" not in err
     assert graph.mutations == []
     assert graph.parent_of(TASK) == OLD
-    assert len(graph.children_of(NEW)) == 100
+    assert len(graph.children_of(NEW)) == 3
 
 
 # -- Deferred queue: entered and left only through vrg-intake-route (#3673) ---
