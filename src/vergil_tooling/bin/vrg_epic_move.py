@@ -1,9 +1,14 @@
 """Move a task issue to a different epic (idempotent re-parent).
 
-GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
-The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
-``adhoc``, ``intake``, ``planning``, ``hoshin`` and ``operations`` sentinels and validating
-epic-ness); moving a task already under the target epic is a no-op.
+A task with a parent moves in one atomic re-parent (``addSubIssue`` with
+``replaceParent: true``, :func:`epics.reparent_child`), never unlink-then-link,
+so a failed move leaves the task under its old epic; a task with no parent is
+linked with :func:`epics.add_child`. A closed target epic is refused by name
+before any write: closed epics are not reopened by the tooling (epic
+vergil-project/.github#1609). The target epic is resolved via
+:func:`epics.resolve_epic_ref` (accepting the ``adhoc``, ``intake``,
+``planning``, ``hoshin`` and ``operations`` sentinels and validating
+epic-ness); moving a task already under an open target epic is a no-op.
 
 The sentinels and a bare ``#N`` epic ref are read against the **task's** repo,
 never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
@@ -77,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            # Closed is closed: refuse a closed target before reading the
+            # task's parent or writing anything. ClosedEpicError is an
+            # EpicRefusalError, which cli_main reports in one line, exit 1.
+            epics.require_open_epic(epic)
             current = epics.parent_of(task)
             if current is not None and epics.queue_kind(current) == epics.DEFERRED.key:
                 print(
@@ -88,9 +97,24 @@ def main(argv: list[str] | None = None) -> int:
             if current == epic:
                 print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
                 return 0
-            if current is not None:
-                epics.remove_child(current, task)
-            epics.add_child(epic, task)
+            try:
+                if current is None:
+                    epics.add_child(epic, task)
+                else:
+                    # One call, so a failed move never leaves the task unparented.
+                    epics.reparent_child(epic, task)
+            except (RuntimeError, github.GitHubAPIError) as exc:
+                # A GraphQL error (RuntimeError) or a failed gh call: report it
+                # in one line. The write is a single call, so no earlier
+                # unlink has to be undone. A missing token keeps cli_main's
+                # own message.
+                if isinstance(exc, github.MissingGitHubTokenError):
+                    raise
+                print(
+                    f"vrg-epic-move: moving {task.slug} under epic {epic.slug} failed: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
     except github.NoInstallationError as exc:
         print(f"vrg-epic-move: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1

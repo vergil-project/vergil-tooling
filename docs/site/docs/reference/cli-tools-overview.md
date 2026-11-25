@@ -1153,18 +1153,20 @@ task's epic home.
 
 ### vrg-epic-move
 
-Move a task under a different epic (unlink, then link). `--epic` accepts
-`adhoc`, `intake`, `planning`, `hoshin`, `operations`, `#N` or
-`owner/repo#N`, read against the task's repo. Moving a task already under the target is a no-op. The deferred
-queue is entered and left only through `vrg-intake-route`, so this refuses
-it.
+Move a task under a different epic in one atomic re-parent, so a failed
+move leaves the task under its old epic; a task with no epic is linked.
+`--epic` accepts `adhoc`, `intake`, `planning`, `hoshin`, `operations`,
+`#N` or `owner/repo#N`, read against the task's repo. A closed target epic
+is refused by name, since the tooling never reopens a closed epic. Moving a
+task already under an open target is a no-op. The deferred queue is
+entered and left only through `vrg-intake-route`, so this refuses it.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_move` |
 | Args | `--task` (required), `--epic` (required) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | Every refusal runs before any write and is reported on stderr |
+| Failure mode | Every refusal (a closed target epic among them) runs before any write and is reported on stderr; a failed move is reported in one line and leaves the task where it was |
 | Exit codes | 0 moved or already there, 1 error |
 | Status | Active |
 

@@ -27,23 +27,114 @@ def queue_kind() -> Iterator[MagicMock]:
         yield mock_kind
 
 
+@pytest.fixture(autouse=True)
+def issue_state() -> Iterator[MagicMock]:
+    """Every target epic is open unless a test says otherwise (epic .github#1609)."""
+    with patch("vergil_tooling.lib.epics._issue_state", return_value="OPEN") as mock_state:
+        yield mock_state
+
+
 def test_parse_args_requires_task_and_epic() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--epic", "adhoc"])  # missing --task
 
 
-def test_main_reparents_unlink_then_link() -> None:
+def test_main_reparents_in_one_call() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
         patch(f"{_MOD}.epics.parent_of", return_value=OLD),
         patch(f"{_MOD}.epics.remove_child") as mock_remove,
         patch(f"{_MOD}.epics.add_child") as mock_add,
+        patch(f"{_MOD}.epics.reparent_child") as mock_reparent,
     ):
         rc = main(["--task", "#42", "--epic", "org/repo#200"])
     assert rc == 0
-    mock_remove.assert_called_once_with(OLD, TASK)
+    mock_reparent.assert_called_once_with(NEW, TASK)
+    mock_remove.assert_not_called()
+    mock_add.assert_not_called()
+
+
+# -- Atomic move and closed target, at the GraphQL layer (epic .github#1609) --
+
+
+def _run_move(mock_graphql: MagicMock, *, parent: epics.IssueRef | None) -> int:
+    """Move TASK to NEW with only the GraphQL call (and node-id reads) faked."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
+        patch(f"{_MOD}.epics.parent_of", return_value=parent),
+        patch("vergil_tooling.lib.epics._node_id", side_effect=lambda ref: f"node-{ref.number}"),
+        patch("vergil_tooling.lib.epics.github.graphql", mock_graphql),
+    ):
+        return main(["--task", "#42", "--epic", "org/repo#200"])
+
+
+def test_move_uses_one_reparent() -> None:
+    """A task under A moved to B is one addSubIssue with replaceParent, no remove."""
+    mock_graphql = MagicMock()
+    rc = _run_move(mock_graphql, parent=OLD)
+    assert rc == 0
+    assert mock_graphql.call_count == 1
+    query = mock_graphql.call_args.args[0]
+    assert "addSubIssue" in query
+    assert "replaceParent: true" in query
+    assert "removeSubIssue" not in query
+    assert mock_graphql.call_args.kwargs == {"parent": "node-200", "child": "node-42"}
+
+
+def test_failed_move_leaves_task_in_place(capsys: pytest.CaptureFixture[str]) -> None:
+    """A failed re-parent exits 1 with the error, and nothing was unlinked first."""
+    mock_graphql = MagicMock(side_effect=RuntimeError("GraphQL errors: boom"))
+    rc = _run_move(mock_graphql, parent=OLD)
+    assert rc == 1
+    assert capsys.readouterr().err == (
+        "vrg-epic-move: moving org/repo#42 under epic org/repo#200 failed: GraphQL errors: boom\n"
+    )
+    assert mock_graphql.call_count == 1
+    assert all("removeSubIssue" not in call.args[0] for call in mock_graphql.call_args_list)
+
+
+def test_failed_move_missing_token_keeps_cli_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing token during the move gets cli_main's configuration message."""
+    exc = github.MissingGitHubTokenError(1, ["gh"], stderr="GH_TOKEN environment variable")
+    with pytest.raises(SystemExit) as excinfo:
+        _run_move(MagicMock(side_effect=exc), parent=OLD)
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err.startswith("vrg-epic-move: no GitHub token available.")
+
+
+def test_move_unparented_task_links_it() -> None:
+    """A task with no parent is linked with add_child (a plain addSubIssue)."""
+    mock_graphql = MagicMock()
+    with patch(f"{_MOD}.epics.add_child", wraps=epics.add_child) as mock_add:
+        rc = _run_move(mock_graphql, parent=None)
+    assert rc == 0
     mock_add.assert_called_once_with(NEW, TASK)
+    assert mock_graphql.call_count == 1
+    query = mock_graphql.call_args.args[0]
+    assert "addSubIssue" in query
+    assert "replaceParent" not in query
+
+
+def test_move_into_closed_epic_refused(
+    issue_state: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A closed target is refused by name before any write; the task stays under A."""
+    issue_state.side_effect = lambda ref: "CLOSED" if ref == NEW else "OPEN"
+    mock_graphql = MagicMock()
+    # ClosedEpicError reaches cli_main, which prints one line and exits 1.
+    with pytest.raises(SystemExit) as excinfo:
+        _run_move(mock_graphql, parent=OLD)
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert err == f"vrg-epic-move: {epics.ClosedEpicError(NEW)}\n"
+    assert "org/repo#200" in err
+    assert "Traceback" not in err
+    mock_graphql.assert_not_called()
 
 
 def test_main_idempotent_when_already_under_target() -> None:
@@ -362,9 +453,9 @@ def test_epic_move_moves_task_out_of_intake(queue_kind: MagicMock) -> None:
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
         patch(f"{_MOD}.epics.parent_of", return_value=OLD),
         patch(f"{_MOD}.epics.remove_child") as mock_remove,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
+        patch(f"{_MOD}.epics.reparent_child") as mock_reparent,
     ):
         rc = main(["--task", "#42", "--epic", "org/repo#200"])
     assert rc == 0
-    mock_remove.assert_called_once_with(OLD, TASK)
-    mock_add.assert_called_once_with(NEW, TASK)
+    mock_reparent.assert_called_once_with(NEW, TASK)
+    mock_remove.assert_not_called()
