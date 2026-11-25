@@ -19992,18 +19992,24 @@ before judging it:</p>
 <ol>
 <li>It checks that the recorded run is for <code>main</code>'s tip, the release
    merge, and refuses to re-run it otherwise.</li>
-<li>It re-runs the release PR's CI run and watches it with
-   <code>--exit-status</code>. The release job's evidence gate harvests that run's
-   artifacts, so a fix that changes what CI writes reaches the gate only
-   through a fresh CI attempt. A CI re-run that fails stops the resume
-   before the CD run is touched.</li>
-<li>It re-runs the failed CD run and watches it.</li>
+<li>It checks that the release PR's head has a CI attempt that passed,
+   and names it in the log. It never re-runs that CI run: its gates were
+   judged before the merge, and a re-run after the merge fails its
+   version check, with the head and <code>main</code> at the same version. The
+   newest attempt that passed counts, even when a later re-run of the
+   same run failed. With no attempt that passed, the resume stops before
+   the CD run is touched.</li>
+<li>It re-runs the failed CD run, and only it, and watches it.</li>
 <li>It judges the CD run's new attempt through the same release-job gate.
+   That job's CI evidence gate takes the same attempt and harvests only
+   what that attempt produced (see the
+   <a href="../ci-evidence-convention/">CI evidence convention</a>).
    A release job that passes clears the recorded run; one that fails
-   again keeps it recorded, and the next resume recovers it again.</li>
+   again keeps it recorded, and the next resume recovers it again. Once
+   it passes, the stages after <code>confirm-main</code> run as in any release.</li>
 </ol>
-<p>When the defect is in the release commit itself, so no re-run can pass,
-supersede the release instead (see
+<p>When the defect is in the release commit itself, or in what its CI
+wrote, so no re-run of the CD run can pass, supersede the release instead (see
 <a href="#superseding-a-release">Superseding a release</a>).</p>
 <h3 id="superseding-a-release">Superseding a release<a class="headerlink" href="#superseding-a-release" title="Permanent link">&para;</a></h3>
 <p>A release that <code>--resume</code> cannot finish, because the defect is in its

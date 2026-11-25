@@ -25536,7 +25536,10 @@ the release merge commit, downloads and validates its evidence into a
 staging directory. The release PR must be the commit's one merged same-repo
 PR with a trusted author, with no first-PR fallback; the CI run must be built
 from the repo itself, and only its own check suite's check runs and GitHub
-Advanced Security's scanner checks count; <code>assemble</code> builds the manifest and tarball from that
+Advanced Security's scanner checks count. When the run's latest attempt
+did not pass but an earlier one did, that attempt's own jobs, scanner
+checks and artifacts are harvested, or the harvest fails naming what it
+cannot tie to the attempt; <code>assemble</code> builds the manifest and tarball from that
 staging directory with no network access; <code>bundle</code> does both. Used by the
 release workflow.</p>
 <table>
