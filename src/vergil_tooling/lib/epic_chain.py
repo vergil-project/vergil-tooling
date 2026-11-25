@@ -809,7 +809,15 @@ def find_or_create_continuation(
     if chain[-1].item_count >= SUBISSUE_LIMIT:
         items = [item.ref for item in steps[-1].items]
         moved = own_item if own_item in items else items[-1]
-        epics.reparent_child(continuation, moved)
+        try:
+            epics.reparent_child(continuation, moved)
+        except github.GitHubAPIError as exc:
+            # A move into an unlinked continuation never meets the sub-issue
+            # limit, so this is never a race: nothing moved, nothing to put back.
+            raise RuntimeError(
+                f"could not move {moved.slug} from the full tail {tail.slug} of epic "
+                f"{head.slug} into continuation {continuation.slug}: {error_text(exc)}"
+            ) from exc
     write = epics._add_child_unchecked if chain[-1].state == "CLOSED" else epics.add_child
     try:
         _link_rewording_depth(write, tail, continuation, head=head, fit=fit, task=None)

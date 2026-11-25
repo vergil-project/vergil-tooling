@@ -1373,6 +1373,33 @@ def test_full_tail_heal_link_failure_moves_the_item_back(
 
 
 @pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_reparent_failure_is_not_a_race(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    items = _items(graph, HEAD, 100)
+    task = _new_task(graph)
+
+    def failing(new_parent: IssueRef, child: IssueRef) -> None:
+        raise subissue_fake._graphql_error("Something went wrong on our side")
+
+    monkeypatch.setattr(epics, "reparent_child", failing)
+
+    with pytest.raises(RuntimeError, match="Something went wrong on our side") as exc:
+        epic_chain.link_into(HEAD, task)
+
+    assert not isinstance(exc.value, (github.GitHubAPIError, epic_chain.ChainLimitError))
+    (ours,) = _created(graph)
+    assert str(exc.value).startswith(
+        f"could not move {items[-1].slug} from the full tail {HEAD.slug} of epic {HEAD.slug} "
+        f"into continuation {ours.slug}"
+    )
+    assert graph.children_of(HEAD) == items
+    assert "racing writer" not in capsys.readouterr().out
+    with pytest.raises(RuntimeError, match="Something went wrong on our side"):
+        epic_chain.heal_full_tail(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
 def test_full_tail_heal_depth_error_moves_the_item_back(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
