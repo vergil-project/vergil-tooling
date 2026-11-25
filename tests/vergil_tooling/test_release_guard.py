@@ -3,13 +3,18 @@
 GitHub is faked at ``github.graphql`` with the trust layer's item and events
 queries, in the field shapes of a recorded response (``{ __typename login }``
 actors); the layer's own paging and loud failures are tested in
-``test_trust.py``.
+``test_trust.py``. A live recording of a three-page timeline pins that the
+guard reads every page and judges a close on the last one.
 """
 
 from __future__ import annotations
 
+import copy
+import itertools
+import json
 import subprocess
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -235,6 +240,130 @@ def test_guard_missing_typename_raises() -> None:
     """An actor without its account type is a read failure, never a guess."""
     with pytest.raises(trust.TrustReadError, match="has no __typename"):
         _check(events=[_event("ClosedEvent", {"login": "human"})])
+
+
+# --- a recorded multi-page timeline ------------------------------------------------
+
+# The trust layer's events query (trust._EVENTS_QUERY, unmodified) read live on
+# 2026-11-25 against vergil-project/.github#1384, a closed epic (issue #5007):
+# each page's raw response, in order, untrimmed. Its 243 type-filtered events
+# take three pages of 100, 100 and 43, and the one close or reopen event is the
+# last node of the last page: the org automation App closing the epic.
+#
+# The same reads with the connection's counts added gave filteredCount 243, 143
+# and 43: after a cursor, filteredCount counts from the cursor onward, so a sum
+# of the pages' counts is not the number of events. The guard follows
+# hasNextPage and asks for no count (test_events_query_asks_for_no_count).
+_RECORDED = (
+    Path(__file__).parent / "fixtures" / "tracking_guard" / "epic_close_by_automation.json"
+)
+_RECORDED_REPO = "vergil-project/.github"
+_RECORDED_NUMBER = 1384
+_RECORDED_HUMAN = {"__typename": "User", "login": "wphillipmoore"}
+_RECORDED_AUTHORS = TrustedAuthors(
+    human=("wphillipmoore",),
+    agents=("wphillipmoore-vergil-user",),
+    orgs={"vergil-project": OrgConfig("vergil-project-automation")},
+)
+
+
+def _recorded_pages() -> list[dict[str, Any]]:
+    pages: list[dict[str, Any]] = json.loads(_RECORDED.read_text("utf-8"))
+    return pages
+
+
+def _timeline(page: dict[str, Any]) -> dict[str, Any]:
+    timeline: dict[str, Any] = page["repository"]["issueOrPullRequest"]["timelineItems"]
+    return timeline
+
+
+class _RecordedGitHub:
+    """A human-only issue body, then the recorded event pages, served by cursor."""
+
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self.cursors: dict[str | None, dict[str, Any]] = {None: pages[0]}
+        for before, after in itertools.pairwise(pages):
+            self.cursors[_timeline(before)["pageInfo"]["endCursor"]] = after
+        self.afters: list[object] = []
+
+    def __call__(self, query: str, **variables: object) -> dict[str, Any]:
+        assert (variables["owner"], variables["name"], variables["number"]) == (
+            "vergil-project",
+            ".github",
+            _RECORDED_NUMBER,
+        )
+        if query == trust._ITEM_QUERY:  # noqa: SLF001 - the layer's own query
+            return trust_stubs.item(author=_RECORDED_HUMAN)
+        assert query == trust._EVENTS_QUERY  # noqa: SLF001
+        after = variables.get("after")
+        self.afters.append(after)
+        return copy.deepcopy(self.cursors[cast("str | None", after)])
+
+
+def _check_recorded(pages: list[dict[str, Any]]) -> tuple[_RecordedGitHub, list[str]]:
+    fake = _RecordedGitHub(pages)
+    with patch("vergil_tooling.lib.github.graphql", side_effect=fake):
+        warnings = check_tracking_issue(
+            _RECORDED_REPO, _RECORDED_NUMBER, authors=_RECORDED_AUTHORS
+        )
+    return fake, warnings
+
+
+def test_recorded_timeline_shape() -> None:
+    """The recording is the multi-page case: three pages, the close last of all."""
+    pages = _recorded_pages()
+    sizes = [len(_timeline(page)["nodes"]) for page in pages]
+    assert sizes == [100, 100, 43]
+    assert [_timeline(page)["pageInfo"]["hasNextPage"] for page in pages] == [True, True, False]
+    last = _timeline(pages[-1])["nodes"][-1]
+    assert last["__typename"] == "ClosedEvent"
+    assert last["actor"] == {"__typename": "Bot", "login": "vergil-project-automation"}
+    state = [
+        node
+        for page in pages
+        for node in _timeline(page)["nodes"]
+        if node["__typename"] in ("ClosedEvent", "ReopenedEvent")
+    ]
+    assert state == [last]
+
+
+def test_guard_sees_a_close_actor_on_the_last_recorded_page() -> None:
+    """The guard reads every page and judges the close at the end of the last one."""
+    fake = _RecordedGitHub(_recorded_pages())
+    with (
+        patch("vergil_tooling.lib.github.graphql", side_effect=fake),
+        pytest.raises(
+            TrackingIssueBreach,
+            match=r"vergil-project-automation closed the issue \(not-accepted\)",
+        ) as info,
+    ):
+        check_tracking_issue(_RECORDED_REPO, _RECORDED_NUMBER, authors=_RECORDED_AUTHORS)
+    assert info.value.number == _RECORDED_NUMBER
+    assert len(fake.afters) == 3
+
+
+def test_guard_reads_every_recorded_event() -> None:
+    """With the close by the human, all 243 events are read and judged, no page missed."""
+    pages = _recorded_pages()
+    _timeline(pages[-1])["nodes"][-1]["actor"] = _RECORDED_HUMAN
+    fake, warnings = _check_recorded(pages)
+    assert fake.afters == [None] + [_timeline(page)["pageInfo"]["endCursor"] for page in pages[:2]]
+    # Every agent trace on every page is a warning: 171 cross-references, 2 labels.
+    agent = [
+        node
+        for page in pages
+        for node in _timeline(page)["nodes"]
+        if node["actor"]["login"] == "wphillipmoore-vergil-user"
+    ]
+    assert len(agent) == len(warnings) == 173
+    assert warnings.count("wphillipmoore-vergil-user cross-referenced the issue") == 171
+    assert warnings.count("wphillipmoore-vergil-user added a label") == 2
+
+
+def test_events_query_asks_for_no_count() -> None:
+    """Paging follows hasNextPage alone: a per-page count is not a total (see above)."""
+    assert "hasNextPage" in trust._EVENTS_QUERY  # noqa: SLF001
+    assert "Count" not in trust._EVENTS_QUERY  # noqa: SLF001
 
 
 # --- ensure_locked ---------------------------------------------------------------

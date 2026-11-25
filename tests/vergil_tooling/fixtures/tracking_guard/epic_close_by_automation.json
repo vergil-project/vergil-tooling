@@ -1,0 +1,1991 @@
+[
+  {
+    "repository": {
+      "issueOrPullRequest": {
+        "__typename": "Issue",
+        "timelineItems": {
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "Y3Vyc29yOnYyOpPPAAABogs2fNACqzI0NTAyNTcxMzY5"
+          },
+          "nodes": [
+            {
+              "__typename": "LabeledEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T13:46:30Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T13:47:02Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T16:02:01Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T17:32:35Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T17:46:17Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T17:46:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T17:49:46Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T17:49:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:16Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:20Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:34Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:46Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:10:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:03Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:07Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:12Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:20Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:25Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:30Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:40Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:11:51Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:12:33Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:13:53Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:24:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:25:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-19T18:39:33Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T18:42:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T20:33:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T21:17:44Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-19T22:23:04Z"
+            },
+            {
+              "__typename": "LabeledEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-21T11:50:10Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:36:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:12Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:15Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:16Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:17Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T17:37:19Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:13:22Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:13:42Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:14:27Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:18:08Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:18:44Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-22T19:18:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T13:04:32Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T18:01:19Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:02:52Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:10:43Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T19:19:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:21:12Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:44:56Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:49:14Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:59:49Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T19:59:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T20:00:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:06:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:17:09Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:17:42Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:17:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:17:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T20:18:01Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T21:39:26Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T21:56:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:38:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:39:08Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-23T22:43:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:50:43Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:51:49Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:52:24Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:52:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:52:58Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:53:15Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:53:41Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:59:51Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T22:59:59Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:00:02Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:00:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:00:07Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:00:15Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:03:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:21:27Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:08Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:21Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:37Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:53Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:27:57Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:38:52Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:41:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:45:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-23T23:59:35Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T00:00:14Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T00:00:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T00:00:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T01:40:50Z"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "repository": {
+      "issueOrPullRequest": {
+        "__typename": "Issue",
+        "timelineItems": {
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "Y3Vyc29yOnYyOpPPAAABog-0gxACqzI0NzUzMjg3MTQx"
+          },
+          "nodes": [
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:49:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:49:58Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:57:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:57:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:58:07Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T11:58:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T12:03:34Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T12:05:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T12:19:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T12:21:17Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T13:46:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:03:40Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:28:46Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:28:51Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:28:56Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:09Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:29:24Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:33:57Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:08Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:24Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:34Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:44Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:35:59Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:03Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:09Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:24Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:34Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:42Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:36:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:39:09Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:10Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:18Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:22Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:25Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:31Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:36Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:40Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:51Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:48:56Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:34Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:40Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:41Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:42Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:43Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:52:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:54:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T14:55:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T14:56:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:01:21Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:04:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:07:17Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:07:40Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:08:33Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:09:41Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:17:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T15:17:52Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T15:22:09Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T15:35:59Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T18:58:23Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T19:37:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T19:37:35Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T19:41:02Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T19:55:50Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T20:03:41Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T20:06:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T20:55:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T20:55:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T21:18:21Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T21:27:31Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T21:27:43Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T22:00:33Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:23:21Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:30:03Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:30:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:34:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:35:14Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:35:44Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:35:55Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:36:58Z"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "repository": {
+      "issueOrPullRequest": {
+        "__typename": "Issue",
+        "timelineItems": {
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": "Y3Vyc29yOnYyOpPPAAABohM4H9gBqzM3MjY2MjI5MjM0"
+          },
+          "nodes": [
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:37:22Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T22:56:39Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "User",
+                "login": "wphillipmoore"
+              },
+              "createdAt": "2026-11-24T23:01:47Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T23:22:07Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T23:22:14Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T23:30:49Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T23:30:52Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-24T23:36:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T02:32:46Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T02:33:12Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T02:33:16Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T11:47:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T11:55:56Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T11:56:44Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T11:56:45Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:03:32Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:07:04Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:07:38Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:07:43Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:07:48Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:07:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:08:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:08:06Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:08:11Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:15:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:15:39Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:16:05Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:16:54Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:16:58Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:17:19Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:18:28Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:23:00Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:28:31Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:29:10Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T12:29:29Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T13:19:25Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T13:49:52Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T14:51:13Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T14:51:20Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T14:51:24Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T14:51:33Z"
+            },
+            {
+              "__typename": "CrossReferencedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "wphillipmoore-vergil-user"
+              },
+              "createdAt": "2026-11-25T14:56:23Z"
+            },
+            {
+              "__typename": "ClosedEvent",
+              "actor": {
+                "__typename": "Bot",
+                "login": "vergil-project-automation"
+              },
+              "createdAt": "2026-11-25T14:59:35Z"
+            }
+          ]
+        }
+      }
+    }
+  }
+]
