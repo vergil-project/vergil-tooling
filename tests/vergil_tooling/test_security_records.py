@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epics, github, labels, security_records, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.lib import epic_chain, epics, github, labels, security_records, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
@@ -3293,3 +3294,27 @@ def test_records_pass_trust_errors_are_one_line_failures(
     assert records_pass("org", apply=True, prog="prog") == 1
     err = capsys.readouterr().err
     assert err == f"prog: security records pass failed: {error}\n"
+
+
+# --- the guard reads a queue item's epic across its chain (epic .github#1609) ---
+
+
+def test_security_records_reads_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A tracked issue linked in a continuation of the planning queue is still a
+    # planning item: its epic is the chain's head, and the guard holds it.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(
+        IssueRef("org", ".github", 600),
+        title="Epic (planning): org",
+        labels=["epic", "planning", "epic-management"],
+    )
+    for number in range(700, 700 + epic_chain.ITEM_CAP):
+        graph.link(head, graph.add_issue(IssueRef("org", "tool", number), title="an item"))
+    c2 = graph.add_continuation(IssueRef("org", ".github", 601), head, head)
+    graph.add_issue(A, title="the fix")
+    graph.link(c2, A)
+    graph.clear_log()
+    guard, changes = _guarded([_adv()], [_iss(A, open_=False)])
+    assert changes == []
+    assert guard == GuardResult(held=[(GHSA, (A,))], errors=[])
+    assert graph.events == []

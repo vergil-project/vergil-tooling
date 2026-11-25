@@ -193,12 +193,14 @@ A check (`check` or `check-<k>`) adds:
 
 What the reviewer is told the task is is never chosen by the agent whose
 work is under review. `vrg-merge-review-request` reads the `--issue`'s body
-itself, and derives `epic_open_tasks` from the issue's native parent: when
-the parent carries the `epic` label and not `ad-hoc`, the issue is under an
-epic, and its open tasks are the parent's open sub-issues, every page, less
-the issue itself; a task with no native parent, or under any other parent,
-has none. A failure to read the issue, its parent's labels or the sub-issues
-is a refusal, never an empty body or an empty list. The design sources stay
+itself, and derives `epic_open_tasks` from the issue's native parent, read
+through the chain layer, so a continuation means its chain's head: when the
+parent carries the `epic` label and not `ad-hoc`, the issue is under an
+epic, and its open tasks are the open native children of the epic's whole
+chain, less the issue itself; a task with no native parent, or under any
+other parent, has none. A failure to read the issue, its parent's labels or
+the children, and chain drift, is a refusal, never an empty body or an empty
+list. The design sources stay
 files: the caller fetches them from the epic's Documents section and names
 each with `--design-source`.
 

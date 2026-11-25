@@ -81,9 +81,11 @@ def _open_epics(home: str) -> list[Any]:
 def _is_perpetual(epic: Any) -> bool:
     """True if the epic is not a development epic of its own: a perpetual
     standing epic (ad-hoc or a queue kind) or a proxy, which lives as long as
-    its primary. Excluded from the strategic roadmap and so from epic drift."""
+    its primary, or a continuation, whose items its chain's head summarizes
+    (epic vergil-project/.github#1609). Excluded from the strategic roadmap
+    and so from epic drift."""
     names = {str((label or {}).get("name", "")) for label in (epic.get("labels") or [])}
-    return epics.is_standing(names) or epics.is_proxy(names)
+    return epics.is_standing(names) or epics.is_proxy(names) or epics.is_continuation(names)
 
 
 def gather(org: str | None = None) -> list[EpicSummary]:
@@ -156,8 +158,9 @@ def gather_completed(org: str | None = None) -> list[CompletedEpic]:
     judged too: an epic an outsider opened, edited, retitled or closed is left
     out and reported on stderr, metadata only (counts by cause under GitHub
     Actions). An epic closed as not planned was not completed and is not read.
-    Container, proxy and archived epics (:func:`epic_docs.is_skipped`) and
-    release tracking issues are left out. A read failure raises
+    Container, proxy and archived epics (:func:`epic_docs.is_skipped`),
+    continuations (closed with their chain's head, which carries the
+    summary) and release tracking issues are left out. A read failure raises
     :class:`trust.TrustReadError`; a malformed Documents section raises
     :class:`epic_docs.EpicDocsFormatError`.
     """
@@ -175,7 +178,7 @@ def gather_completed(org: str | None = None) -> list[CompletedEpic]:
     trust.report_skipped(skipped, stream=sys.stderr)
     completed: list[CompletedEpic] = []
     for hit in hits:
-        if epic_docs.is_skipped(hit.title, hit.labels):
+        if epic_docs.is_skipped(hit.title, hit.labels) or epics.is_continuation(hit.labels):
             continue
         if release.is_release_tracking_issue(home, hit.number, title=hit.title, body=hit.body):
             continue
