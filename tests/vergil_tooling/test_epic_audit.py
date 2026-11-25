@@ -575,23 +575,9 @@ def test_closed_epic_open_child_uses_a_given_listing() -> None:
     mock_list.assert_not_called()
 
 
-def test_reopen_epics_with_open_children_reopens_and_comments() -> None:
-    violations: list[epic_audit.EpicOpenChildViolation] = [
-        (epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))
-    ]
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        reopened = epic_audit.reopen_epics_with_open_children(violations)
-    assert reopened == ["org/.github#19"]
-    assert run.call_args.args[:5] == ("issue", "reopen", "19", "--repo", "org/.github")
-    assert "org/lab#462" in run.call_args.args[-1]
-
-
-def test_reopen_epics_with_open_children_empty_is_noop() -> None:
-    run = MagicMock()
-    with patch("vergil_tooling.lib.github.run", run):
-        assert epic_audit.reopen_epics_with_open_children([]) == []
-    run.assert_not_called()
+def test_reopen_remediation_is_gone() -> None:
+    # Closed is closed (.github#1609): the audit has no reopen fix to call.
+    assert not hasattr(epic_audit, "reopen_epics_with_open_children")
 
 
 def test_render_flags_closed_epic_with_open_child() -> None:
@@ -610,10 +596,19 @@ def test_render_flags_closed_epic_with_open_child() -> None:
     assert "org/lab#462" in out
 
 
-def test_render_closed_lists_reopened_epics() -> None:
-    out = epic_audit.render_closed([], org="org", window_days=30, reopened=["org/.github#19"])
-    assert "Reopened" in out
-    assert "org/.github#19" in out
+def test_render_closed_reports_closed_epic_with_open_child_for_a_human() -> None:
+    out = epic_audit.render_closed(
+        [],
+        org="org",
+        window_days=30,
+        closed_epic_open_children=[
+            (epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))
+        ],
+    )
+    assert "## Needs a human (report only)" in out
+    assert "Closed epics with open children" in out
+    assert "- org/.github#19 — open children: org/lab#462" in out
+    assert "Reopened" not in out
 
 
 def test_render_shows_invariant_violations() -> None:
@@ -1492,7 +1487,9 @@ def _orphan_drift(issues: list[epic_audit.OpenIssue]) -> list[epic_audit.Orphan]
     return epic_audit.orphan_drift("org", parents=_judged_parents(issues), issues=issues)
 
 
-def _attach(orphans: list[epic_audit.Orphan], stops: trust.BatchStops | None = None) -> int:
+def _attach(
+    orphans: list[epic_audit.Orphan], stops: trust.BatchStops | None = None
+) -> epic_audit.LinkPass:
     """attach_orphans of *orphans*, judged with the stub authors."""
     return epic_audit.attach_orphans(
         orphans, stops=trust.BatchStops() if stops is None else stops, authors=trust_stubs.AUTHORS
@@ -1640,7 +1637,7 @@ def test_attach_orphans_attaches_each_under_its_intake_epic() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=[]) as cs,
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert _attach(orphans) == 3
+        assert _attach(orphans) == epic_audit.LinkPass(linked=3)
     assert ensure.call_count == 2  # resolved once per home
     assert ensure.call_args_list[0].args == (epics.INTAKE, "org/.github", "org")
     assert cs.call_count == 2  # open-children count fetched once per epic
@@ -1662,7 +1659,7 @@ def test_attach_orphans_is_idempotent() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child"),
     ):
-        assert _attach(_orphan_drift(before)) == 1
+        assert _attach(_orphan_drift(before)) == epic_audit.LinkPass(linked=1)
     after = [_issue("org/tool", 5, native_parent=intake)]
     assert _orphan_drift(after) == []
 
@@ -1761,7 +1758,7 @@ def test_attach_orphans_skips_outsider_issue_clean_exit(
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert _attach(orphans) == 2
+        assert _attach(orphans) == epic_audit.LinkPass(linked=2)
     assert [c.args for c in add.call_args_list] == [
         (intake, epics.IssueRef("org", "tool", 6)),
         (intake, epics.IssueRef("org", "tool", 8)),
@@ -1793,7 +1790,7 @@ def test_attach_orphans_outsider_issues_under_actions_are_counts(
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child"),
     ):
-        assert _attach(orphans) == 2
+        assert _attach(orphans) == epic_audit.LinkPass(linked=2)
     err = capsys.readouterr().err
     assert err == "skipped 3 untrusted item(s) (untrusted: 2, wrong-type: 1)\n"
 
@@ -1815,7 +1812,7 @@ def test_attach_orphans_outsider_issues_stay_out_of_the_cap() -> None:
         patch("vergil_tooling.lib.epics.child_states", return_value=near),
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert _attach(orphans) == 1
+        assert _attach(orphans) == epic_audit.LinkPass(linked=1)
     assert [c.args for c in add.call_args_list] == [(intake, epics.IssueRef("org", "tool", 6))]
 
 
@@ -1843,7 +1840,7 @@ def test_attach_orphans_read_failure_is_a_per_item_stop(
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
         patch("vergil_tooling.lib.epics.add_child") as add,
     ):
-        assert _attach(orphans, stops) == 2
+        assert _attach(orphans, stops) == epic_audit.LinkPass(linked=2)
     assert [c.args for c in add.call_args_list] == [
         (intake, epics.IssueRef("org", "tool", 6)),
         (intake, epics.IssueRef("org", "tool", 8)),
@@ -1916,11 +1913,102 @@ def test_body_only_parents_pairs_task_with_body_epic() -> None:
     assert parents.held == frozenset()
 
 
+def test_nativize_skips_closed_epic_and_continues() -> None:
+    # Closed is closed (.github#1609): the task naming a closed epic is reported
+    # naming both, the next task is still linked, and nothing is reopened.
+    closed_task, closed_epic = epics.IssueRef("org", "tool", 5), epics.IssueRef("org", ".github", 40)
+    open_task, open_epic = epics.IssueRef("org", "tool", 6), epics.IssueRef("org", ".github", 41)
+    linked: list[tuple[epics.IssueRef, epics.IssueRef]] = []
+
+    def add_child(epic: epics.IssueRef, task: epics.IssueRef) -> None:
+        if epic == closed_epic:
+            raise epics.ClosedEpicError(epic)
+        linked.append((epic, task))
+
+    with (
+        patch("vergil_tooling.lib.epics.add_child", side_effect=add_child),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        result = epic_audit.nativize_parents([(closed_task, closed_epic), (open_task, open_epic)])
+    assert result == epic_audit.LinkPass(
+        linked=1,
+        refused=(
+            "org/tool#5 not linked: epic org/.github#40 is closed; closed epics are not "
+            "reopened by the tooling",
+        ),
+    )
+    assert linked == [(open_epic, open_task)]
+    mock_run.assert_not_called()
+
+
+@pytest.mark.usefixtures("trusted_reads")
+def test_attach_orphans_reports_closed_intake_epic() -> None:
+    # A home whose only intake epic is closed links nothing there and reopens
+    # nothing; each of its orphans is named, and another home's still attaches.
+    closed = epics.ClosedStandingEpicError(epics.IssueRef("org", ".github", 100))
+    orphans = [
+        epic_audit.Orphan(epics.IssueRef("org", "tool", 5), home="org/.github", name="org"),
+        epic_audit.Orphan(epics.IssueRef("org", "tool", 6), home="org/.github", name="org"),
+        epic_audit.Orphan(epics.IssueRef("other", "tool", 3), home="other/.github", name="other"),
+    ]
+
+    def ensure(_kind: object, home: str, _name: str) -> epics.IssueRef:
+        if home == "org/.github":
+            raise closed
+        return _intake_epic(home)
+
+    with (
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", side_effect=ensure) as mock_ensure,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.epics.add_child") as add,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        result = _attach(orphans)
+    message = (
+        "epic org/.github#100 is closed; closed epics are not reopened by the tooling; "
+        "a person may reopen it by hand"
+    )
+    assert result == epic_audit.LinkPass(
+        linked=1,
+        refused=(f"org/tool#5 not linked: {message}", f"org/tool#6 not linked: {message}"),
+    )
+    assert mock_ensure.call_count == 2  # the closed home is looked up once
+    assert [c.args for c in add.call_args_list] == [
+        (epics.IssueRef("other", ".github", 7), epics.IssueRef("other", "tool", 3))
+    ]
+    mock_run.assert_not_called()
+
+
+@pytest.mark.usefixtures("trusted_reads")
+def test_attach_orphans_epic_closed_at_link_time_is_reported() -> None:
+    # The epic closes between the lookup and the link: the refusal is reported
+    # for that orphan and the rest of its home, never raised out of the pass.
+    intake = epics.IssueRef("org", ".github", 100)
+    orphans = [
+        epic_audit.Orphan(epics.IssueRef("org", "tool", n), home="org/.github", name="org")
+        for n in (5, 6)
+    ]
+    with (
+        patch("vergil_tooling.lib.epics.ensure_standing_epic", return_value=intake),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        patch(
+            "vergil_tooling.lib.epics.add_child", side_effect=epics.ClosedEpicError(intake)
+        ) as add,
+    ):
+        result = _attach(orphans)
+    assert result.linked == 0
+    assert [line.split(" not linked: ")[0] for line in result.refused] == [
+        "org/tool#5",
+        "org/tool#6",
+    ]
+    add.assert_called_once()
+
+
 def test_nativize_parents_adds_native_link() -> None:
     task = epics.IssueRef("org", "tool", 5)
     epic = epics.IssueRef("org", ".github", 40)
     with patch("vergil_tooling.lib.epics.add_child") as add:
-        assert epic_audit.nativize_parents([(task, epic)]) == 1
+        assert epic_audit.nativize_parents([(task, epic)]) == epic_audit.LinkPass(linked=1)
     add.assert_called_once_with(epic, task)
 
 
@@ -3369,7 +3457,9 @@ def test_nativize_skips_untrusted_body_parent(
     task, epic = epics.IssueRef("org", "tool", 7), epics.IssueRef("org", ".github", 40)
     assert parents.pairs == ((task, epic),)
     with patch("vergil_tooling.lib.epics.add_child") as add:
-        assert epic_audit.nativize_parents(list(parents.pairs)) == 1
+        assert epic_audit.nativize_parents(list(parents.pairs)) == epic_audit.LinkPass(
+            linked=1
+        )
     add.assert_called_once_with(epic, task)
     assert [o.ref.number for o in orphans] == [5, 6]
     err = capsys.readouterr().err

@@ -63,6 +63,20 @@ EpicOpenChildViolation = tuple[epics.IssueRef, tuple[epics.IssueRef, ...]]
 
 
 @dataclass(frozen=True)
+class LinkPass:
+    """What one of the orphan pass's link passes did.
+
+    *linked* counts the items linked. *refused* holds one line per item not
+    linked because its epic is closed, naming the item and the epic: closed is
+    closed, so the pass reports it and goes on, and the run exits non-zero at
+    the end (epic vergil-project/.github#1609).
+    """
+
+    linked: int
+    refused: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TaskDrift:
     """A merged PR whose tracking task is still open."""
 
@@ -637,8 +651,9 @@ def closed_epic_open_child(
     authoritative signal (``child_states``); perpetual (``ad-hoc``) epics are
     skipped — they never roll up, so being closed-with-open-children is
     not a violation for them. Report-only: like the other invariants it is never
-    auto-acted (remediation is :func:`reopen_epics_with_open_children`, gated to a
-    human). Scoped to the resolved epic *home* (default ``<org>/.github``).
+    auto-acted, and closed is closed, so the sweep never reopens the epic; it
+    is drift for a human. Scoped to the resolved epic *home* (default
+    ``<org>/.github``).
 
     *listing* is the home's :func:`list_home_epics`, shared with
     :func:`epic_documents` so the audit lists the epics once; it is read here
@@ -648,7 +663,7 @@ def closed_epic_open_child(
     latest reopen was made by a trusted actor (spec §5.2): a child reopened by
     an untrusted actor, or one whose events cannot be read, is a stop on its
     epic alone, added to *stops*, and the epic is not a violation, so it is
-    never reopened on that child's account.
+    never reported on that child's account.
     """
     if home is None:
         home = f"{org}/.github"
@@ -1018,13 +1033,19 @@ class _QueueCapacity:
 
 def attach_orphans(
     orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
-) -> int:
-    """Attach each orphan, in order, under its home's intake epic; return the count.
+) -> LinkPass:
+    """Attach each orphan, in order, under its home's intake epic.
 
     The intake epic is resolved (created if absent) once per home. Before each
     attach the epic's open children are checked against the cap; at the cap this
     raises :class:`StandingEpicFull` naming every orphan not yet attached. Writes
     to GitHub; the caller gates it and scopes the org token.
+
+    A home whose intake epic is closed (only a closed one exists, or the epic
+    is closed by the time of the link) attaches nothing there and reopens
+    nothing: each of its orphans is a refused line in the result naming the
+    orphan and the closed epic, and the other homes' orphans are still
+    attached (closed is closed, epic vergil-project/.github#1609).
 
     An orphan an outsider opened (its author holds no role, as the trust layer
     judges it) is never attached: it is reported on stderr, metadata only
@@ -1035,17 +1056,36 @@ def attach_orphans(
     before the first attach.
     """
     orphans = _trusted_orphans(orphans, stops=stops, authors=authors)
-    targets: dict[tuple[str, str], epics.IssueRef] = {}
+    targets: dict[tuple[str, str], epics.IssueRef | epics.ClosedEpicError] = {}
     capacity = _QueueCapacity()
+    linked = 0
+    refused: list[str] = []
     for index, orphan in enumerate(orphans):
         key = (orphan.home, orphan.name)
         if key not in targets:
-            targets[key] = epics.ensure_standing_epic(epics.INTAKE, orphan.home, orphan.name)
+            try:
+                targets[key] = epics.ensure_standing_epic(epics.INTAKE, orphan.home, orphan.name)
+            except epics.ClosedEpicError as exc:
+                targets[key] = exc
         target = targets[key]
+        if isinstance(target, epics.ClosedEpicError):
+            refused.append(_closed_refusal(orphan.ref, target))
+            continue
         pending = [o.ref for o in orphans[index:]]
         capacity.reserve(target, pending)
-        epics.add_child(target, orphan.ref)
-    return len(orphans)
+        try:
+            epics.add_child(target, orphan.ref)
+        except epics.ClosedEpicError as exc:
+            targets[key] = exc
+            refused.append(_closed_refusal(orphan.ref, exc))
+            continue
+        linked += 1
+    return LinkPass(linked=linked, refused=tuple(refused))
+
+
+def _closed_refusal(task: epics.IssueRef, exc: epics.ClosedEpicError) -> str:
+    """The orphan pass's line for *task*, not linked because its epic is closed."""
+    return f"{task.slug} not linked: {exc}"
 
 
 def _trusted_orphans(
@@ -1191,11 +1231,24 @@ def unlabelled_advisory_lines(
     return found
 
 
-def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> int:
-    """Link each body-declared task under its epic natively; return the count."""
+def nativize_parents(pairs: list[tuple[epics.IssueRef, epics.IssueRef]]) -> LinkPass:
+    """Link each body-declared task under its epic natively.
+
+    A task whose epic is closed is not linked and the epic is not reopened: it
+    is a refused line in the result naming the task and the epic, and the
+    other tasks are still linked (closed is closed, epic
+    vergil-project/.github#1609).
+    """
+    linked = 0
+    refused: list[str] = []
     for task, epic in pairs:
-        epics.add_child(epic, task)
-    return len(pairs)
+        try:
+            epics.add_child(epic, task)
+        except epics.ClosedEpicError as exc:
+            refused.append(_closed_refusal(task, exc))
+            continue
+        linked += 1
+    return LinkPass(linked=linked, refused=tuple(refused))
 
 
 @dataclass(frozen=True)
@@ -1761,24 +1814,34 @@ def render(
         if closed_operational_no_success:
             lines.append("**Validation tasks closed without a PASS comment** — re-open and run:")
             lines += [f"- {slug}" for slug in sorted(closed_operational_no_success)]
-        if closed_epic_open_children:
-            lines.append(
-                "**Closed epics with open children** — an epic must not be closed "
-                "while a child is open; reopen each (`--close` remediates):"
-            )
-            for closed_epic, kids in sorted(
-                closed_epic_open_children, key=lambda v: (v[0].owner, v[0].repo, v[0].number)
-            ):
-                open_kids = ", ".join(
-                    kid.slug for kid in sorted(kids, key=lambda k: (k.owner, k.repo, k.number))
-                )
-                lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
+        lines += _render_closed_epic_open_children(closed_epic_open_children)
         lines += _render_misplaced_archives(misplaced)
     lines += _render_proxy_link_drift(proxy_link_drift)
     lines += _render_misplaced_adhoc(misplaced_adhoc)
     lines += _render_epic_documents(epic_docs_findings, f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_closed_epic_open_children(violations: list[EpicOpenChildViolation]) -> list[str]:
+    """The closed-epic-with-open-child lines, for a human; none when clean.
+
+    Closed is closed (epic vergil-project/.github#1609): neither the audit nor
+    the sweep reopens the epic, so each is listed for a person to settle.
+    """
+    if not violations:
+        return []
+    lines = [
+        "**Closed epics with open children** — an epic must not be closed while a "
+        "child is open; the tooling never reopens one, so a person settles each "
+        "(reopen it by hand, or close or move the open children):"
+    ]
+    for closed_epic, kids in sorted(violations, key=lambda v: (v[0].owner, v[0].repo, v[0].number)):
+        open_kids = ", ".join(
+            kid.slug for kid in sorted(kids, key=lambda k: (k.owner, k.repo, k.number))
+        )
+        lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
+    return lines
 
 
 def _render_epic_documents(findings: list[EpicDocsFinding], home: str) -> list[str]:
@@ -1893,38 +1956,6 @@ _TASK_CLOSE_COMMENT = (
 _EPIC_CLOSE_COMMENT = (
     "Closed by `vrg-epic-audit`: all {total} child tasks are closed; the epic rolled up."
 )
-_EPIC_REOPEN_COMMENT = (
-    "Reopened by `vrg-epic-audit`: the epic was closed while child {child} is still "
-    "open — an epic cannot be closed while it has open children."
-)
-
-
-def reopen_epics_with_open_children(violations: list[EpicOpenChildViolation]) -> list[str]:
-    """Reopen each closed epic that still has an open child (issue #2259 Fix C).
-
-    The inverse of ``epic_drift``'s close: it restores the *an epic must never be
-    closed while it has open children* invariant that ``task_drift`` violated,
-    leaving an explanatory comment naming an open child. *violations* is the
-    output of :func:`closed_epic_open_child` (already closed epics), so every
-    reopen is meaningful; ``gh issue reopen`` on an already-open epic is a no-op,
-    so a repeat run is idempotent. Returns the reopened epic slugs. This performs
-    outward-effecting GitHub writes; the caller gates it to a human.
-    """
-    reopened: list[str] = []
-    for epic, open_kids in sorted(violations, key=lambda v: (v[0].owner, v[0].repo, v[0].number)):
-        github.run(
-            "issue",
-            "reopen",
-            str(epic.number),
-            "--repo",
-            f"{epic.owner}/{epic.repo}",
-            "--comment",
-            _EPIC_REOPEN_COMMENT.format(child=open_kids[0].slug),
-        )
-        reopened.append(epic.slug)
-    return reopened
-
-
 def close_drift(
     tasks: list[TaskDrift],
     epics: list[roadmap.EpicSummary],
@@ -1969,7 +2000,7 @@ def render_closed(
     *,
     org: str,
     window_days: int,
-    reopened: list[str] | None = None,
+    closed_epic_open_children: list[EpicOpenChildViolation] | None = None,
     misplaced: list[MisplacedArchive] | None = None,
     proxies_closed: list[str] | None = None,
     proxy_drift: list[str] | None = None,
@@ -1977,12 +2008,13 @@ def render_closed(
     proxy_link_drift: list[str] | None = None,
     misplaced_adhoc: list[MisplacedTask] | None = None,
 ) -> str:
-    """Summarize a ``--close`` run: what was closed and what was reopened.
+    """Summarize a ``--close`` run: what was closed, and what needs a human.
 
-    ``reopened`` is the closed-epic-with-open-child remediation (issue #2259):
-    epics that were wrongly closed while a child was still open, now reopened.
-    ``misplaced`` is report-only (never acted on), surfaced here too so the
-    scheduled sweep's log carries it, as are ``proxy_link_drift``
+    ``closed_epic_open_children`` (:func:`closed_epic_open_child`) are epics
+    closed while a child is still open: report-only, since the tooling never
+    reopens an epic (closed is closed). It and ``misplaced`` are never acted
+    on, surfaced here so the scheduled sweep's log carries them, as are
+    ``proxy_link_drift``
     (:func:`proxy_link_drift`) and ``misplaced_adhoc`` (:func:`misplaced_adhoc`),
     the trusted-comment checks.
 
@@ -1993,7 +2025,7 @@ def render_closed(
     proxies_closed = proxies_closed or []
     proxy_drift = proxy_drift or []
     proxy_errors = proxy_errors or []
-    reopened = reopened or []
+    closed_epic_open_children = closed_epic_open_children or []
     misplaced = misplaced or []
     proxy_link_drift = proxy_link_drift or []
     misplaced_adhoc = misplaced_adhoc or []
@@ -2002,7 +2034,7 @@ def render_closed(
     if not any(
         [
             closed,
-            reopened,
+            closed_epic_open_children,
             misplaced,
             proxies_closed,
             proxy_drift,
@@ -2015,13 +2047,6 @@ def render_closed(
     lines = [*header]
     if closed:
         lines += ["## Closed", "", *[f"- {slug}" for slug in closed], ""]
-    if reopened:
-        lines += [
-            "## Reopened (epic was closed with an open child)",
-            "",
-            *[f"- {slug}" for slug in reopened],
-            "",
-        ]
     if proxies_closed:
         lines += [
             "## Proxies closed (primary closed, no open task)",
@@ -2029,8 +2054,18 @@ def render_closed(
             *[f"- {slug}" for slug in proxies_closed],
             "",
         ]
-    if misplaced or proxy_drift or proxy_errors or proxy_link_drift or misplaced_adhoc:
+    if any(
+        [
+            closed_epic_open_children,
+            misplaced,
+            proxy_drift,
+            proxy_errors,
+            proxy_link_drift,
+            misplaced_adhoc,
+        ]
+    ):
         lines += ["## Needs a human (report only)", ""]
+        lines += _render_closed_epic_open_children(closed_epic_open_children)
         lines += _render_misplaced_archives(misplaced)
         if proxy_drift:
             lines.append("**Proxies left open** — the primary closed with a task still open:")

@@ -1929,15 +1929,34 @@ def test_route_one_off_already_under_epic_is_left(env: Env) -> None:
     env.add_child.assert_not_called()
 
 
-def test_route_one_off_reopens_closed_epic_before_reparent(env: Env) -> None:
+def test_route_refuses_closed_target_epic(env: Env) -> None:
+    # Closed is closed (.github#1609): the route is refused naming the epic,
+    # which is never reopened, and the item is not moved.
     env.native_parent[ITEM] = INTAKE
     env.epic_state = "closed"
     finite = IssueRef("org", ".github", 50)
     env.resolve_epic_ref.return_value = finite
-    route(ITEM, OneOff(repo="org/.github", epic="#50"), today=TODAY)
+    with pytest.raises(epics.ClosedEpicError, match=r"epic org/\.github#50 is closed"):
+        route(ITEM, OneOff(repo="org/.github", epic="#50"), today=TODAY)
     env.resolve_epic_ref.assert_called_once_with("#50", repo="org/.github")
-    env.run.assert_called_once_with("issue", "reopen", "50", "--repo", "org/.github")
-    env.reparent_child.assert_called_once_with(finite, ITEM)
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.add_child.assert_not_called()
+    assert env.native_parent[ITEM] == INTAKE
+
+
+def test_route_refuses_closed_target_epic_before_transfer(env: Env) -> None:
+    # A one-off into another repo is refused before the transfer, so a closed
+    # epic leaves the item where it was.
+    env.native_parent[ITEM] = INTAKE
+    env.epic_state = "closed"
+    with pytest.raises(epics.ClosedEpicError):
+        route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    env.run.assert_not_called()
+    env.reparent_child.assert_not_called()
+    env.remove_child.assert_not_called()
+    env.create_issue.assert_not_called()
+    assert not [c for c in env.read_output.call_args_list if c.args[:2] == ("issue", "transfer")]
 
 
 def test_route_one_off_open_epic_is_not_reopened(env: Env) -> None:

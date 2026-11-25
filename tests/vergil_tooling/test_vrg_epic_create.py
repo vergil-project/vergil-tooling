@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_epic_create import main, parse_args
-from vergil_tooling.lib import github, proxies, trust
+from vergil_tooling.lib import epics, github, proxies, trust
 from vergil_tooling.lib.epics import IssueRef
 
 if TYPE_CHECKING:
@@ -200,13 +200,10 @@ _PROXY_ARGS = ["--proxy-for", "vergil-project/.github#1417", "--repo", "logical-
 def _result(
     *,
     created: bool = False,
-    reopened: bool = False,
     retitled: bool = False,
     commented: bool = False,
 ) -> object:
-    return proxies.ProxyResult(
-        _PROXY, created=created, reopened=reopened, retitled=retitled, commented=commented
-    )
+    return proxies.ProxyResult(_PROXY, created=created, retitled=retitled, commented=commented)
 
 
 def test_proxy_for_creates_and_comments(capsys: pytest.CaptureFixture[str]) -> None:
@@ -230,11 +227,27 @@ def test_proxy_for_existing_open_proxy_prints_it(capsys: pytest.CaptureFixture[s
     assert "already records" in out
 
 
-def test_proxy_for_closed_proxy_reopened(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch(f"{_MOD}.proxies.create_proxy", return_value=_result(reopened=True)):
+def test_proxy_for_closed_proxy_is_clean_refusal(capsys: pytest.CaptureFixture[str]) -> None:
+    # Closed is closed (.github#1609): one stderr line naming the proxy, exit 1,
+    # no traceback, and nothing reopened.
+    refusal = epics.ClosedEpicError(
+        _PROXY, "a person may reopen it by hand, and a re-run then reuses it"
+    )
+    with (
+        patch(f"{_MOD}.proxies.create_proxy", side_effect=refusal),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
         rc = main(_PROXY_ARGS)
-    assert rc == 0
-    assert "Reopened proxy logical-minds-foundry/.github#320" in capsys.readouterr().out
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == [
+        "vrg-epic-create: epic logical-minds-foundry/.github#320 is closed; closed epics are "
+        "not reopened by the tooling; a person may reopen it by hand, and a re-run then "
+        "reuses it"
+    ]
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    mock_run.assert_not_called()
 
 
 def test_proxy_for_retitled_proxy_prints_it(capsys: pytest.CaptureFixture[str]) -> None:
@@ -375,7 +388,7 @@ def test_ensure_standing_operations_reuses_existing(capsys: pytest.CaptureFixtur
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch(
             "vergil_tooling.lib.github.read_json",
-            return_value=[{"number": 12, "title": _OPS_TITLE}],
+            return_value=[{"number": 12, "title": _OPS_TITLE, "state": "OPEN"}],
         ),
         patch("vergil_tooling.lib.github.create_issue") as mock_create,
         patch("vergil_tooling.lib.epics.add_child") as mock_add,

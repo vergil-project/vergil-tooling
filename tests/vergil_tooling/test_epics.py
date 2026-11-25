@@ -576,21 +576,27 @@ def test_parent_of_ignores_untrusted_body_line(
     assert "SPAM-MARKER-TEXT" not in err
 
 
-# -- add_child (reopen-on-late-child) ----------------------------------------
+# -- add_child (closed is closed, .github#1609) -------------------------------
 
 
-def test_add_child_reopens_closed_epic_before_linking() -> None:
+def test_add_child_refuses_closed_epic() -> None:
+    # A closed epic is refused by name: no reopen, and no addSubIssue call.
     with (
         patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"),
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch("vergil_tooling.lib.github.run") as mock_run,
         patch("vergil_tooling.lib.github.graphql") as mock_graphql,
+        pytest.raises(epics.ClosedEpicError) as excinfo,
     ):
         epics.add_child(EPIC, TASK)
-    mock_run.assert_called_once()
-    assert mock_run.call_args.args[:2] == ("issue", "reopen")
-    assert "40" in mock_run.call_args.args
-    mock_graphql.assert_called_once()
+    assert excinfo.value.epic == EPIC
+    assert str(excinfo.value) == (
+        "epic org/.github#40 is closed; closed epics are not reopened by the tooling"
+    )
+    assert isinstance(excinfo.value, epics.EpicRefusalError)
+    assert isinstance(excinfo.value, ValueError)
+    mock_run.assert_not_called()
+    mock_graphql.assert_not_called()
 
 
 def test_add_child_open_epic_is_not_reopened() -> None:
@@ -1292,7 +1298,7 @@ def test_reparent_child_issues_replace_parent_mutation() -> None:
 
 def _adhoc_row(number: int, repo_bare: str = "tooling") -> dict:
     """A .github issue-list row for an ad-hoc epic titled for *repo_bare*."""
-    return {"number": number, "title": f"Epic (ad hoc): {repo_bare}"}
+    return {"number": number, "title": f"Epic (ad hoc): {repo_bare}", "state": "OPEN"}
 
 
 def test_resolve_epic_ref_adhoc_discovers_single_epic() -> None:
@@ -1591,7 +1597,7 @@ def test_find_epic_by_title_sees_an_epic_past_row_30() -> None:
 def test_ensure_standing_epic_reuses_an_epic_past_row_30() -> None:
     # The duplicate the paging bug causes: an existing epic past row 30 must be
     # reused, never shadowed by a freshly created one.
-    target = {"number": 100, "title": "Epic (ad hoc): tooling"}
+    target = {"number": 100, "title": "Epic (ad hoc): tooling", "state": "OPEN"}
     newer = [{"number": 200 + i, "title": f"Epic (ad hoc): repo-{i}"} for i in range(30)]
     fake_list = _fake_issue_list([target, *newer])
     with (
@@ -2584,8 +2590,9 @@ def test_ensure_intake_epic_reuses_by_title_and_labels(monkeypatch: pytest.Monke
         *,
         prefer_oldest: bool = False,
         labels: tuple[str, ...] = ("epic", "ad-hoc"),
+        states: str = "open",
     ) -> IssueRef:
-        seen.update(home=home, title=title, labels=labels)
+        seen.update(home=home, title=title, labels=labels, states=states)
         return IssueRef("org", ".github", 7)
 
     monkeypatch.setattr(epics, "queue_home", lambda r: ("org/.github", "org"))
@@ -2597,6 +2604,7 @@ def test_ensure_intake_epic_reuses_by_title_and_labels(monkeypatch: pytest.Monke
         "home": "org/.github",
         "title": "Epic (intake): org",
         "labels": ("epic", "intake"),
+        "states": "all",
     }
 
 
@@ -2625,7 +2633,7 @@ def test_ensure_planning_epic_creates_when_absent() -> None:
 def test_ensure_planning_epic_ensures_in_progress_label() -> None:
     # The per-item planning label is ensured in the planning home even when the
     # planning epic already exists, so epic-create can always apply it.
-    rows = [{"number": 90, "title": "Epic (planning): org"}]
+    rows = [{"number": 90, "title": "Epic (planning): org", "state": "OPEN"}]
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.github.read_json", return_value=rows),
@@ -2661,7 +2669,7 @@ def test_ensure_planning_epic_ensures_in_progress_label_in_item_repo() -> None:
 
 def test_ensure_planning_epic_dotgithub_item_ensures_label_once() -> None:
     # An item in .github is in the home itself: one ensure, not two.
-    rows = [{"number": 3, "title": "Epic (planning): org"}]
+    rows = [{"number": 3, "title": "Epic (planning): org", "state": "OPEN"}]
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=rows),
         patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
@@ -2672,14 +2680,89 @@ def test_ensure_planning_epic_dotgithub_item_ensures_label_once() -> None:
 
 def test_ensure_standing_epic_duplicate_title_raises_naming_kind() -> None:
     rows = [
-        {"number": 1, "title": "Epic (intake): org"},
-        {"number": 2, "title": "Epic (intake): org"},
+        {"number": 1, "title": "Epic (intake): org", "state": "OPEN"},
+        {"number": 2, "title": "Epic (intake): org", "state": "OPEN"},
     ]
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=rows),
         pytest.raises(ValueError, match="multiple intake epics"),
     ):
         epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+
+
+# -- ensure_standing_epic never reopens a closed epic (.github#1609) -----------
+
+
+def test_ensure_standing_epic_reuses_open_beside_closed() -> None:
+    # An open and a closed epic share the canonical title: the open one is
+    # reused, whatever the closed one is, and nothing is created or reopened.
+    rows = [
+        {"number": 5, "title": "Epic (intake): org", "state": "CLOSED"},
+        {"number": 9, "title": "Epic (intake): org", "state": "OPEN"},
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows) as mock_list,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        got = epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+    assert got == IssueRef("org", ".github", 9)
+    mock_create.assert_not_called()
+    mock_run.assert_not_called()
+    args = mock_list.call_args.args
+    assert args[args.index("--state") + 1] == "all"
+    assert args[args.index("--json") + 1] == "number,title,state"
+
+
+def test_ensure_standing_epic_refuses_when_only_closed() -> None:
+    rows = [
+        {"number": 7, "title": "Epic (intake): org", "state": "CLOSED"},
+        {"number": 5, "title": "Epic (intake): org", "state": "CLOSED"},
+        {"number": 8, "title": "Epic (intake): other", "state": "OPEN"},
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.epics.ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+        pytest.raises(epics.ClosedStandingEpicError) as excinfo,
+    ):
+        epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+    assert excinfo.value.epic == IssueRef("org", ".github", 5)
+    assert excinfo.value.others == (IssueRef("org", ".github", 7),)
+    assert str(excinfo.value) == (
+        "epic org/.github#5 is closed; closed epics are not reopened by the tooling; "
+        "a person may reopen it by hand (also closed with that title: org/.github#7)"
+    )
+    assert isinstance(excinfo.value, epics.ClosedEpicError)
+    mock_ensure.assert_not_called()
+    mock_create.assert_not_called()
+    mock_run.assert_not_called()
+
+
+def test_ensure_standing_epic_creates_when_none() -> None:
+    created = "https://github.com/org/.github/issues/12"
+    lists = [[], [{"number": 12, "title": "Epic (intake): org"}]]
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=lists),
+        patch("vergil_tooling.lib.epics.ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        got = epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+    assert got == IssueRef("org", ".github", 12)
+    mock_create.assert_called_once()
+
+
+def test_ensure_standing_epic_row_without_state_raises() -> None:
+    # A row the "all" listing gives no readable state for is never guessed open.
+    rows = [{"number": 5, "title": "Epic (intake): org"}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+        pytest.raises(ValueError, match=r"#5 no readable state"),
+    ):
+        epics.ensure_standing_epic(epics.INTAKE, "org/.github", "org")
+    mock_create.assert_not_called()
 
 
 # -- ensure_standing_epic waits for its new epic to be listable (#3695) --------
@@ -2701,7 +2784,7 @@ class _FakeClock:
 
 
 _DEFERRED_URL = "https://github.com/org/.github/issues/10"
-_DEFERRED_ROW = {"number": 10, "title": "Epic (deferred): org"}
+_DEFERRED_ROW = {"number": 10, "title": "Epic (deferred): org", "state": "OPEN"}
 
 
 def test_ensure_standing_epic_created_and_visible_at_once() -> None:
@@ -2905,7 +2988,7 @@ def test_ensure_standing_epic_back_to_back_creates_exactly_one() -> None:
 
     def fake_create(**kwargs: object) -> str:
         number = 531 + len(created)
-        created.append({"number": number, "title": kwargs["title"]})
+        created.append({"number": number, "title": kwargs["title"], "state": "OPEN"})
         hidden_reads["left"] = 3  # the new issue is unlisted for the next 3 reads
         return f"https://github.com/org/.github/issues/{number}"
 
@@ -3844,7 +3927,7 @@ def test_ensure_hoshin_epic_reuses_existing() -> None:
     ):
         assert epics.ensure_hoshin_epic("org/docs") == existing
     mock_find.assert_called_once_with(
-        "org/.github", "Epic (hoshin): org", labels=("epic", "hoshin")
+        "org/.github", "Epic (hoshin): org", labels=("epic", "hoshin"), states="all"
     )
     mock_create.assert_not_called()
 
@@ -4022,7 +4105,7 @@ def test_ensure_operations_epic_reuses_existing() -> None:
     ):
         assert epics.ensure_operations_epic("acme/widget") == existing
     mock_find.assert_called_once_with(
-        "acme/.github", "Epic (operations): acme", labels=("epic", "operations")
+        "acme/.github", "Epic (operations): acme", labels=("epic", "operations"), states="all"
     )
     mock_create.assert_not_called()
 
