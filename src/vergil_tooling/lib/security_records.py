@@ -41,7 +41,10 @@ advisory's own ``Tracking issue:`` lines.
 
 **Known targets, no scan** (vergil-tooling#5138). A write whose issues are
 known reads only those: :func:`close_record` the tracked issues, and
-:func:`retarget` the tracked issues, the source and the targets. Only the
+:func:`retarget` the tracked issues, the source and the targets, and
+:func:`sync_issues` (the advisory sync ``vrg-finalize-pr`` runs on the issues
+a merged PR closed, vergil-tooling#4583) those issues and the issues their
+advisories track. Only the
 sync, whose job is finding broken pairs, and a retarget re-run that can no
 longer learn its dropped issues from the tracking lines, list the org's
 ``security`` issues (:func:`security_issues`), whose bodies are read in
@@ -1468,7 +1471,8 @@ def sync_states(
     return len(changes)
 
 
-def _held_line(ghsa_id: str, refs: Sequence[IssueRef]) -> str:
+def held_line(ghsa_id: str, refs: Sequence[IssueRef]) -> str:
+    """The ``- held:`` line for *ghsa_id*: the issues that fired the guard, and the next step."""
     slugs = ", ".join(ref.slug for ref in refs)
     return (
         f"- held: {ghsa_id} ({slugs}): retarget it to a fix task, "
@@ -1565,7 +1569,7 @@ def records_pass(org: str, *, apply: bool, prog: str, unlabelled: Sequence[Issue
     for line in broken:
         print(f"- broken: {line}")
     for ghsa_id, refs in guard.held:
-        print(_held_line(ghsa_id, refs))
+        print(held_line(ghsa_id, refs))
     for ghsa_id, ref, error in guard.errors:
         print(
             f"- error: {ghsa_id} ({ref.slug}): reading its parent failed, left unchanged: {error}"
@@ -1579,6 +1583,166 @@ def records_pass(org: str, *, apply: bool, prog: str, unlabelled: Sequence[Issue
         print(f"- unpaired external report (left untouched): {advisory.ghsa_id}")
     trust.report_skipped(skipped, stream=sys.stderr)
     return 1 if skipped or (apply and (broken or guard.errors)) else 0
+
+
+# --- sync of known issues ---------------------------------------------------
+
+_KNOWN_ISSUE_JQ = "{number, repository_url, state, state_reason, labels: [.labels[].name]}"
+
+
+@dataclass
+class IssueSyncResult:
+    """What :func:`sync_issues` did, by GHSA ID and issue ref only.
+
+    ``synced`` holds each ``(GHSA ID, new state)`` it set; ``held`` each
+    advisory the sync close guard kept ``draft`` (:func:`guard_check`), with
+    the tracked issues that fired it, which waits on a human; ``problems``
+    one line per reason an advisory could not be synced (a broken pair, an
+    untrusted body, a guard read that failed), which the caller must report
+    as a failure.
+    """
+
+    synced: list[tuple[str, Literal["draft", "closed"]]] = field(default_factory=list)
+    held: list[tuple[str, tuple[IssueRef, ...]]] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)
+
+
+def _known_security_issues(
+    refs: Sequence[IssueRef], authors: TrustedAuthors
+) -> list[SecurityIssue]:
+    """The ``security``-labelled issues among *refs*, each at its current ref.
+
+    Each issue is read once over REST (its state, close reason and labels; a
+    transfer is followed to the issue's current ref), then the bodies of the
+    labelled ones through the trust layer's body-only batched read, one query
+    per repo, as :func:`security_issues` reads them. An issue without the
+    label is left out, and its body is never read. A failed read propagates.
+    """
+    labelled: list[tuple[IssueRef, Any]] = []
+    for ref in dict.fromkeys(refs):
+        raw = github.read_json("api", _issue_endpoint(ref), "--jq", _KNOWN_ISSUE_JQ)
+        if SECURITY_LABEL in {str(name) for name in raw.get("labels") or []}:
+            labelled.append((_current_ref(raw), raw))
+    by_repo: dict[str, list[int]] = {}
+    for current, _raw in labelled:
+        by_repo.setdefault(f"{current.owner}/{current.repo}", []).append(current.number)
+    bodies = {
+        (repo, number): content
+        for repo, numbers in by_repo.items()
+        for number, content in trust.read_bodies(repo, numbers, authors=authors).items()
+    }
+    found: list[SecurityIssue] = []
+    for current, raw in labelled:
+        content = bodies[(f"{current.owner}/{current.repo}", current.number)]
+        is_open = str(raw["state"]).lower() == "open"
+        reason = raw.get("state_reason")
+        found.append(
+            SecurityIssue(
+                ref=current,
+                open=is_open,
+                ghsa_ids=() if content.body is None else parse_advisory_refs(content.body),
+                state_reason=None if is_open or reason is None else str(reason).lower(),
+                skipped=content.skipped,
+            )
+        )
+    return found
+
+
+def _sync_org(org: str, refs: Sequence[IssueRef], authors: TrustedAuthors) -> IssueSyncResult:
+    """:func:`sync_issues` for the issues *refs*, all in *org*."""
+    result = IssueSyncResult()
+    issues = _known_security_issues(refs, authors)
+    result.problems += [
+        f"{issue.ref.slug}: its body is untrusted, so the advisories it names were not synced"
+        for issue in issues
+        if issue.skipped is not None
+    ]
+    named = [issue for issue in issues if issue.skipped is None]
+    ghsa_ids = tuple(dict.fromkeys(ghsa_id for issue in named for ghsa_id in issue.ghsa_ids))
+    if not ghsa_ids:
+        return result
+    home = advisory_home(org)
+    by_id = {advisory.ghsa_id: advisory for advisory in list_advisories(home)}
+    for issue in named:
+        result.problems += _issue_problems(issue, by_id)
+    # A moved advisory is terminal and an external report is never synced.
+    affected = [
+        by_id[ghsa_id]
+        for ghsa_id in ghsa_ids
+        if ghsa_id in by_id and not by_id[ghsa_id].moved_to and not by_id[ghsa_id].external
+    ]
+    read = {issue.ref for issue in issues}
+    others = [ref for advisory in affected for ref in advisory.tracking if ref not in read]
+    every = [*issues, *_known_security_issues(others, authors)]
+    by_ref = {issue.ref: issue for issue in every}
+    unreadable = {issue.ref for issue in every if issue.skipped is not None}
+    paired: list[Advisory] = []
+    for advisory in affected:
+        if unreadable.intersection(advisory.tracking):
+            result.problems.append(
+                f"{advisory.ghsa_id}: an issue it tracks has an untrusted body, left unchanged"
+            )
+            continue
+        problems = _tracking_problems(advisory, by_ref)
+        if problems:
+            result.problems += problems
+        else:
+            paired.append(advisory)
+    classification = Classification(paired=paired, external=[], broken=[])
+    guard = guard_check(classification, every)
+    result.held.extend(guard.held)
+    result.problems += [
+        f"{ghsa_id} ({ref.slug}): reading its parent failed, left unchanged: {error}"
+        for ghsa_id, ref, error in guard.errors
+    ]
+    for ghsa_id, state in pending_syncs(classification, every, guard):
+        set_state(home, ghsa_id, state)
+        result.synced.append((ghsa_id, state))
+    return result
+
+
+def sync_issues(refs: Sequence[IssueRef]) -> IssueSyncResult:
+    """Sync the advisories the ``security`` issues among *refs* name (vergil-tooling#4583).
+
+    The event-driven half of the sync: a caller that has just changed some
+    issues' state (``vrg-finalize-pr``, once a merged PR has closed them)
+    syncs only the advisories those issues name, reading only the issues
+    those advisories track, with no scan of the org. An issue without the
+    ``security`` label is read over REST only, so a call whose issues name
+    no advisory makes no advisories call and needs no advisories access.
+
+    Each advisory named is decided as :func:`records_pass` decides it: only a
+    **paired** advisory (every issue it tracks is a ``security`` issue that
+    names it back) in ``draft`` or ``closed`` is synced, the sync close guard
+    (:func:`guard_check`) holds one that a queue item or a close other than
+    ``completed`` ended, and a moved advisory or an external report is left
+    alone. A broken pair, an untrusted body (on one of *refs* or on an issue
+    an advisory tracks) and a guard read that failed are ``problems``, each
+    left unchanged; the rest are still synced. The issues are grouped by org,
+    each org's run under :func:`github.target_org`, its advisory home that
+    org's ``.github``.
+
+    Whenever an issue names an advisory it needs **Repository security
+    advisories: read and write** on that org's ``.github``. A failed read or
+    write propagates (a ``gh`` failure scrubbed of its stdout, a
+    :class:`~vergil_tooling.lib.trust.TrustReadError`), after any state
+    already set: the caller must fail loudly, and ``vrg-security-record
+    sync`` finishes the rest.
+    """
+    total = IssueSyncResult()
+    by_org: dict[str, list[IssueRef]] = {}
+    for ref in refs:
+        by_org.setdefault(ref.owner, []).append(ref)
+    if not by_org:
+        return total
+    authors = load_trusted_authors()
+    for org, org_refs in by_org.items():
+        with github.target_org(org):
+            part = _sync_org(org, org_refs, authors)
+        total.synced.extend(part.synced)
+        total.held.extend(part.held)
+        total.problems.extend(part.problems)
+    return total
 
 
 # --- close ------------------------------------------------------------------

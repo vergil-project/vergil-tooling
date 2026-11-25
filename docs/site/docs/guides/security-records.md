@@ -191,6 +191,12 @@ that holds Repository security advisories: Read and write (see
 [Permissions](#permissions)); `--dry-run` previews it and changes nothing.
 The scheduled sweep (`vrg-epic-audit --close`) does not run it: the sweep
 makes no security-advisory call, so its token needs no advisories access.
+`vrg-finalize-pr` syncs the advisories of the issues a merged PR closes, by
+the same rules, once the merge has closed them (see
+[vrg-finalize-pr](../reference/dev/finalize-pr.md#sync-the-advisories-of-the-closed-issues)),
+so a fix task's record usually closes at its merge. Run `sync` for
+everything else: a reopened issue, an issue closed another way, and the
+broken-pair check across the org.
 On each run of `sync`:
 
 - the advisory is **closed** when **every** issue it tracks is closed as
@@ -678,9 +684,10 @@ does not go through `vrg-gh api`, which stays denied to the user agent.
 
 Every user App (`<username>-vergil-user`) needs **Repository security
 advisories: Read and write**, for `vrg-security-record` (`sync`, `close` and
-`note` included) and the hooks in `vrg-intake-route` and `vrg-queue`. A human
-running `vrg-security-record` in human mode needs the same access through
-their own `gh` login. `sync --dry-run` needs only Read. A move to another
+`note` included), the hooks in `vrg-intake-route` and `vrg-queue`, and the
+advisory sync in `vrg-finalize-pr` when a merged PR closes a `security`
+issue. A human running `vrg-security-record` or `vrg-finalize-pr` in human
+mode needs the same access through their own `gh` login. `sync --dry-run` needs only Read. A move to another
 org (`retarget` with every `--to` there) needs Read and write in both
 orgs' `.github`, and `sync` of an org with a moved advisory also needs Read
 in the org it moved to.
