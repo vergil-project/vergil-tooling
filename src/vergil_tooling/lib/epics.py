@@ -652,8 +652,9 @@ def reparent_child(new_parent: IssueRef, task: IssueRef) -> None:
     re-parent is rejected while the child is still linked to its old parent
     ("Sub issue may only have one parent"). ``replaceParent: true`` performs the
     move in one call — no orphan window, no separate remove (issue #2691, proven
-    live via #2677). Only ever targets the current-quarter archive, which is
-    always open, so no reopen-if-closed is needed here.
+    live via #2677). The target's state is not checked here: the archive drain
+    targets the current-quarter archive, which is always open, and
+    ``vrg-epic-move`` refuses a closed target itself before calling this.
     """
     github.graphql(_REPARENT_SUBISSUE, parent=_node_id(new_parent), child=_node_id(task))
 
