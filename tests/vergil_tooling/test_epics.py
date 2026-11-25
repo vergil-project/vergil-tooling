@@ -361,6 +361,32 @@ def test_child_states_with_blockers_skips_an_unwanted_childs_incomplete_list() -
     ]
 
 
+def test_child_states_with_blockers_keeps_an_unchecked_child_without_its_list() -> None:
+    # #5124: with checked, a closed child is still listed, but its incomplete
+    # list is neither taken nor checked, so it never fails the listing.
+    closed = {**_child_node(101, _blocked_by(total=2)), "state": "CLOSED"}
+    data = _listing(closed, _child_node(102, _blocked_by()))
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        result = epics.child_states_with_blockers(EPIC, checked=_is_open)
+    assert result == [
+        ChildState(IssueRef("org", "repo-a", 101), "CLOSED", "t101"),
+        ChildState(IssueRef("org", "repo-a", 102), "OPEN", "t102", native_blockers=()),
+    ]
+
+
+def test_child_states_with_blockers_still_refuses_a_checked_childs_incomplete_list() -> None:
+    data = _listing(_child_node(101, _blocked_by(total=2)))
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+        pytest.raises(epics.NativeBlockersReadError, match="only 0 could be read"),
+    ):
+        epics.child_states_with_blockers(EPIC, checked=_is_open)
+
+
 def test_child_states_with_blockers_still_refuses_a_wanted_childs_incomplete_list() -> None:
     data = _listing(_child_node(101, _blocked_by(total=2)))
     with (

@@ -12,7 +12,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import epic_audit, github, proxies, roadmap, trust
+from vergil_tooling.lib import epic_audit, epics, github, proxies, roadmap, trust
 from vergil_tooling.lib.epic_audit import (
     BodyParents,
     EpicDocsFinding,
@@ -21,7 +21,7 @@ from vergil_tooling.lib.epic_audit import (
     RetiredLabels,
     StandingEpicFull,
 )
-from vergil_tooling.lib.epics import ChildState, IssueRef
+from vergil_tooling.lib.epics import BlockerState, ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, SecurityIssue
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
@@ -264,23 +264,73 @@ def test_close_does_not_run_the_epic_documents_check() -> None:
 def test_main_epic_enumerates_children_as_json(capsys: pytest.CaptureFixture[str]) -> None:
     # --epic emits the epic's children (mixed open/closed) as machine-readable
     # JSON, bypassing the drift audit (issue #2538).
+    # Each open child carries its open blockers and a blocked flag (#5124).
+    blocker = IssueRef("other-org", "lib", 131)
     children = [
-        ChildState(IssueRef("vergil-project", "vergil-tooling", 2538), "OPEN", "Open child"),
+        ChildState(
+            IssueRef("vergil-project", "vergil-tooling", 2538),
+            "OPEN",
+            "Open child",
+            native_blockers=(BlockerState(blocker, "OPEN"),),
+        ),
+        ChildState(
+            IssueRef("vergil-project", "vergil-tooling", 2539),
+            "OPEN",
+            "Free child",
+            native_blockers=(),
+        ),
         ChildState(IssueRef("vergil-project", "vergil-tooling", 2500), "CLOSED", "Closed child"),
     ]
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=children) as cs,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children) as cs,
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
     ):
         rc = main(["--epic", "vergil-project/.github#201"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["epic"] == "vergil-project/.github#201"
-    states = {c["number"]: c["state"] for c in payload["children"]}
-    assert states == {2500: "CLOSED", 2538: "OPEN"}
-    # child_states is asked about the resolved epic ref.
+    fields = {
+        c["number"]: (c["state"], c["open_blockers"], c["blocked"]) for c in payload["children"]
+    }
+    assert fields == {
+        2500: ("CLOSED", [], False),
+        2538: ("OPEN", ["other-org/lib#131"], True),
+        2539: ("OPEN", [], False),
+    }
+    # The listing is asked about the resolved epic ref.
     assert cs.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        epics.NativeBlockersReadError("org/repo#1 has 2 native blockers but only 1 could be read"),
+        trust.UntrustedContentError(
+            trust.Skipped("org/repo", 1, "issue", "drive-by", "t", "body", "untrusted"),
+            "the issue body is untrusted",
+        ),
+        trust.TrustReadError("read_issue org/repo#1", "truncated"),
+    ],
+    ids=["native", "untrusted", "unreadable"],
+)
+def test_main_epic_blocker_read_failure_exits_1(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A blocker list that cannot be read in full fails the listing: no JSON,
+    # never "no blockers" (#5124).
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
+    ):
+        rc = main(["--epic", "vergil-project/.github#201"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-epic-audit: {error}\n"
 
 
 def test_main_bare_epic_resolves_against_cwd_epic_home() -> None:
@@ -300,7 +350,7 @@ def test_main_bare_epic_resolves_against_cwd_epic_home() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
         patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
-        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]) as cs,
     ):
         rc = main(["--epic", "#407"])
     assert rc == 0
@@ -315,7 +365,7 @@ def test_main_qualified_epic_ref_skips_home_lookup() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch("vergil_tooling.lib.github.repo_exists") as probe,
         patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
-        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]),
     ):
         rc = main(["--epic", "other/repo#12"])
     assert rc == 0
@@ -327,7 +377,7 @@ def test_main_epic_rejects_non_epic_ref(capsys: pytest.CaptureFixture[str]) -> N
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=False),
-        patch(f"{_MOD}.epics.child_states") as cs,
+        patch(f"{_MOD}.epics.child_states_with_blockers") as cs,
     ):
         rc = main(["--epic", "vergil-project/vergil-tooling#2538"])
     assert rc == 1
@@ -1109,7 +1159,7 @@ _PROXY = IssueRef("logical-minds-foundry", ".github", 320)
 
 
 def test_vrg_epic_audit_epic_lists_proxy_children(capsys: pytest.CaptureFixture[str]) -> None:
-    def child_states(epic: IssueRef) -> list[ChildState]:
+    def child_states(epic: IssueRef, **_: object) -> list[ChildState]:
         if epic == _PRIMARY:
             return [ChildState(IssueRef("vergil-project", "vergil-tooling", 1), "OPEN", "own")]
         return [ChildState(IssueRef("logical-minds-foundry", "mq-rest-admin", 7), "OPEN", "px")]
@@ -1117,7 +1167,9 @@ def test_vrg_epic_audit_epic_lists_proxy_children(capsys: pytest.CaptureFixture[
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", side_effect=child_states),
+        patch(f"{_MOD}.epics.child_states_with_blockers", side_effect=child_states),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
@@ -1136,7 +1188,7 @@ def test_vrg_epic_audit_epic_link_drift_exits_1(capsys: pytest.CaptureFixture[st
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]) as cs,
         patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=IssueRef("vergil-project", ".github", 9)),
@@ -1158,7 +1210,9 @@ def test_vrg_epic_audit_epic_on_proxy_reports_primary(capsys: pytest.CaptureFixt
     with (
         patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
@@ -1177,7 +1231,7 @@ def test_vrg_epic_audit_epic_on_proxy_without_primary_comment_exits_1(
     with (
         patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]),
         patch(f"{_PX}.proxies_of", return_value=()),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
@@ -1266,7 +1320,7 @@ def test_vrg_epic_audit_epic_proxy_link_error_while_listing_exits_1(
         patch(f"{_MOD}.epics.is_epic", return_value=True),
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
         patch(
-            f"{_MOD}.epic_audit.epic_children",
+            f"{_MOD}.epic_audit.epic_children_with_blockers",
             side_effect=proxies.ProxyLinkError("proxy has no 'Primary:' line"),
         ),
     ):
@@ -1599,7 +1653,7 @@ def test_vrg_epic_audit_epic_untrusted_proxy_body_exits_1(
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
         patch(f"{_MOD}.epics.is_epic", return_value=True),
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
-        patch(f"{_MOD}.epic_audit.epic_children", side_effect=error),
+        patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
     ):
         rc = main(["--epic", _PROXY.slug])
     assert rc == 1

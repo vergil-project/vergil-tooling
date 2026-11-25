@@ -55,6 +55,8 @@ from vergil_tooling.lib.labels import RETIRED_LABELS
 from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
@@ -1411,8 +1413,80 @@ def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
     nothing: :class:`~vergil_tooling.lib.trust.UntrustedContentError`) or
     cannot read in full (:class:`~vergil_tooling.lib.trust.TrustReadError`).
     """
+    return _walk_epic_and_proxies(epic, epics.child_states)
+
+
+@dataclass(frozen=True)
+class ListedChild:
+    """A child of :func:`epic_children_with_blockers`, with the issues still blocking it.
+
+    ``open_blockers`` holds every issue not closed that the child is blocked
+    by, through a native blocked-by relationship or a trusted ``Blocked-by:``
+    body line, deduplicated and sorted. A closed child's blockers are not
+    read, so it holds none.
+    """
+
+    child: epics.ChildState
+    open_blockers: tuple[epics.IssueRef, ...] = ()
+
+
+def epic_children_with_blockers(epic: epics.IssueRef) -> list[ListedChild]:
+    """:func:`epic_children`, with each open child's open blockers read too (#5124).
+
+    The children are listed as :func:`epic_children` lists them, proxies
+    included and their links checked the same way, each epic's children and
+    their blockers read under that epic's org token. An open child's native
+    blocked-by list comes from the listing
+    (:func:`epics.child_states_with_blockers`), or from its own read
+    (:func:`epics.native_blockers_of`) for a reflink-fallback child; its
+    ``Blocked-by:`` lines from its body (:func:`epics.blockers_of`). Every
+    read fails loudly, never "no blockers": a native list that cannot be read
+    in full raises :class:`epics.NativeBlockersReadError`, a body the trust
+    layer does not trust raises
+    :class:`~vergil_tooling.lib.trust.UntrustedContentError`, one it cannot
+    read in full :class:`~vergil_tooling.lib.trust.TrustReadError`, and a
+    blocker whose state cannot be read raises the read's error.
+    """
+
+    def listed(of: epics.IssueRef) -> list[ListedChild]:
+        return [
+            ListedChild(child, _open_blockers(child) if _is_open(child) else ())
+            for child in epics.child_states_with_blockers(of, checked=_is_open)
+        ]
+
+    return _walk_epic_and_proxies(epic, listed)
+
+
+def _open_blockers(child: epics.ChildState) -> tuple[epics.IssueRef, ...]:
+    """Every issue not closed that open *child* is blocked by, native and body alike."""
+    native = (
+        child.native_blockers
+        if child.native_blockers is not None
+        else epics.native_blockers_of(child.ref)
+    )
+    states = {blocker.ref: blocker.state for blocker in native}
+    for ref in epics.blockers_of(child.ref):
+        if ref not in states:
+            states[ref] = epics.issue_state(ref)
+    return tuple(
+        sorted(
+            (ref for ref, state in states.items() if state != "CLOSED"),
+            key=lambda r: (r.owner, r.repo, r.number),
+        )
+    )
+
+
+def _walk_epic_and_proxies[T](
+    epic: epics.IssueRef, list_children: Callable[[epics.IssueRef], list[T]]
+) -> list[T]:
+    """*list_children* of *epic*, then of every proxy its trusted comments name.
+
+    Each list is read under its epic's org token, and each proxy's
+    ``Primary:`` line must name *epic* (:func:`epic_children` says what
+    raises).
+    """
     with github.target_org(epic.owner):
-        children = list(epics.child_states(epic))
+        children = list(list_children(epic))
         listed = proxies.proxies_of(epic)
     for proxy in listed:
         with github.target_org(proxy.owner):
@@ -1422,7 +1496,7 @@ def epic_children(epic: epics.IssueRef) -> list[epics.ChildState]:
                     f"{epic.slug} lists the proxy {proxy.slug}, whose 'Primary:' line names"
                     f" {primary.slug}"
                 )
-            children += epics.child_states(proxy)
+            children += list_children(proxy)
     return children
 
 
@@ -1640,7 +1714,7 @@ def close_proxies(closures: list[ProxyClosure]) -> list[str]:
 
 def render_epic_children(
     epic: epics.IssueRef,
-    children: list[epics.ChildState],
+    children: Sequence[epics.ChildState | ListedChild],
     *,
     primary: epics.IssueRef | None = None,
 ) -> str:
@@ -1661,20 +1735,33 @@ def render_epic_children(
     *primary* is given only for a proxy epic: the payload then gains a
     ``"primary"`` key naming it, which merge review reads. Any other epic's
     payload has no such key.
+
+    A :class:`ListedChild` entry (:func:`epic_children_with_blockers`) also
+    carries ``open_blockers``, the ``owner/repo#N`` refs of the issues not
+    closed that it is blocked by (native and ``Blocked-by:`` alike, sorted),
+    and ``blocked``, true iff that list is not empty (#5124). A closed
+    child's list is always empty.
     """
-    ordered = sorted(children, key=lambda c: (c.ref.owner, c.ref.repo, c.ref.number))
+    entries: list[tuple[epics.ChildState, tuple[epics.IssueRef, ...] | None]] = [
+        (c.child, c.open_blockers) if isinstance(c, ListedChild) else (c, None) for c in children
+    ]
+    entries.sort(key=lambda e: (e[0].ref.owner, e[0].ref.repo, e[0].ref.number))
     payload: dict[str, object] = {"epic": epic.slug}
     if primary is not None:
         payload["primary"] = primary.slug
-    payload["children"] = [
-        {
+    rendered: list[dict[str, object]] = []
+    for child, blockers in entries:
+        entry: dict[str, object] = {
             "repo": f"{child.ref.owner}/{child.ref.repo}",
             "number": child.ref.number,
             "title": child.title,
             "state": child.state,
         }
-        for child in ordered
-    ]
+        if blockers is not None:
+            entry["open_blockers"] = [ref.slug for ref in blockers]
+            entry["blocked"] = bool(blockers)
+        rendered.append(entry)
+    payload["children"] = rendered
     return json.dumps(payload, indent=2)
 
 

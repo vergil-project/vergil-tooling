@@ -454,7 +454,10 @@ def native_blockers_of(task: IssueRef) -> tuple[BlockerState, ...]:
 
 
 def child_states_with_blockers(
-    epic: IssueRef, *, wanted: Callable[[ChildState], bool] | None = None
+    epic: IssueRef,
+    *,
+    wanted: Callable[[ChildState], bool] | None = None,
+    checked: Callable[[ChildState], bool] | None = None,
 ) -> list[ChildState]:
     """:func:`child_states`, with each native child's blocked-by list read too.
 
@@ -468,6 +471,11 @@ def child_states_with_blockers(
     title and close time, before any blocker is taken) are returned, and only
     their lists are checked: a child the caller would discard, such as a
     closed one, never fails the listing over a list it does not need.
+
+    With *checked*, every wanted child is still returned, but only the ones
+    it accepts carry their list: the rest carry ``None``, their list neither
+    taken nor checked. A caller that lists every child but needs only the
+    open ones' blockers so reads the listing once.
     """
     data: Any = github.graphql(_SUBISSUES_WITH_BLOCKERS_QUERY, id=_node_id(epic))
     nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
@@ -483,6 +491,9 @@ def child_states_with_blockers(
             closed_at=str(n.get("closedAt") or ""),
         )
         if wanted is not None and not wanted(child):
+            continue
+        if checked is not None and not checked(child):
+            states.append(child)
             continue
         states.append(
             replace(child, native_blockers=_native_blockers(n.get("blockedBy"), child.ref))
