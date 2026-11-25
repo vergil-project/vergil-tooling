@@ -31,6 +31,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
+    ROLLING_TAG_BRANCH_FIELD,
     BypassUnreadable,
     ClassicProtectionReport,
     ConfigDiff,
@@ -175,8 +176,9 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
     - **0:** the GitHub side converged and the managed files are in sync:
       no sync PR was needed, or the one opened this run merged;
     - **1:** drift that could not be fixed: a managed-file check with no
-      fixer, a fix that cannot be computed (:class:`CannotFix`), or an
-      undeclared ruleset parameter. The sync PR for the fixable drift is
+      fixer, a fix that cannot be computed (:class:`CannotFix`), an
+      undeclared ruleset parameter, or a branch named like a rolling tag,
+      which must be deleted by hand. The sync PR for the fixable drift is
       still opened, and exit 1 applies only once it has merged;
     - **2:** something could not be audited or converged: an agent identity,
       a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
@@ -383,9 +385,11 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         )
         return 2
 
+    branch_prefix = f"{ROLLING_TAG_BRANCH_FIELD}."
+    shadowing = [i for i in github_diff.items if i.field.startswith(branch_prefix)]
     if github_diff.is_compliant():
         print("GitHub config compliant, nothing to apply.")
-    elif github_diff.items:
+    elif len(github_diff.items) > len(shadowing):
         print(f"  Applying to {repo}...")
         try:
             reports = _apply_repo(repo, config)
@@ -413,6 +417,17 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
             f"  {repo}: apply cannot resolve {len(github_diff.undeclared)} undeclared "
             f"ruleset parameter(s); declare each on or off in the desired spec, or "
             f"add it to _STRIP_RULE_PARAMS, then re-run."
+        )
+        return 1
+
+    if shadowing:
+        # apply never deletes a branch: one named like a rolling tag shadows
+        # the tag for consumers that resolve a branch first, so it stays drift
+        # until a human removes it (the branch-name ruleset allows deletion).
+        names = ", ".join(i.field.removeprefix(branch_prefix) for i in shadowing)
+        print(
+            f"  {repo}: apply does not delete branches; delete the branch(es) named "
+            f"like a rolling tag by hand, then re-run: {names}"
         )
         return 1
 

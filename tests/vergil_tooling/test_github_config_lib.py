@@ -103,8 +103,14 @@ def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[obje
     raises ``ValueError``, as does an envelope page with no *key* list (the
     environment's branch policies). Pagination itself is exercised end to end
     by ``test_*_rulesets_reads_every_page``.
+
+    The rolling-tag branch listing (``git/matching-refs/heads/v``) reads as no
+    branches when the mock answers it with its catch-all ``{}``, so the tests
+    that do not model branches need not; a test that does returns a list.
     """
     page: object = github_config.github.read_json("api", endpoint)
+    if endpoint.endswith("/git/matching-refs/heads/v") and page == {}:
+        return []
     if key is not None:
         if not isinstance(page, dict) or key not in page:
             msg = f"paginated response from {endpoint!r} has no {key!r} list"
@@ -333,6 +339,96 @@ def test_rolling_tag_branch_ruleset() -> None:
     assert r.ref_include == [BRANCH_PATTERN]
     assert r.bypass_actors == []
     assert [rule["type"] for rule in r.rules] == ["creation", "update", "non_fast_forward"]
+
+
+def _fetch_with_matching_refs(refs: object) -> FetchResult:
+    """Fetch o/r with the rolling-tag branch listing answered by *refs*."""
+
+    def mock_read_json(*args: str) -> object:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {"default_branch": "develop", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
+            return refs
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        return {}
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=mock_read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=False),
+    ):
+        return fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_lists_branches_named_like_a_rolling_tag() -> None:
+    """A branch shaped like a rolling tag is read back; other ``v`` branches are not."""
+    refs = [
+        {"ref": "refs/heads/v2.1", "object": {"sha": "a"}},
+        {"ref": "refs/heads/vm-tools", "object": {"sha": "b"}},
+        {"ref": "refs/heads/v2", "object": {"sha": "c"}},
+    ]
+    result = _fetch_with_matching_refs(refs)
+    assert result.state.rolling_tag_branches == ["v2", "v2.1"]
+
+
+def test_fetch_actual_state_malformed_matching_ref_raises() -> None:
+    with pytest.raises(RuntimeError, match="unreadable ref"):
+        _fetch_with_matching_refs([{"object": {"sha": "a"}}])
+
+
+def _fetch_with_matching_refs_403(message: str) -> FetchResult:
+    """Fetch o/r with the rolling-tag branch listing refused with a 403 *message*."""
+
+    def paginated(endpoint: str, key: str | None = None) -> list[object]:
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
+            raise GitHubAPIError(1, ("gh", "api", endpoint), "", f"gh: {message} (HTTP 403)")
+        return _paginated_via_read_json(endpoint, key)
+
+    with patch(
+        "vergil_tooling.lib.github_config.github.read_json_paginated", side_effect=paginated
+    ):
+        return _fetch_with_matching_refs([])
+
+
+def test_fetch_actual_state_unreadable_matching_refs_is_not_checked() -> None:
+    """A permission-gap 403 on the branch listing is not checked, never clean."""
+    result = _fetch_with_matching_refs_403("Resource not accessible by integration")
+    assert NotChecked(field="rolling_tag_branches", permission="contents=read") in (
+        result.not_checked
+    )
+    assert result.state.rolling_tag_branches == []
+
+
+def test_fetch_actual_state_matching_refs_non_permission_403_propagates() -> None:
+    with pytest.raises(GitHubAPIError, match="rate limit"):
+        _fetch_with_matching_refs_403("API rate limit exceeded")
+
+
+def test_compute_diff_reports_each_rolling_tag_branch_as_drift() -> None:
+    """The ruleset is live and correct, yet a pre-existing ``v2.1`` branch is drift."""
+    desired = _state(_vergil_config())
+    actual = dataclasses.replace(desired, rolling_tag_branches=["v2", "v2.1"])
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [(i.field, i.expected, i.actual) for i in diff.items] == [
+        ("rolling_tag_branches.v2", "absent", "present"),
+        ("rolling_tag_branches.v2.1", "absent", "present"),
+    ]
+    assert not diff.is_compliant()
+
+
+def test_compute_diff_no_rolling_tag_branch_is_clean() -> None:
+    desired = _state(_vergil_config())
+    assert compute_diff(desired=desired, actual=dataclasses.replace(desired)).is_compliant()
+
+
+def test_compute_diff_rolling_tag_branch_in_desired_is_not_drift() -> None:
+    # Only a branch the desired state does not hold is drift; the real desired
+    # state holds none.
+    desired = dataclasses.replace(_state(_vergil_config()), rolling_tag_branches=["v2"])
+    actual = dataclasses.replace(desired, rolling_tag_branches=["v2", "v3"])
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [i.field for i in diff.items] == ["rolling_tag_branches.v3"]
 
 
 # ---------------------------------------------------------------------------
@@ -1802,6 +1898,8 @@ def test_fetch_actual_state_rulesets_reads_every_page() -> None:
         return {}
 
     def fake_read_output(*args: str, **_: object) -> str:
+        if args == ("api", "--paginate", "repos/o/r/git/matching-refs/heads/v?per_page=100"):
+            return "[]"
         assert args == ("api", "--paginate", "repos/o/r/rulesets?per_page=100")
         return json.dumps(page1) + json.dumps(page2)
 
@@ -3157,6 +3255,8 @@ def test_classic_develop_unreadable_is_not_checked_not_drift() -> None:
             return {**_REPO_SETTINGS_JSON, "default_branch": "", "security_and_analysis": {}}
         if endpoint == "repos/o/r/rulesets":
             return []
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
+            return []
         if endpoint == "repos/o/r/actions/permissions":
             return {"allowed_actions": "all"}
         if endpoint == "repos/o/r/actions/permissions/workflow":
@@ -3330,6 +3430,8 @@ def _admin_gap_read_json(repo_json: dict[str, object]) -> Callable[..., object]:
             return repo_json
         if endpoint == "repos/o/r/rulesets":
             return []
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
+            return []
         raise _forbidden(endpoint)
 
     return read_json
@@ -3379,6 +3481,8 @@ def test_fetch_actual_state_selected_actions_unreadable() -> None:
         if endpoint == "repos/o/r":
             return {**_REPO_SETTINGS_JSON, "default_branch": "", "security_and_analysis": {}}
         if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
             return []
         if endpoint == "repos/o/r/actions/permissions":
             return {"allowed_actions": "selected"}
@@ -3448,6 +3552,8 @@ def _fetch_with_repo_json(repo_json: object) -> FetchResult:
         if endpoint == "repos/o/r":
             return repo_json
         if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/git/matching-refs/heads/v":
             return []
         if endpoint == "repos/o/r/actions/permissions":
             return {"allowed_actions": "all"}
