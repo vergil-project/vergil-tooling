@@ -508,8 +508,7 @@ def _resolve_any(ref: str, *, ls_refs: Callable[[str, tuple[str, ...]], str]) ->
     found = [name for name in names if name in refs]
     if not found:
         msg = (
-            f"no branch or tag {ref} at {GIT_URL} "
-            "(a commit is named by its full 40-character SHA)"
+            f"no branch or tag {ref} at {GIT_URL} (a commit is named by its full 40-character SHA)"
         )
         raise ToolingInstallError(msg)
     if len(found) > 1:
