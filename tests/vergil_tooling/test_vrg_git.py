@@ -299,6 +299,21 @@ def test_remote_write_forms_are_refused(
         ["--null", "--list"],
         ["--type=bool", "--get", "core.bare"],
         ["--bool", "--get", "core.bare"],
+        # Git 2.46's subcommand forms (#5018).
+        ["get", "user.email"],
+        ["get", "--global", "user.name"],
+        ["get", "--all", "remote.origin.fetch"],
+        ["get", "--regexp", "^remote\\."],
+        ["get", "--all", "--show-names", "--regexp", "^branch\\."],
+        ["get", "--value=^git@", "--fixed-value", "remote.origin.url"],
+        ["get", "--url=https://github.com", "http.extraHeader"],
+        ["get", "--default=main", "init.defaultBranch"],
+        ["get", "--type=bool", "core.bare"],
+        ["get", "--show-origin", "--show-scope", "-z", "user.name"],
+        ["list"],
+        ["list", "--local", "--show-origin"],
+        ["list", "--name-only", "--null"],
+        ["list", "--includes"],
     ],
 )
 def test_config_read_forms_are_allowed(args: list[str]) -> None:
@@ -329,6 +344,29 @@ def test_config_read_forms_are_allowed(args: list[str]) -> None:
         ["--file", "/etc/gitconfig", "--list"],
         ["set", "user.email", "x@example.com"],
         ["unset", "user.email"],
+        # Every writing subcommand, and malformed read subcommands (#5018).
+        ["set", "--global", "user.email", "x@example.com"],
+        ["set", "--append", "remote.origin.fetch", "+refs/*:refs/*"],
+        ["unset", "--all", "remote.origin.fetch"],
+        ["rename-section", "user", "who"],
+        ["remove-section", "user"],
+        ["edit"],
+        ["edit", "--global"],
+        ["get"],
+        ["get", "user.email", "x@example.com"],
+        ["get", "--value", "^git@", "remote.origin.url"],
+        ["get", "--default", "main", "init.defaultBranch"],
+        ["get", "--add", "user.email"],
+        ["get", "--unset", "user.email"],
+        ["get", "--get", "user.email"],
+        ["get", "--file", "/etc/gitconfig", "user.email"],
+        ["get", "--", "user.email"],
+        ["list", "user.email"],
+        ["list", "--list"],
+        ["list", "--all"],
+        ["list", "--file", "/etc/gitconfig"],
+        ["--global", "get", "user.name"],
+        ["--global", "list"],
     ],
 )
 def test_config_write_forms_are_refused(
@@ -406,6 +444,7 @@ def test_help_lists_remote_config_and_tag_read_forms(
     out = capsys.readouterr().out
     assert "remote get-url" in out
     assert "--get-regexp" in out
+    assert "config get <name>" in out
     assert "--points-at" in out
 
 

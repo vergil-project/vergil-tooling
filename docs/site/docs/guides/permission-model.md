@@ -85,7 +85,7 @@ shell expansion, no pipes, no redirection.
 | `show-ref` | — | Read-only — list refs |
 | `symbolic-ref` | `<name> <ref>`, `-d`/`--delete`, `-m` | Read form only — one ref, optionally `-q`/`--quiet`/`--short` |
 | `remote` | `add`, `remove`, `rename`, `set-url`, `set-head`, `prune`, `update` and every other form | Read forms only — `remote [-v\|--verbose]`, `remote get-url [--push] [--all] <name>`, `remote show -n <name>...` |
-| `config` | every write (`<name> <value>`, `--add`, `--unset`, `--replace-all`, section edits, `-e`) | Read forms only — one of `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, with scope and output flags |
+| `config` | every write (`<name> <value>`, `--add`, `--unset`, `--replace-all`, section edits, `-e`, and the `set`, `unset`, `rename-section`, `remove-section` and `edit` subcommands) | Read forms only — one of `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, or the `get <name>` and `list` subcommands (`get` with `--all`, `--regexp`, `--fixed-value`, `--show-names`, `--value=`, `--url=`, `--default=`), with scope and output flags |
 | `tag` | `-a`, `-s`, `-u`, `-m`, `-F`, `-f`, `-d`, `-v`, `-e`, and a tag name without a list flag | List forms only — no tag name, or `-l`/`--list`, `--contains`, `--no-contains`, `--points-at`, `--merged`, `--no-merged`, `-n<num>` |
 | `var` | — | Read-only — logical git variables |
 | `verify-commit` | — | Read-only — signature verification |

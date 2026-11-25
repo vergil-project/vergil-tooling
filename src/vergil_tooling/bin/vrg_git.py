@@ -155,10 +155,22 @@ _CONFIG_READ_FLAGS: frozenset[str] = frozenset(
     }
 )
 _CONFIG_READ_FLAG_PREFIXES: tuple[str, ...] = ("--type=",)
+# Git 2.46's subcommand forms (#5018): `config list` and `config get <name>`,
+# taking the same scope and output flags. `get` also takes its own read-only
+# options; a value-taking one is allowed only in its `--opt=<value>` form, so
+# its value can never be read as the name. Every writing subcommand (set,
+# unset, rename-section, remove-section, edit) is refused, and a subcommand
+# name is recognized only as the first argument, as git parses it.
+_CONFIG_GET_FLAGS: frozenset[str] = frozenset(
+    {"--all", "--regexp", "--fixed-value", "--show-names"}
+)
+_CONFIG_GET_FLAG_PREFIXES: tuple[str, ...] = ("--value=", "--url=", "--default=")
 _CONFIG_READ_USAGE = (
     "config is denied except its read forms: config [<scope>] "
-    "--get|--get-all|--get-regexp <name> [<value-pattern>], or "
-    "config [<scope>] --list|-l"
+    "--get|--get-all|--get-regexp <name> [<value-pattern>], "
+    "config [<scope>] --list|-l, config get [<scope>] [--all] [--regexp] "
+    "[--value=<pattern>] [--fixed-value] [--url=<url>] [--default=<value>] "
+    "[--show-names] <name>, or config list [<scope>]"
 )
 
 # tag: the list forms only. With no positional `tag` lists; a positional needs
@@ -429,6 +441,8 @@ def _check_remote_read(args: list[str]) -> str | None:
 
 def _check_config_read(args: list[str]) -> str | None:
     """Refuse every config form except one read action with read-only flags."""
+    if args and args[0] in ("get", "list"):
+        return _check_config_subcommand_read(args[0], args[1:])
     actions = [a for a in args if a in _CONFIG_READ_ACTIONS]
     others = [a for a in args if a not in _CONFIG_READ_ACTIONS]
     flags = [a for a in others if a.startswith("-")]
@@ -442,6 +456,23 @@ def _check_config_read(args: list[str]) -> str | None:
         return _CONFIG_READ_USAGE
     low, high = _CONFIG_READ_ACTIONS[actions[0]]
     if not low <= len(positionals) <= high:
+        return _CONFIG_READ_USAGE
+    return None
+
+
+def _check_config_subcommand_read(sub: str, args: list[str]) -> str | None:
+    """Refuse a ``config get``/``config list`` form unless every flag is a read flag.
+
+    ``list`` takes no positional and ``get`` exactly one, the name. The
+    legacy action flags (``--get``, ``--list`` and the rest) are not taken
+    after a subcommand.
+    """
+    flags = [a for a in args if a.startswith("-")]
+    positionals = [a for a in args if not a.startswith("-")]
+    allowed = _CONFIG_READ_FLAGS | (_CONFIG_GET_FLAGS if sub == "get" else frozenset())
+    prefixes = _CONFIG_READ_FLAG_PREFIXES + (_CONFIG_GET_FLAG_PREFIXES if sub == "get" else ())
+    bad_flags = [f for f in flags if f not in allowed and not f.startswith(prefixes)]
+    if bad_flags or len(positionals) != (1 if sub == "get" else 0):
         return _CONFIG_READ_USAGE
     return None
 
@@ -1417,7 +1448,8 @@ def _print_help() -> None:
         "    symbolic-ref [-q|--quiet] [--short] <name> (setting a ref,\n"
         "    -d/--delete and -m are denied); remote [-v], remote get-url\n"
         "    [--push] [--all] <name> and remote show -n <name>...; config\n"
-        "    --get/--get-all/--get-regexp/--list (every write is denied);\n"
+        "    --get/--get-all/--get-regexp/--list, config get <name> and\n"
+        "    config list (every write is denied);\n"
         "    tag with no tag name or with a list flag (-l/--list, --contains,\n"
         "    --no-contains, --points-at, --merged, --no-merged).\n"
         f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"
