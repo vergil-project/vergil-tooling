@@ -1490,6 +1490,8 @@
       
         
       
+        
+      
     
     
     
@@ -1542,6 +1544,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.347/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.347
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19521,6 +19551,21 @@ role, and an unmerged PR never stand in for it, and with none (or several) the
 harvest fails rather than take the first PR of the commit. The CI run is the
 latest green <code>CI</code> run built from the repo itself; a fork's run of the same
 commit is ignored.</p>
+<p>A run is green when its latest attempt passed, or when an earlier attempt
+passed and a later re-run did not. The second case happens when the release
+PR's CI is re-run after the PR merged, because its version check then fails.
+A failed, cancelled or in-progress attempt never counts. The harvest then
+reads only what that earlier attempt produced:</p>
+<ul>
+<li><strong>Workflow checks:</strong> the conclusions come from that attempt's own jobs, not
+  the commit's latest check runs.</li>
+<li><strong>Scanner checks:</strong> the <code>CodeQL</code>, <code>Semgrep OSS</code> and <code>Trivy</code> checks are the
+  newest that started between the attempt's first job and the next attempt.</li>
+<li><strong>Artifacts:</strong> only an evidence artifact created in that same window is
+  used.</li>
+</ul>
+<p>If a required check or an evidence artifact cannot be tied to the attempt,
+the harvest fails and names it. The manifest's CI run URL names the attempt.</p>
 <h2 id="verification-how-a-downstream-auditor-checks-the-bundle">Verification: how a downstream auditor checks the bundle<a class="headerlink" href="#verification-how-a-downstream-auditor-checks-the-bundle" title="Permanent link">&para;</a></h2>
 <p>An auditor who pulls a release months later verifies the bundle in two steps:</p>
 <p><strong>1. Verify the attestation (chain of custody).</strong> After the bundle is assembled,
