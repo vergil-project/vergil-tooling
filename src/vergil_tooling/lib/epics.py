@@ -221,9 +221,10 @@ query($id: ID!) {
 }
 """
 
-# A task's native parent with the parent's labels, in one read, so the
-# chain-aware parent lookup tells a continuation from a head without a read of
-# its own (epic vergil-project/.github#1609).
+# A task's native parent with the parent's labels and whether it has a parent
+# of its own, in one read, so the chain-aware parent lookup tells a head from
+# what may be a continuation without a read of its own (epic
+# vergil-project/.github#1609).
 _PARENT_WITH_LABELS_QUERY = """
 query($id: ID!) {
   node(id: $id) {
@@ -231,6 +232,7 @@ query($id: ID!) {
       parent {
         number repository { name owner { login } }
         labels(first: 100) { totalCount nodes { name } }
+        parent { number }
       }
     }
   }
@@ -654,16 +656,29 @@ def _label_names(connection: Any, what: str) -> set[str]:
     return {str(label.get("name", "")) for label in nodes}
 
 
-def _chain_head(container: IssueRef, labels: Collection[str]) -> IssueRef:
-    """The head of *container*'s chain when its *labels* mark a continuation, else *container*.
+def _chain_head(
+    container: IssueRef, labels: Collection[str], *, nested: bool | None = None
+) -> IssueRef:
+    """The head of *container*'s chain when it is a continuation, else *container*.
 
-    A continuation is recognised by its label (:func:`is_continuation`) and
-    resolved with :func:`~vergil_tooling.lib.epic_chain.head_of`, which checks
-    every rule of spec §4.1 and raises chain drift on a broken one.
+    :func:`~vergil_tooling.lib.epic_chain.head_of` decides, checking every
+    rule of spec §4.1 and raising chain drift on a broken one, so a
+    continuation that lost either of its labels is drift, never a head. It is
+    asked whenever *container* could be a continuation: it carries the
+    ``continuation`` label, or it carries ``epic`` and is itself a native
+    sub-issue (*nested*; read here when not given), as every linked
+    continuation is. A top-level issue without the ``continuation`` label is
+    taken as itself: only an orphan that also lost that label escapes, and
+    the orphan search, which lists continuations by that label, cannot see it
+    either.
     """
-    if is_continuation(labels):
+    if CONTINUATION_LABEL in labels:
         return epic_chain.head_of(container)
-    return container
+    if "epic" not in labels:
+        return container
+    if nested is None:
+        nested = _container_parent(container) is not None
+    return epic_chain.head_of(container) if nested else container
 
 
 def native_parent_of(task: IssueRef) -> IssueRef | None:
@@ -675,14 +690,19 @@ def native_parent_of(task: IssueRef) -> IssueRef | None:
 
     Chain-aware (epic vergil-project/.github#1609): a task linked in a
     continuation belongs to the chain's head, so the head is returned. The
-    parent's labels come in the same read, so only a continuation costs more.
+    parent's labels, and whether it has a parent of its own, come in the same
+    read, so only a parent that could be a continuation costs more
+    (:func:`_chain_head`).
     """
     data: Any = github.graphql(_PARENT_WITH_LABELS_QUERY, id=_node_id(task))
     parent = ((data or {}).get("node") or {}).get("parent")
     if not isinstance(parent, dict):
         return None
     ref = _ref_from_node(parent)
-    return _chain_head(ref, _label_names(parent.get("labels"), ref.slug))
+    labels = _label_names(parent.get("labels"), ref.slug)
+    if "parent" not in parent:
+        raise RuntimeError(f"the parent read of {task.slug} did not say whether {ref.slug} has one")
+    return _chain_head(ref, labels, nested=isinstance(parent["parent"], dict))
 
 
 @dataclass(frozen=True)
@@ -915,8 +935,9 @@ def epic_head(epic: IssueRef, *, labels: Collection[str] | None = None) -> Issue
     continuation is mapped to its head
     (:func:`~vergil_tooling.lib.epic_chain.head_of`, chain drift raises) and
     ``<continuation> is a continuation of <head>; using <head>`` is printed to
-    stderr; every kind check then runs against the head. One label read,
-    none when the caller passes *epic*'s *labels*.
+    stderr; every kind check then runs against the head. One label read
+    (none when the caller passes *epic*'s *labels*), and for an epic, one
+    read of whether it is itself a sub-issue (:func:`_chain_head`).
     """
     head = _chain_head(epic, _labels(epic) if labels is None else labels)
     if head != epic:
@@ -1791,7 +1812,12 @@ def unbuildable_kind(epic: IssueRef) -> str | None:
     label read; a failed read raises. A continuation is its head's kind, read
     from the head.
     """
-    kind = standing_kind_of(_head_labels(epic))
+    return _unbuildable_key(_head_labels(epic))
+
+
+def _unbuildable_key(labels: set[str]) -> str | None:
+    """The :func:`unbuildable_kind` of a head with *labels*."""
+    kind = standing_kind_of(labels)
     if kind in QUEUE_KINDS or kind is OPERATIONS:
         return kind.key
     return None
@@ -1818,7 +1844,8 @@ def unbuildable_parent_kind(ref: str, *, default_repo: str) -> str | None:
     parent = native_parent_of(issue)
     if parent is None:
         return None
-    return unbuildable_kind(parent)
+    # native_parent_of has already resolved the chain, so its head's own labels decide.
+    return _unbuildable_key(_labels(parent))
 
 
 _QUEUE_REFUSAL_TAILS = {

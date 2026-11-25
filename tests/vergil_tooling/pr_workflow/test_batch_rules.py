@@ -84,6 +84,8 @@ class FakeGitHub:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(epics, "_labels", self.labels)
+        # Every epic here is top-level, so no epic is asked whether it is a continuation.
+        monkeypatch.setattr(epics, "_container_parent", lambda ref: None)
         monkeypatch.setattr(
             epics, "native_parent_of", lambda ref: self._get("parent", ref).native_parent
         )

@@ -287,6 +287,8 @@ class FakeSubIssueGraph:
                     "totalCount": len(names),
                     "nodes": [{"name": name} for name in names],
                 }
+                grandparent = self.issues[parent].parent
+                node["parent"] = None if grandparent is None else {"number": grandparent.number}
             return {"node": {"parent": node}}
         if query == epics._CONTAINER_QUERY:
             nodes = [self._child_node(c, labels=True, blockers=False) for c in issue.children]

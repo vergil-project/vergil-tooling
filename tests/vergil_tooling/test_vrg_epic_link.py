@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 _MOD = "vergil_tooling.bin.vrg_epic_link"
 _REAL_LABELS = epics._labels
+_REAL_CONTAINER_PARENT = epics._container_parent
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,13 @@ def _epic_labels() -> Generator[MagicMock]:
     """Every --epic is a plain epic head unless a test says otherwise (no gh label read)."""
     with patch("vergil_tooling.lib.epics._labels", return_value={"epic"}) as mock_labels:
         yield mock_labels
+
+
+@pytest.fixture(autouse=True)
+def _epic_is_top_level() -> Generator[MagicMock]:
+    """Every --epic is a top-level issue unless a test says otherwise (no gh parent read)."""
+    with patch("vergil_tooling.lib.epics._container_parent", return_value=None) as mock_parent:
+        yield mock_parent
 
 
 def test_main_refuses_an_epic_ref_that_is_not_an_epic(
@@ -180,11 +188,13 @@ def test_task_label_lookup_failure_propagates(_task_is_a_task: MagicMock) -> Non
 
 def test_epic_link_continuation_uses_head(
     _epic_labels: MagicMock,
+    _epic_is_top_level: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # A continuation's ref (copied from GitHub's UI) means its chain's head.
     _epic_labels.side_effect = _REAL_LABELS
+    _epic_is_top_level.side_effect = _REAL_CONTAINER_PARENT
     graph = FakeSubIssueGraph().install(monkeypatch)
     head = graph.add_issue(epics.IssueRef("org", ".github", 40), title="Epic: big", labels=["epic"])
     continuation = graph.add_continuation(epics.IssueRef("org", ".github", 50), head, head)

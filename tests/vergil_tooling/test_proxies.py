@@ -487,6 +487,8 @@ class FakeGitHub:
             patch("vergil_tooling.lib.github.create_issue", side_effect=self.create_issue),
             patch("vergil_tooling.lib.proxies.ensure_labels", side_effect=self.ensure_labels),
             patch("vergil_tooling.lib.github.graphql", side_effect=self.graphql),
+            # The primary is a top-level epic, so it is never a continuation.
+            patch("vergil_tooling.lib.epics._container_parent", return_value=None),
             patch(
                 "vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS
             ),

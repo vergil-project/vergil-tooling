@@ -36,6 +36,7 @@ def _parent_answer(number: int, labels: tuple[str, ...] = ("epic",)) -> dict[str
                 "number": number,
                 "repository": _repo_node("org", ".github"),
                 "labels": {"totalCount": len(labels), "nodes": [{"name": n} for n in labels]},
+                "parent": None,
             }
         }
     }
@@ -570,6 +571,7 @@ def _unlinked_parent_of(layer: FakeItems, task: IssueRef = TASK) -> IssueRef | N
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch("vergil_tooling.lib.github.graphql", side_effect=_with_layer(layer, no_parent)),
         # The Parent: line's epic is a head: its labels mark no continuation.
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
     ):
         return epics.parent_of(task)
@@ -1084,6 +1086,7 @@ def test_rollup_stops_on_outsider_close_before_the_drain(layer: FakeItems) -> No
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 40)),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
         patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
         pytest.raises(trust.UntrustedContentError),
@@ -1097,6 +1100,7 @@ def test_rollup_proxy_reads_no_close(layer: FakeItems) -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "proxy"}),
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
@@ -1127,6 +1131,7 @@ def test_rollup_repo_epic_archives_into_own_bucket() -> None:
     arch = IssueRef("org", "some-repo", 88)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): some-repo"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
@@ -1152,6 +1157,7 @@ def test_rollup_dotgithub_own_epic_unchanged() -> None:
     arch = IssueRef("org", ".github", 88)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
@@ -1182,6 +1188,7 @@ def test_rollup_skips_non_repo_adhoc_epic() -> None:
     title = "Epic (ad hoc): Lab lifecycle reliability — cold rebuild / boot / repoint / deploy"
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value=title),
         patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
@@ -1200,6 +1207,7 @@ def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
     task = IssueRef("org", ".github", 101)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 88)),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch(
             "vergil_tooling.lib.epics._issue_title",
@@ -1216,6 +1224,7 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
     live = IssueRef("org", ".github", 40)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
@@ -1234,6 +1243,7 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
     live = IssueRef("org", ".github", 40)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
@@ -1416,7 +1426,10 @@ def test_find_epic_by_title_ambiguity_names_every_match_lowest_first() -> None:
 
 
 def test_resolve_epic_ref_explicit_validates_epic() -> None:
-    with patch("vergil_tooling.lib.epics._labels", return_value={"epic"}):
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
+    ):
         assert epics.resolve_epic_ref("org/.github#40", repo="org/repo") == IssueRef(
             "org", ".github", 40
         )
@@ -1424,6 +1437,7 @@ def test_resolve_epic_ref_explicit_validates_epic() -> None:
 
 def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
     with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value=set()),
         pytest.raises(ValueError, match="not an epic"),
     ):
@@ -1435,6 +1449,7 @@ def test_resolve_epic_ref_bare_ref_homes_in_dotgithub() -> None:
     # itself: every task's epics live in <org>/.github (#3411).
     with (
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic"}) as mock_labels,
     ):
         epic = epics.resolve_epic_ref("#407", repo="org/tooling")
@@ -1446,6 +1461,7 @@ def test_resolve_epic_ref_qualified_ref_skips_home_resolution() -> None:
     # A fully qualified ref is taken as written: no home check at all.
     with (
         patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
     ):
         assert epics.resolve_epic_ref("org/tooling#9", repo="org/lab") == IssueRef(
@@ -1774,6 +1790,7 @@ def test_rollup_noop_for_child_under_archive_parent() -> None:
     archive = IssueRef("org", ".github", 88)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=archive),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"archive", "ad-hoc"}),
         patch("vergil_tooling.lib.epics.ensure_standing_archive") as mock_ensure,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
@@ -2356,6 +2373,7 @@ def test_rollup_rolls_into_new_segment_when_head_full() -> None:
     seg2 = IssueRef("org", ".github", 250)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): tooling"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
@@ -3135,7 +3153,10 @@ def test_is_archive(labels: set[str], title: str, expected: bool) -> None:
     ],
 )
 def test_queue_kind_reads_epic_labels(labels: set[str], expected: str | None) -> None:
-    with patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels:
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels,
+    ):
         assert epics.queue_kind(EPIC) == expected
     mock_labels.assert_called_once_with(EPIC)
 
@@ -3192,6 +3213,7 @@ def test_queue_or_archive_kind_read_failure_raises() -> None:
 def test_unbuildable_parent_kind_queue_unchanged(labels: set[str], expected: str | None) -> None:
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC) as mock_parent,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels,
     ):
         assert epics.unbuildable_parent_kind("org/repo-a#101", default_repo="org/x") == expected
@@ -3203,6 +3225,7 @@ def test_unbuildable_parent_kind_operations() -> None:
     # An ops issue, under the operations epic, is never the task a PR closes.
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC) as mock_parent,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "operations"}),
     ):
         assert epics.unbuildable_parent_kind("org/repo-a#101", default_repo="org/x") == (
@@ -3223,7 +3246,10 @@ def test_unbuildable_parent_kind_operations() -> None:
     ],
 )
 def test_unbuildable_kind(labels: set[str], expected: str | None) -> None:
-    with patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels:
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value=labels) as mock_labels,
+    ):
         assert epics.unbuildable_kind(EPIC) == expected
     mock_labels.assert_called_once_with(EPIC)
 
@@ -3239,6 +3265,7 @@ def test_queue_refusal_message_operations() -> None:
 def test_unbuildable_parent_kind_bare_ref_uses_default_repo() -> None:
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC) as mock_parent,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
     ):
         assert epics.unbuildable_parent_kind("#101", default_repo="org/repo-a") == "intake"
@@ -3248,6 +3275,7 @@ def test_unbuildable_parent_kind_bare_ref_uses_default_repo() -> None:
 def test_unbuildable_parent_kind_unparented_is_none() -> None:
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", return_value=None),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels") as mock_labels,
     ):
         assert epics.unbuildable_parent_kind("#101", default_repo="org/repo-a") is None
@@ -3370,6 +3398,7 @@ def test_rollup_never_closes_intake_or_planning_epic(kind_label: str) -> None:
     live = IssueRef("org", ".github", 7)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", kind_label}),
         patch("vergil_tooling.lib.epics.all_children_closed", return_value=True) as mock_all,
         patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
@@ -3526,6 +3555,7 @@ def test_rollup_drains_closed_intake_child_into_quarter_archive() -> None:
     arch = IssueRef("org", ".github", 501)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=_INTAKE_PARENT),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (intake): org"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-10-23T00:00:00Z"),
@@ -3546,6 +3576,7 @@ def test_rollup_drains_closed_intake_child_into_quarter_archive() -> None:
 def test_rollup_skips_noncanonical_intake_epic_loudly(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=_INTAKE_PARENT),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (intake): elsewhere"),
         patch("vergil_tooling.lib.epics._issue_closed_at") as mock_closed,
@@ -3563,6 +3594,7 @@ def test_rollup_skips_noncanonical_intake_epic_loudly(capsys: pytest.CaptureFixt
 def test_rollup_intake_child_without_closed_at_is_noop() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=_INTAKE_PARENT),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "intake"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (intake): org"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
@@ -3581,6 +3613,7 @@ def test_rollup_leaves_intake_archive_terminal(kind_label: str) -> None:
     archive = IssueRef("org", ".github", 501)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=archive),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"archive", kind_label}),
         patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
@@ -3805,7 +3838,10 @@ def test_archive_re_matches_deferred_archive() -> None:
 def test_queue_kind_and_container_kind_deferred_and_adhoc(
     labels: set[str], queue: str | None, container: str | None
 ) -> None:
-    with patch("vergil_tooling.lib.epics._labels", return_value=labels):
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value=labels),
+    ):
         assert epics.queue_kind(EPIC) == queue
         assert epics.container_kind(EPIC) == container
 
@@ -3813,6 +3849,7 @@ def test_queue_kind_and_container_kind_deferred_and_adhoc(
 def test_unbuildable_parent_kind_deferred() -> None:
     with (
         patch("vergil_tooling.lib.epics.native_parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "deferred"}),
     ):
         assert epics.unbuildable_parent_kind("#101", default_repo="org/repo-a") == "deferred"
@@ -3916,7 +3953,10 @@ def test_hoshin_is_standing_not_queue() -> None:
     assert epics.standing_kind_of({"epic", "hoshin"}) is kind
     assert epics.standing_kind_of({"archive", "hoshin"}) is None
     assert epics.is_standing({"epic", "hoshin"})
-    with patch("vergil_tooling.lib.epics._labels", return_value={"epic", "hoshin"}):
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "hoshin"}),
+    ):
         assert epics.queue_kind(EPIC) is None
         assert epics.container_kind(EPIC) == "hoshin"
 
@@ -4005,6 +4045,7 @@ def test_drain_standing_child_hoshin() -> None:
     arch = IssueRef("vergil-project", ".github", 600)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=parent),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "hoshin"}),
         patch(
             "vergil_tooling.lib.epics._issue_title", return_value="Epic (hoshin): vergil-project"
@@ -4079,7 +4120,10 @@ def test_operations_kind_is_standing_not_queue() -> None:
     assert "operations" in epics.EPIC_SENTINELS
     assert epics.standing_kind_of({"epic", "operations"}) is kind
     assert epics.standing_kind_of({"archive", "operations"}) is None
-    with patch("vergil_tooling.lib.epics._labels", return_value={"epic", "operations"}):
+    with (
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "operations"}),
+    ):
         assert epics.queue_kind(EPIC) is None
         assert epics.container_kind(EPIC) == "operations"
 
@@ -4189,6 +4233,7 @@ def test_rollup_skips_proxy() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "proxy"}),
         patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
         patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
@@ -4798,3 +4843,48 @@ def test_epic_category_refuses_a_head_that_is_a_continuation(graph: FakeSubIssue
     issue = graph.issues[C2]
     with pytest.raises(RuntimeError, match=r"the head org/\.github#30 of org/\.github#20"):
         epics.epic_category(issue.labels, issue.title, ref=C2)
+
+
+@pytest.mark.parametrize("lost", ["epic", epics.CONTINUATION_LABEL])
+def test_continuation_missing_a_label_is_drift_for_every_reader(
+    graph: FakeSubIssueGraph, lost: str
+) -> None:
+    # A linked continuation that lost either label is drift, never a head: the
+    # parent lookups, the ref resolution and the kind checks all raise it, as
+    # the chain walk does.
+    _add_continuation(graph, INTAKE_C2, INTAKE_HEAD, head=INTAKE_HEAD)
+    (item,) = _add_items(graph, INTAKE_C2, 1)
+    graph.issues[INTAKE_C2].labels.remove(lost)
+    readers = [
+        lambda: epics.parent_of(item),
+        lambda: epics.native_parent_of(item),
+        lambda: epics.unbuildable_parent_kind(item.slug, default_repo="org/repo-a"),
+        lambda: epics.queue_kind(INTAKE_C2),
+        lambda: epics.child_states(INTAKE_HEAD),
+    ]
+    if lost == epics.CONTINUATION_LABEL:
+        readers.append(lambda: epics.resolve_epic_ref(INTAKE_C2.slug, repo="org/tool"))
+    for read in readers:
+        with pytest.raises(epic_chain.ChainDriftError) as excinfo:
+            read()
+        assert excinfo.value.rule == "label"
+
+
+def test_nested_epic_that_is_no_continuation_is_its_own_head(graph: FakeSubIssueGraph) -> None:
+    # A sub-epic linked under an epic is asked about, and is itself.
+    sub = graph.add_issue(IssueRef("org", ".github", 80), title="Epic: sub", labels=["epic"])
+    graph.link(HEAD, sub)
+    (item,) = _add_items(graph, sub, 1)
+    assert epics.parent_of(item) == sub
+    assert epics.resolve_epic_ref(sub.slug, repo="org/tool") == sub
+
+
+def test_native_parent_of_refuses_a_read_without_the_grandparent() -> None:
+    data: Any = _parent_answer(40)
+    del data["node"]["parent"]["parent"]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+        pytest.raises(RuntimeError, match="did not say whether"),
+    ):
+        epics.native_parent_of(TASK)

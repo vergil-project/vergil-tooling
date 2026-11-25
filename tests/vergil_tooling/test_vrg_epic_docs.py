@@ -61,6 +61,7 @@ def fake() -> Generator[_Fake]:
         patch(f"{_MOD}.epic_docs.read_body", state.read_body),
         patch(f"{_MOD}.epic_docs.write_body", state.write_body),
         patch(f"{_MOD}.epic_docs.default_branch", state.default_branch),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch(f"{_MOD}.epics._labels", state.labels),
     ):
         yield state
@@ -301,6 +302,7 @@ def test_set_reads_the_body_through_the_trust_layer(
     with (
         patch("vergil_tooling.lib.github.graphql", return_value=answer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch(f"{_MOD}.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epic_docs.write_body", write),
     ):
