@@ -21896,7 +21896,8 @@ scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> refere
 from a file's <code>## Intro</code>, <code>## Preconditions</code>, <code>## Procedure</code> and
 <code>## Acceptance</code> sections (all required) and, for deployment only, an optional
 <code>## Human-run steps</code>; the scaffold keeps its frame. <code>--kind retrospective</code>
-refuses <code>--body-file</code>. If the link
+refuses <code>--body-file</code>. A closed epic is refused before the issue is created,
+naming the epic; it is never reopened. If the link
 fails after creation, the created issue's URL is reported for recovery with
 <code>vrg-epic-move</code>.</p>
 <table>
@@ -21921,7 +21922,7 @@ fails after creation, the created issue's URL is reported for recovery with
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Refusals and a failed link are reported on stderr; a failed link names the created issue</td>
+<td>Refusals (a closed epic among them, before anything is created) and a failed link are reported on stderr; a failed link names the created issue</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22020,9 +22021,11 @@ target's <code>&lt;owner&gt;/.github</code>, titled <code>Epic (proxy): OWNER/RE
 title without "Epic: "&gt;</code> and labelled <code>epic</code> + <code>proxy</code>, whose body carries the
 line <code>Primary: OWNER/REPO#N</code>. It then posts a comment on the primary carrying
 <code>Proxy: &lt;owner&gt;/.github#&lt;N&gt;</code>, alone on its line. An open proxy for the primary
-is reused and a closed one is reopened (it prints which). A reused or reopened
-proxy whose title differs from the derived one is retitled, so a re-run brings
-an older proxy up to date; a proxy is found by its <code>Primary:</code> line and labels,
+is reused. When the primary's only proxy is closed, the command refuses before
+any write, naming the proxy: the tooling never reopens a closed epic. A person
+may reopen it by hand, and a re-run then reuses it. A reused proxy whose title
+differs from the derived one is retitled, so a re-run brings an older proxy up
+to date; a proxy is found by its <code>Primary:</code> line and labels,
 never its title. The comment is posted only when no trusted comment on the
 primary already names the proxy, so a re-run on an up-to-date proxy writes
 nothing. The <code>Primary:</code> lines and <code>Proxy:</code> comments are read through the
@@ -22296,9 +22299,10 @@ the current list's order, <code>removed</code> in the block's.</p>
 </tbody>
 </table>
 <h3 id="vrg-epic-link">vrg-epic-link<a class="headerlink" href="#vrg-epic-link" title="Permanent link">&para;</a></h3>
-<p>Link a task under an epic as a native GitHub sub-issue, reopening a closed
-epic first. Used when creating a task under an epic and to backfill
-reflink-only children. A bare <code>#N</code> epic ref resolves to the task's epic home.</p>
+<p>Link a task under an epic as a native GitHub sub-issue. A closed epic is
+refused by name and never reopened. Used when creating a task under an epic
+and to backfill reflink-only children. A bare <code>#N</code> epic ref resolves to the
+task's epic home.</p>
 <table>
 <thead>
 <tr>
@@ -22321,7 +22325,7 @@ reflink-only children. A bare <code>#N</code> epic ref resolves to the task's ep
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Refusals and API errors on stderr</td>
+<td>Refusals (a closed epic among them) and API errors on stderr</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -23670,15 +23674,18 @@ org is read under its own App token.</p>
 <li>Close the drifted tasks and rolled-up epics. Then close each open proxy
    epic in the home whose primary has closed and which has no open task; a
    proxy that still has an open task is reported and left open, never closed
-   silently. Then reopen each epic closed while a child was still open. Each
-   close and reopen carries an explanatory comment.</li>
+   silently. Each close carries an explanatory comment. An epic closed while a
+   child is still open is reported for a human and never reopened.</li>
 <li>Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
    and operations epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 <li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, and
    attach every orphan to its home's intake epic (never one an outsider
-   opened, which is reported).</li>
+   opened, which is reported). An item whose epic is closed (a <code>Parent:</code> line
+   naming a closed epic, or a home whose only intake epic is closed) is named
+   on stderr with that epic and left unlinked; the pass goes on and the run
+   exits 1 at the end.</li>
 </ol>
 <p><code>--close</code> makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is <code>vrg-security-record sync</code>, run by
@@ -23708,7 +23715,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, an org with no <code>.github</code> home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without <code>--close</code>. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1. With <code>--untrusted</code>, an <code>--org</code> with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout</td>
+<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, an org with no <code>.github</code> home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without <code>--close</code>. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, or proxy link drift, exits 1. With <code>--untrusted</code>, an <code>--org</code> with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout</td>
 </tr>
 <tr>
 <td>Exit codes</td>

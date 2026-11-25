@@ -19845,6 +19845,9 @@ repos. The link runs both ways, each side on a line alone on its line:</p>
   nothing. A proxy is never removed
   from the list: one created by mistake is closed and stays listed.</li>
 </ul>
+<p><code>vrg-epic-create --proxy-for</code> reuses an open proxy. When the primary's only
+proxy is closed it refuses before any write, naming the proxy, and never
+reopens it: a person may reopen it by hand, and a re-run then reuses it.</p>
 <p>A missing, duplicated or malformed <code>Primary:</code> line, one naming an issue that
 is not an epic, or a malformed trusted <code>Proxy:</code> line is an error in every tool
 that reads them, never a skipped item. <code>vrg-epic-audit --epic</code> lists a
@@ -20269,7 +20272,15 @@ org's <code>.github</code>.</p>
 <li><strong>An epic is never closed while a child is open.</strong> A closed finite epic with an
   open child is a violation (perpetual standing epics are exempt — they never
   roll up; their closed children are drained into per-quarter archives
-  instead, see <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
+  instead, see <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>). It is
+  reported for a human; neither the audit nor the sweep reopens the epic.</li>
+<li><strong>Closed is closed.</strong> No tool reopens a closed epic. Linking a task under a
+  closed epic (<code>vrg-epic-link</code>, <code>vrg-issue-create</code>, <code>vrg-intake-route</code> and the
+  orphan pass alike) is refused, naming the epic; <code>vrg-issue-create</code> refuses
+  before it creates the issue. A missing standing epic is created on demand,
+  but when the only one with its title is closed the command refuses, naming
+  it, and never reopens or replaces it. A person may reopen a closed epic by
+  hand.</li>
 <li><strong>Every issue has an epic parent</strong> (the
   <a href="#the-invariant-every-issue-belongs-to-an-epic">invariant</a>). The audit lists
   each <strong>orphan</strong> — an open issue in a managed repo (non-archived, with a
@@ -20311,7 +20322,10 @@ with an org-wide <strong>orphan pass</strong>, in order:</p>
 </ol>
 <p>An issue whose body the trust layer cannot read in full is a stop on that
 issue alone: it is neither nativized nor attached, the rest of the pass runs,
-and the run exits 1.</p>
+and the run exits 1. So is an issue whose epic is closed (a <code>Parent:</code> line
+naming a closed epic, or a home whose only intake epic is closed): it is named
+on stderr with that epic and left unlinked, the epic is never reopened, the
+rest of the pass runs, and the run exits 1.</p>
 <p>The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's
 100-sub-issue limit); a full queue epic <strong>stops the pass</strong> with
