@@ -1984,12 +1984,14 @@ def _adopt_orphans(head: IssueRef, found: list[IssueRef]) -> tuple[list[str], li
     adopts an orphan first) or a concurrent writer already adopted is never
     adopted twice, and no continuation is created in its place; the run
     adopts at most as many as *found*, and a later orphan waits for the next
-    sweep. A failed adoption keeps the lines of those already adopted. The
+    sweep. A failed adoption keeps the lines of those already adopted, and
+    its unhealed line names only the orphans left unadopted. The
     rollup runs only once every adoption has landed, and a failed rollup is
     its own unhealed line: the adoptions stand.
     """
     names = ", ".join(ref.slug for ref in found)
     healed: list[str] = []
+    adopted_refs: list[IssueRef] = []
     try:
         if epics.issue_state(head) == "CLOSED":
             return [], [
@@ -2007,11 +2009,14 @@ def _adopt_orphans(head: IssueRef, found: list[IssueRef]) -> tuple[list[str], li
             # Adopts the lowest-numbered orphan into the current tail.
             tail = epic_chain.chain_of(head)[-1]
             adopted = epic_chain.find_or_create_continuation(head, tail)
+            adopted_refs.append(adopted)
             healed.append(f"adopted the orphaned continuation {adopted.slug} into epic {head.slug}")
     except (*_HEAL_ERRORS, trust.UntrustedContentError, trust.TrustReadError) as exc:
-        return healed, [
-            f"epic {head.slug}: the orphaned continuation(s) {names} not adopted: {exc}"
-        ]
+        # Name only the orphans still unadopted: those in *healed* landed. The
+        # loop adopts at most len(found), and raises only before the last one
+        # lands, so at least one orphan of *found* is left here.
+        left = ", ".join(ref.slug for ref in found if ref not in adopted_refs)
+        return healed, [f"epic {head.slug}: the orphaned continuation(s) {left} not adopted: {exc}"]
     try:
         closed = [c.ref for c in epics.child_states(head) if c.state == "CLOSED"]
         if closed:

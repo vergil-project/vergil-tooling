@@ -4860,7 +4860,6 @@ def test_sweep_failed_adoption_keeps_earlier_adoptions(monkeypatch: pytest.Monke
     assert heals == epic_audit.ChainHeals(
         healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",),
         unhealed=(
-            "epic org/.github#40: the orphaned continuation(s) org/.github#50, org/.github#60"
-            " not adopted: boom",
+            "epic org/.github#40: the orphaned continuation(s) org/.github#60 not adopted: boom",
         ),
     )
