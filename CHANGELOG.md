@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.349] - 2026-11-25
+
+### Bug fixes
+
+- move a task between epics in one atomic re-parent (#5184)
+- confirm a successful run rerun (#5175)
+- report branches named like a rolling tag as config drift (#5200)
+- security fixes for GHSA-rp4r-x254-p53h, GHSA-f4j7-x3f8-59gv, GHSA-j7c6-37h8-hjvg and GHSA-ch78-r3p7-2wmx (#5202)
+- retry dnf metadata refreshes through the Pages cache window after an index publish (#5211)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- add the machine-readable tool output principle (#4645)
+
+### Features
+
+- add the chain layer's read side, the continuation label and the sub-issue fake (#5185)
+- link, move and unlink through the chain with first-fit rollover, orphan adoption and the depth refusal (#5189)
+- heal racing rollovers and close a chain head first (#5190)
+- report each child's open blockers in --epic output (#5193)
+- accept any git ref of vergil-tooling (branch, tag or commit) (#5195)
+- allow the config get and config list subcommand forms (#5018)
+- read epics, parents and rollups across the whole chain (#5194)
+- split the roadmap into in-flight, planned and completed epics (#5201)
+- add vrg-epic-parent, which names a task's epic and kind across a chain (#5204)
+- read queues, roadmaps, planning closes, advisories and merge-review scopes across the chain (#5205)
+- audit chained epics: skip continuations, read across the chain and report chain drift (#5207)
+- sync the security advisories of the issues a merged PR closes (#5206)
+- record evidence for every gate tool that writes no report (#5210)
+- link, move and create through the chain layer, checking capacity before creating (#5213)
+- route and settle intake items across chained queues (#5214)
+- refuse an agent's completed close of an operational task until its result is recorded (#5215)
+- sweep through chained epics: adopt orphans, heal chains and close them whole (#5216)
+
+### Refactoring
+
+- make the raw sub-issue layer private to epics and epic_chain (#5217)
+
+### Testing
+
+- pin the tracking guard against a recorded multi-page timeline for GHSA-mfv3-fc33-69pp (#5203)
+
 ## [2.1.348] - 2026-11-25
 
 ### Bug fixes
