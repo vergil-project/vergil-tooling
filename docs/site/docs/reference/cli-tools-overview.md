@@ -73,7 +73,8 @@ frozen; `vrg-pr-workflow unfreeze` is the way back (see the freeze in
 A safe git wrapper for agent sessions. It forwards to `git` only after
 enforcing policy: a subcommand allowlist, read-only forms of `reflog`,
 `symbolic-ref`, `remote` (the list, `get-url` and `show -n`), `config`
-(`--get`, `--get-all`, `--get-regexp` and `--list`) and `tag` (its list
+(`--get`, `--get-all`, `--get-regexp`, `--list`, `config get` and
+`config list`) and `tag` (its list
 forms), denied subcommands (`commit`, `gc` and others; use
 `vrg-commit` for commits), a flag deny-list (`push --force`, `branch -D`,
 `rebase -i` without `--autosquash`), the worktree convention, the
