@@ -114,7 +114,20 @@ class _Fake:
             self.calls.append(("bootstrap",))
             self.boot.append((run, org, fmt, suite, sudo))
 
+        # dnf_refresh runs for real on a fake local_run: the refresh is recorded in
+        # ``calls`` and answers with each of ``refresh_failures`` in turn.
+        self.refresh_failures: list[subprocess.CalledProcessError] = []
+        self.slept: list[float] = []
+
+        def fake_local_run(*argv: str) -> subprocess.CompletedProcess[str]:
+            self.calls.append(argv)
+            if self.refresh_failures:
+                raise self.refresh_failures.pop(0)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
         monkeypatch.setattr(python_builder.repo_setup, "bootstrap", fake_bootstrap)
+        monkeypatch.setattr(python_builder.repo_setup, "local_run", fake_local_run)
+        monkeypatch.setattr(python_builder.repo_setup.time, "sleep", self.slept.append)
         monkeypatch.setattr(python_builder, "_run", self.run)
         monkeypatch.setattr(python_builder, "_OPT", str(self.opt))
 
@@ -333,12 +346,34 @@ def test_native_rhel_cell_uses_dnf(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     fake = _Fake(tmp_path, monkeypatch)
     res = python_builder.build_python(_py_ctx(tmp_path, cell=_NATIVE_RHEL9))
     assert fake.boot[0][2:4] == ("rpm", "el9")
-    assert fake.flat[1:3] == [
+    assert fake.flat[1:4] == [
+        # The vergil repo is refreshed through the retried refresh before the install.
+        "dnf -y makecache --refresh --repo vergil",
         "dnf install -y vergil-python3.14",
         "rpm -q --qf %{VERSION} vergil-python3.14",
     ]
     assert not any(c.startswith("apt-get") for c in fake.flat)
     assert res.depends["rpm"] == ["vergil-python3.14 >= 3.14.4+20261001"]
+
+
+def test_rhel_runtime_install_waits_out_the_pages_cache_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real RHEL 9 output of a repomd.xml / repomd.xml.asc mismatch (#4663).
+    fixtures = Path(__file__).parent / "fixtures" / "dnf"
+    race = subprocess.CalledProcessError(
+        1,
+        ["dnf"],
+        (fixtures / "el9-mismatch-makecache.stdout.txt").read_text(),
+        (fixtures / "el9-mismatch-makecache.stderr.txt").read_text(),
+    )
+    _repo(tmp_path)
+    fake = _Fake(tmp_path, monkeypatch)
+    fake.refresh_failures = [race]
+    python_builder.build_python(_py_ctx(tmp_path, cell=_NATIVE_RHEL9))
+    refresh = "dnf -y makecache --refresh --repo vergil"
+    assert fake.flat[1:4] == [refresh, refresh, "dnf install -y vergil-python3.14"]
+    assert fake.slept == [python_builder.repo_setup.DNF_REFRESH_DELAYS[0]]
 
 
 def test_native_ubuntu_cell_uses_its_own_suite(

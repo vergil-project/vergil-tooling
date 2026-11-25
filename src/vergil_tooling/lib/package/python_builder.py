@@ -199,6 +199,11 @@ def _install_runtime(fmt: str, rt_pkg: str) -> str:
         # Drop the Debian revision (``-1``); the upstream version is the PBS build.
         version = raw.rsplit("-", 1)[0] if "-" in raw else raw
     else:
+        # On a fresh bootstrap this install is the first read of the permanent
+        # vergil repo: refresh it first, through the Pages cache window (#4663),
+        # so the install runs on that cache and is never retried itself.
+        # ``local_run`` captures dnf's output, which the retry's match reads.
+        repo_setup.dnf_refresh(repo_setup.local_run, _RUNTIME_VENDOR, sudo=False)
         _run("dnf", "install", "-y", rt_pkg)
         raw = version = _run("rpm", "-q", "--qf", "%{VERSION}", rt_pkg).stdout.strip()
     if not version:

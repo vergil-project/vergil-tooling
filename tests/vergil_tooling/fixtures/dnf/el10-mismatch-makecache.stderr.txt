@@ -1,0 +1,1 @@
+Error: Failed to download metadata for repo 'vergil': repomd.xml GPG signature verification error: Bad PGP signature

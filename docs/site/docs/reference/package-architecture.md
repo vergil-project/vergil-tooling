@@ -82,7 +82,9 @@ The main modules under `src/vergil_tooling/lib/`:
   `updaters/`.
 - **`package/`**: binary package builds for `vrg-package`: the matrix, the
   python and staged builders, nFPM, install-test, repository bootstrap, and
-  `index/` for the signed apt/dnf site.
+  `index/` for the signed apt/dnf site. `repo_setup.dnf_refresh` refreshes
+  a repository's dnf metadata through the cache window after an index
+  publish ([Index generations and by-hash files](package-config.md#index-generations-and-by-hash-files)).
 - **`host_*.py`**: `vrg-host`: manifest loading (`host_deps`),
   install-method handlers (`host_methods`), host pins (`host_pins`),
   classification and rendering (`host_status`), and version ordering

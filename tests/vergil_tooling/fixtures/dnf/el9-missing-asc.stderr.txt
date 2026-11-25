@@ -1,0 +1,7 @@
+Importing GPG key 0xB8142851:
+ Userid     : "vergil-project packages <packages@vergil-project.invalid>"
+ Fingerprint: DD67 B5BA 8414 42A7 7A6E C2F7 04D6 8CED B814 2851
+ From       : /etc/pki/rpm-gpg/RPM-GPG-KEY-vergil-test
+Errors during downloading metadata for repository 'vergil':
+  - Status code: 404 for http://127.0.0.1:8080/rpm/el9/aarch64/repodata/repomd.xml.asc (IP: 127.0.0.1)
+Error: Failed to download metadata for repo 'vergil': GPG verification is enabled, but GPG signature is not available. This may be an error or the repository does not support GPG verification: Status code: 404 for http://127.0.0.1:8080/rpm/el9/aarch64/repodata/repomd.xml.asc (IP: 127.0.0.1)

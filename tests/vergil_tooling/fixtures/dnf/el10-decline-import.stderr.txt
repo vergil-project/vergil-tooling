@@ -1,0 +1,5 @@
+Importing GPG key 0x166ECABE:
+ Userid     : "vergil-project packages <packages@vergil-project.invalid>"
+ Fingerprint: B3A1 D804 DC03 AB03 6566 A4E3 6786 1822 166E CABE
+ From       : /etc/pki/rpm-gpg/RPM-GPG-KEY-vergil-test
+Error: Failed to download metadata for repo 'vergil': repomd.xml GPG signature verification error: Signing key not found
