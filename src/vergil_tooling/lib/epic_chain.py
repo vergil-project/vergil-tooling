@@ -619,12 +619,20 @@ def move_into(head: IssueRef, task: IssueRef) -> IssueRef:
     Returns the container *task* is in. The container is chosen as
     :func:`link_into` chooses it, with the same refusals and rollover, and
     the move is one ``replaceParent``, so a refused move leaves *task* where
-    it was. A *task* already linked anywhere in the chain stays where it is.
+    it was. A *task* already linked in the chain (its parent field names a
+    container whose listing holds it) stays where it is, and that container
+    is returned. One whose parent field names a container whose listing
+    lacks it (#4291) is moved like any other: re-linking it where its parent
+    field points is :func:`relink`'s job.
     """
     epics.require_open_epic(head)
     current = epics._container_parent(task)
-    if current is not None and current in chain_of(head):
-        return current
+    if current is not None:
+        for step in _walk(head):
+            if step.container.ref == current:
+                if any(item.ref == task for item in step.items):
+                    return current
+                break
     return _place(head, task, epics.reparent_child)
 
 
@@ -639,6 +647,77 @@ def unlink_from(head: IssueRef, task: IssueRef) -> None:
             epics.remove_child(step.container.ref, task)
             return
     raise ValueError(f"{task.slug} is not linked in the chain of epic {head.slug}")
+
+
+# -- settling after a transfer (spec §4.2) -------------------------------------------
+#
+# GitHub's parent field and its sub-issue listings can disagree for a while
+# after an issue is transferred (vergil-project/vergil-tooling#3839, #4004 and
+# #4291). These operations let a caller observe that state across a chain's
+# containers and repair it there, never on the head alone.
+
+
+def observe_parent(head: IssueRef, task: IssueRef) -> tuple[IssueRef | None, list[IssueRef]]:
+    """*task*'s parent field, and the containers of *head*'s chain whose listing holds it.
+
+    The parent field is the raw container GitHub names (None when *task* has
+    no parent); it may be a container of another chain. The listings are
+    read in chain order, continuations excluded as items. The two agree
+    when *task* is settled in the chain: the parent field names a container
+    and that container's listing is the only one in the chain holding it.
+    Chain drift raises :class:`ChainDriftError`.
+    """
+    field = epics._container_parent(task)
+    listings = [
+        step.container.ref for step in _walk(head) if any(item.ref == task for item in step.items)
+    ]
+    return field, listings
+
+
+def clear_stale_listing(head: IssueRef, task: IssueRef, keep: IssueRef) -> None:
+    """Remove *task* from the listing of every container of *head*'s chain but *keep*.
+
+    For a listing GitHub still shows after *task* moved elsewhere (#4004):
+    *keep* is the container *task* belongs in, which is never cleared, so a
+    caller that has checked *keep* lists *task* can never orphan it. The
+    caller says what it clears, one line each. Raises :class:`ValueError`, naming both,
+    when no container of the chain but *keep* lists *task*.
+    """
+    stale = [
+        step.container.ref
+        for step in _walk(head)
+        if step.container.ref != keep and any(item.ref == task for item in step.items)
+    ]
+    if not stale:
+        raise ValueError(
+            f"no container of epic {head.slug} but {keep.slug} lists {task.slug}; "
+            "there is no stale listing to clear"
+        )
+    for container in stale:
+        epics.remove_child(container, task)
+
+
+def relink(head: IssueRef, task: IssueRef) -> IssueRef:
+    """Re-link *task*, with ``replaceParent``, into the container its parent field names.
+
+    The #4291 case: *task*'s parent field names a container of *head*'s
+    chain, but that container's listing lacks it, so the parent field is not
+    proof of the link. One ``addSubIssue`` with ``replaceParent: true`` into
+    that container makes the listing hold it again. Returns the container.
+    A closed head raises :class:`ClosedEpicError` (closed is closed); a
+    parent field naming no container of the chain raises
+    :class:`ValueError`, naming both, and nothing is written.
+    """
+    epics.require_open_epic(head)
+    field = epics._container_parent(task)
+    if field is None or field not in chain_of(head):
+        where = f"names {field.slug}" if field is not None else "is empty"
+        raise ValueError(
+            f"{task.slug}'s parent field {where}, not a container of epic {head.slug}; "
+            "it cannot be re-linked there"
+        )
+    epics.reparent_child(field, task)
+    return field
 
 
 def _continuation_title(head: IssueRef, k: int) -> str:

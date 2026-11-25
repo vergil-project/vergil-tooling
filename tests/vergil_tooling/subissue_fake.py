@@ -22,6 +22,19 @@ parent already holding :data:`SUBISSUE_LIMIT` children refuses with
 :data:`MAX_DEPTH` levels (the top issue included) refuses with
 :data:`DEPTH_ERROR`. Both raise :class:`~vergil_tooling.lib.github.GitHubAPIError`,
 as a failed ``gh api graphql`` does.
+
+GitHub's parent field and its sub-issue listings can disagree for a while
+after a transfer (vergil-project/vergil-tooling#3839, #4004 and #4291), and
+the fake models that too: each issue's ``parent`` is its parent field and each
+container's ``children`` its listing, which agree unless a test makes them
+disagree with :meth:`FakeSubIssueGraph.unlist` (the field names a container
+whose listing lacks the child) or :meth:`FakeSubIssueGraph.list_stale` (a
+listing holds a child whose field names another container, or none). Then
+``addSubIssue`` into a container that lists the child under another parent
+field refuses with :data:`DUPLICATE_ERROR` (#3839), a ``replaceParent`` link
+into the container the field already names puts the child back in its
+listing (#4291), and ``removeSubIssue`` of the field's link leaves the child
+under the container that still lists it, if any (#4004).
 """
 
 from __future__ import annotations
@@ -59,6 +72,12 @@ DEPTH_ERROR = (
 LIMIT_ERROR = (
     "Failed to add sub-issue #{child} to parent #{parent}."
     " Parent cannot have more than 100 sub-issues."
+)
+
+#: GitHub's refusal of a link into a parent that already lists the child (#3839).
+DUPLICATE_ERROR = (
+    "Failed to add sub-issue #{child} to parent #{parent}."
+    " Issue may not contain duplicate sub-issues"
 )
 
 
@@ -154,6 +173,17 @@ class FakeSubIssueGraph:
         """Link *child* under *parent*, under GitHub's rules (a refusal raises)."""
         self._add(parent, child, replace=False)
 
+    def unlist(self, parent: IssueRef, child: IssueRef) -> None:
+        """Drop *child* from *parent*'s listing, its parent field still naming *parent* (#4291)."""
+        assert self.issues[child].parent == parent, f"{child.slug} is not under {parent.slug}"
+        self.issues[parent].children.remove(child)
+
+    def list_stale(self, parent: IssueRef, child: IssueRef) -> None:
+        """List *child* under *parent* too, its parent field unchanged (#3839, #4004)."""
+        assert self.issues[child].parent != parent, f"{child.slug} is under {parent.slug}"
+        assert child not in self.issues[parent].children, f"{parent.slug} lists {child.slug}"
+        self.issues[parent].children.append(child)
+
     def close(self, ref: IssueRef) -> None:
         self.issues[ref].state = "CLOSED"
 
@@ -200,17 +230,23 @@ class FakeSubIssueGraph:
     def _add(self, parent: IssueRef, child: IssueRef, *, replace: bool) -> None:
         node, sub = self.issues[parent], self.issues[child]
         numbers = {"child": child.number, "parent": parent.number}
+        op = "reparent" if replace else "add"
+        if child in node.children and sub.parent != parent:
+            raise _graphql_error(DUPLICATE_ERROR.format(**numbers))
         if sub.parent is not None and not replace:
             raise _graphql_error("Sub issue may only have one parent")
+        if sub.parent == parent and child in node.children:
+            self._record((op, parent, child))
+            return
         if len(node.children) >= SUBISSUE_LIMIT:
             raise _graphql_error(LIMIT_ERROR.format(**numbers))
         if self._level(parent) + self._height(child) > MAX_DEPTH:
             raise _graphql_error(DEPTH_ERROR.format(**numbers))
-        if sub.parent is not None:
+        if sub.parent is not None and child in self.issues[sub.parent].children:
             self.issues[sub.parent].children.remove(child)
         node.children.append(child)
         sub.parent = parent
-        self._record(("reparent" if replace else "add", parent, child))
+        self._record((op, parent, child))
 
     def clear_log(self) -> None:
         """Forget the writes so far, so a test sees only those of the call under test."""
@@ -225,10 +261,15 @@ class FakeSubIssueGraph:
 
     def _remove(self, parent: IssueRef, child: IssueRef) -> None:
         node, sub = self.issues[parent], self.issues[child]
-        if sub.parent != parent:
+        if sub.parent == parent:
+            if child in node.children:
+                node.children.remove(child)
+            # A listing left elsewhere (#4004) takes over the parent field.
+            sub.parent = next((r for r, i in self.issues.items() if child in i.children), None)
+        elif child in node.children:
+            node.children.remove(child)
+        else:
             raise _graphql_error(f"#{child.number} is not a sub-issue of #{parent.number}")
-        node.children.remove(child)
-        sub.parent = None
         self._record(("remove", parent, child))
 
     # -- the github boundary ----------------------------------------------------

@@ -11,7 +11,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
-from vergil_tooling.lib import epics, github, intake_route, security_records, trust
+from vergil_tooling.lib import epic_chain, epics, github, intake_route, security_records, trust
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.intake_route import (
@@ -56,6 +56,61 @@ DUPLICATE_REFUSAL = (
 )
 
 
+# The queries epics and epic_chain make of the sub-issue graph, reads and writes.
+_GRAPH_QUERIES = frozenset(
+    {
+        epics._ADD_SUBISSUE,
+        epics._REPARENT_SUBISSUE,
+        epics._REMOVE_SUBISSUE,
+        epics._PARENT_QUERY,
+        epics._PARENT_WITH_LABELS_QUERY,
+        epics._CONTAINER_QUERY,
+        epics._SUBISSUES_QUERY,
+        epics._SUBISSUES_WITH_BLOCKERS_QUERY,
+        epics._OPEN_ISSUES_QUERY,
+    }
+)
+
+
+def _applied(_parent: IssueRef, _child: IssueRef, apply: Any) -> None:
+    """A write that takes effect under the fake's GitHub rules."""
+    apply()
+
+
+def _no_effect(_parent: IssueRef, _child: IssueRef, _apply: Any) -> None:
+    """A write GitHub accepts that never takes effect."""
+
+
+def _raising(exc: BaseException) -> Any:
+    """A write that fails with *exc*, changing nothing."""
+
+    def effect(_parent: IssueRef, _child: IssueRef, _apply: Any) -> None:
+        raise exc
+
+    return effect
+
+
+class _RouteGraph(FakeSubIssueGraph):
+    """The sub-issue fake, each write logged on *env* and passed through its effects."""
+
+    def __init__(self, env: Env) -> None:
+        super().__init__()
+        self.env = env
+
+    def _add(self, parent: IssueRef, child: IssueRef, *, replace: bool) -> None:
+        op = "reparent" if replace else "add"
+        self.env.writes.append((op, parent, child))
+        self.env.effects[op](
+            parent, child, lambda: FakeSubIssueGraph._add(self, parent, child, replace=replace)
+        )
+
+    def _remove(self, parent: IssueRef, child: IssueRef) -> None:
+        self.env.writes.append(("remove", parent, child))
+        self.env.effects["remove"](
+            parent, child, lambda: FakeSubIssueGraph._remove(self, parent, child)
+        )
+
+
 class Env:
     """The patched GitHub and epics boundary one test drives."""
 
@@ -88,6 +143,13 @@ class Env:
         # Closing-PR URL -> the trust layer's read of it (trust_stubs.closing_pr).
         self.closing_pr_answers: dict[str, dict[str, Any]] = {}
         self.closing_pr_reads: list[str] = []
+        # The sub-issue graph the real epics and epic_chain code reads and
+        # writes (a FakeSubIssueGraph). The three maps below describe its
+        # parent fields and listings: each is loaded into the graph before a
+        # sub-issue query and read back from it after one, so a test sets or
+        # checks a state through them, even mid-route (a late carry-over).
+        self.graph = _RouteGraph(self)
+        # Each issue's parent field: task -> the container it names.
         self.native_parent: dict[IssueRef, IssueRef | None] = {}
         # Sub-issue listings GitHub still shows although the child's parent
         # field says otherwise: epic -> stale children (#4004).
@@ -117,11 +179,17 @@ class Env:
         self.read_json = MagicMock(side_effect=self._read_json)
         self.create_issue = MagicMock(side_effect=lambda **kw: self.created_url)
         self.ensure_labels = MagicMock()
-        # A link takes effect: the task's native parent becomes the epic,
-        # unless GitHub already lists it under the epic (#3839).
-        self.add_child = MagicMock(side_effect=self.link)
-        self.reparent_child = MagicMock(side_effect=self.link)
-        self.remove_child = MagicMock(side_effect=self.detach)
+        # Every sub-issue write the route attempts, in order, as (op, parent,
+        # child) with op "add", "reparent" (replaceParent) or "remove".
+        self.writes: list[tuple[str, IssueRef, IssueRef]] = []
+        # What each kind of write does: called with (parent, child, apply),
+        # where apply() makes the write under the fake's GitHub rules. A test
+        # swaps one to record an order, fail, or have no effect.
+        self.effects: dict[str, Any] = dict.fromkeys(("add", "reparent", "remove"), _applied)
+        # Once set, every read of a container's sub-issue listing fails with it,
+        # after the first *listing_reads_left* of them.
+        self.listing_error: BaseException | None = None
+        self.listing_reads_left = 0
         self.sleep = MagicMock()
         self.ensure_planning_epic = MagicMock(return_value=PLANNING)
         self.ensure_intake_epic = MagicMock(return_value=INTAKE)
@@ -143,31 +211,76 @@ class Env:
             "labels": [{"name": "bug"}, {"name": "security"}],
         }
 
-    def attach(self, epic: IssueRef, task: IssueRef) -> None:
-        self.native_parent[task] = epic
-        self.unlisted.get(epic, set()).discard(task)
+    def calls(self, op: str) -> list[tuple[IssueRef, IssueRef]]:
+        """The (parent, child) of every *op* write attempted, in order."""
+        return [(parent, child) for kind, parent, child in self.writes if kind == op]
 
-    def link(self, epic: IssueRef, task: IssueRef) -> None:
-        """addSubIssue: refused while *epic* lists *task* but its parent reads elsewhere."""
-        if task in self.stale_listing.get(epic, set()) and self.native_parent.get(task) != epic:
-            raise github.GitHubAPIError(1, ["gh", "api", "graphql"], "", DUPLICATE_REFUSAL)
-        self.attach(epic, task)
-
-    def detach(self, epic: IssueRef, task: IssueRef) -> None:
-        """removeSubIssue: drop the *epic* link; a link another epic still lists takes over."""
-        if self.native_parent.get(task) == epic:
-            holder = next((e for e, kids in self.stale_listing.items() if task in kids), None)
-            if holder is not None:
-                self.stale_listing[holder].discard(task)
-            self.native_parent[task] = holder
-        else:
-            self.stale_listing.get(epic, set()).discard(task)
-
-    def native_children(self, epic: IssueRef) -> list[IssueRef]:
-        """The epic's sub-issue list: its children by parent field, plus stale listings."""
+    def listing(self, epic: IssueRef) -> list[IssueRef]:
+        """*epic*'s sub-issue list: its children by parent field, less unlisted, plus stale."""
         listed = {task for task, parent in self.native_parent.items() if parent == epic}
         listed -= self.unlisted.get(epic, set())
         return sorted(listed | self.stale_listing.get(epic, set()), key=lambda ref: ref.slug)
+
+    def add_continuation(self, ref: IssueRef, head: IssueRef, under: IssueRef, k: int = 2) -> None:
+        """Add continuation *k* of *head*'s chain, linked under *under*."""
+        self._ensure(head)
+        self.graph.add_continuation(ref, head, None, k=k)
+        self.native_parent[ref] = under
+
+    def fill(self, container: IssueRef, count: int, *, start: int) -> list[IssueRef]:
+        """Link *count* items numbered from *start* under *container*."""
+        items = [IssueRef("org", "tool", number) for number in range(start, start + count)]
+        for item in items:
+            self.native_parent[item] = container
+        return items
+
+    def _ensure(self, ref: IssueRef) -> None:
+        if ref not in self.graph.issues:
+            kind = self.kinds.get(ref)
+            if kind is not None:
+                labels = ["epic", kind]
+            else:
+                labels = ["epic"] if ref in self.epic_refs else []
+            self.graph.add_issue(ref, title=f"issue {ref.slug}", labels=labels)
+
+    def _state(self, ref: IssueRef) -> str:
+        endpoint = f"repos/{ref.owner}/{ref.repo}/issues/{ref.number}"
+        return self.api_states.get(endpoint, self.epic_state).upper()
+
+    def _load(self) -> None:
+        """Put the parent fields and listings the maps describe into the graph."""
+        refs = {*self.kinds, *self.epic_refs, *self.native_parent}
+        refs |= {parent for parent in self.native_parent.values() if parent is not None}
+        for epic, tasks in (*self.stale_listing.items(), *self.unlisted.items()):
+            refs |= {epic, *tasks}
+        for ref in refs:
+            self._ensure(ref)
+        for ref, issue in self.graph.issues.items():
+            issue.parent = self.native_parent.get(ref)
+            issue.children = self.listing(ref)
+            issue.state = self._state(ref)
+
+    def _store(self) -> None:
+        """Read the graph's parent fields and listings back into the maps."""
+        issues = self.graph.issues
+        fields = {ref: issue.parent for ref, issue in issues.items()}
+        stale = {
+            ref: {c for c in issue.children if issues[c].parent != ref}
+            for ref, issue in issues.items()
+        }
+        unlisted = {
+            ref: {c for c, parent in fields.items() if parent == ref} - set(issue.children)
+            for ref, issue in issues.items()
+        }
+        known = set(self.native_parent)
+        self.native_parent.clear()
+        self.native_parent.update(
+            {ref: parent for ref, parent in fields.items() if parent is not None or ref in known}
+        )
+        self.stale_listing.clear()
+        self.stale_listing.update({ref: kids for ref, kids in stale.items() if kids})
+        self.unlisted.clear()
+        self.unlisted.update({ref: kids for ref, kids in unlisted.items() if kids})
 
     def find_standing_epic(self, kind: epics.StandingKind, home: str, name: str) -> IssueRef | None:
         """The live standing epics: one queue of each kind, an ad-hoc epic per repo."""
@@ -188,12 +301,21 @@ class Env:
 
     def _read_json(self, *args: str) -> object:
         fields = args[-1]
+        if args[:2] == ("issue", "list"):
+            # The chain layer's listing of a repo's continuations.
+            self._load()
+            return self.graph.read_json(*args)
         if args[:2] == ("search", "issues"):
             if isinstance(self.search_results, BaseException):
                 raise self.search_results
             return self.search_results
         if fields == "labels" and int(args[2]) == ITEM.number and self.labels is not None:
             return {"labels": [{"name": name} for name in self.labels]}
+        if fields == "labels" and args[:2] == ("issue", "view"):
+            owner, repo = args[4].split("/", 1)
+            issue = self.graph.issues.get(IssueRef(owner, repo, int(args[2])))
+            if issue is not None and "epic" in issue.labels:
+                return self.graph.read_json(*args)
         if fields == "closedByPullRequestsReferences":
             return {
                 "closedByPullRequestsReferences": [
@@ -207,8 +329,20 @@ class Env:
         """The trust layer's item read: the item's body and comments, any other issue's none.
 
         A closing PR's read answers from *closing_pr_answers*, or as a PR in
-        *closing_prs* whose trusted body closes the item.
+        *closing_prs* whose trusted body closes the item. A sub-issue query
+        or write goes to :attr:`graph`, loaded from the maps first and read
+        back into them after.
         """
+        if query in _GRAPH_QUERIES:
+            if self.listing_error is not None and query == epics._CONTAINER_QUERY:
+                if self.listing_reads_left == 0:
+                    raise self.listing_error
+                self.listing_reads_left -= 1
+            self._load()
+            try:
+                return self.graph.graphql(query, **variables)
+            finally:
+                self._store()
         if query == trust._PR_CLOSING_QUERY:
             repo = f"{variables['owner']}/{variables['name']}"
             url = f"https://github.com/{repo}/pull/{variables['number']}"
@@ -239,6 +373,9 @@ class Env:
                 (repo, int(hit["number"])),
                 trust_stubs.item(body=str(hit.get("body") or ""), author=author),
             )
+        # Every other issue's body (a continuation's, say) as the graph serves it.
+        for key, answer in self.graph.layer.items.items():
+            items.setdefault(key, answer)
         fake = trust_stubs.FakeItems(items)
         return fake(query, **variables)
 
@@ -248,6 +385,15 @@ class Env:
                 raise self.transfer
             return str(self.transfer)
         assert args[0] == "api"
+        if args[-1] == ".node_id":
+            _, owner, repo, _, number = args[1].split("/")
+            ref = IssueRef(owner, repo, int(number))
+            self._ensure(ref)
+            return f"I_{ref.slug}"
+        if args[-1] == ".title":
+            # The chain layer's read of a container's title.
+            self._load()
+            return self.graph.read_output(*args)
         assert args[-1] == ".state"
         if args[1] in self.api_states:
             return self.api_states[args[1]]
@@ -263,14 +409,6 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.queue_kind", side_effect=state.queue_kind),
         patch(f"{_MOD}.epics.container_kind", side_effect=lambda ref: state.kinds.get(ref)),
         patch(f"{_MOD}.epics.is_epic", side_effect=lambda ref: ref in state.epic_refs),
-        patch(
-            f"{_MOD}.epics.native_parent_of",
-            side_effect=lambda ref: state.native_parent.get(ref),
-        ),
-        patch(f"{_MOD}.epics.native_children", side_effect=state.native_children),
-        patch(f"{_MOD}.epics.add_child", state.add_child),
-        patch(f"{_MOD}.epics.reparent_child", state.reparent_child),
-        patch(f"{_MOD}.epics.remove_child", state.remove_child),
         patch(f"{_MOD}.epics.ensure_planning_epic", state.ensure_planning_epic),
         patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
         patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
@@ -333,7 +471,7 @@ def test_route_defer_moves_intake_item_and_records(env: Env) -> None:
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.ensure_deferred_epic.assert_called_once_with("org/.github")
     # The intake parent is replaced atomically, never unlinked first.
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     assert env.native_parent[ITEM] == DEFERRED
     env.run.assert_called_once_with(
         "issue",
@@ -349,7 +487,7 @@ def test_route_defer_moves_intake_item_and_records(env: Env) -> None:
 def test_route_defer_links_before_commenting(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     assert order == ["link", "issue:comment"]
@@ -384,8 +522,8 @@ def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
         "Deferred 2026-10-23: still waiting\nRevisit when: Y ships",
     )
     env.ensure_deferred_epic.assert_not_called()
-    env.add_child.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("add") == []
+    assert env.calls("reparent") == []
 
 
 def test_route_defer_from_planning_removes_in_progress(env: Env) -> None:
@@ -394,7 +532,7 @@ def test_route_defer_from_planning_removes_in_progress(env: Env) -> None:
     env.labels = ["in-progress", "idea"]
     env.comments = ["Some progress note."]
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     env.run.assert_any_call(
         "issue", "edit", "352", "--repo", "org/.github", "--remove-label", "in-progress"
     )
@@ -413,7 +551,7 @@ def test_route_defer_from_adhoc_moves(env: Env) -> None:
     env.parent = ADHOC_DOTGITHUB
     env.native_parent[ITEM] = ADHOC_DOTGITHUB
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     assert _comment_calls(env)[0].args[-1].endswith("\nDeferred from: org/.github#9")
 
 
@@ -422,8 +560,8 @@ def test_route_defer_refuses_development_epic_task(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match=r"org/\.github#400"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.run.assert_not_called()
-    env.add_child.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("add") == []
+    assert env.calls("reparent") == []
     env.ensure_deferred_epic.assert_not_called()
 
 
@@ -437,7 +575,7 @@ def test_route_defer_refuses_unparented(env: Env) -> None:
 
 def _assert_untouched(env: Env) -> None:
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.ensure_deferred_epic.assert_not_called()
 
 
@@ -489,9 +627,6 @@ def _assert_nothing_resolved_or_written(env: Env) -> None:
         env.read_json,
         env.create_issue,
         env.ensure_labels,
-        env.add_child,
-        env.reparent_child,
-        env.remove_child,
         env.ensure_planning_epic,
         env.ensure_intake_epic,
         env.ensure_deferred_epic,
@@ -499,6 +634,7 @@ def _assert_nothing_resolved_or_written(env: Env) -> None:
         env.retarget,
     ):
         mock.assert_not_called()
+    assert env.writes == []
 
 
 @pytest.mark.parametrize(
@@ -643,7 +779,7 @@ def test_route_drop_planning_with_all_epics_closed_closes(env: Env) -> None:
     env.search_results = [_epic_hit(600, "CLOSED")]
     result = route(ITEM, Drop(reason="no longer needed"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.ensure_deferred_epic.assert_not_called()
     env.run.assert_called_once_with(
         "issue",
@@ -687,7 +823,7 @@ def test_route_defer_planning_with_all_epics_closed_moves(env: Env) -> None:
     env.api_states = {"repos/org/.github/issues/600": "closed"}
     env.search_results = [_epic_hit(600, "CLOSED"), _epic_hit(648, "CLOSED")]
     route(ITEM, Defer(reason="on hold", revisit_when="the design settles"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     assert _comment_calls(env)[0].args[-1] == (
         "Deferred 2026-10-23: on hold\nRevisit when: the design settles\n"
         "Deferred from: org/.github#8"
@@ -730,7 +866,7 @@ def test_route_defer_planning_ignores_an_untrusted_planning_line(
     env.search_results = [_epic_hit(648, "OPEN")]
     env.untrusted_hits = {648}
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     err = capsys.readouterr().err
     assert "skipped untrusted content:" in err
     assert "648" in err
@@ -744,7 +880,7 @@ def test_route_defer_planning_ignores_hit_without_the_exact_planning_line(env: E
         _epic_hit(701, "OPEN", body="See Planning: org/.github#352 for context"),
     ]
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
 
 
 def test_route_defer_planning_refuses_a_truncated_search(env: Env) -> None:
@@ -808,7 +944,7 @@ def test_route_one_off_from_planning_moves_under_adhoc(env: Env) -> None:
     assert result == RouteResult(final=new, moved_by="transfer")
     env.resolve_epic_ref.assert_called_once_with("adhoc", repo="org/tool")
     assert env.native_parent[new] == TOOL_ADHOC
-    assert new not in env.native_children(PLANNING)
+    assert new not in env.listing(PLANNING)
     assert _label_removals(env) == []
 
 
@@ -859,7 +995,7 @@ def _closed_planning_item(env: Env) -> None:
 def test_route_one_off_from_planning_removes_in_progress_after_transfer(env: Env) -> None:
     _closed_planning_item(env)
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     new = IssueRef("org", "tool", 900)
@@ -898,7 +1034,7 @@ def test_route_one_off_from_planning_removes_in_progress_same_repo(env: Env) -> 
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
-    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    assert env.calls("reparent") == [(ADHOC_DOTGITHUB, ITEM)]
     env.run.assert_called_once_with(
         "issue", "edit", "352", "--repo", "org/.github", "--remove-label", "in-progress"
     )
@@ -1008,7 +1144,7 @@ def test_route_defer_adhoc_refuses_open_closing_pr(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match=r"https://github\.com/org/\.github/pull/42"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.ensure_deferred_epic.assert_not_called()
 
 
@@ -1020,7 +1156,7 @@ def test_route_defer_adhoc_ignores_closed_pr(env: Env) -> None:
         "https://github.com/org/.github/pull/43": "CLOSED",
     }
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
 
 
 def test_route_defer_comment_failure_after_move_fails_loudly(env: Env) -> None:
@@ -1059,7 +1195,7 @@ def test_route_defer_uses_items_repo_queue_home(env: Env) -> None:
     env.ensure_deferred_epic.return_value = secret_deferred
     route(secret_item, Defer(reason="r", revisit_when="w"), today=TODAY)
     env.ensure_deferred_epic.assert_called_once_with("org/secret")
-    env.add_child.assert_called_once_with(secret_deferred, secret_item)
+    assert env.calls("add") == [(secret_deferred, secret_item)]
 
 
 # -- revive (out of deferred) ------------------------------------------------
@@ -1071,7 +1207,7 @@ def test_route_to_intake_from_deferred(env: Env) -> None:
     result = route(ITEM, ToIntake(), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.ensure_intake_epic.assert_called_once_with("org/.github")
-    env.reparent_child.assert_called_once_with(INTAKE, ITEM)
+    assert env.calls("reparent") == [(INTAKE, ITEM)]
     env.run.assert_not_called()
 
 
@@ -1079,14 +1215,14 @@ def test_route_to_intake_refused_from_intake(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="the intake route is not allowed"):
         route(ITEM, ToIntake(), today=TODAY)
     env.ensure_intake_epic.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
 
 
 def test_route_planning_from_deferred(env: Env) -> None:
     env.parent = DEFERRED
     env.native_parent[ITEM] = DEFERRED
     route(ITEM, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
 
 
 def test_route_planning_from_adhoc_reparents(env: Env) -> None:
@@ -1096,8 +1232,8 @@ def test_route_planning_from_adhoc_reparents(env: Env) -> None:
     result = route(ITEM, ToPlanning(), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.ensure_planning_epic.assert_called_once_with("org/.github")
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
+    assert env.calls("add") == []
     env.run.assert_not_called()
 
 
@@ -1114,7 +1250,7 @@ def test_route_planning_from_adhoc_refuses_open_closing_pr(env: Env) -> None:
     assert "https://github.com/org/.github/pull/42" in message
     assert "routing to planning it would strand that work" in message
     env.ensure_planning_epic.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.run.assert_not_called()
 
 
@@ -1126,7 +1262,7 @@ def test_route_planning_from_adhoc_ignores_closed_pr(env: Env) -> None:
         "https://github.com/org/.github/pull/43": "CLOSED",
     }
     route(ITEM, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
 
 
 def test_route_planning_from_intake_does_not_read_closing_prs(env: Env) -> None:
@@ -1163,7 +1299,7 @@ def test_route_defer_adhoc_untrusted_closing_pr_does_not_hold_it(
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _open_pr(env, author=trust_stubs.OUTSIDER)
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     err = capsys.readouterr().err
     assert "skipped untrusted content: org/.github#42 pr drive-by" in err
     assert "open PR org/.github#42 would close it by a reference the trust layer" in err
@@ -1173,20 +1309,20 @@ def test_route_defer_adhoc_untrusted_closing_pr_does_not_hold_it(
 def test_route_planning_adhoc_untrusted_edit_of_closing_pr_does_not_hold_it(env: Env) -> None:
     _open_pr(env, editor=trust_stubs.OUTSIDER)
     route(ITEM, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
 
 
 def test_route_defer_adhoc_untrusted_link_does_not_hold_it(env: Env) -> None:
     _open_pr(env, body="No closing line.", links=((trust_stubs.OUTSIDER, "org/.github", 352),))
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
 
 
 def test_route_defer_adhoc_trusted_link_holds_it(env: Env) -> None:
     _open_pr(env, body="No closing line.", links=((trust_stubs.AGENT, "org/.github", 352),))
     with pytest.raises(RouteRefusedError, match="deferring it would strand that work"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
 
 
 def test_route_defer_adhoc_pr_of_another_repo_does_not_hold_it(env: Env) -> None:
@@ -1196,7 +1332,7 @@ def test_route_defer_adhoc_pr_of_another_repo_does_not_hold_it(env: Env) -> None
     url = "https://github.com/org/tool/pull/7"
     env.closing_pr_answers[url] = trust_stubs.closing_pr("org/tool", 7, _ITEM_REF, state="OPEN")
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_called_once_with(DEFERRED, ITEM)
+    assert env.calls("reparent") == [(DEFERRED, ITEM)]
     assert env.closing_pr_reads == [url]
 
 
@@ -1207,7 +1343,7 @@ def test_route_defer_adhoc_closing_pr_read_failure_moves_nothing(env: Env) -> No
     answer["closingIssuesReferences"]["totalCount"] = 30
     with pytest.raises(trust.TrustReadError, match="truncated"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.ensure_deferred_epic.assert_not_called()
 
 
@@ -1216,7 +1352,7 @@ def test_route_defer_adhoc_closing_pr_without_a_pr_url_fails(env: Env) -> None:
     env.closing_prs = {"https://github.com/org/.github/issues/42": "OPEN"}
     with pytest.raises(RuntimeError, match="has no PR URL"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     assert env.closing_pr_reads == []
 
 
@@ -1237,7 +1373,7 @@ def test_route_one_off_from_deferred_same_repo_reparents(env: Env) -> None:
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
-    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    assert env.calls("reparent") == [(ADHOC_DOTGITHUB, ITEM)]
     assert _transfer_calls(env) == []
 
 
@@ -1271,7 +1407,7 @@ def test_route_defer_unexpected_issue_view_fails_loudly(env: Env) -> None:
     env.read_json.side_effect = lambda *a: ["not", "a", "dict"]
     with pytest.raises(RuntimeError, match="unexpected 'gh issue view' response"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.run.assert_not_called()
 
 
@@ -1281,7 +1417,7 @@ def test_route_defer_adhoc_closing_pr_without_url_fails_loudly(env: Env) -> None
     env.read_json.side_effect = lambda *a: view
     with pytest.raises(RuntimeError, match="has no URL"):
         route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.run.assert_not_called()
 
 
@@ -1301,7 +1437,7 @@ def test_route_refuses_routes_outside_the_table(
     with pytest.raises(RouteRefusedError, match=f"the {name} route is not allowed"):
         route(ITEM, action, today=TODAY)
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.resolve_epic_ref.assert_not_called()
 
 
@@ -1349,7 +1485,7 @@ def test_route_refuses_planning_item_for_planning(env: Env) -> None:
     env.parent = PLANNING
     with pytest.raises(RouteRefusedError, match="the planning route is not allowed"):
         route(ITEM, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
 
 
 def test_route_runs_under_item_owner_token(env: Env) -> None:
@@ -1372,16 +1508,16 @@ def test_route_planning_reparents_to_planning_epic(env: Env) -> None:
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.ensure_planning_epic.assert_called_once_with("org/.github")
     # The intake parent is replaced atomically, never unlinked first.
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
+    assert env.calls("add") == []
 
 
 def test_route_planning_accepts_unparented_issue(env: Env) -> None:
     env.parent = None
     result = route(ITEM, ToPlanning(), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
-    env.add_child.assert_called_once_with(PLANNING, ITEM)
-    env.reparent_child.assert_not_called()
+    assert env.calls("add") == [(PLANNING, ITEM)]
+    assert env.calls("reparent") == []
 
 
 def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
@@ -1391,7 +1527,7 @@ def test_route_planning_uses_items_repo_queue_home(env: Env) -> None:
     env.native_parent[secret_item] = IssueRef("org", "secret", 1)
     route(secret_item, ToPlanning(), today=TODAY)
     env.ensure_planning_epic.assert_called_once_with("org/secret")
-    env.reparent_child.assert_called_once_with(secret_planning, secret_item)
+    assert env.calls("reparent") == [(secret_planning, secret_item)]
 
 
 def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> None:
@@ -1411,7 +1547,7 @@ def test_route_planning_ensures_in_progress_label_in_items_repo(env: Env) -> Non
         ("org/.github", ("in-progress",)),
         ("org/tool", ("in-progress",)),
     ]
-    env.reparent_child.assert_called_once_with(PLANNING, tool_item)
+    assert env.calls("reparent") == [(PLANNING, tool_item)]
 
 
 # -- planning: a follow-on brainstorm out of a development epic (#4296) -------
@@ -1429,8 +1565,8 @@ def test_route_planning_moves_brainstorm_from_development_epic(env: Env) -> None
     result = route(ITEM, ToPlanning(), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
     # The development epic is replaced atomically, never unlinked first.
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
-    env.remove_child.assert_not_called()
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
+    assert env.calls("remove") == []
     assert env.native_parent[ITEM] == PLANNING
     assert [c.args for c in _comment_calls(env)] == [
         (
@@ -1457,7 +1593,7 @@ def test_route_planning_moves_brainstorm_from_development_epic(env: Env) -> None
 def test_route_planning_records_brainstorm_only_after_the_move(env: Env) -> None:
     _brainstorm(env)
     order: list[str] = []
-    env.reparent_child.side_effect = lambda epic, task: order.append("link")
+    env.effects["reparent"] = lambda *a: order.append("link")
     env.run.side_effect = lambda *args: order.append("comment")
     route(ITEM, ToPlanning(), today=TODAY)
     assert order == ["link", "comment", "comment"]
@@ -1548,14 +1684,14 @@ def test_route_one_off_same_repo_reparents_only(env: Env) -> None:
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.resolve_epic_ref.assert_called_once_with("adhoc", repo="org/.github")
     assert _transfer_calls(env) == []
-    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    assert env.calls("reparent") == [(ADHOC_DOTGITHUB, ITEM)]
     env.create_issue.assert_not_called()
 
 
 def test_route_one_off_same_repo_parent_mismatch_fails_loudly(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
-    env.reparent_child.side_effect = None  # the link never takes
+    env.effects["reparent"] = _no_effect  # the link never takes
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/.github"), today=TODAY)
     assert str(excinfo.value) == (
@@ -1575,8 +1711,8 @@ def test_route_one_off_transfers_then_links(env: Env) -> None:
     env.resolve_epic_ref.assert_called_once_with("adhoc", repo="org/tool")
     # The transfer dropped the sub-issue link; it is still linked with
     # replaceParent, in case the old parent surfaces before the link lands.
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == [(TOOL_ADHOC, new)]
+    assert env.calls("add") == []
     assert env.native_parent[new] == TOOL_ADHOC
     # One settle wait before the first read, one more before the confirming read.
     assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
@@ -1589,8 +1725,8 @@ def test_route_one_off_transfer_kept_link_is_replaced(env: Env) -> None:
     env.native_parent[new] = INTAKE
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == [(TOOL_ADHOC, new)]
+    assert env.calls("add") == []
     assert env.native_parent[new] == TOOL_ADHOC
 
 
@@ -1608,7 +1744,7 @@ def test_route_one_off_transfer_late_parent_is_replaced_again(
     env.sleep.side_effect = carry_over
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new), call(TOOL_ADHOC, new)]
+    assert env.calls("reparent") == [(TOOL_ADHOC, new), (TOOL_ADHOC, new)]
     assert env.native_parent[new] == TOOL_ADHOC
     err = capsys.readouterr().err
     assert "org/tool#900 is under org/.github#7 after linking it under org/.github#11" in err
@@ -1620,14 +1756,14 @@ def test_route_one_off_transfer_parent_mismatch_fails_loudly(
 ) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = INTAKE
-    env.reparent_child.side_effect = None  # the link never takes
+    env.effects["reparent"] = _no_effect  # the link never takes
     with pytest.raises(RuntimeError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert "but it is under org/.github#7, not under org/.github#11" in message
     assert "half-applied" in message
     assert "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'" in message
-    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+    assert len(env.calls("reparent")) == intake_route._SETTLE_ROUNDS
     assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
 
 
@@ -1647,7 +1783,7 @@ def test_route_one_off_transfer_parent_reverting_after_a_matching_read_is_replac
     env.sleep.side_effect = carry_over_after_first_read
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new), call(TOOL_ADHOC, new)]
+    assert env.calls("reparent") == [(TOOL_ADHOC, new), (TOOL_ADHOC, new)]
     assert env.native_parent[new] == TOOL_ADHOC
     err = capsys.readouterr().err
     assert "org/tool#900 is under org/.github#7 after linking it under org/.github#11" in err
@@ -1674,7 +1810,7 @@ def test_route_one_off_transfer_parent_that_never_holds_fails_loudly(env: Env) -
     )
     assert "not under org/.github#11; the route is half-applied" in message
     assert "vrg-epic-move --task 'org/tool#900' --epic 'org/.github#11'" in message
-    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+    assert len(env.calls("reparent")) == intake_route._SETTLE_ROUNDS
 
 
 def test_route_one_off_transfer_still_listed_under_intake_fails_loudly(
@@ -1715,7 +1851,7 @@ def test_route_one_off_transfer_stale_listing_that_clears_settles(env: Env) -> N
     env.sleep.side_effect = listing_catches_up
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, new)
+    assert env.calls("reparent") == [(TOOL_ADHOC, new)]
 
 
 def test_route_one_off_transfer_duplicate_refusal_clears_the_old_link(
@@ -1729,7 +1865,7 @@ def test_route_one_off_transfer_duplicate_refusal_clears_the_old_link(
     env.stale_listing[TOOL_ADHOC] = {new}
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    env.remove_child.assert_called_once_with(INTAKE, new)
+    assert env.calls("remove") == [(INTAKE, new)]
     assert env.native_parent[new] == TOOL_ADHOC
     # The recovery is followed by the settle loop's two-read check.
     assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
@@ -1748,7 +1884,7 @@ def test_route_one_off_same_repo_rerun_duplicate_refusal_clears_and_settles(env:
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     result = route(ITEM, OneOff(repo="org/.github"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
-    env.remove_child.assert_called_once_with(INTAKE, ITEM)
+    assert env.calls("remove") == [(INTAKE, ITEM)]
     assert env.native_parent[ITEM] == ADHOC_DOTGITHUB
     # A recovered link gets the settle loop's read-back, not a single read.
     assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
@@ -1758,7 +1894,7 @@ def test_route_one_off_same_repo_without_refusal_reads_once(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     route(ITEM, OneOff(repo="org/.github"), today=TODAY)
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
     env.sleep.assert_not_called()
 
 
@@ -1769,8 +1905,8 @@ def test_route_one_off_duplicate_refusal_while_unparented_relinks(env: Env) -> N
     env.stale_listing[TOOL_ADHOC] = {new}
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=new, moved_by="transfer")
-    env.remove_child.assert_called_once_with(TOOL_ADHOC, new)
-    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, new)] * 2
+    assert env.calls("remove") == [(TOOL_ADHOC, new)]
+    assert env.calls("reparent") == [(TOOL_ADHOC, new)] * 2
     assert env.native_parent[new] == TOOL_ADHOC
 
 
@@ -1779,8 +1915,8 @@ def test_route_one_off_duplicate_refusal_not_listed_fails_cleanly(env: Env) -> N
     env.native_parent[new] = INTAKE
     # GitHub refuses the link as a duplicate, but the target's list does not
     # show the item: no known state to recover from, so nothing is removed.
-    env.reparent_child.side_effect = github.GitHubAPIError(
-        1, ["gh", "api", "graphql"], "", DUPLICATE_REFUSAL
+    env.effects["reparent"] = _raising(
+        github.GitHubAPIError(1, ["gh", "api", "graphql"], "", DUPLICATE_REFUSAL)
     )
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
@@ -1790,20 +1926,23 @@ def test_route_one_off_duplicate_refusal_not_listed_fails_cleanly(env: Env) -> N
         "org/.github#11 does not list it; it is under org/.github#7; the route is "
         "half-applied. Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
     )
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_duplicate_refusal_listing_read_failure_fails_cleanly(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = INTAKE
     env.stale_listing[TOOL_ADHOC] = {new}
-    with (
-        patch(
-            f"{_MOD}.epics.native_children",
-            side_effect=github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"),
-        ),
-        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
-    ):
+
+    def refuse_then_fail_reads(_parent: IssueRef, _child: IssueRef, apply: Any) -> None:
+        # Every listing read after the refused link fails, but the one that
+        # checks whether the refusal was a full container.
+        env.listing_error = github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502")
+        env.listing_reads_left = 1
+        apply()
+
+    env.effects["reparent"] = refuse_then_fail_reads
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert message.startswith(
@@ -1815,15 +1954,15 @@ def test_route_one_off_duplicate_refusal_listing_read_failure_fails_cleanly(env:
         "); it is under org/.github#7; the route is half-applied. "
         "Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
     )
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_duplicate_refusal_remove_failure_fails_cleanly(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = INTAKE
     env.stale_listing[TOOL_ADHOC] = {new}
-    env.remove_child.side_effect = github.GitHubAPIError(
-        1, ["gh", "api", "graphql"], "", "gh: HTTP 502"
+    env.effects["remove"] = _raising(
+        github.GitHubAPIError(1, ["gh", "api", "graphql"], "", "gh: HTTP 502")
     )
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
@@ -1846,7 +1985,7 @@ def test_route_one_off_duplicate_refusal_that_persists_fails_cleanly(
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = INTAKE
     env.stale_listing[TOOL_ADHOC] = {new}
-    env.remove_child.side_effect = None  # the removal never takes
+    env.effects["remove"] = _no_effect  # the removal never takes
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     # vrg-epic-move would hit the same refusal: name the fix that works.
@@ -1856,14 +1995,14 @@ def test_route_one_off_duplicate_refusal_that_persists_fails_cleanly(
         "the link: Issue may not contain duplicate sub-issues); the route is half-applied. "
         "Set the parent of org/tool#900 to org/.github#11 in the GitHub UI"
     )
-    assert env.remove_child.call_count == intake_route._SETTLE_ROUNDS
+    assert len(env.calls("remove")) == intake_route._SETTLE_ROUNDS
     assert capsys.readouterr().err.count("replacing the parent") == intake_route._SETTLE_ROUNDS
 
 
 def test_route_one_off_other_link_error_fails_cleanly(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
-    env.reparent_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502")
+    env.effects["reparent"] = _raising(github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"))
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/.github"), today=TODAY)
     message = str(excinfo.value)
@@ -1877,19 +2016,19 @@ def test_route_one_off_other_link_error_fails_cleanly(env: Env) -> None:
         "); the route is half-applied. Check where it is with vrg-queue, then fix it "
         "with: vrg-epic-move --task 'org/.github#352' --epic 'org/.github#9'"
     )
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_transfer_read_back_error_fails_cleanly(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
-    # The link lands, but reading the old epic's sub-issues back fails.
-    with (
-        patch(
-            f"{_MOD}.epics.native_children",
-            side_effect=github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502"),
-        ),
-        pytest.raises(intake_route.RouteHalfAppliedError) as excinfo,
-    ):
+    # The link lands, but reading the sub-issues back fails.
+
+    def link_then_fail_reads(_parent: IssueRef, _child: IssueRef, apply: Any) -> None:
+        apply()
+        env.listing_error = github.GitHubAPIError(1, ["gh"], "", "gh: HTTP 502")
+
+    env.effects["reparent"] = link_then_fail_reads
+    with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
     assert message.startswith(
@@ -1901,7 +2040,7 @@ def test_route_one_off_transfer_read_back_error_fails_cleanly(env: Env) -> None:
 
 
 def test_route_one_off_missing_token_is_left_as_it_came(env: Env) -> None:
-    env.reparent_child.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "no token")
+    env.effects["reparent"] = _raising(github.MissingGitHubTokenError(1, ["gh"], "", "no token"))
     with pytest.raises(github.MissingGitHubTokenError):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
@@ -1912,15 +2051,15 @@ def test_route_planning_duplicate_refusal_is_not_recovered(env: Env) -> None:
     env.stale_listing[PLANNING] = {ITEM}
     with pytest.raises(github.GitHubAPIError):
         route(ITEM, ToPlanning(), today=TODAY)
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_already_under_epic_is_left(env: Env) -> None:
     new = IssueRef("org", "tool", 900)
     env.native_parent[new] = TOOL_ADHOC
     route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == []
+    assert env.calls("add") == []
 
 
 def test_route_refuses_closed_target_epic(env: Env) -> None:
@@ -1934,8 +2073,8 @@ def test_route_refuses_closed_target_epic(env: Env) -> None:
         route(ITEM, OneOff(repo="org/.github", epic="#50"), today=TODAY)
     env.resolve_epic_ref.assert_called_once_with("#50", repo="org/.github")
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == []
+    assert env.calls("add") == []
     assert env.native_parent[ITEM] == INTAKE
 
 
@@ -1947,8 +2086,8 @@ def test_route_refuses_closed_target_epic_before_transfer(env: Env) -> None:
     with pytest.raises(epics.ClosedEpicError):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
-    env.remove_child.assert_not_called()
+    assert env.calls("reparent") == []
+    assert env.calls("remove") == []
     env.create_issue.assert_not_called()
     assert not [c for c in env.read_output.call_args_list if c.args[:2] == ("issue", "transfer")]
 
@@ -1968,7 +2107,7 @@ def test_route_one_off_falls_back_to_recreate_when_transfer_fails(
     order: list[str] = []
     env.create_issue.side_effect = lambda **kw: order.append("create") or env.created_url
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
-    env.add_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["add"] = lambda *a: order.append("link") or a[2]()
 
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
 
@@ -1992,7 +2131,7 @@ def test_route_one_off_falls_back_to_recreate_when_transfer_fails(
         "--comment",
         f"Moved to {env.created_url}",
     )
-    env.add_child.assert_called_once_with(TOOL_ADHOC, new)
+    assert env.calls("add") == [(TOOL_ADHOC, new)]
     # Never half-moved: the copy exists before the original closes, then it is linked.
     assert order == ["create", "issue:close", "link"]
     err = capsys.readouterr().err
@@ -2001,16 +2140,16 @@ def test_route_one_off_falls_back_to_recreate_when_transfer_fails(
     assert f"); recreated as {env.created_url}" in err
     assert "label(s) not carried to org/tool#901 (not in the label registry): off-registry" in err
     # A recreated issue has no parent to carry over: no settle wait.
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.sleep.assert_not_called()
 
 
 def test_route_recreate_parent_mismatch_fails_loudly(env: Env) -> None:
     env.transfer = github.GitHubAPIError(1, ["gh"], "", "HTTP 422")
-    env.add_child.side_effect = None  # the link never takes
+    env.effects["add"] = _no_effect  # the link never takes
     with pytest.raises(RuntimeError, match=r"but it is unparented, not under org/\.github#11"):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    env.add_child.assert_called_once_with(TOOL_ADHOC, IssueRef("org", "tool", 901))
+    assert env.calls("add") == [(TOOL_ADHOC, IssueRef("org", "tool", 901))]
 
 
 def test_route_recreate_with_empty_body_and_no_labels(
@@ -2038,7 +2177,7 @@ def test_route_one_off_unreadable_transfer_output_fails_loudly(env: Env) -> None
     with pytest.raises(RuntimeError, match="could not read the new issue URL"):
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     env.create_issue.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("add") == []
 
 
 def test_route_one_off_refuses_cross_org_repo(env: Env) -> None:
@@ -2065,8 +2204,8 @@ def test_one_off_refuses_hoshin_sentinel(env: Env) -> None:
     env.resolve_epic_ref.assert_not_called()
     env.create_issue.assert_not_called()
     assert _transfer_calls(env) == []
-    env.add_child.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("add") == []
+    assert env.calls("reparent") == []
 
 
 @pytest.mark.parametrize(
@@ -2096,8 +2235,8 @@ def test_one_off_refuses_hoshin_epic_ref(env: Env) -> None:
     with pytest.raises(RouteRefusedError, match="org/.github#77 is the hoshin epic"):
         route(ITEM, OneOff(repo="org/tool", epic="org/.github#77"), today=TODAY)
     assert _transfer_calls(env) == []
-    env.add_child.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("add") == []
+    assert env.calls("reparent") == []
 
 
 @pytest.mark.parametrize(
@@ -2124,8 +2263,8 @@ def test_route_refuses_item_under_operations(env: Env, action: RouteAction) -> N
     )
     _assert_untouched(env)
     env.resolve_epic_ref.assert_not_called()
-    env.add_child.assert_not_called()
-    env.remove_child.assert_not_called()
+    assert env.calls("add") == []
+    assert env.calls("remove") == []
     assert _transfer_calls(env) == []
 
 
@@ -2136,7 +2275,7 @@ def test_route_one_off_into_operations_allowed(env: Env) -> None:
     result = route(ITEM, OneOff(repo="org/.github", epic="operations"), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.resolve_epic_ref.assert_called_once_with("operations", repo="org/.github")
-    env.reparent_child.assert_called_once_with(OPERATIONS, ITEM)
+    assert env.calls("reparent") == [(OPERATIONS, ITEM)]
     assert env.native_parent[ITEM] == OPERATIONS
 
 
@@ -2149,7 +2288,7 @@ def test_route_one_off_rerun_into_operations_clears_a_stale_queue_listing(env: E
     env.stale_listing[INTAKE] = {moved}
     result = route(moved, OneOff(repo="org/tool", epic="operations"), today=TODAY)
     assert result == RouteResult(final=moved, moved_by="none")
-    env.remove_child.assert_called_once_with(INTAKE, moved)
+    assert env.calls("remove") == [(INTAKE, moved)]
     assert env.native_parent[moved] == OPERATIONS
     env.resolve_epic_ref.assert_not_called()
 
@@ -2217,7 +2356,7 @@ def test_route_security_lines_untrusted_body_raises(
     env.run.assert_not_called()
     env.read_output.assert_not_called()
     env.create_issue.assert_not_called()
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None:
@@ -2227,6 +2366,8 @@ def test_recreate_copies_the_trusted_body_read_before_the_move(env: Env) -> None
 
     def graphql(query: str, **variables: Any) -> dict[str, Any]:
         nonlocal reads
+        if query in _GRAPH_QUERIES:
+            return env.graphql(query, **variables)
         reads += 1
         return trust_stubs.item(body=str(trusted_body))
 
@@ -2295,7 +2436,7 @@ def test_recreate_security_item_retarget_failure_leaves_original_open(env: Env) 
         in message
     )
     env.run.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("add") == []
 
 
 def test_transfer_security_item_retargets_to_final(env: Env) -> None:
@@ -2336,7 +2477,7 @@ def test_transfer_retarget_failure_reports_moved_not_refused(env: Env) -> None:
 
 def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
     env.make_security_item()
-    env.reparent_child.side_effect = None  # the link never takes
+    env.effects["reparent"] = _no_effect  # the link never takes
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2351,7 +2492,7 @@ def test_transfer_parent_mismatch_also_names_the_advisory(env: Env) -> None:
 
 def test_transfer_link_error_is_half_applied_and_names_the_advisory(env: Env) -> None:
     env.make_security_item()
-    env.reparent_child.side_effect = RuntimeError("GraphQL errors: [boom]")
+    env.effects["reparent"] = _raising(RuntimeError("GraphQL errors: [boom]"))
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     # The item has moved, so a failed link leaves the route half-applied
@@ -2469,7 +2610,7 @@ def test_transfer_first_retarget_failure_names_both_advisories(env: Env) -> None
 
 def test_transfer_parent_mismatch_names_every_advisory(env: Env) -> None:
     _name_two_advisories(env)
-    env.reparent_child.side_effect = None  # the link never takes
+    env.effects["reparent"] = _no_effect  # the link never takes
     with pytest.raises(RuntimeError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2512,7 +2653,7 @@ def test_recreate_second_retarget_failure_leaves_original_open(env: Env) -> None
     assert f"retarget {GHSA} " not in message
     assert "org/.github#352 is left open" in message
     env.run.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("add") == []
 
 
 def test_split_refuses_an_item_naming_several_advisories(env: Env) -> None:
@@ -2623,36 +2764,36 @@ MOVED = IssueRef("org", "tool", 900)
 def test_route_one_off_unlinks_from_the_queue_before_the_transfer(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     order: list[str] = []
-    env.remove_child.side_effect = lambda *a: order.append("unlink") or env.detach(*a)
+    env.effects["remove"] = lambda *a: order.append("unlink") or a[2]()
     env.read_output.side_effect = lambda *a: (
         (order.append("transfer") if a[:2] == ("issue", "transfer") else None)
         or env._read_output(*a)
     )
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="transfer")
-    env.remove_child.assert_called_once_with(INTAKE, ITEM)
+    assert env.calls("remove") == [(INTAKE, ITEM)]
     assert order == ["unlink", "transfer"]
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, MOVED)
+    assert env.calls("reparent") == [(TOOL_ADHOC, MOVED)]
     assert env.native_parent[MOVED] == TOOL_ADHOC
 
 
 def test_route_one_off_body_only_parent_is_not_unlinked(env: Env) -> None:
     # parent_of reads the body Parent: line; there is no native link to remove.
     route(ITEM, OneOff(repo="org/tool"), today=TODAY)
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_same_repo_is_not_unlinked_first(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.resolve_epic_ref.return_value = ADHOC_DOTGITHUB
     route(ITEM, OneOff(repo="org/.github"), today=TODAY)
-    env.remove_child.assert_not_called()
-    env.reparent_child.assert_called_once_with(ADHOC_DOTGITHUB, ITEM)
+    assert env.calls("remove") == []
+    assert env.calls("reparent") == [(ADHOC_DOTGITHUB, ITEM)]
 
 
 def test_route_one_off_unlink_failure_moves_nothing(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
-    env.remove_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    env.effects["remove"] = _raising(github.GitHubAPIError(1, ["gh"], "", "HTTP 502"))
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2667,7 +2808,7 @@ def test_route_one_off_unlink_failure_moves_nothing(env: Env) -> None:
 
 def test_route_one_off_unlink_that_does_not_take_moves_nothing(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
-    env.remove_child.side_effect = None  # the unlink never takes
+    env.effects["remove"] = _no_effect  # the unlink never takes
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
@@ -2681,7 +2822,7 @@ def test_route_one_off_refused_transfer_relinks_before_the_recreate(env: Env) ->
     env.native_parent[ITEM] = INTAKE
     env.transfer = github.GitHubAPIError(1, ["gh"], "", "HTTP 422")
     order: list[str] = []
-    env.add_child.side_effect = lambda *a: order.append(f"link {a[0].slug}") or env.attach(*a)
+    env.effects["add"] = lambda *a: order.append(f"link {a[0].slug}") or a[2]()
     env.create_issue.side_effect = lambda **kw: order.append("create") or env.created_url
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=IssueRef("org", "tool", 901), moved_by="recreate")
@@ -2693,7 +2834,7 @@ def test_route_one_off_refused_transfer_relinks_before_the_recreate(env: Env) ->
 def test_route_one_off_relink_failure_after_refused_transfer_fails_loudly(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     env.transfer = github.GitHubAPIError(1, ["gh"], "", "HTTP 422")
-    env.add_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    env.effects["add"] = _raising(github.GitHubAPIError(1, ["gh"], "", "HTTP 502"))
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2717,14 +2858,14 @@ def test_route_one_off_rerun_clears_a_stale_queue_listing(
     _moved_but_still_listed(env)
     result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
-    env.remove_child.assert_called_once_with(INTAKE, MOVED)
+    assert env.calls("remove") == [(INTAKE, MOVED)]
     assert env.native_parent[MOVED] == TOOL_ADHOC
-    assert MOVED not in env.native_children(INTAKE)
+    assert MOVED not in env.listing(INTAKE)
     # Read back twice, a settle delay apart.
     assert env.sleep.call_args_list == [call(intake_route._SETTLE_SECONDS)] * 2
     # Never creates or links anything.
     env.resolve_epic_ref.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     assert _transfer_calls(env) == []
     assert (
         "intake-route: org/tool#900 is under org/.github#11, but org/.github#7 still lists "
@@ -2737,7 +2878,7 @@ def test_route_one_off_rerun_as_the_half_applied_message_prints_clears_it(env: E
     _moved_but_still_listed(env)
     result = route(MOVED, OneOff(repo="org/tool", epic="org/.github#11"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
-    env.remove_child.assert_called_once_with(INTAKE, MOVED)
+    assert env.calls("remove") == [(INTAKE, MOVED)]
 
 
 def test_route_one_off_rerun_clears_a_stale_listing_under_a_finite_epic(env: Env) -> None:
@@ -2748,7 +2889,7 @@ def test_route_one_off_rerun_clears_a_stale_listing_under_a_finite_epic(env: Env
     env.resolve_epic_ref.return_value = finite
     result = route(MOVED, OneOff(repo="org/tool", epic="#50"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
-    env.remove_child.assert_called_once_with(PLANNING, MOVED)
+    assert env.calls("remove") == [(PLANNING, MOVED)]
     # The re-run's target goes through the shared resolution with no sentinel,
     # so a continuation's ref would mean its head and nothing is created.
     env.resolve_epic_ref.assert_called_once_with("#50", repo="org/tool", sentinels=False)
@@ -2759,7 +2900,7 @@ def test_route_one_off_rerun_with_no_stale_listing_is_still_refused(env: Env) ->
     env.native_parent[MOVED] = TOOL_ADHOC
     with pytest.raises(RouteRefusedError, match="the one-off route is not allowed from ad-hoc"):
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
     env.sleep.assert_not_called()
 
 
@@ -2782,8 +2923,8 @@ def test_route_one_off_rerun_off_target_is_refused_untouched(
     env.stale_listing[INTAKE] = {MOVED}
     with pytest.raises(RouteRefusedError):
         route(MOVED, action, today=TODAY)
-    env.remove_child.assert_not_called()
-    assert MOVED in env.native_children(INTAKE)
+    assert env.calls("remove") == []
+    assert MOVED in env.listing(INTAKE)
 
 
 def test_route_one_off_rerun_without_a_target_adhoc_epic_is_refused(env: Env) -> None:
@@ -2791,13 +2932,13 @@ def test_route_one_off_rerun_without_a_target_adhoc_epic_is_refused(env: Env) ->
     env.adhoc_epics.clear()  # never created by a refused route
     with pytest.raises(RouteRefusedError):
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
-    env.remove_child.assert_not_called()
+    assert env.calls("remove") == []
     env.resolve_epic_ref.assert_not_called()
 
 
 def test_route_one_off_rerun_listing_that_stays_fails_loudly(env: Env) -> None:
     _moved_but_still_listed(env)
-    env.remove_child.side_effect = None  # the removal never takes
+    env.effects["remove"] = _no_effect  # the removal never takes
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
@@ -2819,7 +2960,7 @@ def test_route_one_off_rerun_parent_that_moves_fails_loudly(env: Env) -> None:
 
 def test_route_one_off_rerun_remove_failure_fails_loudly(env: Env) -> None:
     _moved_but_still_listed(env)
-    env.remove_child.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 502")
+    env.effects["remove"] = _raising(github.GitHubAPIError(1, ["gh"], "", "HTTP 502"))
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2833,7 +2974,7 @@ def test_route_one_off_rerun_remove_failure_fails_loudly(env: Env) -> None:
 
 def test_route_one_off_rerun_missing_token_is_left_as_it_came(env: Env) -> None:
     _moved_but_still_listed(env)
-    env.remove_child.side_effect = github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN")
+    env.effects["remove"] = _raising(github.MissingGitHubTokenError(1, ["gh"], "", "GH_TOKEN"))
     with pytest.raises(github.MissingGitHubTokenError):
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
 
@@ -2850,16 +2991,19 @@ def test_route_one_off_rerun_relinks_before_clearing_when_the_target_lacks_it(
 ) -> None:
     _parent_field_only(env)
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.link(*a)
-    env.remove_child.side_effect = lambda *a: order.append("unlink") or env.detach(*a)
-    result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
+    env.effects["remove"] = lambda *a: order.append("unlink") or a[2]()
+    with patch.object(epic_chain, "relink", wraps=epic_chain.relink) as relink:
+        result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
+    # The forced re-link goes into the container the parent field names (#4291).
+    assert relink.call_args_list == [call(TOOL_ADHOC, MOVED)]
     # Linked under the target first, so removing the queue listing cannot orphan it.
     assert order == ["link", "unlink"]
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, MOVED)
-    env.remove_child.assert_called_once_with(INTAKE, MOVED)
-    assert MOVED in env.native_children(TOOL_ADHOC)
-    assert MOVED not in env.native_children(INTAKE)
+    assert env.calls("reparent") == [(TOOL_ADHOC, MOVED)]
+    assert env.calls("remove") == [(INTAKE, MOVED)]
+    assert MOVED in env.listing(TOOL_ADHOC)
+    assert MOVED not in env.listing(INTAKE)
     err = capsys.readouterr().err
     assert (
         "intake-route: org/tool#900's parent reads org/.github#11, but org/.github#11 does "
@@ -2873,13 +3017,13 @@ def test_route_one_off_rerun_relink_with_no_queue_listing_settles(env: Env) -> N
     env.unlisted[TOOL_ADHOC] = {MOVED}
     result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
-    env.reparent_child.assert_called_once_with(TOOL_ADHOC, MOVED)
-    env.remove_child.assert_not_called()
+    assert env.calls("reparent") == [(TOOL_ADHOC, MOVED)]
+    assert env.calls("remove") == []
 
 
 def test_route_one_off_rerun_relink_that_does_not_list_it_removes_nothing(env: Env) -> None:
     _parent_field_only(env)
-    env.reparent_child.side_effect = None  # the link never lands
+    env.effects["reparent"] = _no_effect  # the link never lands
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(MOVED, OneOff(repo="org/tool"), today=TODAY)
     message = str(excinfo.value)
@@ -2887,8 +3031,8 @@ def test_route_one_off_rerun_relink_that_does_not_list_it_removes_nothing(env: E
         "linked org/tool#900 under org/.github#11 again, but org/.github#11 still does not "
         "list it; no queue listing was removed."
     )
-    env.remove_child.assert_not_called()
-    assert MOVED in env.native_children(INTAKE)
+    assert env.calls("remove") == []
+    assert MOVED in env.listing(INTAKE)
 
 
 def test_route_one_off_transfer_link_the_target_does_not_list_is_linked_again(
@@ -2905,7 +3049,7 @@ def test_route_one_off_transfer_link_the_target_does_not_list_is_linked_again(
     env.sleep.side_effect = hide_after_first_link
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="transfer")
-    assert env.reparent_child.call_args_list == [call(TOOL_ADHOC, MOVED)] * 2
+    assert env.calls("reparent") == [(TOOL_ADHOC, MOVED)] * 2
     err = capsys.readouterr().err
     assert (
         "org/tool#900 is not listed as a sub-issue of org/.github#11 (its parent reads "
@@ -2914,9 +3058,7 @@ def test_route_one_off_transfer_link_the_target_does_not_list_is_linked_again(
 
 
 def test_route_one_off_transfer_never_listed_names_the_rerun(env: Env) -> None:
-    env.reparent_child.side_effect = lambda *a: (
-        env.link(*a) or env.unlisted.setdefault(TOOL_ADHOC, set()).add(MOVED)
-    )
+    env.effects["reparent"] = lambda *a: a[2]() or env.graph.unlist(TOOL_ADHOC, MOVED)
     with pytest.raises(intake_route.RouteHalfAppliedError) as excinfo:
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert str(excinfo.value) == (
@@ -2925,7 +3067,7 @@ def test_route_one_off_transfer_never_listed_names_the_rerun(env: Env) -> None:
         "the route is half-applied. Fix it with: vrg-intake-route 'org/tool#900' one-off "
         "--repo org/tool --epic 'org/.github#11'"
     )
-    assert env.reparent_child.call_count == intake_route._SETTLE_ROUNDS
+    assert len(env.calls("reparent")) == intake_route._SETTLE_ROUNDS
 
 
 def test_route_one_off_same_repo_parent_field_only_fails_loudly(env: Env) -> None:
@@ -3027,8 +3169,8 @@ def test_size_planning_item(env: Env) -> None:
         ),
     ]
     env.ensure_labels.assert_called_once_with("org/.github", ["epic-size:M"])
-    env.reparent_child.assert_not_called()
-    env.add_child.assert_not_called()
+    assert env.calls("reparent") == []
+    assert env.calls("add") == []
 
 
 def test_size_removes_every_other_size_label(env: Env) -> None:
@@ -3072,7 +3214,7 @@ def test_size_deferred_item(env: Env) -> None:
     route(ITEM, SizeItem(SIZING), today=TODAY)
     assert _sizing_calls(env)[0] == _comment_args(SIZING_BODY)
     # Sizing a deferred item moves nothing.
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     assert env.native_parent[ITEM] == DEFERRED
 
 
@@ -3169,7 +3311,7 @@ def test_planning_with_sizing(env: Env) -> None:
     env.native_parent[ITEM] = INTAKE
     _sized_labels(env, "bug")
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     result = route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
     assert result == RouteResult(final=ITEM, moved_by="none")
@@ -3185,7 +3327,7 @@ def test_planning_from_adhoc_with_sizing(env: Env) -> None:
     env.native_parent[ITEM] = ADHOC_DOTGITHUB
     _sized_labels(env, "bug")
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     route(ITEM, ToPlanning(sizing=SIZING), today=TODAY)
     assert order == ["link", "issue:comment", "issue:edit"]
@@ -3198,7 +3340,7 @@ def test_planning_with_invalid_sizing_is_refused_before_any_change(env: Env) -> 
     # Sizing validates on construction, so a bad size never reaches the route.
     with pytest.raises(ValueError, match="positive integer"):
         route(ITEM, ToPlanning(sizing=Sizing(0, "med", "x")), today=TODAY)
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
     env.ensure_planning_epic.assert_not_called()
     env.run.assert_not_called()
 
@@ -3239,7 +3381,7 @@ def test_planning_without_sizing_leaves_size(env: Env) -> None:
     env.native_parent[ITEM] = DEFERRED
     _sized_labels(env, "epic-size:M")
     route(ITEM, ToPlanning(), today=TODAY)
-    env.reparent_child.assert_called_once_with(PLANNING, ITEM)
+    assert env.calls("reparent") == [(PLANNING, ITEM)]
     env.run.assert_not_called()
     env.ensure_labels.assert_not_called()
 
@@ -3310,7 +3452,7 @@ def _cleared_calls(number: str, repo: str) -> list[tuple[str, ...]]:
 def test_one_off_transfer_clears_size(env: Env) -> None:
     _sized_item(env)
     order: list[str] = []
-    env.reparent_child.side_effect = lambda *a: order.append("link") or env.attach(*a)
+    env.effects["reparent"] = lambda *a: order.append("link") or a[2]()
     env.run.side_effect = lambda *a: order.append(f"{a[0]}:{a[1]}")
     result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="transfer")
@@ -3519,7 +3661,7 @@ def test_one_off_trusted_authors_error_propagates_before_the_move(env: Env) -> N
         route(ITEM, OneOff(repo="org/tool"), today=TODAY)
     assert _transfer_calls(env) == []
     env.run.assert_not_called()
-    env.reparent_child.assert_not_called()
+    assert env.calls("reparent") == []
 
 
 def test_one_off_outsider_sizing_comment_posts_no_cleared_marker(
@@ -3564,3 +3706,97 @@ def test_one_off_target_continuation_uses_head(
         capsys.readouterr().err
     )
     assert graph.events == []
+
+
+# -- chained queues (epic vergil-project/.github#1609) --------------------------------
+
+# The intake epic's continuation, its chain's second container.
+INTAKE_C2 = IssueRef("org", ".github", 70)
+
+
+@pytest.fixture
+def chained_intake(env: Env, monkeypatch: pytest.MonkeyPatch) -> Env:
+    """Rollover on, and the intake epic a chain: a full head, then an empty INTAKE_C2."""
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    env.fill(INTAKE, epic_chain.ITEM_CAP, start=1000)
+    env.add_continuation(INTAKE_C2, INTAKE, INTAKE)
+    return env
+
+
+def test_route_item_from_continuation(chained_intake: Env) -> None:
+    # An intake item in the chain's continuation is routed to planning: its
+    # parent reads as the intake head, and it leaves the continuation for the
+    # planning chain in one atomic re-parent.
+    env = chained_intake
+    env.native_parent[ITEM] = INTAKE_C2
+    with patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF):
+        result = route(ITEM, ToPlanning(), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    assert env.writes == [("reparent", PLANNING, ITEM)]
+    assert env.native_parent[ITEM] == PLANNING
+    assert ITEM not in env.listing(INTAKE_C2)
+    assert ITEM in env.listing(PLANNING)
+
+
+def test_route_into_full_planning_rolls_over(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A planning epic holding 99 items rolls over: the route's link creates its
+    # continuation, links it into the head's last slot, then links the item.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    env.fill(PLANNING, epic_chain.ITEM_CAP, start=1000)
+    env.native_parent[ITEM] = INTAKE
+    env.create_issue.side_effect = env.graph.create_issue
+    result = route(ITEM, ToPlanning(), today=TODAY)
+    assert result == RouteResult(final=ITEM, moved_by="none")
+    (continuation,) = [event[1] for event in env.graph.events if event[0] == "create"]
+    assert env.writes == [("add", PLANNING, continuation), ("reparent", continuation, ITEM)]
+    assert env.native_parent[continuation] == PLANNING
+    assert env.native_parent[ITEM] == continuation
+    assert len(env.listing(PLANNING)) == epic_chain.SUBISSUE_LIMIT
+    assert (
+        f"queue {PLANNING.slug} rolled over into continuation {continuation.slug}; "
+        "run epic-review planning"
+    ) in capsys.readouterr().out
+
+
+def test_settle_after_transfer_finds_listing_in_continuation(
+    chained_intake: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The #4004 state with a chained queue: moved and under the ad-hoc epic,
+    # while the intake chain's continuation still lists it. A re-run clears
+    # the listing from the continuation that holds it, never from the head.
+    env = chained_intake
+    env.parent = TOOL_ADHOC
+    env.native_parent[MOVED] = TOOL_ADHOC
+    env.stale_listing[INTAKE_C2] = {MOVED}
+    result = route(MOVED, OneOff(repo="org/tool"), today=TODAY)
+    assert result == RouteResult(final=MOVED, moved_by="none")
+    assert env.writes == [("remove", INTAKE_C2, MOVED)]
+    assert env.native_parent[MOVED] == TOOL_ADHOC
+    assert MOVED not in env.listing(INTAKE_C2)
+    assert MOVED in env.listing(TOOL_ADHOC)
+    assert (
+        "intake-route: org/tool#900 is under org/.github#11, but org/.github#7 still lists "
+        "it as a sub-issue; removing the stale listing"
+    ) in capsys.readouterr().err
+
+
+def test_relink_after_failed_transfer_uses_chain(chained_intake: Env) -> None:
+    # An item in the intake chain's continuation is unlinked from that
+    # container before its transfer; the transfer is refused, so it is linked
+    # back into the chain by first fit (the head is full), then recreated.
+    env = chained_intake
+    env.native_parent[ITEM] = INTAKE_C2
+    _transfer_fails(env)
+    result = route(ITEM, OneOff(repo="org/tool"), today=TODAY)
+    new = IssueRef("org", "tool", 901)
+    assert result == RouteResult(final=new, moved_by="recreate")
+    assert env.writes == [
+        ("remove", INTAKE_C2, ITEM),
+        ("add", INTAKE_C2, ITEM),
+        ("add", TOOL_ADHOC, new),
+    ]
+    assert env.native_parent[ITEM] == INTAKE_C2
+    assert len(env.listing(INTAKE)) == epic_chain.SUBISSUE_LIMIT
+    assert env.native_parent[new] == TOOL_ADHOC
