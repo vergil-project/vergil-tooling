@@ -948,9 +948,7 @@ class TestAgentDenials:
                 "vergil_tooling.bin.vrg_gh.github.get_installation_token",
                 return_value=None,
             ),
-            patch(
-                "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None
-            ) as gate,
+            patch("vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None) as gate,
             patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed()
@@ -1175,9 +1173,7 @@ class TestOperationalCloseGate:
     def test_number_resolves_against_cwd_repo(self, gh: MagicMock) -> None:
         with (
             patch("vergil_tooling.bin.vrg_gh.github.current_repo", return_value="org/here"),
-            patch(
-                "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None
-            ) as gate,
+            patch("vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None) as gate,
         ):
             assert main(["issue", "close", "9", "--comment", "Validated"]) == 0
         gate.assert_called_once_with(epics.IssueRef("org", "here", 9))
@@ -1219,16 +1215,15 @@ class TestOperationalCloseGate:
     def test_failed_read_refused(self, gh: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
         with patch(
             "vergil_tooling.bin.vrg_gh.operational_close.refusal",
-            side_effect=trust.TrustReadError("comments unreadable"),
+            side_effect=trust.TrustReadError("test", "comments unreadable"),
         ):
             assert main(["issue", "close", "42", "--repo", "org/repo"]) == 1
         gh.assert_not_called()
         err = capsys.readouterr().err
-        assert "does not close it: comments unreadable" in err
+        assert "does not close it: cannot read who wrote the content" in err
+        assert "comments unreadable" in err
 
-    def test_human_close_not_gated(
-        self, gh: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_human_close_not_gated(self, gh: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.delenv("VRG_APP_ID", raising=False)
         with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:

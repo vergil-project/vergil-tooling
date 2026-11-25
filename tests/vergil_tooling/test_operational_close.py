@@ -71,6 +71,6 @@ def test_operational_task_without_success_is_refused(
 
 
 def test_failed_comment_read_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub(monkeypatch, "validation", trust.TrustReadError("read failed"))
+    _stub(monkeypatch, "validation", trust.TrustReadError("test", "read failed"))
     with pytest.raises(trust.TrustReadError):
         operational_close.refusal(_REF)
