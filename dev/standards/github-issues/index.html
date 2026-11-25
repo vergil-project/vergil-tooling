@@ -20226,9 +20226,12 @@ ad-hoc epic ends up holding only its still-open children.</p>
   <code>Archive (intake): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code>,
   <code>Archive (planning): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> and
   <code>Archive (deferred): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> buckets (labels <code>archive</code> +
-  <code>intake</code> / <code>planning</code> / <code>deferred</code>), so only open items count against GitHub's
-  100-sub-issue cap. An archive bucket holds at most 95 children; a full one
-  rolls over to a new segment.</li>
+  <code>intake</code> / <code>planning</code> / <code>deferred</code>), so a queue's
+  <a href="#chained-epics">chain</a> holds only its open items and the slots its closed
+  items free are reused before it grows. An archive bucket holds at most 95
+  children; a full one rolls over to a new segment. Archives are not chained:
+  a segment is a new top-level archive of its own, not a continuation, and no
+  reader reads a quarter's segments as one list.</li>
 </ul>
 <h4 id="running-the-drain">Running the drain<a class="headerlink" href="#running-the-drain" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>

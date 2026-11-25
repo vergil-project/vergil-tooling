@@ -20947,7 +20947,11 @@ names it in (<code>-R</code>/<code>--repo</code>, <code>--owner</code>, a positi
 search qualifier, an <code>api</code> endpoint), and refusing a command that names more
 than one owner (see
 <a href="../../guides/credential-management/">Credential management</a>). Raw <code>gh issue create</code>, <code>gh auth</code>,
-<code>pr close</code>, <code>repo edit/create/delete</code> and <code>workflow run</code> are denied outright;
+<code>pr close</code>, <code>repo edit/create/delete</code> and <code>workflow run</code> are denied outright,
+as are <code>issue edit</code>'s raw sub-issue flags (<code>--parent</code>, <code>--add-sub-issue</code>,
+<code>--remove-sub-issue</code>), since an epic's
+<a href="../../standards/github-issues/#chained-epics">chain</a> owns its links: use
+<code>vrg-epic-link</code> or <code>vrg-epic-move</code>;
 <code>gh api</code> is full for a human, read-only <code>GET</code> for the audit identity, and
 denied for the user identity. An agent's <code>issue close</code> of an operational
 task as completed is refused until a trusted comment on it records
@@ -22591,8 +22595,14 @@ tasks are closed. A no-op for any other issue (a standing epic such as
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> stays open until its
 primary closes), so it is safe on every issue close. It acts on a close only
 when its actor is trusted: an untrusted close of the task, or of a task the
-epic's close relies on, is a stop before any write. Run by the <code>epic-rollup</code>
-workflow on <code>issues.closed</code>.</p>
+epic's close relies on, is a stop before any write. It reads through the
+epic's <a href="../../standards/github-issues/#chained-epics">chain</a>: the epic is the
+head of the chain the task is linked in, it closes only when every item
+across the chain is closed, and it then closes the head first, then each
+continuation. Before judging it adopts each orphaned continuation of the
+head, and it refuses to close the epic while one it cannot adopt exists. A
+continuation closing rolls nothing up. Run by the <code>epic-rollup</code> workflow on
+<code>issues.closed</code>.</p>
 <table>
 <thead>
 <tr>
@@ -23928,18 +23938,33 @@ org is read under its own App token.</p>
 <li>Close the drifted tasks and rolled-up epics. Then close each open proxy
    epic in the home whose primary has closed and which has no open task; a
    proxy that still has an open task is reported and left open, never closed
-   silently. Each close carries an explanatory comment. An epic closed while a
-   child is still open is reported for a human and never reopened.</li>
+   silently. Each close carries an explanatory comment, and each epic closes
+   with its whole <a href="../../standards/github-issues/#chained-epics">chain</a>, head
+   first. An epic closed while a child is still open is reported for a human
+   and never reopened.</li>
+<li>Heal the chain drift of the home's epics (see
+   <a href="../../standards/github-issues/#the-chain-heals">The chain heals</a>): a full
+   last container with no continuation, two continuations under one
+   container, a closed epic's open continuations, and each orphaned
+   continuation of an open epic, adopted and then rolled up again. Each heal
+   is listed under <strong>Chains healed</strong>; drift it cannot heal is listed under
+   <strong>Needs a human</strong>, named on stderr, and the run exits 1 at the end. Each
+   open development or proxy epic with a continuation is listed under
+   <strong>Chained epics</strong>, every run, as a prompt to consider splitting it.</li>
 <li>Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
    and operations epics into per-quarter archives, and close past archives (see
    <a href="../../standards/github-issues/#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 <li>Run the <a href="../../standards/github-issues/#the-orphan-pass-auto-heal">orphan pass</a>:
    nativize body-only <code>Parent:</code> links, strip the retired kind labels, and
    attach every orphan to its home's intake epic (never one an outsider
-   opened, which is reported). An item whose epic is closed (a <code>Parent:</code> line
-   naming a closed epic, or a home whose only intake epic is closed) is named
-   on stderr with that epic and left unlinked; the pass goes on and the run
-   exits 1 at the end.</li>
+   opened, which is reported). Every link goes into the epic's chain by first
+   fit, so a full intake epic rolls over rather than stopping the pass; an
+   intake queue holding 95 open items or more once the pass is done prints
+   <code>intake queue &lt;head&gt; holds &lt;n&gt; open items; run epic-review intake</code>, a
+   report line, not a failure. An item whose epic refuses it (a <code>Parent:</code>
+   line naming a closed epic, a home whose only intake epic is closed, or
+   GitHub's nesting limit) is named on stderr with that epic and left
+   unlinked; the pass goes on and the run exits 1 at the end.</li>
 </ol>
 <p><code>--close</code> makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is <code>vrg-security-record sync</code>, run by
@@ -23969,7 +23994,7 @@ which sets <code>VRG_EPIC_SWEEP=1</code>. Other invariant violations stay report
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, an org with no <code>.github</code> home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without <code>--close</code>. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, proxy link drift, a native blocked-by list that cannot be read in full, or an open child's body that is untrusted or unreadable exits 1. With <code>--untrusted</code>, an <code>--org</code> with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout</td>
+<td><code>--close</code> in an agent session is refused before any network call; an org that cannot be detected, an org with no <code>.github</code> home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without <code>--close</code>. A full intake epic never stops the orphan pass: it rolls over into a continuation. An item the orphan pass cannot link because its epic is closed or at GitHub's nesting limit is named on stderr, the pass goes on, and the run exits 1. With <code>--close</code>, chain drift the sweep cannot heal is named on stderr, every other pass still runs, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose <code>Primary:</code> link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without <code>--close</code>. Without <code>--close</code>, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With <code>--epic</code>, a ref that is not an epic, proxy link drift, a native blocked-by list that cannot be read in full, or an open child's body that is untrusted or unreadable exits 1. With <code>--untrusted</code>, an <code>--org</code> with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout</td>
 </tr>
 <tr>
 <td>Exit codes</td>
