@@ -18966,7 +18966,7 @@
 auto-merge on, then always runs one
 <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a> over them, which watches them merge
 and settles <code>develop</code> once (epic vergil-project/.github#1218). Submitting
-a PR is the human's decision to merge it: GitHub merges it once its
+a PR is the decision to merge it: GitHub merges it once its
 required checks pass. Has three modes:</p>
 <ul>
 <li><strong>Template mode</strong> (no arguments): the normal path. Reads
@@ -18984,9 +18984,13 @@ required checks pass. Has three modes:</p>
   human emergency use. It stays single-issue.</li>
 </ul>
 <div class="admonition warning">
-<p class="admonition-title">Human-run tool</p>
-<p>PR submission is a human action. Agent identities are refused;
-agents hand off with <code>vrg-pr-workflow report-ready</code> instead.</p>
+<p class="admonition-title">Who may submit</p>
+<p>The user agent may submit in template mode (with <code>--all</code>/<code>--select</code>
+from the repo root), after it records the PR metadata with
+<code>vrg-pr-workflow report-ready</code> (epic vergil-project/.github#1384).
+The CLI mode, the relay branch mode and <code>--release</code> are refused to
+every agent identity, and the audit agent is refused outright.
+Releases and promotion stay with the human.</p>
 </div>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>When running inside a dev container, <code>GH_TOKEN</code> must be set so <code>gh</code> can
@@ -19411,7 +19415,7 @@ failed to submit it returns at least 3, and a tool error from finalize
 </tr>
 <tr>
 <td>1</td>
-<td>A usage error or a refusal before anything opened (a removed flag, an agent identity, no submittable worktree, a malformed <code>$VRG_FINALIZE_DEADLINE</code>, <code>--release</code> on a repo that is not released), or a tool error from finalize</td>
+<td>A usage error or a refusal before anything opened (a removed flag, the audit agent, the user agent in the CLI or relay branch mode or with <code>--release</code>, no submittable worktree, a malformed <code>$VRG_FINALIZE_DEADLINE</code>, <code>--release</code> on a repo that is not released), or a tool error from finalize</td>
 </tr>
 <tr>
 <td>3</td>

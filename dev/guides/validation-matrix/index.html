@@ -19369,6 +19369,10 @@ dev images come from
    file elsewhere in the repository.</li>
 <li>yamllint on YAML under <code>.github/</code> and <code>docs/</code>, with the bundled
    config.</li>
+<li>dependabot-limit: when <code>.github/dependabot.yml</code> exists, every
+   <code>updates</code> entry must carry <code>open-pull-requests-limit: 0</code> (a missing
+   key means Dependabot's default of 5), so Dependabot never opens a PR
+   (epic vergil-project/.github#420).</li>
 <li>hadolint on <code>Dockerfile*</code> at the repository root.</li>
 <li>actionlint on <code>.github/workflows/</code>.</li>
 <li>runner-labels: no value in a <code>.github/workflows/*.yml</code> or <code>*.yaml</code>
@@ -19376,14 +19380,14 @@ dev images come from
    <code>ubuntu-latest</code>. Pin GitHub-hosted runners to <code>ubuntu-24.04</code>; the
    check names each hit by path and line.</li>
 <li>secrets-inherit: a job in a <code>.github/workflows/*.yml</code> or <code>*.yaml</code>
-   file may pass <code>secrets: inherit</code> only to a vergil-actions workflow that
-   reads the <code>automation</code> environment's secrets (<code>cd-release.yml</code>,
-   <code>cd-docs.yml</code>, <code>cd-docs-refresh.yml</code>, <code>publish-index.yml</code>,
-   <code>ops-github-config.yml</code>, <code>ops-upstream-refresh.yml</code>,
-   <code>ops-epic-rollup.yml</code>, <code>ops-epic-sweep.yml</code>, <code>ops-agent-audit.yml</code>).
-   Every other caller passes an explicit secrets map; the check names each
-   refused <code>inherit</code> by path and line. See
-   <a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>.</li>
+    file may pass <code>secrets: inherit</code> only to a vergil-actions workflow that
+    reads the <code>automation</code> environment's secrets (<code>cd-release.yml</code>,
+    <code>cd-docs.yml</code>, <code>cd-docs-refresh.yml</code>, <code>publish-index.yml</code>,
+    <code>ops-github-config.yml</code>, <code>ops-upstream-refresh.yml</code>,
+    <code>ops-epic-rollup.yml</code>, <code>ops-epic-sweep.yml</code>, <code>ops-agent-audit.yml</code>).
+    Every other caller passes an explicit secrets map; the check names each
+    refused <code>inherit</code> by path and line. See
+    <a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>.</li>
 <li>ansible-lint, when the repository has Ansible content.</li>
 </ol>
 <p>The first failing check stops the run. In CI the common checks run once,

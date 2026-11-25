@@ -20884,9 +20884,11 @@ epic's planning issue, on a <code>- Planning issue: Closes &lt;ref&gt;</code> li
 when it cannot, it says why (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 It refuses an issue whose native parent is an intake, planning, deferred or
-operations epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). Human-run: agent
-identities are refused, and agents hand off with
-<code>vrg-pr-workflow report-ready</code> instead.</p>
+operations epic (see <a href="#vrg-pr-workflow"><code>vrg-pr-workflow</code></a>). The user agent
+may submit only in template mode (and its <code>--all</code>/<code>--select</code> batch), after
+<code>vrg-pr-workflow report-ready</code>; the CLI mode, the relay branch mode and
+<code>--release</code> are refused to every agent, and the audit agent is refused
+outright (epic vergil-project/.github#1384).</p>
 <p>Every mode takes one path (epic vergil-project/.github#1218): one
 table of the selection (no confirmation prompt and no PR-body preview),
 then for each PR the push, <code>gh pr create</code>,

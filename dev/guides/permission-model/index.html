@@ -19929,17 +19929,17 @@ a bare "not recognized":</p>
 <tr>
 <td><code>pr create</code></td>
 <td>every identity</td>
-<td>Agents are told PR creation needs a human; a human is pointed to <code>vrg-submit-pr</code></td>
+<td>The user agent opens a PR only through the gated path, <code>vrg-pr-workflow report-ready</code> then <code>vrg-submit-pr</code>; a human is pointed to <code>vrg-submit-pr</code></td>
 </tr>
 <tr>
 <td><code>pr edit</code></td>
 <td><code>user</code>, <code>audit</code></td>
-<td>PR edit requires a human maintainer</td>
+<td>No agent edits a PR with <code>gh</code>; the user agent corrects the PR metadata with <code>report-ready</code> before <code>vrg-submit-pr</code> opens the PR</td>
 </tr>
 <tr>
 <td><code>pr merge</code></td>
 <td><code>user</code>, <code>audit</code></td>
-<td>PR merge requires a human maintainer</td>
+<td>The user agent merges only through the gated path: <code>vrg-submit-pr</code> turns auto-merge on</td>
 </tr>
 <tr>
 <td><code>pr review --approve</code></td>
@@ -20190,20 +20190,30 @@ and branch protection rulesets.</p>
 <ul>
 <li>Each agent is a GitHub App whose installation token is bounded by
   its declared permission shape. The user App holds
-  <code>pull_requests: read</code>, so it physically cannot open, approve, or
-  merge a PR; the audit App holds <code>contents: read</code>, so it cannot
-  write code or merge (merging through the API requires
-  <code>contents: write</code>). Neither App holds Workflows access, so neither
-  can push under <code>.github/workflows/</code>. GitHub rejects the API call
-  regardless of what happens locally.</li>
+  <code>pull_requests: write</code> and <code>workflows: write</code>
+  (<a href="https://github.com/vergil-project/.github/issues/1384">epic vergil-project/.github#1384</a>),
+  so it can open its own PRs, turn their auto-merge on and push
+  changes under <code>.github/workflows/</code>; it takes the PR path only through
+  <code>vrg-submit-pr</code>, whose gate requires a merge-review record or a
+  merge-review exemption the human approved. The audit App holds
+  <code>contents: read</code>, so it cannot write code or merge (merging through
+  the API requires <code>contents: write</code>). Every secret that can write or
+  act lives in each repo's <code>automation</code> environment, limited to
+  <code>develop</code> and <code>main</code>, so a workflow pushed on a feature branch runs
+  without them.</li>
 <li>Branch protection rulesets require a pull request to change
   <code>develop</code> or <code>main</code>, with its required CI checks passing; only
   <code>main</code>'s ruleset also requires the branch to be up to date. They
-  require no approving review. Who can merge is set by the identity's
-  permissions: the human, whose <code>vrg-submit-pr</code> turns a development
-  PR's auto-merge on, and the org automation App for the mechanized
-  <code>automation/</code> PRs that merge once CI passes (the repo-config sync and
-  the upstream refresh). No client-side manipulation changes this.</li>
+  require no approving review. A development PR merges into <code>develop</code>
+  through the auto-merge <code>vrg-submit-pr</code> turns on, whether the user
+  agent or the human submitted it, and the org automation App merges the
+  mechanized <code>automation/</code> PRs once CI passes (the repo-config sync and
+  the upstream refresh). The "Main updates" ruleset lets only the human
+  admin update <code>main</code>, so no agent can merge a release, and the daily
+  agent audit checks the merges into <code>develop</code> and <code>main</code> (see
+  <a href="../../reference/config-audit/#github-checks-rulesets">the rulesets</a>).
+  No client-side
+  manipulation changes this.</li>
 <li>An App can only act on accounts it is installed on and repos that
   installation covers.</li>
 </ul>
@@ -20304,7 +20314,7 @@ keeps untrusted content from driving behaviour.</p>
 <td>rejected</td>
 <td>blocked</td>
 <td>n/a</td>
-<td><strong>API rejected</strong> (no merge permission)</td>
+<td>into <code>develop</code>, merged once its required checks pass (if layers bypassed); into <code>main</code>, <strong>refused</strong> by the "Main updates" ruleset</td>
 </tr>
 <tr>
 <td><code>gh pr create</code></td>
@@ -20320,7 +20330,7 @@ keeps untrusted content from driving behaviour.</p>
 <td>n/a</td>
 <td>blocked</td>
 <td>n/a</td>
-<td><strong>API rejected</strong> (no merge permission)</td>
+<td>into <code>develop</code>, merged once its required checks pass (if layers bypassed); into <code>main</code>, <strong>refused</strong> by the "Main updates" ruleset</td>
 </tr>
 <tr>
 <td><code>vrg-gh issue view &lt;N&gt; --comments</code> (agent)</td>

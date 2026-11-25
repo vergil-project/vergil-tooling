@@ -18984,7 +18984,7 @@ user account:</p>
 <tbody>
 <tr>
 <td><code>&lt;username&gt;</code></td>
-<td>Human — review, approval, merge, admin (Chief Steward)</td>
+<td>Human — rulings, releases and promotion, admin (Chief Steward)</td>
 <td>The human's own GitHub account</td>
 </tr>
 <tr>
@@ -19009,10 +19009,11 @@ user account:</p>
 </tr>
 </tbody>
 </table>
-<p>The human account owns the decision-making authority: code review,
-PR approval, merge, and administrative operations. The two agent
-Apps do the bounded work — the user App writes code, the audit App
-reviews PRs. Each org's automation App runs scheduled and
+<p>The human account owns the decision-making authority: rulings,
+merge-review exemptions, releases and promotion to <code>main</code>, and
+administrative operations. The two agent Apps do the bounded work —
+the user App writes code and submits its own PRs into <code>develop</code>, the
+audit App reviews PRs. Each org's automation App runs scheduled and
 event-driven CI work that needs neither human judgment nor a
 per-contributor identity (see
 <a href="#the-org-automation-apps">The org automation Apps</a>).</p>
@@ -19043,7 +19044,7 @@ not a control: the credential the process holds is the boundary.</p>
 <td><code>user</code></td>
 <td><code>&lt;username&gt;-vergil-user</code></td>
 <td><code>VRG_IDENTITY_MODE</code>, the mode file, or the provisioned App key or ID in an agent VM</td>
-<td>The narrowest: stops at <code>vrg-pr-workflow report-ready</code>, never submits or merges</td>
+<td>Submits and finalizes its own PRs into <code>develop</code> in template mode, after <code>vrg-pr-workflow report-ready</code> and the merge-review gate; refused the CLI and relay branch modes and <code>--release</code></td>
 </tr>
 <tr>
 <td><code>audit</code></td>
@@ -19098,7 +19099,8 @@ identity that appears on commits (<code>jdoe-vergil-user[bot]</code>) comes
 directly from the App — there is nothing else to configure.</p>
 <h2 id="inverted-permission-shapes">Inverted permission shapes<a class="headerlink" href="#inverted-permission-shapes" title="Permanent link">&para;</a></h2>
 <p>The user and audit Apps have deliberately <strong>inverted</strong> repository
-permission shapes. This split is the core of the model:</p>
+permission shapes on code: the user App writes it, the audit App only
+reads it. This split is the core of the model:</p>
 <table>
 <thead>
 <tr>
@@ -19120,7 +19122,7 @@ permission shapes. This split is the core of the model:</p>
 </tr>
 <tr>
 <td>Pull requests</td>
-<td><strong>Read-only</strong></td>
+<td>Read and write</td>
 <td>Read and write</td>
 </tr>
 <tr>
@@ -19130,31 +19132,39 @@ permission shapes. This split is the core of the model:</p>
 </tr>
 <tr>
 <td>Workflows</td>
-<td>No access</td>
+<td>Read and write</td>
 <td>No access</td>
 </tr>
 </tbody>
 </table>
-<p>The user App can write code but only read PRs. The audit App can
-only read code but can write (review/comment on) PRs. Neither holds
-Workflows access, so neither can push changes under
-<code>.github/workflows/</code>.</p>
+<p>The user App writes code, workflow files included, and opens and
+merges its own PRs into <code>develop</code>; the audit App can only read code
+but can write (review/comment on) PRs. Epic
+<a href="https://github.com/vergil-project/.github/issues/1384">vergil-project/.github#1384</a>
+raised the user App's Pull requests from read and its Workflows from
+none. Every secret that can write or act lives in each repo's
+<code>automation</code> environment, limited to <code>develop</code> and <code>main</code>, so a
+workflow the user agent pushes on a feature branch runs without them.</p>
 <h3 id="what-the-user-agent-can-do">What the user agent can do<a class="headerlink" href="#what-the-user-agent-can-do" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Commit and push to feature branches (<code>contents: write</code>)</li>
+<li>Commit and push to feature branches, workflow files included
+  (<code>contents: write</code>, <code>workflows: write</code>)</li>
 <li>Create and comment on issues (<code>issues: write</code>)</li>
-<li>Read PR and CI status (<code>pull_requests: read</code>, plus <code>checks: read</code>,
-  <code>statuses: read</code> and <code>actions: read</code>)</li>
-<li>Record PR metadata in <code>.vergil/pr-workflow.json</code> (via <code>vrg-pr-workflow</code>)
-  to stage a PR for the human</li>
+<li>Read PR and CI status (<code>checks: read</code>, <code>statuses: read</code> and
+  <code>actions: read</code>)</li>
+<li>Submit and finalize its own PRs into <code>develop</code> (<code>pull_requests:
+  write</code>): it records the PR metadata with <code>vrg-pr-workflow
+  report-ready</code>, then runs <code>vrg-submit-pr</code>, which opens the PR and
+  turns its auto-merge on once the merge-review gate passes</li>
 </ul>
 <h3 id="what-the-user-agent-cannot-do">What the user agent cannot do<a class="headerlink" href="#what-the-user-agent-cannot-do" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Open, edit, comment on, approve, or merge PRs</strong> — its App holds
-  <code>pull_requests: read</code>. Its workflow ends at "ready for PR"; the
-  human submits the PR from the host.</li>
-<li><strong>Push changes under <code>.github/workflows/</code></strong> — no Workflows access,
-  so GitHub rejects such a push server-side.</li>
+<li><strong>Open or merge a PR outside <code>vrg-submit-pr</code></strong> — <code>vrg-gh</code> denies
+  <code>pr create</code>, <code>pr edit</code> and <code>pr merge</code> to it, and <code>vrg-submit-pr</code>
+  refuses its CLI mode, its relay branch mode and <code>--release</code>.</li>
+<li><strong>Update <code>main</code></strong> — the "Main updates" ruleset lets only the human
+  admin update it, so releases and promotion stay with the human. This
+  is a server-side hard gate.</li>
 <li>Access admin settings or manage org membership.</li>
 </ul>
 <h3 id="what-the-audit-agent-can-do">What the audit agent can do<a class="headerlink" href="#what-the-audit-agent-can-do" title="Permanent link">&para;</a></h3>
@@ -19261,8 +19271,16 @@ repositories</strong> in that org:</p>
 </table>
 <p>These Apps are an automation identity, not a per-contributor one, and
 they are separate from the agent Apps above. Workflows reach an org's
-App through the <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> Actions secrets
-and mint a short-lived installation token with
+App through the <code>APP_CLIENT_ID</code> and <code>APP_PRIVATE_KEY</code> secrets, which
+live only in each repo's <code>automation</code> environment, limited to <code>develop</code>
+and <code>main</code> (epic
+<a href="https://github.com/vergil-project/.github/issues/1384">vergil-project/.github#1384</a>).
+A caller in <code>vergil-project</code> passes them to the vergil-actions
+workflows with <code>secrets: inherit</code>; a caller in any other organization
+passes them by name, as does a call job to its repo's own local
+reusable workflow (see
+<a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CI Architecture</a>).
+The workflows mint a short-lived installation token with
 <code>actions/create-github-app-token</code>. The <code>vergil-actions</code> reusable
 workflows use it for:</p>
 <ul>
@@ -19290,8 +19308,13 @@ workflows use it for:</p>
 <p>The App's full permission set, and the scoped permissions each job's
 token requests, are in the vergil-actions
 <a href="https://vergil-project.github.io/vergil-actions/latest/configuration/">configuration reference</a>.
-Four of the App's permissions matter to the tooling in this repo:</p>
+Five of the App's permissions matter to the tooling in this repo:</p>
 <ul>
+<li><strong>Actions: Read.</strong> <code>vrg-github-repo-config</code> needs it to read the
+  repo's <code>automation</code> environment and its deployment branch policies
+  (vergil-project/vergil-tooling#4773). Without it, or until an
+  installation accepts it, <code>update</code> reports the environment as not
+  checked.</li>
 <li><strong>Dependabot alerts: Read.</strong> <code>vrg-dependabot-audit</code> needs it to list
   a repo's open alerts (epic
   <a href="https://github.com/vergil-project/.github/issues/420">vergil-project/.github#420</a>).

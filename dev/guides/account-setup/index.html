@@ -19023,7 +19023,7 @@ PRs comes from the App itself.</p>
 <tr>
 <td><code>&lt;username&gt;-vergil-user</code></td>
 <td>Daily development (Driver)</td>
-<td>write code, read PRs</td>
+<td>write code, write PRs</td>
 </tr>
 <tr>
 <td><code>&lt;username&gt;-vergil-audit</code></td>
@@ -19034,10 +19034,11 @@ PRs comes from the App itself.</p>
 </table>
 <p>A third role — <code>&lt;username&gt;-vergil-admin</code> — is a reserved slot and is
 <strong>not</strong> provisioned. Do not create it.</p>
-<p>The two Apps have deliberately <strong>inverted</strong> permission shapes. The
-user App can write code but only read PRs; the audit App can only read
-code but can write (review/comment on) PRs. This split is the core of
-the permission model — set the permissions exactly as documented.</p>
+<p>The two Apps have deliberately <strong>inverted</strong> permission shapes on code.
+The user App writes code, workflow files included, and opens its own
+PRs; the audit App can only read code but can write (review/comment
+on) PRs. This split is the core of the permission model — set the
+permissions exactly as documented.</p>
 <h2 id="why-github-apps">Why GitHub Apps<a class="headerlink" href="#why-github-apps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>No shadow-ban risk</strong> — Apps are first-class GitHub citizens</li>
@@ -19117,7 +19118,7 @@ the permission model — set the permissions exactly as documented.</p>
 </tr>
 <tr>
 <td><strong>Pull requests</strong></td>
-<td><strong>Read-only</strong></td>
+<td><strong>Read and write</strong></td>
 </tr>
 <tr>
 <td><strong>Actions</strong></td>
@@ -19141,7 +19142,7 @@ the permission model — set the permissions exactly as documented.</p>
 </tr>
 <tr>
 <td><strong>Workflows</strong></td>
-<td><strong>No access</strong> — leave untouched</td>
+<td><strong>Read and write</strong></td>
 </tr>
 </tbody>
 </table>
@@ -19170,17 +19171,20 @@ the permission model — set the permissions exactly as documented.</p>
        integration". On a public repo the reads succeed anyway, which
        hides a missing grant. All three are read-only and grant no
        ability to trigger, re-run or change CI.</p>
-<p>!!! warning "Pull requests is Read-only on purpose"
-       The user agent does not open or comment on PRs. Its workflow
-       ends at "ready for PR"; the human submits the PR from the host.
-       <code>pull_requests: read</code> is the server-side hard gate that makes
-       <code>gh pr create</code> fail for this identity even if the soft gate is
-       bypassed. The agent still needs <code>read</code> to see PR and CI status.</p>
-<p>!!! warning "Never grant Workflows"
-       No agent identity may push changes under <code>.github/workflows/</code>.
-       Leaving Workflows at <strong>No access</strong> is what makes GitHub reject
-       such a push server-side. This is deliberate containment, not an
-       oversight.</p>
+<p>!!! note "Pull requests and Workflows are Read and write"
+       The user agent submits and finalizes its own PRs into <code>develop</code>
+       and pushes workflow-file changes like any other change (epic
+       <a href="https://github.com/vergil-project/.github/issues/1384">vergil-project/.github#1384</a>).
+       It opens a PR and turns its auto-merge on only through
+       <code>vrg-submit-pr</code>, after <code>vrg-pr-workflow report-ready</code>, and the
+       submit's gate requires a merge-review record or a merge-review
+       exemption the human approved. What keeps releases human is the
+       "Main updates" ruleset, which lets only the human admin update
+       <code>main</code>, and the secrets that can write or act live only in each
+       repo's <code>automation</code> environment, limited to <code>develop</code> and
+       <code>main</code>. Raising either permission on an existing App changes its
+       permission set, so <strong>each installation must accept the change</strong>
+       before the new grant takes effect.</p>
 <ol>
 <li>Under <strong>Where can this GitHub App be installed?</strong>, select
    <strong>Any account</strong> — this lets you install it on your organizations,
@@ -19263,7 +19267,7 @@ step (next) — do not wait for a prompt.</p>
 <h2 id="part-2-the-audit-app-username-vergil-audit">Part 2 — The audit App (<code>&lt;username&gt;-vergil-audit</code>)<a class="headerlink" href="#part-2-the-audit-app-username-vergil-audit" title="Permanent link">&para;</a></h2>
 <p>The audit App follows the <strong>same flow</strong> as the user App, with two
 differences: the name, and an <strong>inverted permission shape</strong> (it reads
-code and writes PRs, the mirror of the user App).</p>
+code and writes PRs, and holds no Workflows access).</p>
 <h3 id="step-21-register-the-app">Step 2.1 — Register the App<a class="headerlink" href="#step-21-register-the-app" title="Permanent link">&para;</a></h3>
 <p>Follow Step 1.1, changing:</p>
 <ul>
@@ -19271,8 +19275,8 @@ code and writes PRs, the mirror of the user App).</p>
 <li><strong>Description</strong>: AI agent identity (audit / Officials role) owned by
   <code>&lt;username&gt;</code>. PR-review agent running in an isolated VM; reads code
   and writes PR reviews/comments via installation tokens.</li>
-<li><strong>Repository permissions</strong> — note these are <strong>inverted</strong> from the
-  user App:</li>
+<li><strong>Repository permissions</strong> — note these differ from the user App
+  (Contents and Issues read-only, no Workflows):</li>
 </ul>
 <table>
 <thead>
@@ -19477,10 +19481,10 @@ rather than guess.</p>
       App), with their generation dates in the filenames</li>
 <li>[ ] <code>identities.toml</code> has a <code>vergil-user</code> and a <code>vergil-audit</code> stanza, each with
       the correct App ID and key path</li>
-<li>[ ] Each App shows the correct <strong>inverted</strong> repository permissions
-      (user: contents/issues write, PRs read; audit: contents/issues
-      read, PRs write; both hold Actions, Checks and Commit statuses
-      read-only; neither holds Workflows)</li>
+<li>[ ] Each App shows the correct repository permissions
+      (user: contents/issues/PRs/workflows write; audit: contents/issues
+      read, PRs write, no workflows; both hold Actions, Checks and
+      Commit statuses read-only)</li>
 <li>[ ] The user App holds <strong>Repository security advisories: Read and
       write</strong>, the audit App does not, and every installation has
       accepted the change</li>
