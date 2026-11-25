@@ -20087,6 +20087,20 @@ A link that would need a container past that limit is refused before
 anything is created or linked:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>epic &lt;head&gt; cannot grow: &lt;n&gt; items in &lt;k&gt; containers, at GitHub's nesting limit of 8; split the epic
 </code></pre></div>
+<p><strong>Every writer goes through the chain.</strong> <code>vrg-epic-link</code>, <code>vrg-epic-move</code>,
+<code>vrg-issue-create</code>, <code>vrg-intake-create</code>, <code>vrg-security-record</code> and the ops
+reports of unattended jobs link and move only by first fit across the chain,
+so an item may land in a continuation. The closing line of the first four
+then names it, as <code>under epic &lt;head&gt; (in continuation &lt;continuation&gt;)</code>. <code>vrg-epic-move</code> treats a
+task linked anywhere in the target's chain as already there. The commands
+that create an issue and then link it (<code>vrg-issue-create</code>,
+<code>vrg-intake-create</code>, <code>vrg-security-record</code> and the ops reports) check the
+chain's capacity first: a closed epic, the depth limit and a full head while
+rollover is off are refused before anything is created, so no issue is left
+unlinked. If a link still fails after the create, the command names the
+created issue; when the chain refused it, the message says the issue is left
+unlinked and that <code>vrg-epic-move</code> would be refused the same way, instead of
+suggesting it.</p>
 <p><strong>Rollover is not enabled yet.</strong> Until every reader of an epic's children,
 the plugin skills included, reads through the chain, no tool creates a
 continuation: a head takes up to GitHub's 100 items, and a link into a full

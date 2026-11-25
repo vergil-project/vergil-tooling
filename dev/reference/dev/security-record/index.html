@@ -19049,6 +19049,11 @@ human's own <code>gh</code> login is used.</p>
 </table>
 <p>A fresh <code>create</code> runs these steps in order:</p>
 <ol>
+<li><strong>Capacity.</strong> Check the intake epic's
+   <a href="../../../standards/github-issues/#chained-epics">chain</a> can take the
+   issue: a closed intake epic, one at GitHub's nesting limit and a full one
+   while rollover is off are refused by name (exit 1) before anything is
+   created. The check runs again just before the issue is created (step 4).</li>
 <li><strong>Duplicate guard.</strong> Look for a draft in <code>&lt;org&gt;/.github</code> with the same
    summary and the same affected repo. If one exists, refuse, naming its
    GHSA ID and the command that finishes its pair.</li>
@@ -19059,7 +19064,8 @@ human's own <code>gh</code> login is used.</p>
 <li><strong>Issue.</strong> Ensure the <code>security</code> label in the queue home, then create
    the issue there with the label and the body plus
    <code>Security advisory: &lt;org&gt;/.github &lt;GHSA-id&gt;</code>.</li>
-<li><strong>Link.</strong> Add the issue as a sub-issue of the queue home's intake epic.</li>
+<li><strong>Link.</strong> Link the issue into the intake epic's chain, in the first
+   container with a free slot.</li>
 <li><strong>Tracking line.</strong> Write <code>Tracking issue: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> into the
    advisory's description.</li>
 </ol>
@@ -19097,12 +19103,14 @@ completes whatever steps are missing:</p>
 <li>with <code>--issue</code>, it marks that issue (idempotent), links it under the
   intake epic <strong>only if it has no parent yet</strong>, and writes the tracking
   line;</li>
-<li>without <code>--issue</code>, it looks among the intake epic's sub-issues for one
-  whose body has the advisory's <code>Security advisory:</code> line (it never uses
-  search, whose index can lag). A match counts only when the trust layer
-  trusts that body (its author and every editor trusted); any other is
-  skipped and reported on stderr, metadata only. If none is found it
-  creates the issue and links it. Then it writes the tracking line.</li>
+<li>without <code>--issue</code>, it looks among the items of the intake epic's whole
+  chain, continuations included, for one whose body has the advisory's
+  <code>Security advisory:</code> line (it never uses search, whose index can lag).
+  Bodies are read through the trust layer, and a match counts only when it
+  trusts that body (its author and every editor trusted). If none is found,
+  each untrusted body is reported on stderr, metadata only, and it checks
+  the chain's capacity, then creates the issue and links it. Then it writes
+  the tracking line.</li>
 </ul>
 <p>Every step is idempotent, so running a resume command twice is safe.</p>
 <p><code>create</code> makes the advisory's <strong>first</strong> pairing, on its own path, not

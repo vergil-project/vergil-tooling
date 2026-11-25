@@ -21920,8 +21920,11 @@ step, date and the most recent closed ops issue with the same title
 (<code>previous occurrence: #N</code>), or comments on the open one. A success
 comments <code>ops-report: recovered</code> only on the first green run after a
 failure or cancel, and otherwise does nothing. Two open ops issues for one
-key get the report on the oldest, naming the others. An issue found or
-created that is not linked under the operations epic is linked. After a
+key get the report on the oldest, naming the others. The capacity of the operations epic's
+<a href="../../standards/github-issues/#chained-epics">chain</a> is checked
+before an issue is created, so a refusal (the nesting limit, a full epic while
+rollover is off) creates nothing. An issue found or
+created that is not linked in the operations epic's chain is linked. After a
 create it waits until the lookup lists the new issue, so the next run finds
 it. It <strong>never closes an issue</strong>. Every read goes through the trust layer:
 only issues, and report comments, written by the automation App count, so
@@ -21982,10 +21985,14 @@ scaffold, and <code>--blocked-by</code> stamps a <code>Blocked-by:</code> refere
 from a file's <code>## Intro</code>, <code>## Preconditions</code>, <code>## Procedure</code> and
 <code>## Acceptance</code> sections (all required) and, for deployment only, an optional
 <code>## Human-run steps</code>; the scaffold keeps its frame. <code>--kind retrospective</code>
-refuses <code>--body-file</code>. A closed epic is refused before the issue is created,
-naming the epic; it is never reopened. If the link
-fails after creation, the created issue's URL is reported for recovery with
-<code>vrg-epic-move</code>.</p>
+refuses <code>--body-file</code>. The issue is linked into the epic's
+<a href="../../standards/github-issues/#chained-epics">chain</a>, and the chain's capacity
+is checked before the issue is created: a closed epic (never reopened), an
+epic at GitHub's nesting limit and a full epic while rollover is off are
+refused by name with nothing created. If the link fails after creation, the
+created issue's URL is reported for recovery with <code>vrg-epic-move</code>, or, when
+the chain refused the link, with a note that <code>vrg-epic-move</code> would be refused
+the same way.</p>
 <table>
 <thead>
 <tr>
@@ -22385,8 +22392,10 @@ the current list's order, <code>removed</code> in the block's.</p>
 </tbody>
 </table>
 <h3 id="vrg-epic-link">vrg-epic-link<a class="headerlink" href="#vrg-epic-link" title="Permanent link">&para;</a></h3>
-<p>Link a task under an epic as a native GitHub sub-issue. A closed epic is
-refused by name and never reopened. Used when creating a task under an epic
+<p>Link a task under an epic as a native GitHub sub-issue, into the first
+container of the epic's <a href="../../standards/github-issues/#chained-epics">chain</a>
+with a free slot. A closed epic is refused by name and never reopened, as are
+an epic at GitHub's nesting limit and a full epic while rollover is off. Used when creating a task under an epic
 and to backfill reflink-only children. A bare <code>#N</code> epic ref resolves to the
 task's epic home. An <code>--epic</code> without the <code>epic</code> label is refused, and a
 <a href="../../standards/github-issues/#chained-epics">continuation</a>'s ref resolves to
@@ -22472,8 +22481,11 @@ See <a href="../dev/epic-parent/">vrg-epic-parent</a>.</p>
 move leaves the task under its old epic; a task with no epic is linked.
 <code>--epic</code> accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>operations</code>,
 <code>#N</code> or <code>owner/repo#N</code>, read against the task's repo. A closed target epic
-is refused by name, since the tooling never reopens a closed epic. Moving a
-task already under an open target is a no-op. The deferred queue is
+is refused by name, since the tooling never reopens a closed epic, as are a
+target at GitHub's nesting limit and a full target while rollover is off. The
+task lands in the first container of the target's
+<a href="../../standards/github-issues/#chained-epics">chain</a> with a free slot. Moving
+a task already linked anywhere in an open target's chain is a no-op. The deferred queue is
 entered and left only through <code>vrg-intake-route</code>, so this refuses it.</p>
 <table>
 <thead>
@@ -22597,8 +22609,13 @@ quarter-named epics to that form; both are dry runs unless <code>--apply</code>.
 The issue is filed in the current repo's queue home, <code>&lt;org&gt;/.github</code>, and linked under
 that home's <code>Epic (intake): &lt;name&gt;</code> as it is created, so there is no unlinked
 path. It carries no kind label. The intake epic is resolved (created if
-absent) <em>before</em> the issue is created; if linking the created issue fails, the
-tool exits 1 naming its URL and the <code>vrg-epic-move</code> command that links it. Used
+absent) and its <a href="../../standards/github-issues/#chained-epics">chain</a>'s
+capacity checked <em>before</em> the issue is created, so a refusal (a closed queue,
+the nesting limit, a full queue while rollover is off) creates nothing; a full
+queue with rollover on rolls over with the review nudge. If linking the
+created issue fails, the tool exits 1 naming its URL and the <code>vrg-epic-move</code>
+command that links it, or, when the chain refused the link, a note that
+<code>vrg-epic-move</code> would be refused the same way. Used
 by the <code>intake-capture</code> skill. See
 <a href="../../standards/github-issues/#intake-planning-and-deferred-queues">Intake, planning and deferred queues</a>.</p>
 <table>

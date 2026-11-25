@@ -19267,8 +19267,9 @@ is given a severity by whoever records it.</p>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--details-file<span class="w"> </span>details.md<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--severity<span class="w"> </span>low
 </code></pre></div>
-<p><code>create</code> runs the steps in a fixed order: a duplicate check, the advisory,
-the issue, the link under the intake epic, then the advisory's
+<p><code>create</code> runs the steps in a fixed order: a capacity check of the intake
+epic, a duplicate check, the advisory,
+the issue, the link into the intake epic's chain, then the advisory's
 <code>Tracking issue:</code> line. If a step fails after the advisory exists, it
 prints the exact command that finishes the pair and exits 1. Drafts can't
 be deleted, so never re-run the original command; run the printed one.
