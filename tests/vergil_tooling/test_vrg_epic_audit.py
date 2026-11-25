@@ -29,7 +29,6 @@ from vergil_tooling.lib.epic_audit import (
     MisplacedArchive,
     Orphan,
     RetiredLabels,
-    StandingEpicFull,
 )
 from vergil_tooling.lib.epics import BlockerState, ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, SecurityIssue
@@ -862,14 +861,10 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     assert "org/.github#180 — missing the `archive` label" in out
 
 
-def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    full = StandingEpicFull(
-        IssueRef("org", ".github", 100),
-        95,
-        [IssueRef("org", "tool", n) for n in (5, 6, 7)],
-    )
+def test_orphan_pass_past_95_links_and_nudges(capsys: pytest.CaptureFixture[str]) -> None:
+    # A queue past the cap is the review nudge, never a stop (spec §4.7 of
+    # .github#1609): the pass links, prints the nudge and exits 0.
+    nudge = "intake queue org/.github#100 holds 98 open items; run epic-review intake"
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
         patch(f"{_MOD}.github.detect_org", return_value="org"),
@@ -878,18 +873,55 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
             _close_patches(
                 nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
                 strip_retired_labels=MagicMock(return_value=0),
-                attach_orphans=MagicMock(side_effect=full),
+                attach_orphans=MagicMock(
+                    return_value=epic_audit.LinkPass(linked=3, nudges=(nudge,))
+                ),
+            )
+        ),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert f"Orphans attached to intake: 3.\n{nudge}\n" in captured.out
+    assert nudge not in captured.err
+
+
+def test_close_heals_chains_and_reports_chained_epics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The sweep heals from the home's chain drift, reports each heal, note and
+    # chained development epic, and exits 1 on drift it could not heal, after
+    # the orphan pass has run.
+    drift = [epic_audit.ChainDrift(IssueRef("org", ".github", 40), "orphan", ())]
+    heals = epic_audit.ChainHeals(healed=("healed A",), unhealed=("broken B",), notes=("note C",))
+    heal = MagicMock(return_value=heals)
+    attach = MagicMock(return_value=epic_audit.LinkPass(linked=0))
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.chain_drift", return_value=drift) as chain_drift,
+        patch(f"{_MOD}.epic_audit.heal_chains", heal),
+        patch(f"{_MOD}.epic_audit.chained_epics", return_value=["epic D spans 2"]) as chained,
+        _patched(
+            _close_patches(
+                nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+                strip_retired_labels=MagicMock(return_value=0),
+                attach_orphans=attach,
             )
         ),
     ):
         rc = main(["--close"])
     assert rc == 1
+    chain_drift.assert_called_once_with("org/.github", listing=[])
+    heal.assert_called_once_with(drift)
+    chained.assert_called_once_with("org/.github", listing=[])
+    attach.assert_called_once()
     captured = capsys.readouterr()
-    assert (
-        "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
-        "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake." in captured.err
-    )
-    assert "Orphans attached" not in captured.out
+    assert "## Chains healed\n\n- healed A\n" in captured.out
+    assert "## Chain notes\n\n- note C\n" in captured.out
+    assert "## Chained epics (report only)\n\n- epic D spans 2\n" in captured.out
+    assert "vrg-epic-audit: chain drift not healed: broken B" in captured.err
 
 
 def test_close_orphan_pass_reports_closed_epics_and_exits_1(
@@ -1033,7 +1065,7 @@ def test_close_makes_no_security_advisory_call(
     # Contents read, so --close must not list, read or write a security
     # advisory (vergil-tooling#4313): vrg-security-record sync owns that pass.
     # A closed security issue with a draft advisory would sync if the pass ran.
-    full = StandingEpicFull(IssueRef("org", ".github", 100), 95, [IssueRef("org", "tool", 5)])
+    refused = epic_audit.LinkPass(linked=0, refused=("org/tool#5 not linked: closed",))
     write = MagicMock()
     spies = {
         name: MagicMock(name=name)
@@ -1055,7 +1087,7 @@ def test_close_makes_no_security_advisory_call(
             issues=[_security_issue()],
             advisories=None,
             write=write,
-            attach=MagicMock(side_effect=full) if orphan_pass_fails else None,
+            attach=MagicMock(return_value=refused) if orphan_pass_fails else None,
         )
     assert rc == (1 if orphan_pass_fails else 0)
     for spy in spies.values():
@@ -1410,8 +1442,11 @@ def test_proxy_unreadable_primary_reported_and_run_fails(
     assert "## Proxies closed (primary closed, no open task)" in captured.out
     assert "- org/.github#4" in captured.out
     assert "- proxy org/.github#3 has no 'Primary:' line in its body" in captured.out
-    assert run.call_count == 1
-    assert run.call_args.args[:5] == ("issue", "close", "4", "--repo", "org/.github")
+    # The proxy closes with its chain, then is commented (.github#1609).
+    assert [c.args[:5] for c in run.call_args_list] == [
+        ("issue", "close", "4", "--repo", "org/.github"),
+        ("issue", "comment", "4", "--repo", "org/.github"),
+    ]
     for writer in writers.values():
         writer.assert_called_once()
 
@@ -1643,7 +1678,8 @@ def test_close_stop_is_per_item_and_exits_nonzero(
     rc, out, err, run = _run_close_with_an_outsider_close(capsys)
     assert rc == 1
     assert [c.args[:5] for c in run.call_args_list] == [
-        ("issue", "close", "5", "--repo", "org/.github")
+        ("issue", "close", "5", "--repo", "org/.github"),
+        ("issue", "comment", "5", "--repo", "org/.github"),
     ]
     assert "- org/.github#5" in out
     assert "org/.github#4" not in out
