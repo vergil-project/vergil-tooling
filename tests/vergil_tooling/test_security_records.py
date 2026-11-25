@@ -3455,9 +3455,7 @@ def test_sync_issues_reports_a_tracked_issue_without_the_label(
     # A is not a security issue: the known-issue read leaves it out.
     write, _ = _known(monkeypatch, [_iss(C, open_=False)], [_adv(tracking=(A, C))])
     result = sync_issues([C])
-    assert result.problems == [
-        f"{GHSA}: tracks {A.slug}, which is not a security-labelled issue"
-    ]
+    assert result.problems == [f"{GHSA}: tracks {A.slug}, which is not a security-labelled issue"]
     write.assert_not_called()
 
 
@@ -3492,9 +3490,7 @@ def test_sync_issues_leaves_an_advisory_tracking_an_untrusted_issue(
         [_adv(tracking=(A, C))],
     )
     result = sync_issues([C])
-    assert result.problems == [
-        f"{GHSA}: an issue it tracks has an untrusted body, left unchanged"
-    ]
+    assert result.problems == [f"{GHSA}: an issue it tracks has an untrusted body, left unchanged"]
     write.assert_not_called()
 
 

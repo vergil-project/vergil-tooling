@@ -54,7 +54,6 @@ from vergil_tooling.lib import (
     trust,
     worktrees,
 )
-from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -64,6 +63,7 @@ from vergil_tooling.lib.cd_runs import (
 )
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.closing_refs import ClosingRefs
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.finalize_watch import FinalizeWatchError, Outcome, PRResult
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError
 from vergil_tooling.lib.live_branches import RepoSetError
@@ -2215,9 +2215,7 @@ def test_advisory_sync_reports_each_state_it_set(
 ) -> None:
     ctx = _stage_ctx(["123"])
     ctx.closed_issues.extend([_I7, _I8])
-    _no_advisory_sync.return_value = security_records.IssueSyncResult(
-        synced=[(_GHSA, "closed")]
-    )
+    _no_advisory_sync.return_value = security_records.IssueSyncResult(synced=[(_GHSA, "closed")])
     _stage_advisory_sync(ctx)
     _no_advisory_sync.assert_called_once_with([_I7, _I8])
     assert f"  {_GHSA}: set to closed" in capsys.readouterr().out

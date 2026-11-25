@@ -1620,7 +1620,7 @@ def _known_security_issues(
     """
     labelled: list[tuple[IssueRef, Any]] = []
     for ref in dict.fromkeys(refs):
-        raw = github.read_json("api", _issue_endpoint(ref), "--jq", _KNOWN_ISSUE_JQ)
+        raw: Any = github.read_json("api", _issue_endpoint(ref), "--jq", _KNOWN_ISSUE_JQ)
         if SECURITY_LABEL in {str(name) for name in raw.get("labels") or []}:
             labelled.append((_current_ref(raw), raw))
     by_repo: dict[str, list[int]] = {}
