@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epics, roadmap
-from vergil_tooling.lib.roadmap import EpicSummary
+from vergil_tooling.lib import epic_docs, epics, roadmap, trust
+from vergil_tooling.lib.roadmap import CompletedEpic, EpicSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -218,17 +218,19 @@ def test_open_epics_refuses_a_list_that_may_be_truncated() -> None:
         roadmap._open_epics("org/.github")
 
 
-def test_render_empty() -> None:
-    assert "No active epics" in roadmap.render([])
+def test_render_empty_says_none_in_each_section() -> None:
+    out = roadmap.render([], [])
+    assert out.index("## In flight") < out.index("## Planned") < out.index("## Completed")
+    assert out.count("_None._") == 3
 
 
-def test_render_groups_by_milestone() -> None:
+def test_render_splits_open_epics_into_in_flight_and_planned() -> None:
     summaries = [
         EpicSummary(
             40,
             "Convention | edge",
             "2026-06-28",
-            "v2.2",
+            None,
             ("vergil-project/.github", "vergil-project/vergil-tooling"),
             2,
             1,
@@ -236,27 +238,219 @@ def test_render_groups_by_milestone() -> None:
         ),
         EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7"),
     ]
-    out = roadmap.render(summaries, "vergil-project")
-    assert "## v2.2" in out
-    assert "## No milestone" in out
+    out = roadmap.render(summaries, [], "vergil-project")
     # Caption names the org the epics were read from.
-    assert "open epics in vergil-project/.github" in out
-    # Table scaffolding, one header per milestone section.
-    assert "| Epic | Done | Repos | Created |" in out
-    assert out.count("| --- | --- | --- | --- |") == 2
+    assert "the epics in vergil-project/.github" in out
+    in_flight, rest = out.split("## Planned")
+    planned, completed = rest.split("## Completed")
+    # An epic with a closed task is in flight; one with none is planned.
     # Epic row: link + title (pipe escaped), Done as X/Y, repos stacked short
-    # names via <br>, and the created date now has its own visible column.
+    # names via <br>, and the created date.
     assert (
-        "| [#40](u40) Convention \\| edge | 1/2 | .github<br>vergil-tooling | 2026-06-28 |" in out
+        "| [#40](u40) Convention \\| edge | 1/2 | .github<br>vergil-tooling | 2026-06-28 |"
+        in in_flight
     )
     # No repos renders an em dash in the cell.
-    assert "| [#7](u7) Orphan | 0/0 | — | 2026-02-02 |" in out
+    assert "| [#7](u7) Orphan | 0/0 | — | 2026-02-02 |" in planned
+    # With no milestone anywhere, each section is one table and no subheading.
+    assert "###" not in out
+    assert out.count("| Epic | Done | Repos | Created |") == 2
+    assert "_None._" in completed
+
+
+def test_render_groups_a_section_by_milestone_when_any_has_one() -> None:
+    summaries = [
+        EpicSummary(40, "A", "2026-06-28", "v2.2", (), 2, 1, "u40"),
+        EpicSummary(41, "B", "2026-06-29", None, (), 3, 1, "u41"),
+        EpicSummary(7, "C", "2026-02-02", None, (), 1, 0, "u7"),
+    ]
+    out = roadmap.render(summaries, [])
+    in_flight, planned = out.split("## Planned")
+    assert in_flight.index("### v2.2") < in_flight.index("### No milestone")
+    assert in_flight.count("| --- | --- | --- | --- |") == 2
+    # The planned section has no milestone, so it stays ungrouped.
+    assert "###" not in planned
 
 
 def test_render_without_org_uses_generic_source() -> None:
-    summaries = [EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7")]
-    out = roadmap.render(summaries)
-    assert "open epics in the org .github repo" in out
+    out = roadmap.render([EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7")], [])
+    assert "the epics in the org .github repo" in out
+
+
+def _completed(number: int, closed: str, **kwargs: object) -> CompletedEpic:
+    fields: dict[str, Any] = {
+        "title": f"Epic {number}",
+        "repos": (),
+        "total": 0,
+        "url": f"u{number}",
+        "documents": (),
+    }
+    fields.update(kwargs)
+    return CompletedEpic(number=number, closed=closed, **fields)
+
+
+def test_render_lists_completed_epics_newest_first() -> None:
+    completed = [
+        _completed(10, "2026-07-01"),
+        _completed(
+            30,
+            "2026-11-20",
+            title="Shipped <b>",
+            repos=("vergil-project/.github", "vergil-project/vergil-tooling"),
+            total=12,
+            documents=(("spec", "https://s"), ("retrospective", "https://r")),
+        ),
+        _completed(20, "2026-11-20"),
+    ]
+    out = roadmap.render([], completed)
+    section = out.split("## Completed")[1]
+    assert "| Epic | Closed | Tasks | Repos | Documents |" in section
+    rows = [line for line in section.splitlines() if line.startswith("| [#")]
+    # Most recently closed first; a same-day tie puts the higher number first.
+    assert [row.split("]")[0] for row in rows] == ["| [#30", "| [#20", "| [#10"]
+    assert rows[0] == (
+        "| [#30](u30) Shipped &lt;b&gt; | 2026-11-20 | 12 | .github<br>vergil-tooling "
+        "| [Spec](https://s) · [Retrospective](https://r) |"
+    )
+    # No documents and no repos render an em dash.
+    assert rows[2] == "| [#10](u10) Epic 10 | 2026-07-01 | 0 | — | — |"
+
+
+_DOCS_BODY = (
+    "Intro.\n\n"
+    "<!-- vrg-epic-docs -->\n"
+    "**Documents**\n\n"
+    "- Spec: [`epics/9-x/spec.md`](https://github.com/vergil-project/.github/blob/develop/epics/9-x/spec.md)\n"
+    "- Plan: not written (predates the spec and plan convention)\n"
+    "- Retrospective: [`epics/9-x/retrospective.md`](https://github.com/vergil-project/.github/blob/develop/epics/9-x/retrospective.md)\n"
+    "<!-- /vrg-epic-docs -->\n"
+)
+
+
+def _hit(number: int, **kwargs: object) -> trust.TrustedHit:
+    fields: dict[str, Any] = {
+        "repo": "vergil-project/.github",
+        "kind": "issue",
+        "title": f"Epic {number}",
+        "url": f"u{number}",
+        "state": "CLOSED",
+        "labels": ("epic",),
+        "body": "",
+        "body_role": trust.Role.AGENTS,
+        "closed_at": "2026-11-20T10:00:00Z",
+    }
+    fields.update(kwargs)
+    return trust.TrustedHit(number=number, **fields)
+
+
+def test_gather_completed_reads_closed_epics_through_the_trust_layer() -> None:
+    hits = [
+        _hit(9, body=_DOCS_BODY),
+        _hit(5, title="Epic (ad hoc): vergil-tooling", labels=("epic", "ad-hoc")),
+        _hit(6, title="Epic (proxy): x", labels=("epic", "proxy")),
+        _hit(8, title="[archived] old attempt"),
+    ]
+    skipped = [
+        trust.Skipped(
+            "vergil-project/.github", 3, "issue", "outsider", "2026-11-01", "body", trust.UNTRUSTED
+        )
+    ]
+    children = [
+        _child("vergil-project", "vergil-tooling", 1, "CLOSED"),
+        _child("vergil-project", ".github", 2, "CLOSED"),
+    ]
+    with (
+        patch("vergil_tooling.lib.trust.search_window", return_value=(hits, skipped)) as search,
+        patch("vergil_tooling.lib.trust.report_skipped") as report,
+        patch("vergil_tooling.lib.epics.child_states", return_value=children) as mock_children,
+    ):
+        result = roadmap.gather_completed("vergil-project")
+    query = search.call_args.args[0]
+    assert query == "repo:vergil-project/.github label:epic is:closed reason:completed"
+    assert search.call_args.kwargs == {
+        "kind": "issue",
+        "field": "closed",
+        "since": roadmap.COMPLETED_SINCE,
+        "judge_close": True,
+    }
+    # The untrusted epics are reported, metadata only, never dropped silently.
+    assert report.call_args.args[0] == skipped
+    # Container, proxy and archived epics are left out.
+    mock_children.assert_called_once_with(epics.IssueRef("vergil-project", ".github", 9))
+    assert result == [
+        CompletedEpic(
+            number=9,
+            title="Epic 9",
+            closed="2026-11-20",
+            repos=("vergil-project/.github", "vergil-project/vergil-tooling"),
+            total=2,
+            url="u9",
+            documents=(
+                (
+                    "spec",
+                    "https://github.com/vergil-project/.github/blob/develop/epics/9-x/spec.md",
+                ),
+                (
+                    "retrospective",
+                    "https://github.com/vergil-project/.github/blob/develop/epics/9-x/retrospective.md",
+                ),
+            ),
+        )
+    ]
+
+
+def test_gather_completed_skips_release_tracking_issue() -> None:
+    body = "<!-- vrg-release:progress -->\n- [x] tag\n"
+    hits = [_hit(373, title="release: 2.1.4", body=body)]
+    with (
+        patch("vergil_tooling.lib.trust.search_window", return_value=(hits, [])),
+        patch("vergil_tooling.lib.release.is_release_tracking_issue", return_value=True) as check,
+        patch("vergil_tooling.lib.epics.child_states") as mock_children,
+    ):
+        assert roadmap.gather_completed("vergil-project") == []
+    check.assert_called_once_with("vergil-project/.github", 373, title="release: 2.1.4", body=body)
+    mock_children.assert_not_called()
+
+
+def test_gather_completed_refuses_an_epic_with_no_close_time() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.trust.search_window", return_value=([_hit(9, closed_at=None)], [])
+        ),
+        pytest.raises(trust.TrustReadError, match="u9 has no close time"),
+    ):
+        roadmap.gather_completed("vergil-project")
+
+
+def test_gather_completed_fails_on_a_malformed_documents_section() -> None:
+    body = "<!-- vrg-epic-docs -->\n**Documents**\n"
+    with (
+        patch("vergil_tooling.lib.trust.search_window", return_value=([_hit(9, body=body)], [])),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+        pytest.raises(epic_docs.EpicDocsFormatError, match="epic #9"),
+    ):
+        roadmap.gather_completed("vergil-project")
+
+
+def test_gather_completed_epic_with_no_documents_section() -> None:
+    with (
+        patch("vergil_tooling.lib.trust.search_window", return_value=([_hit(9)], [])),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+    ):
+        result = roadmap.gather_completed("vergil-project")
+    assert result[0].documents == ()
+    assert result[0].repos == ()
+
+
+def test_gather_completed_defaults_org_to_current_repo_owner() -> None:
+    with (
+        patch("vergil_tooling.lib.github.current_org", return_value="logical-minds-foundry"),
+        patch("vergil_tooling.lib.trust.search_window", return_value=([_hit(9)], [])) as search,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
+    ):
+        roadmap.gather_completed()
+    assert search.call_args.args[0].startswith("repo:logical-minds-foundry/.github ")
+    assert mock_children.call_args.args[0].owner == "logical-minds-foundry"
 
 
 def test_gather_defaults_org_to_current_repo_owner() -> None:
@@ -303,8 +497,8 @@ def test_roadmap_row_escapes_title() -> None:
 
 def test_render_escapes_milestone_title() -> None:
     summary = EpicSummary(9, "t", "2026-06-28", "<i>v3</i> | *x*", (), 0, 0, "u9")
-    out = roadmap.render([summary], "vergil-project")
-    assert "## &lt;i&gt;v3&lt;/i&gt; \\| \\*x\\*" in out
+    out = roadmap.render([summary], [], "vergil-project")
+    assert "### &lt;i&gt;v3&lt;/i&gt; \\| \\*x\\*" in out
     assert "<i>" not in out
 
 

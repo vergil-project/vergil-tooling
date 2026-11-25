@@ -1523,16 +1523,26 @@ exits 1.
 
 ### vrg-roadmap
 
-Print the generated project roadmap: the open epics in an org's `.github`,
-apart from the standing and proxy epics. The docs-refresh workflow
-publishes the same rendering.
+Print the generated project roadmap: the epics in an org's `.github`, apart
+from the standing, proxy and archived epics, in three sections. **In flight**
+lists the open epics with at least one closed task, **Planned** the open epics
+with none closed yet, and **Completed** the epics closed as completed, most
+recently closed first, each with its close date, task count, repos and links
+to its spec, plan and retrospective from its Documents section. An epic closed
+as not planned is not listed. The docs-refresh workflow publishes the same
+rendering.
+
+The completed epics are read through the trust layer's search, each one's
+latest close judged too: an epic an untrusted identity opened, edited,
+retitled or closed is left out and reported on stderr, metadata only (counts
+by cause under GitHub Actions).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_roadmap` |
 | Args | `--org ORG` (default: the current repo's owner) |
-| Preconditions | GitHub App credentials for the target org |
-| Failure mode | Error on stderr |
+| Preconditions | GitHub App credentials for the target org. Reads the configured trusted authors (the VM's `trusted-authors.toml`, else the host's `identities.toml` stanza) |
+| Failure mode | Error on stderr, and nothing printed on stdout, when a read fails, including a completed epic's trust read and a completed epic whose Documents section is malformed |
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
