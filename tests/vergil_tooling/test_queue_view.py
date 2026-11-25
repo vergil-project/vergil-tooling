@@ -11,7 +11,8 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epics, github, in_flight, queue_view, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.lib import epic_chain, epics, github, in_flight, queue_view, trust
 from vergil_tooling.lib.epic_size import SizeRecord
 from vergil_tooling.lib.epics import ChildState, IssueRef
 from vergil_tooling.lib.queue_view import AdvisoryHold, Deferral, PlanningMarkers, QueueItem
@@ -2019,3 +2020,47 @@ def test_adhoc_to_json_dicts() -> None:
             "disposition": None,
         }
     ]
+
+
+# -- queues across a chain (epic vergil-project/.github#1609) -----------------------
+
+_CHAIN_HOME = "org/.github"
+
+
+def _queue_chain(
+    graph: FakeSubIssueGraph, kind: epics.StandingKind, head_number: int
+) -> tuple[IssueRef, IssueRef, list[IssueRef], IssueRef]:
+    """*kind*'s queue head holding 99 items, a continuation in its last slot, one item there.
+
+    ``(head, continuation, head items, continuation item)``; the head's
+    items are all open.
+    """
+    head = graph.add_issue(
+        IssueRef("org", ".github", head_number),
+        title=f"{kind.title_prefix}org",
+        labels=[*kind.labels, "epic-management"],
+    )
+    items = []
+    for offset in range(epic_chain.ITEM_CAP):
+        item = graph.add_issue(IssueRef("org", "tool", head_number * 1000 + offset), title="an item")
+        graph.link(head, item)
+        items.append(item)
+    c2 = graph.add_continuation(IssueRef("org", ".github", head_number + 1), head, head)
+    late = graph.add_issue(IssueRef("org", "tool", head_number * 1000 + 999), title="late")
+    graph.link(c2, late)
+    graph.clear_log()
+    return head, c2, items, late
+
+
+def test_queue_view_lists_items_in_continuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _head, c2, items, late = _queue_chain(graph, epics.INTAKE, 40)
+    listed = queue_view._open_children(epics.INTAKE, _CHAIN_HOME, "org")
+    assert listed == [*items, late]
+    # The planning view lists the item in its continuation, never the continuation itself.
+    _p_head, p_c2, p_items, p_late = _queue_chain(graph, epics.PLANNING, 60)
+    planning = queue_view._open_children(epics.PLANNING, _CHAIN_HOME, "org")
+    assert planning == [*p_items, p_late]
+    assert c2 not in listed
+    assert p_c2 not in planning
+    assert graph.events == []

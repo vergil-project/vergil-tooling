@@ -8,7 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epic_docs, epics, roadmap, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.lib import epic_chain, epic_docs, epics, roadmap, trust
 from vergil_tooling.lib.roadmap import CompletedEpic, EpicSummary
 
 if TYPE_CHECKING:
@@ -530,3 +531,67 @@ def test_gather_excludes_proxy() -> None:
         result = roadmap.gather("vergil-project")
     assert [s.number for s in result] == [40]
     mock_children.assert_called_once_with(epics.IssueRef("vergil-project", ".github", 40))
+
+
+# -- chained epics (epic vergil-project/.github#1609) --------------------------------
+
+_HEAD = epics.IssueRef("vergil-project", ".github", 40)
+_C2 = epics.IssueRef("vergil-project", ".github", 41)
+
+
+def _chained_graph(monkeypatch: pytest.MonkeyPatch, *, state: str) -> FakeSubIssueGraph:
+    """``_HEAD`` holding 99 items and ``_C2`` in its last slot with 2 more, all in *state*."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Convention", labels=["epic", "epic-development"], state=state)
+    for number in range(1000, 1000 + epic_chain.ITEM_CAP):
+        item = graph.add_issue(epics.IssueRef("vergil-project", "vergil-tooling", number), title="t")
+        graph.link(_HEAD, item)
+    graph.add_continuation(_C2, _HEAD, _HEAD)
+    for number in (1, 2):
+        item = graph.add_issue(epics.IssueRef("vergil-project", ".github", 900 + number), title="t")
+        graph.link(_C2, item)
+    if state == "CLOSED":
+        for ref in graph.issues:
+            graph.close(ref)
+    graph.clear_log()
+    monkeypatch.setattr(epics, "resolve_epic_home", lambda org, _repo: f"{org}/.github")
+    monkeypatch.setattr("vergil_tooling.lib.release.is_release_tracking_issue", lambda *a, **k: False)
+    return graph
+
+
+def _row(ref: epics.IssueRef, graph: FakeSubIssueGraph) -> dict[str, Any]:
+    issue = graph.issues[ref]
+    return {
+        "number": ref.number,
+        "title": issue.title,
+        "createdAt": "2026-06-28T10:00:00Z",
+        "milestone": None,
+        "labels": [{"name": name} for name in issue.labels],
+        "url": f"u{ref.number}",
+        "body": issue.body,
+    }
+
+
+def test_roadmap_skips_continuations(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The head summarizes the whole chain; its continuation is never an epic of its own.
+    graph = _chained_graph(monkeypatch, state="OPEN")
+    rows = [_row(_HEAD, graph), _row(_C2, graph)]
+    monkeypatch.setattr(roadmap, "_open_epics", lambda _home: rows)
+    (summary,) = roadmap.gather("vergil-project")
+    assert summary.number == _HEAD.number
+    assert summary.total == epic_chain.ITEM_CAP + 2
+    assert summary.repos == ("vergil-project/.github", "vergil-project/vergil-tooling")
+    assert graph.events == []
+
+
+def test_roadmap_completed_skips_continuations(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = _chained_graph(monkeypatch, state="CLOSED")
+    hits = [
+        _hit(_HEAD.number, title="Convention", labels=("epic", "epic-development")),
+        _hit(_C2.number, title="Convention (continuation 2)", labels=("epic", "continuation")),
+    ]
+    with patch("vergil_tooling.lib.trust.search_window", return_value=(hits, [])):
+        (completed,) = roadmap.gather_completed("vergil-project")
+    assert completed.number == _HEAD.number
+    assert completed.total == epic_chain.ITEM_CAP + 2
+    assert graph.events == []

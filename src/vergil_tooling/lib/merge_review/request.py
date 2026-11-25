@@ -15,9 +15,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
-from vergil_tooling.lib import epic_audit, epics, github, proxies, trust
+from vergil_tooling.lib import epic_audit, epic_chain, epics, github, proxies, trust
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
 from vergil_tooling.lib.merge_review.result import ResultError, check_request, parse_result
@@ -142,9 +142,10 @@ class TaskContext:
 def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskContext:
     """Read *issue*'s body and derive its epic's open tasks, both from GitHub.
 
-    The task is **under an epic** when its native parent carries the ``epic``
-    label and not ``ad-hoc``; its open tasks are then the parent's open
-    sub-issues, every page, as ``{"ref": "owner/name#N", "title": "..."}``,
+    The task is **under an epic** when its native parent, read through the
+    chain layer (a continuation means its chain's head), carries the ``epic``
+    label and not ``ad-hoc``; its open tasks are then the open native
+    children of the whole chain, as ``{"ref": "owner/name#N", "title": "..."}``,
     leaving out the task itself and every issue of its *batch* PR, whose
     scopes the request carries. When that parent is a **proxy** (it also
     carries ``proxy``), they are instead the open children of the proxy's
@@ -173,7 +174,9 @@ def fetch_task_context(issue: IssueRef, batch: Sequence[IssueRef] = ()) -> TaskC
     except (
         TrustedAuthorsNotConfiguredError,
         github.GitHubAPIError,
-        RuntimeError,  # a GraphQL error, or a broken proxy link (ProxyLinkError)
+        # A GraphQL error, a short sub-issue or label read, chain drift
+        # (ChainDriftError), or a broken proxy link (ProxyLinkError).
+        RuntimeError,
         # A proxy body the trust layer does not trust gives no Primary: link,
         # or one it cannot read in full (spec §5.2 of epic .github#1467).
         trust.UntrustedContentError,
@@ -225,52 +228,22 @@ def fetch_issue_body(issue: IssueRef) -> str:
     return body
 
 
-_TASK_QUERY = """
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      parent {
-        number
-        repository { nameWithOwner }
-        labels(first: 100) { totalCount nodes { name } }
-      }
-    }
-  }
-}
-"""
-
-_SUB_ISSUES_QUERY = """
-query($owner: String!, $name: String!, $number: Int!, $after: String) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      subIssues(first: 100, after: $after) {
-        pageInfo { hasNextPage endCursor }
-        nodes { number state title repository { nameWithOwner } }
-      }
-    }
-  }
-}
-"""
-
-
-def _issue_node(data: object, where: str) -> dict[str, Any]:
-    """The ``repository.issue`` object of a GraphQL response, refusing any other shape."""
-    repository = data.get("repository") if isinstance(data, dict) else None
-    node = repository.get("issue") if isinstance(repository, dict) else None
-    if not isinstance(node, dict):
-        _unreadable(f"{where}: issue not found")
-    return node
-
-
-def _ref_of(number: object, repository: object, where: str) -> IssueRef:
-    """An ``IssueRef`` from a GraphQL ``number`` and ``repository { nameWithOwner }``."""
-    name = repository.get("nameWithOwner") if isinstance(repository, dict) else None
-    if not isinstance(number, int) or isinstance(number, bool) or not isinstance(name, str):
-        _unreadable(f"{where}: an issue has no number or repository")
-    try:
-        return parse_issue_ref(f"{name}#{number}", default_repo="")
-    except ValueError:
-        _unreadable(f"{where}: an issue has no usable ref")
+def _labels_of(epic: IssueRef) -> set[str]:
+    """*epic*'s label names, refusing a response of any other shape."""
+    raw = github.read_json(
+        "issue", "view", str(epic.number), "--repo", f"{epic.owner}/{epic.repo}",
+        "--json", "labels",
+    )  # fmt: skip
+    labels = raw.get("labels") if isinstance(raw, dict) else None
+    if not isinstance(labels, list):
+        _unreadable(f"{epic.slug}: its labels are unreadable")
+    names: set[str] = set()
+    for label in labels:
+        name = label.get("name") if isinstance(label, dict) else None
+        if not isinstance(name, str):
+            _unreadable(f"{epic.slug}: a label has no name")
+        names.add(name)
+    return names
 
 
 def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None, bool]:
@@ -280,70 +253,36 @@ def _fetch_task(issue: IssueRef) -> tuple[str, IssueRef | None, bool]:
     (``require_body=True``): an untrusted body raises
     :class:`~vergil_tooling.lib.trust.UntrustedContentError`, metadata only,
     and is never handed to the reviewer as the task's scope.
+
+    The epic is read through the chain layer (epic vergil-project/.github#1609):
+    a task linked in a continuation is under its chain's head
+    (:func:`epics.native_parent_of`), and the head's labels decide. Chain
+    drift raises, as any failed read does.
     """
-    where = issue.slug
     content = trust.read_issue(f"{issue.owner}/{issue.repo}", issue.number, require_body=True)
     body = content.body or ""
-    data = github.graphql(_TASK_QUERY, owner=issue.owner, name=issue.repo, number=issue.number)
-    node = _issue_node(data, where)
-    parent = node.get("parent")
+    parent = epics.native_parent_of(issue)
     if parent is None:
         return body, None, False
-    if not isinstance(parent, dict):
-        _unreadable(f"{where}: its parent is not an object")
-    parent_ref = _ref_of(parent.get("number"), parent.get("repository"), where)
-    labels = parent.get("labels")
-    nodes = labels.get("nodes") if isinstance(labels, dict) else None
-    total = labels.get("totalCount") if isinstance(labels, dict) else None
-    if not isinstance(nodes, list) or not isinstance(total, int) or total != len(nodes):
-        _unreadable(f"{parent_ref.slug}: its labels are incomplete")
-    names: set[str] = set()
-    for label in nodes:
-        name = label.get("name") if isinstance(label, dict) else None
-        if not isinstance(name, str):
-            _unreadable(f"{parent_ref.slug}: a label has no name")
-        names.add(name)
+    names = _labels_of(parent)
     if "epic" not in names or "ad-hoc" in names:
         return body, None, False
-    return body, parent_ref, epics.is_proxy(names)
+    return body, parent, epics.is_proxy(names)
 
 
 def _open_sub_issues(epic: IssueRef, left_out: set[str]) -> list[dict[str, str]]:
-    """*epic*'s open sub-issues, every page, as ``{ref, title}``, without *left_out*.
+    """*epic*'s open native children across its chain, as ``{ref, title}``, without *left_out*.
 
-    *left_out* holds lowercased ``owner/name#N`` slugs.
+    *epic* is a head: its items and every continuation's, in container order,
+    the continuations themselves excluded
+    (:func:`~vergil_tooling.lib.epic_chain.chain_child_states`; chain drift
+    raises). *left_out* holds lowercased ``owner/name#N`` slugs.
     """
-    where = epic.slug
-    tasks: list[dict[str, str]] = []
-    after: str | None = None
-    while True:
-        variables: dict[str, object] = {
-            "owner": epic.owner,
-            "name": epic.repo,
-            "number": epic.number,
-        }
-        if after is not None:
-            variables["after"] = after
-        page = _issue_node(github.graphql(_SUB_ISSUES_QUERY, **variables), where).get("subIssues")
-        nodes = page.get("nodes") if isinstance(page, dict) else None
-        info = page.get("pageInfo") if isinstance(page, dict) else None
-        if not isinstance(nodes, list) or not isinstance(info, dict):
-            _unreadable(f"{where}: the sub-issues page is malformed")
-        for node in nodes:
-            if not isinstance(node, dict):
-                _unreadable(f"{where}: a sub-issue is not an object")
-            ref = _ref_of(node.get("number"), node.get("repository"), where)
-            state, title = node.get("state"), node.get("title")
-            if not isinstance(state, str) or not isinstance(title, str):
-                _unreadable(f"{ref.slug} has no state or title")
-            if state.upper() == "OPEN" and ref.slug.lower() not in left_out:
-                tasks.append({"ref": ref.slug, "title": title})
-        if not info.get("hasNextPage"):
-            return tasks
-        cursor = info.get("endCursor")
-        if not isinstance(cursor, str) or not cursor:
-            _unreadable(f"{where}: more sub-issues but no cursor")
-        after = cursor
+    return [
+        {"ref": child.ref.slug, "title": child.title}
+        for child in epic_chain.chain_child_states(epic)
+        if child.state == "OPEN" and child.ref.slug.lower() not in left_out
+    ]
 
 
 @dataclass(frozen=True)

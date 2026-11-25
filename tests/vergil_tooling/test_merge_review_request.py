@@ -12,8 +12,9 @@ from typing import Any
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin import vrg_merge_review_request
-from vergil_tooling.lib import epic_audit, github, proxies, trust
+from vergil_tooling.lib import epic_audit, epic_chain, epics, github, proxies, trust
 from vergil_tooling.lib.epics import ChildState, IssueRef, parse_issue_ref
 from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
@@ -96,12 +97,59 @@ def graphql_calls() -> list[dict[str, object]]:
 
 
 @pytest.fixture
-def task_calls() -> list[tuple[str, dict[str, object]]]:
-    """Every task or sub-issues query the fake received, ``(kind, variables)``, in order."""
+def task_calls() -> list[tuple[str, str]]:
+    """Every parent or sub-issue read of the sub-issue graph, ``(kind, issue slug)``, in order.
+
+    *kind* is ``task`` for a parent read and ``subs`` for a container's
+    sub-issue read (:func:`_graph_kind`).
+    """
     return []
 
 
 EPIC = "acme/.github#7"
+EPIC_REF = parse_issue_ref(EPIC, default_repo="")
+ISSUE_REF = parse_issue_ref(ISSUE, default_repo="")
+NEXT = IssueRef("acme", "widget", 43)
+DONE = IssueRef("acme", "widget", 44)
+
+
+@pytest.fixture
+def graph() -> FakeSubIssueGraph:
+    """The task's sub-issue graph, read through ``epics`` and the chain layer.
+
+    ``EPIC`` (labelled ``epic``) holds ``acme/widget#43`` (open), the task
+    and ``acme/widget#44`` (closed), in that order. The graph answers the
+    parent and sub-issue reads, node ids and labels; the trust layer's reads
+    (bodies, a continuation's included) stay with :func:`comment_pages`.
+    """
+    fake = FakeSubIssueGraph()
+    fake.add_issue(EPIC_REF, title="Epic: e", labels=["epic"])
+    fake.add_issue(NEXT, title="The next task")
+    fake.add_issue(ISSUE_REF, title="This task")
+    fake.add_issue(DONE, title="A done task", state="CLOSED")
+    for ref in (NEXT, ISSUE_REF, DONE):
+        fake.link(EPIC_REF, ref)
+    return fake
+
+
+def _graph_kind(query: str) -> str:
+    """``task`` for a parent read of the graph, ``subs`` for a sub-issue read."""
+    return "task" if query in (epics._PARENT_QUERY, epics._PARENT_WITH_LABELS_QUERY) else "subs"
+
+
+def _graph_number(variables: dict[str, object]) -> object:
+    """The issue number a graph read is for: its node id is ``I_<owner>/<repo>#<N>``."""
+    node_id = variables.get("id")
+    return int(node_id.rsplit("#", 1)[1]) if isinstance(node_id, str) else None
+
+
+def _move(graph: FakeSubIssueGraph, task: IssueRef, parent: IssueRef | None) -> None:
+    """Move *task* from wherever it is linked to *parent* (unlinked for None)."""
+    current = graph.parent_of(task)
+    if current is not None:
+        graph._remove(current, task)
+    if parent is not None:
+        graph.link(parent, task)
 TASK_BODY = "Do the thing.\n"
 _CREATED = "2026-11-01T09:30:00Z"
 _EDITED = "2026-11-03T00:00:00Z"
@@ -115,42 +163,6 @@ OUTSIDER = trust_stubs.OUTSIDER
 IMPOSTOR_USER: dict[str, str] = {"__typename": "User", "login": AGENT}
 IMPOSTOR_BOT: dict[str, str] = {"__typename": "Bot", "login": HUMAN}
 SPAM_TEXT = trust_stubs.SPAM_TEXT
-
-
-def _task(parent: Any = "default") -> dict[str, Any]:
-    """A task query response; *parent* defaults to ``EPIC``, labelled ``epic``."""
-    if parent == "default":
-        parent = _parent()
-    return {"repository": {"issue": {"parent": parent}}}
-
-
-def _parent(
-    ref: str = EPIC, labels: tuple[str, ...] = ("epic",), total: int | None = None
-) -> dict[str, Any]:
-    repo, number = ref.split("#")
-    return {
-        "number": int(number),
-        "repository": {"nameWithOwner": repo},
-        "labels": {
-            "totalCount": len(labels) if total is None else total,
-            "nodes": [{"name": name} for name in labels],
-        },
-    }
-
-
-def _sub(ref: str, title: str = "t", state: str = "OPEN") -> dict[str, Any]:
-    repo, number = ref.split("#")
-    return {
-        "number": int(number),
-        "state": state,
-        "title": title,
-        "repository": {"nameWithOwner": repo},
-    }
-
-
-def _subs(nodes: list[Any], cursor: str | None = None) -> dict[str, Any]:
-    info = {"hasNextPage": cursor is not None, "endCursor": cursor}
-    return {"repository": {"issue": {"subIssues": {"pageInfo": info, "nodes": nodes}}}}
 
 
 def _edits(editor: Any) -> dict[str, Any]:
@@ -221,27 +233,14 @@ def _branch(nodes: list[dict[str, Any]]) -> dict[str, Any]:
 
 @pytest.fixture
 def task_pages() -> dict[str, Any]:
-    """The task query's response, the bodies, and the epic's sub-issue pages served in turn.
+    """The bodies the trust layer's item query serves.
 
-    By default the task is under ``EPIC``, whose open sub-issues are
-    ``acme/widget#43`` and the task itself. The item query gives an issue
-    numbered in ``bodies`` that body (``TASK_BODY`` otherwise), written by
-    the human; an issue numbered in ``items`` gets that whole item answer.
+    The item query gives an issue numbered in ``bodies`` that body
+    (``TASK_BODY`` otherwise), written by the human; an issue numbered in
+    ``items`` gets that whole item answer. The task's epic and its children
+    are the :func:`graph`'s.
     """
-    return {
-        "task": _task(),
-        "bodies": {},
-        "items": {},
-        "subs": [
-            _subs(
-                [
-                    _sub("acme/widget#43", "The next task"),
-                    _sub(ISSUE, "This task"),
-                    _sub("acme/widget#44", "A done task", state="CLOSED"),
-                ]
-            )
-        ],
-    }
+    return {"bodies": {}, "items": {}}
 
 
 @pytest.fixture
@@ -272,10 +271,11 @@ def _comments_page(pages: list[Any], after: object) -> Any:
 def comment_pages(
     monkeypatch: pytest.MonkeyPatch,
     graphql_calls: list[dict[str, object]],
-    task_calls: list[tuple[str, dict[str, object]]],
+    task_calls: list[tuple[str, str]],
     task_pages: dict[str, Any],
     pr_pages: dict[str, Any],
     other_comments: dict[int, list[Any]],
+    graph: FakeSubIssueGraph,
 ) -> list[Any]:
     """The task issue's comment pages (each a :func:`_page`), chained by their cursors.
 
@@ -283,12 +283,11 @@ def comment_pages(
     comment page; the builder reads it once for the body, once for the
     comments) and its comment-page query from *task_pages*, these pages and
     *other_comments*; the branch lookup and the PR's item from *pr_pages*;
-    and the task and sub-issues queries from *task_pages*. It configures the
-    trusted authors, for the builder and the layer alike, with one human
-    login, ``HUMAN``.
+    and the parent and sub-issue reads, node ids and labels from *graph*.
+    It configures the trusted authors, for the builder and the layer alike,
+    with one human login, ``HUMAN``.
     """
     pages: list[Any] = []
-    served = 0
     branch_queries = set(trust._BRANCH_QUERIES.values())
 
     def pages_of(number: object) -> list[Any]:
@@ -297,7 +296,6 @@ def comment_pages(
         return pages
 
     def graphql(query: str, **variables: object) -> Any:
-        nonlocal served
         pr = pr_pages["pr"]
         if query in branch_queries:
             pr_pages["calls"].append(variables)
@@ -320,17 +318,12 @@ def comment_pages(
             graphql_calls.append(variables)
             page = _comments_page(pages_of(number), variables["after"])
             return {"repository": {"issueOrPullRequest": {"comments": page}}}
-        assert query in (req._TASK_QUERY, req._SUB_ISSUES_QUERY), "an unexpected query"
-        kind = "subs" if query == req._SUB_ISSUES_QUERY else "task"
-        task_calls.append((kind, variables))
-        if kind == "task":
-            return task_pages["task"]
-        # The pages repeat, so every build in a test reads the same sub-issues.
-        page = task_pages["subs"][served % len(task_pages["subs"])]
-        served += 1
-        return page
+        task_calls.append((_graph_kind(query), graph._by_node_id(variables["id"]).slug))
+        return graph.graphql(query, **variables)
 
     monkeypatch.setattr("vergil_tooling.lib.github.graphql", graphql)
+    monkeypatch.setattr("vergil_tooling.lib.github.read_output", graph.read_output)
+    monkeypatch.setattr("vergil_tooling.lib.github.read_json", graph.read_json)
     authors = TrustedAuthors(human=(HUMAN,), agents=(AGENT, f"{HUMAN}-vergil-audit"))
     monkeypatch.setattr(req, "load_trusted_authors", lambda: authors)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: authors)
@@ -353,7 +346,7 @@ def _query_kind(query: str, variables: dict[str, object], item_reads: list[objec
         kind = "comments" if number in item_reads else "body"
         item_reads.append(number)
         return kind
-    return "subs" if query == req._SUB_ISSUES_QUERY else "task"
+    return _graph_kind(query)
 
 
 @pytest.fixture
@@ -959,7 +952,8 @@ def _failing_on(
 
     def failing(query: str, **variables: object) -> Any:
         kind = _query_kind(query, variables, item_reads)
-        if kind == failing_kind and (kind == "branch" or variables.get("number") == number):
+        read_of = variables.get("number", _graph_number(variables))
+        if kind == failing_kind and (kind == "branch" or read_of == number):
             if isinstance(answer, BaseException):
                 raise answer
             return answer
@@ -1033,7 +1027,7 @@ def test_request_takes_the_body_from_github(
     request = _built(_argv(repo), capsys)
     assert request["issue_body"] == "The task's own body.\n"
     assert graphql_calls[0] == {"owner": "acme", "name": "widget", "number": 42}
-    assert task_calls[0] == ("task", {"owner": "acme", "name": "widget", "number": 42})
+    assert task_calls[0] == ("task", ISSUE)
 
 
 def test_request_keeps_an_empty_body(repo: Path, capsys: Cap, task_pages: dict[str, Any]) -> None:
@@ -1105,63 +1099,109 @@ def test_request_refuses_an_issue_without_a_body_string(
 
 
 def test_task_under_an_epic_lists_its_other_open_tasks(
-    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any]
+    repo: Path, capsys: Cap, graph: FakeSubIssueGraph, task_calls: list[Any]
 ) -> None:
-    task_pages["task"] = _task(parent=_parent(labels=("epic", "enhancement")))
-    task_pages["subs"] = [
-        _subs(
-            [
-                _sub("acme/widget#43", "The next task"),
-                _sub("Acme/Widget#42", "This task, its owner cased differently"),
-                _sub("acme/.github#9", "Docs task in another repo"),
-                _sub("acme/widget#44", "Done", state="CLOSED"),
-            ]
-        )
-    ]
+    graph.issues[EPIC_REF].labels = ["epic", "enhancement"]
+    cased = graph.add_issue(IssueRef("Acme", "Widget", 42), title="This task, cased differently")
+    docs = graph.add_issue(IssueRef("acme", ".github", 9), title="Docs task in another repo")
+    graph.link(EPIC_REF, cased)
+    graph.link(EPIC_REF, docs)
     request = _built(_argv(repo), capsys)
     assert request["epic_open_tasks"] == [
         {"ref": "acme/widget#43", "title": "The next task"},
         {"ref": "acme/.github#9", "title": "Docs task in another repo"},
     ]
-    assert task_calls[1] == ("subs", {"owner": "acme", "name": ".github", "number": 7})
+    assert task_calls[0] == ("task", ISSUE)
+    assert ("subs", EPIC) in task_calls
 
 
-def test_task_under_an_epic_reads_every_page_of_sub_issues(
-    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any]
+C2 = IssueRef("acme", ".github", 70)
+
+
+def _chained(graph: FakeSubIssueGraph, task_pages: dict[str, Any]) -> IssueRef:
+    """Fill ``EPIC`` to 99 items, link continuation ``C2`` in its last slot, move the task there.
+
+    The fillers are closed; ``C2`` also holds ``acme/widget#45``, open. The
+    trust layer serves ``C2``'s body as the chain layer writes it.
+    """
+    _move(graph, ISSUE_REF, None)
+    for number in range(100, 100 + epic_chain.ITEM_CAP - 2):
+        filler = graph.add_issue(IssueRef("acme", "widget", number), title="t", state="CLOSED")
+        graph.link(EPIC_REF, filler)
+    graph.add_continuation(C2, EPIC_REF, EPIC_REF)
+    task_pages["bodies"][C2.number] = graph.issues[C2].body
+    graph.link(C2, ISSUE_REF)
+    graph.link(C2, graph.add_issue(IssueRef("acme", "widget", 45), title="In the continuation"))
+    return C2
+
+
+def test_merge_review_open_tasks_span_chain(
+    repo: Path,
+    capsys: Cap,
+    graph: FakeSubIssueGraph,
+    task_pages: dict[str, Any],
+    task_calls: list[Any],
 ) -> None:
-    first = [_sub(f"acme/widget#{n}", f"t{n}") for n in range(100, 200)]
-    task_pages["subs"] = [_subs(first, cursor="s1"), _subs([_sub("acme/widget#200", "last")])]
+    # A task in C2 is under the head, and its epic's open tasks are the whole
+    # chain's: the head's and C2's, never C2 itself.
+    _chained(graph, task_pages)
+    graph.clear_log()
+    _body, parent, is_proxy = req._fetch_task(ISSUE_REF)
+    assert (parent, is_proxy) == (EPIC_REF, False)
     request = _built(_argv(repo), capsys)
-    assert [t["title"] for t in request["epic_open_tasks"]] == [
-        *(f"t{n}" for n in range(100, 200)),
-        "last",
+    assert request["epic_open_tasks"] == [
+        {"ref": "acme/widget#43", "title": "The next task"},
+        {"ref": "acme/widget#45", "title": "In the continuation"},
     ]
-    assert task_calls[2] == (
-        "subs",
-        {"owner": "acme", "name": ".github", "number": 7, "after": "s1"},
-    )
+    assert ("subs", C2.slug) in task_calls
+    assert graph.events == []
+
+
+def test_merge_review_chain_drift_refuses(
+    repo: Path, capsys: Cap, graph: FakeSubIssueGraph, task_pages: dict[str, Any]
+) -> None:
+    # A continuation whose Continues: line names another head is drift: the
+    # request is refused, naming it, never built on a guessed epic.
+    _chained(graph, task_pages)
+    task_pages["bodies"][C2.number] = graph.issues[C2].body.replace(EPIC, "acme/.github#8")
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "ERROR: cannot read the issue or its epic: chain drift: acme/.github#70" in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
 
 
 @pytest.mark.parametrize(
-    "parent",
+    ("labels", "parent"),
     [
-        None,
-        _parent(labels=("epic", "ad-hoc")),
-        _parent(labels=("bug",)),
-        _parent(labels=()),
+        (["epic"], None),
+        (["epic", "ad-hoc"], EPIC_REF),
+        (["bug"], EPIC_REF),
+        ([], EPIC_REF),
     ],
     ids=["no-parent", "ad-hoc", "not-an-epic", "unlabelled"],
 )
 def test_task_outside_an_epic_has_no_epic_tasks(
-    repo: Path, capsys: Cap, task_pages: dict[str, Any], task_calls: list[Any], parent: Any
+    repo: Path,
+    capsys: Cap,
+    graph: FakeSubIssueGraph,
+    task_calls: list[Any],
+    labels: list[str],
+    parent: IssueRef | None,
 ) -> None:
-    task_pages["task"] = _task(parent=parent)
+    graph.issues[EPIC_REF].labels = labels
+    _move(graph, ISSUE_REF, parent)
     assert _built(_argv(repo), capsys)["epic_open_tasks"] == []
-    assert [kind for kind, _vars in task_calls] == ["task"]
+    assert [kind for kind, _slug in task_calls] == ["task"]
 
 
 PROXY = "acme/.github#9"
 PRIMARY = "other/.github#5"
+
+def _under_proxy(graph: FakeSubIssueGraph) -> None:
+    """Move the task under ``PROXY``, an ``epic`` + ``proxy`` epic."""
+    proxy = graph.add_issue(parse_issue_ref(PROXY, default_repo=""), title="Epic (proxy): p", labels=["epic", "proxy"])
+    _move(graph, ISSUE_REF, proxy)
 
 
 @pytest.fixture
@@ -1204,11 +1244,11 @@ def proxy_links(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def test_proxy_task_open_tasks_from_primary(
     repo: Path,
     capsys: Cap,
-    task_pages: dict[str, Any],
+    graph: FakeSubIssueGraph,
     task_calls: list[Any],
     proxy_links: dict[str, Any],
 ) -> None:
-    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    _under_proxy(graph)
     request = _built(_argv(repo), capsys)
     assert request["epic_open_tasks"] == [
         {"ref": "other/thing#1", "title": "Primary task"},
@@ -1224,9 +1264,9 @@ def test_proxy_task_open_tasks_from_primary(
 
 
 def test_proxy_task_open_tasks_leave_out_the_batch(
-    comment_pages: list[Any], task_pages: dict[str, Any], proxy_links: dict[str, Any]
+    comment_pages: list[Any], graph: FakeSubIssueGraph, proxy_links: dict[str, Any]
 ) -> None:
-    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    _under_proxy(graph)
     context = req.fetch_task_context(
         parse_issue_ref(ISSUE, default_repo=""), [parse_issue_ref("Acme/Tool#3", default_repo="")]
     )
@@ -1289,12 +1329,12 @@ def test_proxy_task_open_tasks_leave_out_the_batch(
 def test_proxy_task_unresolvable_primary_raises(
     repo: Path,
     capsys: Cap,
-    task_pages: dict[str, Any],
+    graph: FakeSubIssueGraph,
     proxy_links: dict[str, Any],
     override: dict[str, Any],
     message: str,
 ) -> None:
-    task_pages["task"] = _task(parent=_parent(PROXY, labels=("epic", "proxy")))
+    _under_proxy(graph)
     proxy_links.update(override)
     code, out, err = _run(_argv(repo), capsys)
     assert code == 1
@@ -1307,80 +1347,49 @@ def test_proxy_task_unresolvable_primary_raises(
 def test_plain_epic_task_unchanged(
     repo: Path,
     capsys: Cap,
-    task_pages: dict[str, Any],
     task_calls: list[Any],
     proxy_links: dict[str, Any],
 ) -> None:
     request = _built(_argv(repo), capsys)
     assert request["epic_open_tasks"] == [{"ref": "acme/widget#43", "title": "The next task"}]
-    assert [kind for kind, _vars in task_calls] == ["task", "subs"]
+    assert [kind for kind, _slug in task_calls] == ["task", "subs"]
     assert proxy_links["calls"] == []
 
 
 def test_check_request_takes_the_body_and_tasks_from_github(
-    repo: Path, capsys: Cap, task_pages: dict[str, Any]
+    repo: Path, capsys: Cap, task_pages: dict[str, Any], graph: FakeSubIssueGraph
 ) -> None:
     review_head, result = _reviewed(repo, capsys, [_finding("R1")])
     task_pages["bodies"][42] = "Narrowed.\n"
-    task_pages["subs"] = [_subs([])]
+    graph.close(NEXT)
     request = _built(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
     assert request["issue_body"] == "Narrowed.\n"
     assert request["epic_open_tasks"] == []
 
 
 @pytest.mark.parametrize(
-    ("task", "subs", "message"),
+    ("answer", "message"),
     [
-        ({"repository": {"issue": None}}, None, "acme/widget#42: issue not found"),
-        ({"repository": None}, None, "acme/widget#42: issue not found"),
-        (_task(parent="x"), None, "acme/widget#42: its parent is not an object"),
-        (
-            _task(parent={"number": "7", "repository": {"nameWithOwner": "acme/.github"}}),
-            None,
-            "acme/widget#42: an issue has no number or repository",
-        ),
-        (
-            _task(parent={"number": 7, "repository": {"nameWithOwner": "acme"}}),
-            None,
-            "acme/widget#42: an issue has no usable ref",
-        ),
-        (_task(parent=_parent(total=101)), None, f"{EPIC}: its labels are incomplete"),
-        (
-            _task(parent={**_parent(), "labels": {"totalCount": 1, "nodes": [{}]}}),
-            None,
-            f"{EPIC}: a label has no name",
-        ),
-        (_task(), {"repository": {"issue": None}}, f"{EPIC}: issue not found"),
-        (
-            _task(),
-            {"repository": {"issue": {"subIssues": None}}},
-            f"{EPIC}: the sub-issues page is malformed",
-        ),
-        (_task(), _subs(["x"]), f"{EPIC}: a sub-issue is not an object"),
-        (
-            _task(),
-            _subs([{**_sub("acme/widget#43"), "title": None}]),
-            "acme/widget#43 has no state or title",
-        ),
-        (
-            _task(),
-            {
-                "repository": {
-                    "issue": {
-                        "subIssues": {"pageInfo": {"hasNextPage": True}, "nodes": []},
-                    }
-                }
-            },
-            f"{EPIC}: more sub-issues but no cursor",
-        ),
+        ({"labels": None}, f"{EPIC}: its labels are unreadable"),
+        ([], f"{EPIC}: its labels are unreadable"),
+        ({"labels": [{}]}, f"{EPIC}: a label has no name"),
+        ({"labels": ["epic"]}, f"{EPIC}: a label has no name"),
     ],
 )
-def test_request_refuses_a_malformed_issue_or_epic(
-    repo: Path, capsys: Cap, task_pages: dict[str, Any], task: Any, subs: Any, message: str
+def test_request_refuses_unreadable_epic_labels(
+    repo: Path,
+    capsys: Cap,
+    monkeypatch: pytest.MonkeyPatch,
+    graph: FakeSubIssueGraph,
+    answer: Any,
+    message: str,
 ) -> None:
-    task_pages["task"] = task
-    if subs is not None:
-        task_pages["subs"] = [subs]
+    def read_json(*args: str) -> Any:
+        if args[:3] == ("issue", "view", str(EPIC_REF.number)) and args[-1] == "labels":
+            return answer
+        return graph.read_json(*args)
+
+    monkeypatch.setattr("vergil_tooling.lib.github.read_json", read_json)
     code, out, err = _run(_argv(repo), capsys)
     assert code == 1
     assert out == ""

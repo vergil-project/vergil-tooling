@@ -1524,7 +1524,9 @@ exits 1.
 ### vrg-roadmap
 
 Print the generated project roadmap: the epics in an org's `.github`, apart
-from the standing, proxy and archived epics, in three sections. **In flight**
+from the standing, proxy and archived epics and the
+[continuations](../standards/github-issues.md#chained-epics), whose tasks
+their chain's head counts, in three sections. **In flight**
 lists the open epics with at least one closed task, **Planned** the open epics
 with none closed yet, and **Completed** the epics closed as completed, most
 recently closed first, each with its close date, task count, repos and links
@@ -1859,14 +1861,16 @@ the merge base.
 It reads the body of the `--issue` itself, as `issue_body`, through the
 trust layer, and refuses when the layer does not trust it (metadata only,
 never the body's text); it derives
-`epic_open_tasks` from the issue's native parent: when the parent carries
-`epic` and not `ad-hoc`, its open sub-issues, every page, as
-`{"ref", "title"}`, without the issue itself; otherwise `[]`. When the
+`epic_open_tasks` from the issue's native parent, read through the chain
+layer (a [continuation](../standards/github-issues.md#chained-epics) means
+its chain's head): when the parent carries `epic` and not `ad-hoc`, the
+open native children of the epic's whole chain, as `{"ref", "title"}`,
+without the issue itself; otherwise `[]`. When the
 parent is a proxy epic (it also carries `proxy`), the open tasks are
 instead those of the proxy's primary, its own and every proxy's, as
 [`vrg-epic-audit --epic`](#vrg-epic-audit) lists them in its `children`,
 again without the issue itself. It refuses when the issue, its parent's
-labels or the sub-issues cannot be read, and, for a proxy, when its
+labels or the children cannot be read, on chain drift, and, for a proxy, when its
 `Primary:` line cannot be resolved, the primary has no trusted `Proxy:`
 comment naming it back, or any of the primary's proxy links is broken.
 
