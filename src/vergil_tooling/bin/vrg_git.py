@@ -550,19 +550,29 @@ def _is_protected_branch() -> bool:
 
 
 def _is_upstream_gone(branch_name: str) -> bool:
-    result = subprocess.run(
-        ["git", "branch", "-vv"],  # noqa: S603, S607
+    """Return True only if the local branch's upstream is recorded as gone.
+
+    Reads the branch's own tracking state with ``for-each-ref`` rather than
+    parsing ``git branch -vv``, whose line also carries the commit subject
+    and marks worktree branches with ``+`` (GHSA-rp4r-x254-p53h). A
+    ``for-each-ref`` pattern also matches as a prefix, so the ref name is
+    checked exactly. The track text is untranslated for ``for-each-ref``;
+    ``LC_ALL=C`` pins it all the same.
+    """
+    ref = f"refs/heads/{branch_name}"
+    result = subprocess.run(  # noqa: S603
+        ["git", "for-each-ref", "--format=%(refname)%00%(upstream:track)", ref],  # noqa: S607
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "LC_ALL": "C"},
     )
+    if result.returncode != 0:
+        return False
     for line in result.stdout.splitlines():
-        stripped = line.lstrip("* ").strip()
-        if not stripped:
-            continue
-        parts = stripped.split(None, 1)
-        if parts and parts[0] == branch_name:
-            return ": gone]" in line
+        refname, sep, track = line.partition("\0")
+        if sep and refname == ref:
+            return track == "[gone]"
     return False
 
 
