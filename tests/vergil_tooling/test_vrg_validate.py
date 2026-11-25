@@ -401,7 +401,8 @@ class _FailingWrites(io.StringIO):
 
     def writelines(self, lines: Any) -> None:
         self._count()
-        super().writelines(lines)
+        for line in lines:
+            super().write(line)
 
     def write(self, s: str) -> int:
         self._count()
