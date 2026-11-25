@@ -8,13 +8,11 @@ and ``vrg-submit-pr`` reads it. ``status`` prints the current state.
 commit to ``origin/<branch>`` (setting upstream) *before* recording anything, so
 a relay ``vrg-submit-pr <branch>`` always finds the branch on origin and no
 caller has to remember a separate push. Already on origin at that commit, the
-push is a no-op. When the delta touches ``.github/workflows/**`` GitHub refuses
-an agent identity's push; that is expected — report-ready says so and records
-the state anyway, and the human's ``vrg-submit-pr`` pushes the branch instead.
-A stale branch, whose own commits change no workflow file but whose tree carries
-an outdated one, is refused the same way; report-ready tells it apart as
-``vrg-git push`` does and fails with the rebase steps, recording nothing (#4077).
-Any other push failure fails report-ready with nothing recorded and no relay ref
+push is a no-op. A push GitHub refuses for ``.github/workflows/**`` changes is
+a failure like any other: every in-scope installation grants the user App
+``workflows: write``, so the refusal means this repository's installation has
+not accepted it, and report-ready names that and the human's remedy (#5176).
+Every push failure fails report-ready with nothing recorded and no relay ref
 written. Once the branch is pushed and the state recorded, a relay ref that
 cannot be written fails report-ready, naming the ref, with the local state kept
 for the re-run that writes it (#5035). A branch with no commits ahead of
@@ -146,11 +144,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=(
             "Push the branch to origin (setting upstream), record the PR metadata "
             "for this worktree, and freeze the branch. No separate push is needed. "
-            "If the delta touches .github/workflows/**, GitHub refuses the agent "
-            "push; report-ready records the state anyway and the human's "
-            "vrg-submit-pr pushes the branch instead. A stale branch (its own "
-            "commits change no workflow file) is refused with the rebase steps, "
-            "and that and any other push failure record nothing."
+            "A push failure records nothing. A push GitHub refuses for "
+            ".github/workflows/** changes is such a failure: the App lacks "
+            "workflows: write in this repository's installation, and the human "
+            "must accept that permission on the installation."
         ),
     )
     p_ready.add_argument(
@@ -416,19 +413,15 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
     otherwise refuse a re-run's push. Its output is captured, keeping stdout a
     pure JSON document; a branch already on origin at this commit is a no-op.
 
-    GitHub's refusal to let an agent identity push a ``.github/workflows/**``
-    change is recognized from the push error itself — the authoritative signal,
-    where a diff of the delta would only predict it (a human identity's push of
-    the same delta succeeds). That case is expected: it is reported and the state
-    is still recorded, since the human's ``vrg-submit-pr`` pushes the branch.
-    A stale branch gets the same refusal and is refused here instead (see
-    :func:`_handle_workflow_refusal`).
+    GitHub's refusal to push a ``.github/workflows/**`` change is recognized
+    from the push error itself and fails like any other push, with the cause
+    named: the installation has not accepted ``workflows: write`` (#5176).
 
     With *lease_sha* (see :func:`_lease_sha`) and the branch on origin, the push
     carries ``--force-with-lease=refs/heads/<branch>:<lease_sha>`` so a rebase
     after an unfreeze replaces the reported commit without a manual force-push
-    (#3783). A branch absent from origin (its first push was the expected
-    workflow-file refusal) has nothing to overwrite, so it gets the plain push.
+    (#3783). A branch absent from origin (deleted there since the first report)
+    has nothing to overwrite, so it gets the plain push.
     """
     ref = f"refs/heads/{branch}"
     lease = lease_sha is not None and branch in git.remote_branches("origin")
@@ -437,8 +430,12 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
         git.read_output("push", "-u", *lease_args, "origin", f"{ref}:{ref}")
     except subprocess.CalledProcessError as exc:
         if git.is_workflow_push_refusal(exc.stderr):
-            _handle_workflow_refusal(branch)
-            return
+            raise WorkflowError(
+                f"report-ready: could not push {branch} to origin "
+                f"({error_text(exc, output=False)}); nothing was recorded.\n"
+                f"  {git.workflow_push_refusal_text()}\n"
+                "  Then re-run report-ready."
+            ) from exc
         if lease:
             raise WorkflowError(
                 f"report-ready: could not push {branch} to origin "
@@ -453,45 +450,6 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
             "(e.g. after a rebase, vrg-git push --force-with-lease) and re-run report-ready."
         ) from exc
     print(f"report-ready: pushed {branch} to origin", file=sys.stderr)
-
-
-def _handle_workflow_refusal(branch: str) -> None:
-    """Report GitHub's workflow-permission refusal of *branch*, or refuse a stale one.
-
-    The refusal comes both from a branch whose own commits change
-    ``.github/workflows/**`` and from a stale branch whose tree only carries an
-    outdated workflow file; ``vrg-git push`` tells them apart with the same
-    :func:`lib.git.diagnose_workflow_refusal` (#3814, #4077). An own change is
-    the expected hand-off: report it and return, so the state is recorded and
-    the human's ``vrg-submit-pr`` pushes the branch. A stale branch raises, so
-    nothing is recorded and the agent rebases instead. When the cause cannot be
-    told, the hand-off stands as before, with how to check by hand.
-    """
-    diagnosis = git.diagnose_workflow_refusal("origin")
-    if diagnosis.kind == "stale":
-        raise WorkflowError(
-            f"report-ready: {git.stale_workflow_refusal_text(diagnosis)}"
-            "  then re-run `vrg-container-run -- vrg-validate` and re-run report-ready.\n"
-            f"  Nothing was recorded: {branch} is not handed off as ready."
-        )
-    if diagnosis.kind == "own":
-        cause = (
-            f"This branch's own commits change {git.WORKFLOWS_PATH}** "
-            f"({', '.join(diagnosis.files)}), which"
-        )
-    else:
-        cause = f"GitHub refused it for {git.WORKFLOWS_PATH}** changes, which"
-    print(
-        f"report-ready: push of {branch} refused for workflow-file changes — "
-        f"EXPECTED, not an error. {cause} an agent identity may not push; the "
-        "human's vrg-submit-pr pushes it at submit time. Recording the ready state anyway.",
-        file=sys.stderr,
-    )
-    if diagnosis.kind == "unknown":
-        print(
-            f"  report-ready {git.unknown_workflow_refusal_note(diagnosis)}",
-            file=sys.stderr,
-        )
 
 
 def _refuse_drifted_rerun(state: WorkflowState, head_sha: str) -> None:

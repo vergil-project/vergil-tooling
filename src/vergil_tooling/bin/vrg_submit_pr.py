@@ -16,8 +16,7 @@ Supports three modes:
   (issue #2794): when the branch has a local worktree ready-state **and**
   origin lacks the branch, it is pushed and opened locally
   (``push=True``) — the branch was developed on this machine and never
-  reached origin (e.g. a workflow-file change the agent's token could not
-  push). Otherwise it takes the relay path — origin's tip is verified
+  reached origin. Otherwise it takes the relay path — origin's tip is verified
   against the recorded ``head_sha`` and the PR is opened **without**
   pushing (``--head`` names the source branch) — the Mac-side of the
   cloud→Mac relay handoff, where the branch and its metadata already rode
@@ -1826,8 +1825,7 @@ def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submis
     The local-vs-relay choice is made from **actual state**, not from the mere
     fact that a branch was named on the command line (issue #2794). The relay
     path never pushes — it trusts origin already carries the branch — so a
-    branch developed in a local worktree and never pushed (e.g. a workflow-file
-    change the agent's token could not push) would dead-end on
+    branch developed in a local worktree and never pushed would dead-end on
     :func:`_verify_origin_tip`'s "not on origin". When the named branch has a
     local worktree carrying a ready-state **and** origin lacks the branch, fall
     back to the local submit path (``push=True``: push, then open), which is
