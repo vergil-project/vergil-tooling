@@ -15213,6 +15213,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-parent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-parent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-move" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16448,6 +16459,8 @@
       
         
       
+        
+      
     
     
     
@@ -16819,6 +16832,34 @@
     
   
     vrg-scope-change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/epic-parent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-epic-parent
   
 
     
@@ -19923,6 +19964,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-epic-parent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-epic-parent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-epic-move" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -22363,6 +22415,48 @@ its chain's head, with a line saying so.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 linked, 1 error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-epic-parent">vrg-epic-parent<a class="headerlink" href="#vrg-epic-parent" title="Permanent link">&para;</a></h3>
+<p>Print a task's epic and the epic's kind, read through the epic's
+<a href="../../standards/github-issues/#chained-epics">chain</a>: a task linked in a
+continuation is reported under the chain's head, with the head's kind. One
+line, <code>&lt;epic ref&gt; &lt;kind&gt;</code>; <code>--json</code> adds the native parent as <code>container</code>.
+A task with no native parent prints <code>none</code>, a plain-issue parent
+<code>&lt;parent ref&gt; not-epic</code>, and an archive <code>&lt;archive ref&gt; archive</code>. Read-only.
+See <a href="../dev/epic-parent/">vrg-epic-parent</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_epic_parent</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> or <code>#&lt;N&gt;</code> (required), <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the task's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>A bad ref, a failed read or chain drift on stderr</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 answered, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>
