@@ -705,6 +705,124 @@ def native_parent_of(task: IssueRef) -> IssueRef | None:
     return _chain_head(ref, labels, nested=isinstance(parent["parent"], dict))
 
 
+# Every open issue of a repo, a page at a time, with each one's native parent,
+# that parent's labels and whether it has a parent of its own (epic
+# vergil-project/.github#1609): enough for :func:`list_open_issues` to map an
+# issue linked in a continuation to its chain's head with no read per issue.
+_OPEN_ISSUES_QUERY = """
+query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        title
+        body
+        labels(first: 100) { totalCount nodes { name } }
+        parent {
+          number repository { name owner { login } }
+          labels(first: 100) { totalCount nodes { name } }
+          parent { number }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+@dataclass(frozen=True)
+class OpenIssueRecord:
+    """One open issue (never a PR) of a repo, as :func:`list_open_issues` lists it.
+
+    ``container`` is the raw native parent, the one container the issue is
+    linked in; ``epic`` is the epic it belongs to, the head of that
+    container's chain (``container`` itself when it is no continuation).
+    Both are ``None`` for an issue with no native parent. ``body`` is the
+    listing's copy, which the trust layer has not judged.
+    """
+
+    ref: IssueRef
+    title: str
+    body: str
+    labels: frozenset[str]
+    epic: IssueRef | None
+    container: IssueRef | None
+
+
+def list_open_issues(repo: str) -> list[OpenIssueRecord]:
+    """Every open issue of *repo* (``owner/name``), with its epic, in one batched listing.
+
+    One paginated GraphQL read lists each issue with its native parent and
+    that parent's labels. A parent that could be a continuation (it carries
+    the ``continuation`` label, or it carries ``epic`` and is itself a
+    sub-issue) is mapped to its chain's head (:func:`_chain_head`), once per
+    distinct parent however many issues it holds, so no issue costs a read
+    of its own.
+
+    A parent whose chain breaks a rule of spec §4.1 is not guessed past: its
+    issues keep it as their epic, so none of them reads as unparented, and
+    the drift is printed on stderr once (the audit's chain-drift check
+    reports it too). A repo the token cannot read, or an issue whose labels
+    or parent's labels a page cuts short, raises: neither is ever taken as
+    empty.
+    """
+    owner, name = repo.split("/", 1)
+    heads: dict[IssueRef, IssueRef] = {}
+    found: list[OpenIssueRecord] = []
+    after: str | None = None
+    while True:
+        variables: dict[str, object] = {"owner": owner, "name": name}
+        if after is not None:
+            variables["after"] = after
+        data: Any = github.graphql(_OPEN_ISSUES_QUERY, **variables)
+        repository = (data or {}).get("repository")
+        if repository is None:
+            # A listed repo the token cannot read must never count as empty (#3513).
+            raise RuntimeError(f"{repo} is listed but its issues cannot be read")
+        page = repository.get("issues") or {}
+        for node in page.get("nodes") or []:
+            ref = IssueRef(owner, name, int(node["number"]))
+            label_conn = node.get("labels") or {}
+            names = frozenset(str(n["name"]) for n in label_conn.get("nodes") or [])
+            if int(label_conn.get("totalCount") or 0) > len(names):
+                # Never judge an issue on a truncated label set (fail loud).
+                raise RuntimeError(f"{ref.slug} has more labels than one page returns")
+            parent = node.get("parent")
+            container = _ref_from_node(parent) if isinstance(parent, dict) else None
+            epic = None
+            if container is not None:
+                if container not in heads:
+                    heads[container] = _listed_parent_head(container, parent)
+                epic = heads[container]
+            found.append(
+                OpenIssueRecord(
+                    ref=ref,
+                    title=str(node.get("title") or ""),
+                    body=str(node.get("body") or ""),
+                    labels=names,
+                    epic=epic,
+                    container=container,
+                )
+            )
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return found
+        after = str(info["endCursor"])
+
+
+def _listed_parent_head(container: IssueRef, node: Any) -> IssueRef:
+    """The head of *container*'s chain, from its listed *node*; drift keeps *container*."""
+    labels = _label_names(node.get("labels"), container.slug)
+    if "parent" not in node:
+        raise RuntimeError(f"the listing of {container.slug} did not say whether it has a parent")
+    try:
+        return _chain_head(container, labels, nested=isinstance(node["parent"], dict))
+    except epic_chain.ChainDriftError as exc:
+        print(f"{exc}; its issues are read as under {container.slug}", file=sys.stderr)
+        return container
+
+
 @dataclass(frozen=True)
 class _ContainerChild:
     """One child in a container's listing: its state and its labels."""

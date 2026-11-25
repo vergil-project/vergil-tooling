@@ -4888,3 +4888,86 @@ def test_native_parent_of_refuses_a_read_without_the_grandparent() -> None:
         pytest.raises(RuntimeError, match="did not say whether"),
     ):
         epics.native_parent_of(TASK)
+
+
+# -- list_open_issues (epic vergil-project/.github#1609, Task 9a) ----------------
+
+_LIST_HEAD = IssueRef("org", ".github", 40)
+_LIST_C2 = IssueRef("org", ".github", 50)
+
+
+def _listing_graph(
+    monkeypatch: pytest.MonkeyPatch, *, in_head: int, in_c2: int
+) -> FakeSubIssueGraph:
+    """A head with *in_head* items of ``org/tool`` and a continuation with *in_c2*."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_LIST_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_LIST_C2, _LIST_HEAD, _LIST_HEAD)
+    for n in range(1, in_head + in_c2 + 1):
+        item = graph.add_issue(IssueRef("org", "tool", n), title=f"t{n}")
+        graph.link(_LIST_HEAD if n <= in_head else _LIST_C2, item)
+    return graph
+
+
+def test_open_issue_in_continuation_maps_to_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = _listing_graph(monkeypatch, in_head=1, in_c2=1)
+    graph.add_issue(IssueRef("org", "tool", 9), title="unlinked")
+    records = {r.ref.number: r for r in epics.list_open_issues("org/tool")}
+    assert (records[2].epic, records[2].container) == (_LIST_HEAD, _LIST_C2)
+    assert (records[1].epic, records[1].container) == (_LIST_HEAD, _LIST_HEAD)
+    assert (records[9].epic, records[9].container) == (None, None)
+    assert records[2].title == "t2"
+
+
+def test_list_open_issues_is_one_batched_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 150 issues: two listing pages, one head_of for the one continuation
+    # however many issues it holds, and no per-issue parent read.
+    graph = _listing_graph(monkeypatch, in_head=90, in_c2=60)
+    queries: list[str] = []
+    answer = graph.graphql
+
+    def counting(query: str, **variables: Any) -> dict[str, Any]:
+        queries.append(query)
+        return answer(query, **variables)
+
+    monkeypatch.setattr(github, "graphql", counting)
+    heads: list[IssueRef] = []
+    real_head_of = epic_chain.head_of
+
+    def spy(container: IssueRef) -> IssueRef:
+        heads.append(container)
+        return real_head_of(container)
+
+    monkeypatch.setattr(epic_chain, "head_of", spy)
+    records = epics.list_open_issues("org/tool")
+    assert len(records) == 150
+    assert queries.count(epics._OPEN_ISSUES_QUERY) == 2
+    assert heads == [_LIST_C2]
+    # The one parent read is head_of's own, of the continuation: none per issue.
+    assert queries.count(epics._PARENT_QUERY) == 1
+    assert epics._PARENT_WITH_LABELS_QUERY not in queries
+    assert {r.epic for r in records} == {_LIST_HEAD}
+
+
+def test_list_open_issues_drifted_container_keeps_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A continuation that breaks a chain rule is never guessed past: its
+    # issues keep it as their epic, so none reads as unparented, and the
+    # drift is printed once.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_LIST_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_LIST_C2, _LIST_HEAD, _LIST_HEAD, author=trust_stubs.OUTSIDER)
+    for n in (1, 2):
+        graph.link(_LIST_C2, graph.add_issue(IssueRef("org", "tool", n), title=f"t{n}"))
+    records = epics.list_open_issues("org/tool")
+    assert [r.epic for r in records] == [_LIST_C2, _LIST_C2]
+    err = capsys.readouterr().err
+    assert err.count("chain drift: org/.github#50 breaks the untrusted-body rule") == 1
+    assert "its issues are read as under org/.github#50" in err
+
+
+def test_list_open_issues_refuses_an_unreadable_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "graphql", lambda _query, **_variables: {"repository": None})
+    with pytest.raises(RuntimeError, match="org/tool is listed but its issues cannot be read"):
+        epics.list_open_issues("org/tool")

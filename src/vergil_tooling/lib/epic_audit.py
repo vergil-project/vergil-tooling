@@ -39,6 +39,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import (
+    epic_chain,
     epic_docs,
     epics,
     github,
@@ -659,7 +660,12 @@ def closed_epic_open_child(
 
     *listing* is the home's :func:`list_home_epics`, shared with
     :func:`epic_documents` so the audit lists the epics once; it is read here
-    when not given. Only its closed epics are checked.
+    when not given. Only its closed epics are checked. A continuation is
+    never one (epic vergil-project/.github#1609): its items are the chain's,
+    read with its head's, and a closed continuation is no closed epic. An
+    epic whose chain breaks a rule of spec §4.1 is left out here: its
+    children cannot be read past the drift, which :func:`chain_drift`
+    reports by name.
 
     A child is open for this check only when it was never reopened or its
     latest reopen was made by a trusted actor (spec §5.2): a child reopened by
@@ -676,10 +682,17 @@ def closed_epic_open_child(
     for record in listing:
         if record["state"] != "CLOSED":
             continue
-        if epics.is_standing(set(record["labels"])):
+        labels = set(record["labels"])
+        if epics.is_standing(labels):
             continue  # standing epics never roll up; closed-with-open-child doesn't apply
+        if epics.is_continuation(labels):
+            continue  # a container of its head's chain, judged with the head
         epic = epics.IssueRef(home_owner, home_repo, record["number"])
-        open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
+        try:
+            states = epics.child_states(epic)
+        except epic_chain.ChainDriftError:
+            continue  # its chain cannot be read past the drift, which chain_drift reports
+        open_kids = tuple(cs.ref for cs in states if cs.state == "OPEN")
         if open_kids and _opens_trusted(open_kids, stops=stops, authors=authors):
             violations.append((epic, open_kids))
     return violations
@@ -836,33 +849,21 @@ def _link_problems(
 # share one org-wide enumeration (:func:`open_issues`); the ``--close`` sweep
 # applies them in the order nativize -> strip labels -> attach orphans.
 
-_OPEN_ISSUES_QUERY = """
-query($owner: String!, $name: String!, $after: String) {
-  repository(owner: $owner, name: $name) {
-    issues(states: OPEN, first: 100, after: $after) {
-      pageInfo { hasNextPage endCursor }
-      nodes {
-        number
-        title
-        body
-        labels(first: 100) { totalCount nodes { name } }
-        parent { number repository { name owner { login } } }
-      }
-    }
-  }
-}
-"""
-
 
 @dataclass(frozen=True)
 class OpenIssue:
-    """One open issue (never a PR) in a managed repo, as the orphan pass sees it."""
+    """One open issue (never a PR) in a managed repo, as the orphan pass sees it.
+
+    ``native_parent`` is the epic of the issue's native link only, never a
+    body ``Parent:`` line: the head of the chain it is linked in, so an issue
+    in a continuation reads as under its head (epic vergil-project/.github#1609).
+    """
 
     ref: epics.IssueRef
     title: str
     body: str
     labels: frozenset[str]
-    native_parent: epics.IssueRef | None  # the native sub-issue parent only
+    native_parent: epics.IssueRef | None
 
     @property
     def body_parent(self) -> epics.IssueRef | None:
@@ -883,56 +884,30 @@ def _declared_parent(body: str) -> epics.IssueRef | None:
     return epics.IssueRef(match.group(1), match.group(2), int(match.group(3)))
 
 
-def _repo_open_issues(owner: str, bare: str) -> list[OpenIssue]:
-    """Every open issue in ``owner/bare`` via paginated GraphQL (PRs excluded)."""
-    found: list[OpenIssue] = []
-    after: str | None = None
-    while True:
-        variables: dict[str, object] = {"owner": owner, "name": bare}
-        if after is not None:
-            variables["after"] = after
-        data: Any = github.graphql(_OPEN_ISSUES_QUERY, **variables)
-        repository = (data or {}).get("repository")
-        if repository is None:
-            # A listed repo the token cannot read must never count as empty (#3513).
-            raise RuntimeError(f"{owner}/{bare} is listed but its issues cannot be read")
-        page = repository.get("issues") or {}
-        for node in page.get("nodes") or []:
-            ref = epics.IssueRef(owner, bare, int(node["number"]))
-            label_conn = node.get("labels") or {}
-            names = frozenset(str(n["name"]) for n in label_conn.get("nodes") or [])
-            if int(label_conn.get("totalCount") or 0) > len(names):
-                # Never judge an issue on a truncated label set (fail loud).
-                raise RuntimeError(f"{ref.slug} has more labels than one page returns")
-            parent = node.get("parent")
-            found.append(
-                OpenIssue(
-                    ref=ref,
-                    title=str(node.get("title") or ""),
-                    body=str(node.get("body") or ""),
-                    labels=names,
-                    native_parent=epics._ref_from_node(parent) if parent else None,
-                )
-            )
-        info = page.get("pageInfo") or {}
-        if not info.get("hasNextPage"):
-            return found
-        after = str(info["endCursor"])
-
-
 def open_issues(org: str) -> list[OpenIssue]:
     """Every open issue in *org*'s managed repos — the orphan pass's shared domain.
 
     Managed means non-archived with a ``vergil.toml`` (:func:`epics.is_managed_repo`);
     unmanaged repos are never read, so never written to. Enumerated per repo with
-    paginated GraphQL rather than ``gh search issues``: search caps at 1000
-    results and does not return the native parent, which every check here needs.
+    the one batched listing of :func:`epics.list_open_issues` rather than ``gh
+    search issues``: search caps at 1000 results and does not return the native
+    parent, which every check here needs. Each issue's ``native_parent`` is the
+    listing's ``epic``, the head of the chain it is linked in.
     """
     issues: list[OpenIssue] = []
     for bare in github.list_org_repos(org):
         if not epics.is_managed_repo(f"{org}/{bare}"):
             continue
-        issues += _repo_open_issues(org, bare)
+        issues += [
+            OpenIssue(
+                ref=record.ref,
+                title=record.title,
+                body=record.body,
+                labels=record.labels,
+                native_parent=record.epic,
+            )
+            for record in epics.list_open_issues(f"{org}/{bare}")
+        ]
     return issues
 
 
@@ -1570,6 +1545,20 @@ def proxy_link_problems(epic: epics.IssueRef) -> list[str]:
     return _proxy_side_problems(epic) if is_proxy else _primary_side_problems(epic)
 
 
+def _is_open_proxy(record: epic_docs.EpicRecord) -> bool:
+    """True iff *record* is an open proxy epic, and never a continuation.
+
+    A continuation carries no kind label of its own (epic
+    vergil-project/.github#1609, spec §4.1): its kind is its head's, so one
+    that carries ``proxy`` by mistake is still a container of a chain, never
+    a proxy whose link is checked or closed.
+    """
+    labels = set(record["labels"])
+    return (
+        record["state"] == "OPEN" and epics.is_proxy(labels) and not epics.is_continuation(labels)
+    )
+
+
 def proxy_link_drift(
     home: str, *, stops: trust.BatchStops, listing: list[epic_docs.EpicRecord] | None = None
 ) -> list[str]:
@@ -1585,7 +1574,7 @@ def proxy_link_drift(
         listing = list_home_epics(home)
     problems: list[str] = []
     for record in sorted(listing, key=lambda r: r["number"]):
-        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+        if not _is_open_proxy(record):
             continue
         proxy = epics.IssueRef(home_owner, home_repo, record["number"])
         try:
@@ -1642,7 +1631,7 @@ def proxy_closures(
     closures: list[ProxyClosure] = []
     errors: list[str] = []
     for record in sorted(listing, key=lambda r: r["number"]):
-        if record["state"] != "OPEN" or not epics.is_proxy(set(record["labels"])):
+        if not _is_open_proxy(record):
             continue
         proxy = epics.IssueRef(home_owner, home_repo, record["number"])
         try:
@@ -1712,10 +1701,160 @@ def close_proxies(closures: list[ProxyClosure]) -> list[str]:
     return drift
 
 
+# -- Chain drift (epic vergil-project/.github#1609, spec §4.7) ------------------
+
+#: The kinds of :class:`ChainDrift`. Every kind but ``closed-continuation`` is
+#: drift; that one is a note: a continuation closed by hand in an open chain
+#: never blocks the chain (spec §4.2).
+CHAIN_DRIFT_KINDS = (
+    "drift",
+    "full-tail",
+    "duplicate",
+    "closed-head-open-continuation",
+    "orphan",
+    "closed-continuation",
+)
+
+
+@dataclass(frozen=True)
+class ChainDrift:
+    """One problem with an epic's chain of containers, naming the containers.
+
+    *kind* is one of :data:`CHAIN_DRIFT_KINDS`. For ``drift`` and
+    ``duplicate``, *rule* is the :class:`~vergil_tooling.lib.epic_chain.ChainDriftError`
+    rule the first of *containers* broke (``two-continuations`` for a
+    duplicate); every other kind has no rule (``""``). *head* is the epic the
+    chain belongs to, or, for a continuation whose head cannot be resolved
+    past the drift, that continuation itself.
+    """
+
+    head: epics.IssueRef
+    kind: str
+    containers: tuple[epics.IssueRef, ...]
+    rule: str = ""
+
+
+def chain_drift(
+    home: str, *, listing: list[epic_docs.EpicRecord] | None = None
+) -> list[ChainDrift]:
+    """Every problem with the chains of *home*'s epics (report only; spec §4.7).
+
+    Each epic of *home* that is no continuation, open or closed, has its
+    chain walked (:func:`epic_chain.containers`). A walk that breaks a rule
+    of spec §4.1 is ``drift`` (``duplicate`` for two continuations under one
+    container). A closed head with an open continuation, as an interrupted
+    :func:`epic_chain.close_chain` leaves, is ``closed-head-open-continuation``;
+    a closed continuation in an open chain is the note ``closed-continuation``.
+    A tail holding GitHub's 100 sub-issues and no continuation is
+    ``full-tail``, reported only while rollover is on: while it is off a full
+    head is today's limit, which every link refuses by name.
+
+    Then every open continuation no walk reached is resolved to its head
+    (:func:`epic_chain.head_of`): one whose head's chain is whole is an
+    ``orphan``, of an open or a closed head; one whose head's walk already
+    broke is that drift, reported once; one that cannot be resolved is
+    ``drift``.
+
+    *listing* is :func:`list_home_epics`, read here when not given. The
+    reads run under *home*'s owner's token. Nothing is written: the sweep
+    heals from this list.
+    """
+    owner, repo = home.split("/", 1)
+    found: list[ChainDrift] = []
+    walked: set[epics.IssueRef] = set()
+    broken: set[epics.IssueRef] = set()
+    reached: set[epics.IssueRef] = set()
+
+    def walk(head: epics.IssueRef) -> None:
+        walked.add(head)
+        try:
+            chain = epic_chain.containers(head)
+        except epic_chain.ChainDriftError as exc:
+            broken.add(head)
+            reached.add(exc.container)  # accounted for: reported here, once
+            kind = "duplicate" if exc.rule == "two-continuations" else "drift"
+            found.append(ChainDrift(head, kind, (exc.container,), exc.rule))
+            return
+        reached.update(container.ref for container in chain)
+        found.extend(_chain_problems(head, chain))
+
+    with github.target_org(owner):
+        if listing is None:
+            listing = list_home_epics(home)
+        ordered = sorted(listing, key=lambda r: r["number"])
+        for record in ordered:
+            if not epics.is_continuation(set(record["labels"])):
+                walk(epics.IssueRef(owner, repo, record["number"]))
+        for record in ordered:
+            if record["state"] != "OPEN" or not epics.is_continuation(set(record["labels"])):
+                continue
+            continuation = epics.IssueRef(owner, repo, record["number"])
+            if continuation in reached:
+                continue
+            try:
+                head = epic_chain.head_of(continuation)
+            except epic_chain.ChainDriftError as exc:
+                found.append(ChainDrift(continuation, "drift", (exc.container,), exc.rule))
+                continue
+            if head not in walked:
+                walk(head)
+            if head in broken or continuation in reached:
+                continue
+            found.append(ChainDrift(head, "orphan", (continuation,)))
+    return found
+
+
+def _chain_problems(head: epics.IssueRef, chain: list[epic_chain.Container]) -> list[ChainDrift]:
+    """The problems of *head*'s whole *chain*, as :func:`chain_drift` reports them."""
+    rest = chain[1:]
+    if chain[0].state == "CLOSED":
+        still_open = tuple(c.ref for c in rest if c.state == "OPEN")
+        if still_open:
+            return [ChainDrift(head, "closed-head-open-continuation", still_open)]
+        return []
+    problems = [
+        ChainDrift(head, "closed-continuation", (c.ref,)) for c in rest if c.state == "CLOSED"
+    ]
+    tail = chain[-1]
+    if epic_chain.ROLLOVER_ENABLED and tail.item_count >= epic_chain.SUBISSUE_LIMIT:
+        problems.append(ChainDrift(head, "full-tail", (tail.ref,)))
+    return problems
+
+
+def chain_drift_line(drift: ChainDrift) -> str:
+    """The report line for one :class:`ChainDrift`, naming its head and containers."""
+    names = ", ".join(ref.slug for ref in drift.containers)
+    if drift.kind == "drift":
+        if drift.containers == (drift.head,):
+            return f"{names} breaks the {drift.rule} rule"
+        return f"epic {drift.head.slug}: {names} breaks the {drift.rule} rule"
+    if drift.kind == "duplicate":
+        return f"epic {drift.head.slug}: {names} holds two continuations or more"
+    if drift.kind == "full-tail":
+        return (
+            f"epic {drift.head.slug}: its tail {names} holds {epic_chain.SUBISSUE_LIMIT}"
+            " sub-issues and no continuation"
+        )
+    if drift.kind == "closed-head-open-continuation":
+        return f"epic {drift.head.slug} is closed, but its continuation(s) {names} are open"
+    if drift.kind == "orphan":
+        return (
+            f"epic {drift.head.slug}: {names} is an orphaned continuation, open and not"
+            " reached from the head"
+        )
+    if drift.kind == "closed-continuation":
+        return (
+            f"epic {drift.head.slug}: its continuation {names} is closed; its items are still"
+            " read, and nothing is linked into it"
+        )
+    raise ValueError(f"unknown chain drift kind {drift.kind!r}")
+
+
 def render_epic_children(
     epic: epics.IssueRef,
     children: Sequence[epics.ChildState | ListedChild],
     *,
+    containers: int,
     primary: epics.IssueRef | None = None,
 ) -> str:
     """Machine-readable JSON enumeration of *epic*'s children with their state.
@@ -1731,6 +1870,10 @@ def render_epic_children(
     :func:`epics.child_states` (native sub-issues, reflink fallback), so the native
     vs portable mechanism is transparent to the caller. Entries are sorted by
     (owner, repo, number) so the output is deterministic across runs.
+
+    *containers* is the number of containers in *epic*'s chain, the head
+    included (1 for an epic with no continuation; epic
+    vergil-project/.github#1609): the payload's ``containers`` key.
 
     *primary* is given only for a proxy epic: the payload then gains a
     ``"primary"`` key naming it, which merge review reads. Any other epic's
@@ -1749,6 +1892,7 @@ def render_epic_children(
     payload: dict[str, object] = {"epic": epic.slug}
     if primary is not None:
         payload["primary"] = primary.slug
+    payload["containers"] = containers
     rendered: list[dict[str, object]] = []
     for child, blockers in entries:
         entry: dict[str, object] = {
@@ -1785,6 +1929,7 @@ def render(
     proxy_closures: list[ProxyClosure] | None = None,
     proxy_errors: list[str] | None = None,
     misplaced_adhoc: list[MisplacedTask] | None = None,
+    chain_drift: list[ChainDrift] | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
 
@@ -1804,8 +1949,10 @@ def render(
     .github#819). ``proxy_link_drift`` is the report-only :func:`proxy_link_drift`
     check (epic .github#1417); ``proxy_closures`` and ``proxy_errors`` preview
     the ``--close`` proxy close pass (:func:`proxy_closures`), and
-    ``misplaced_adhoc`` is the report-only :func:`misplaced_adhoc` check. Each section
-    appears only when it has something to report.
+    ``misplaced_adhoc`` is the report-only :func:`misplaced_adhoc` check.
+    ``chain_drift`` is the report-only :func:`chain_drift` check (epic
+    .github#1609): its drift in one section, its closed-continuation notes in
+    another. Each section appears only when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
@@ -1821,6 +1968,7 @@ def render(
     proxy_closures = proxy_closures or []
     proxy_errors = proxy_errors or []
     misplaced_adhoc = misplaced_adhoc or []
+    chain_drift = chain_drift or []
     banner = (
         f"_Read-only audit of the **{org}** org (merged PRs from the last "
         f"{window_days} days) — this report changes nothing; run `--close` (as "
@@ -1845,6 +1993,7 @@ def render(
             proxy_closures,
             proxy_errors,
             misplaced_adhoc,
+            chain_drift,
         ]
     ):
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
@@ -1905,6 +2054,7 @@ def render(
         lines += _render_misplaced_archives(misplaced)
     lines += _render_proxy_link_drift(proxy_link_drift)
     lines += _render_misplaced_adhoc(misplaced_adhoc)
+    lines += _render_chain_drift(chain_drift)
     lines += _render_epic_documents(epic_docs_findings, f"{org}/.github")
     lines.append("")
     return "\n".join(lines)
@@ -1961,6 +2111,25 @@ def _render_proxy_link_drift(problems: list[str]) -> list[str]:
         "",
         *[f"- {problem}" for problem in problems],
     ]
+
+
+def _render_chain_drift(found: list[ChainDrift]) -> list[str]:
+    """The ``## Chain drift`` and ``## Chain notes`` sections; none when clean."""
+    drift = [d for d in found if d.kind != "closed-continuation"]
+    notes = [d for d in found if d.kind == "closed-continuation"]
+    lines: list[str] = []
+    if drift:
+        lines += [
+            "",
+            "## Chain drift (report only)",
+            "",
+            "Each line names an epic whose chain of containers needs attention:",
+            "",
+            *[f"- {chain_drift_line(d)}" for d in drift],
+        ]
+    if notes:
+        lines += ["", "## Chain notes", "", *[f"- {chain_drift_line(d)}" for d in notes]]
+    return lines
 
 
 def _render_misplaced_adhoc(misplaced: list[MisplacedTask]) -> list[str]:

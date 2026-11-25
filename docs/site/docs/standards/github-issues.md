@@ -385,7 +385,10 @@ and it is a native sub-issue of the container before it. Anything else is
 rule it broke (`label`, `untrusted-body`, `continues-mismatch`,
 `not-native-child` or `two-continuations`), and never guesses past it. A
 continuation closed by hand in an open chain is not drift: its items are
-still read.
+still read. `vrg-epic-audit` reports every chain's drift in its **Chain
+drift** section, and each closed continuation of an open chain as a note,
+and `vrg-epic-audit --epic` counts an epic's containers in its `containers`
+key.
 
 **Orphaned continuations.** A continuation that is open but not reachable
 from the head its `Continues:` line names (left by a writer that stopped

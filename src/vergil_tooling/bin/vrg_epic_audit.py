@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     epic_audit,
+    epic_chain,
     epics,
     github,
     identity_mode,
@@ -148,6 +149,13 @@ def _epic_listing(epic: epics.IssueRef) -> int:
     An open child's body that is not trusted or cannot be read in full, or a
     native blocked-by list that cannot be read in full, fails the listing the
     same way: never "no blockers".
+
+    The JSON's ``containers`` key counts *epic*'s chain of containers, the
+    head included (epic vergil-project/.github#1609). A chain that breaks a
+    rule of spec §4.1 fails the listing: the drift (the epic, the container
+    and the rule) goes to stderr and no JSON is printed. A closed
+    continuation in an open chain is no drift: it is counted, and noted on
+    stderr.
     """
     try:
         problems = epic_audit.proxy_link_problems(epic)
@@ -155,11 +163,23 @@ def _epic_listing(epic: epics.IssueRef) -> int:
             for problem in problems:
                 print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
             return 1
+        with github.target_org(epic.owner):
+            chain = epic_chain.containers(epic)
+        for container in chain[1:]:
+            if container.state == "CLOSED" and chain[0].state != "CLOSED":
+                print(
+                    f"vrg-epic-audit: note: continuation {container.ref.slug} of epic"
+                    f" {epic.slug} is closed; its items are still listed",
+                    file=sys.stderr,
+                )
         children = epic_audit.epic_children_with_blockers(epic)
         with github.target_org(epic.owner):
             primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
     except proxies.ProxyLinkError as exc:
         print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
+        return 1
+    except epic_chain.ChainDriftError as exc:
+        print(f"vrg-epic-audit: epic {epic.slug}: {exc}", file=sys.stderr)
         return 1
     except (
         trust.UntrustedContentError,
@@ -168,7 +188,7 @@ def _epic_listing(epic: epics.IssueRef) -> int:
     ) as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
         return 1
-    print(epic_audit.render_epic_children(epic, children, primary=primary))
+    print(epic_audit.render_epic_children(epic, children, containers=len(chain), primary=primary))
     return 0
 
 
@@ -278,6 +298,7 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             proxy_closures=proxy_plan,
             proxy_errors=proxy_errors,
             misplaced_adhoc=epic_audit.misplaced_adhoc(org, issues=issues),
+            chain_drift=epic_audit.chain_drift(home, listing=home_epics),
         )
     )
     stops.print_summary(sys.stderr)
@@ -422,7 +443,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "instead of running the drift audit. REF is an epic ref "
             "('owner/repo#N', used as written, or a bare '#N' resolved against "
             "the current repo's epic home, '<org>/.github'). "
-            'Emits {"epic": <slug>, "children": [{repo, number, title, '
+            'Emits {"epic": <slug>, "containers": <n>, "children": [{repo, number, title, '
             "state, open_blockers, blocked}, ...]} — a stable array of objects "
             "(native sub-issues, with the portable Parent: reflink fallback), so "
             "'.children[] | select(.state==\"OPEN\")' lists the open children "
@@ -432,7 +453,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "trusted Blocked-by: body lines; always [] on a closed child), and "
             "blocked is true iff it is not empty. A blocker list that cannot be "
             "read in full, or an open child's body that is not trusted, exits 1 "
-            "with no JSON. The children "
+            "with no JSON. containers counts the epic's chain of containers, "
+            "the epic included (1 for an epic with no continuation); a chain "
+            "that breaks a chain rule exits 1 with the drift on stderr and no "
+            "JSON. The children "
             "of every proxy epic the epic's trusted 'Proxy:' comments name are "
             "listed beside its own, and on a proxy the JSON gains a "
             '"primary": <slug> key. A Primary:/Proxy: link that is broken or '

@@ -3,7 +3,7 @@
 :class:`FakeSubIssueGraph` holds issues (title, labels, body, state) and their
 native parent links, and :meth:`FakeSubIssueGraph.install` patches the
 ``github`` boundary with it: ``github.graphql`` answers ``epics``' sub-issue,
-container, parent and mutation queries, and passes the trust layer's queries
+container, parent, open-issue listing and mutation queries, and passes the trust layer's queries
 to a :class:`~tests.vergil_tooling.trust_stubs.FakeItems` that serves each
 issue's body (trusted unless added with an untrusted *author*);
 ``github.read_output`` and ``github.read_json`` answer the REST reads of a node
@@ -43,6 +43,9 @@ SUBISSUE_LIMIT = 100
 
 #: GitHub's nesting limit in levels, the top issue included (Task 4's ``Max depth``).
 MAX_DEPTH = 8
+
+#: The issues one page of a repo's open-issue listing holds, as GitHub's ``first: 100``.
+OPEN_ISSUES_PAGE = 100
 
 #: GitHub's depth error, as Task 4's probe recorded it.
 DEPTH_ERROR = (
@@ -274,6 +277,8 @@ class FakeSubIssueGraph:
                 return {"removeSubIssue": {"subIssue": {"number": child.number}}}
             self._add(parent, child, replace=query == epics._REPARENT_SUBISSUE)
             return {"addSubIssue": {"subIssue": {"number": child.number}}}
+        if query == epics._OPEN_ISSUES_QUERY:
+            return self._open_issues_page(variables)
         ref = self._by_node_id(variables["id"])
         issue = self.issues[ref]
         if query in (epics._PARENT_QUERY, epics._PARENT_WITH_LABELS_QUERY):
@@ -303,6 +308,55 @@ class FakeSubIssueGraph:
             nodes = [self._child_node(c, labels=False, blockers=blockers) for c in issue.children]
             return {"node": {"subIssues": {"nodes": nodes}}}
         raise AssertionError(f"unfaked GraphQL query: {query.strip()[:60]!r}")
+
+    def _open_issues_page(self, variables: dict[str, Any]) -> dict[str, Any]:
+        """One page of a repo's open issues, each with its parent, as ``epics`` lists them.
+
+        A page holds :data:`OPEN_ISSUES_PAGE` issues; ``after`` is the number
+        of issues already listed.
+        """
+        owner, name = str(variables["owner"]), str(variables["name"])
+        listed = sorted(
+            (ref for ref, issue in self.issues.items() if issue.state == "OPEN"),
+            key=lambda r: r.number,
+        )
+        listed = [ref for ref in listed if (ref.owner, ref.repo) == (owner, name)]
+        start = int(variables.get("after") or 0)
+        page = listed[start : start + OPEN_ISSUES_PAGE]
+        nodes: list[dict[str, Any]] = []
+        for ref in page:
+            issue = self.issues[ref]
+            node: dict[str, Any] = {
+                "number": ref.number,
+                "title": issue.title,
+                "body": issue.body,
+                "labels": {
+                    "totalCount": len(issue.labels),
+                    "nodes": [{"name": label} for label in issue.labels],
+                },
+                "parent": None,
+            }
+            if issue.parent is not None:
+                parent = self.issues[issue.parent]
+                node["parent"] = {
+                    "number": parent.ref.number,
+                    "repository": _repo_node(parent.ref),
+                    "labels": {
+                        "totalCount": len(parent.labels),
+                        "nodes": [{"name": label} for label in parent.labels],
+                    },
+                    "parent": None if parent.parent is None else {"number": parent.parent.number},
+                }
+            nodes.append(node)
+        end = start + len(page)
+        return {
+            "repository": {
+                "issues": {
+                    "pageInfo": {"hasNextPage": end < len(listed), "endCursor": str(end)},
+                    "nodes": nodes,
+                }
+            }
+        }
 
     def read_output(self, *args: str) -> str:
         """``github.read_output``: an issue's REST node id, state, title or close time."""

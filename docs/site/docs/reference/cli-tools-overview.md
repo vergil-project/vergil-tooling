@@ -2051,7 +2051,9 @@ status, and, like the proxy link drift section, runs with `--close` too.
 An **Epic documents** section checks the
 [Documents section](../standards/github-issues.md#the-documents-section) of
 every epic in the home, open and closed, apart from the standing, proxy and
-`[archived]` epics. Each epic needs the section, well formed, with its three
+`[archived]` epics and the
+[continuations](../standards/github-issues.md#chained-epics) of a chained
+epic. Each epic needs the section, well formed, with its three
 entries. On a closed epic, no entry may read `pending` and every link must
 name a file on its repo's default branch (a link to a directory, another
 branch, another org or a missing repo is reported too). An open epic's links
@@ -2060,6 +2062,20 @@ status, and `vrg-epic-docs` settles them. The check runs only without
 `--close`, so the scheduled sweep does not report it. The audit lists the
 home's epics once, under the home owner's App token, for this check and the
 closed-epic-with-open-child check.
+
+A **Chain drift** section lists each epic of the home whose
+[chain](../standards/github-issues.md#chained-epics) is not whole, naming its
+containers: a container that breaks a chain rule (with the rule), a container
+holding two continuations, a closed epic with an open continuation, an
+orphaned continuation (open, and not reached from the head its `Continues:`
+line names), and, once rollover is enabled, a last container holding 100
+sub-issues and no continuation. A **Chain notes** section names each
+continuation closed by hand in an open chain, which is not drift: its items
+are still read, and nothing is linked into it. Both are report-only and do
+not change the exit status. An issue linked in a continuation reads as under
+the chain's head in every check, so a continuation is never reported as an
+epic missing its Documents section, a closed epic with an open child, or a
+proxy.
 
 The report previews, without
 writing, the proxies whose primary has closed (the ones `--close` would close
@@ -2075,9 +2091,14 @@ Every read and write runs under the audited org's token, wherever the
 command is run from.
 
 `--epic REF` is a separate read-only mode: it prints one epic's children as
-JSON (`{"epic": <slug>, "children": [{repo, number, title, state,
-open_blockers, blocked}, …]}`) and skips the drift audit. A bare `#N`
-resolves against the current repo's epic home. `open_blockers` lists, as
+JSON (`{"epic": <slug>, "containers": <n>, "children": [{repo, number,
+title, state, open_blockers, blocked}, …]}`) and skips the drift audit. A
+bare `#N` resolves against the current repo's epic home, and a
+continuation's ref resolves to its chain's head. `containers` counts the
+containers of the epic's chain, the epic included: 1 for an epic with no
+continuation. A chain that breaks a chain rule exits 1, naming the epic, the
+container and the rule on stderr, with no JSON; a continuation closed by hand
+in an open chain is counted, and noted on stderr. `open_blockers` lists, as
 `owner/repo#N` refs sorted, every issue not closed that an open child is
 blocked by: its native GitHub blocked-by relationships, a blocker in another
 repo or org included, and the `Blocked-by:` lines of its body, which count
