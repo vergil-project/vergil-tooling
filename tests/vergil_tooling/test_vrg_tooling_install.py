@@ -219,6 +219,14 @@ def test_a_name_that_is_both_branch_and_tag_is_refused(stubs: Path) -> None:
     assert _calls(stubs, "git") == []
 
 
+def test_a_lookup_skips_malformed_and_non_ref_lines(stubs: Path) -> None:
+    listing = (
+        f"warning: noise\n{_BRANCH_SHA}\tHEAD\n{_BRANCH_SHA} refs/heads/develop extra\n"
+        f"{STUB_SHA}\trefs/heads/develop\n"
+    )
+    assert install_ref("develop", ls_refs=_refs(listing)).sha == STUB_SHA
+
+
 def test_a_listed_non_sha_is_refused(stubs: Path) -> None:
     with pytest.raises(ToolingInstallError, match="not a commit SHA"):
         install_ref("develop", ls_refs=_refs("zzz\trefs/heads/develop\n"))
