@@ -391,6 +391,16 @@ def commit_sha(ref: str) -> str:
     return read_output("rev-parse", ref)
 
 
+def branch_commit(branch: str) -> str:
+    """Return the commit local *branch* points at, read as ``refs/heads/<branch>``.
+
+    A bare name is resolved as a tag before a branch, so a same-named tag
+    would shadow it (GHSA-j7c6-37h8-hjvg). The full ref, ``--verify`` and
+    ``--end-of-options`` resolve the branch or fail.
+    """
+    return read_output("rev-parse", "--verify", "--end-of-options", f"refs/heads/{branch}^{{commit}}")
+
+
 def remote_tracking_branches(remote: str = "origin", repo: Path | None = None) -> set[str]:
     """Return the branch names under ``refs/remotes/<remote>/`` (local, no network).
 
@@ -622,6 +632,22 @@ def remote_branches(remote: str = "origin", repo: Path | None = None) -> set[str
         if ref.startswith(prefix):
             names.add(ref[len(prefix) :])
     return names
+
+
+def remote_branch_tip(branch: str, remote: str = "origin") -> str | None:
+    """The SHA *remote*'s ``refs/heads/<branch>`` points at, or None when it has none.
+
+    ``ls-remote`` matches a pattern by its tail, so ``refs/heads/<branch>``
+    also lists a ref such as ``refs/heads/a/refs/heads/<branch>``, which may
+    sort first. Only the line whose ref field is exactly
+    ``refs/heads/<branch>`` is read (GHSA-f4j7-x3f8-59gv).
+    """
+    ref = f"refs/heads/{branch}"
+    listing = read_output("ls-remote", remote, ref)
+    shas = [
+        sha for sha, _tab, name in (line.partition("\t") for line in listing.splitlines()) if name == ref
+    ]
+    return shas[0] if shas else None
 
 
 def branch_upstreams() -> dict[str, tuple[str, str]]:

@@ -1472,7 +1472,7 @@ def _close_refs_of(pr: str, *, dry_run: bool) -> None:
 def _head_of(branch: str) -> str:
     """The commit *branch* points at; a failed read fails the stage."""
     try:
-        return git.read_output("rev-parse", branch).strip()
+        return git.branch_commit(branch).strip()
     except subprocess.CalledProcessError as exc:
         msg = f"could not read the head of {branch}: {error_text(exc)}"
         raise FinalizeError(msg) from exc
@@ -1644,7 +1644,7 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         # target's carries no merged work, so deleting it saves nothing;
         # it is also exactly what an in-flight branch looks like before
         # its first commit.
-        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
+        if git.branch_commit(branch) == git.branch_commit(args.target_branch):
             print(
                 f"  Skipping {branch}: tip matches {args.target_branch} "
                 "(zero-commit branch, nothing to clean up)"
@@ -1952,7 +1952,7 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     head_sha = ctx.synced_to
     if not head_sha:
         try:
-            head_sha = git.read_output("rev-parse", args.target_branch).strip()
+            head_sha = git.branch_commit(args.target_branch).strip()
         except subprocess.CalledProcessError:
             head_sha = ""
     if not head_sha:

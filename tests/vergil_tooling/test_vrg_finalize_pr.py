@@ -339,7 +339,7 @@ def _sweep_guards_pass() -> Generator[None]:
     evidence, so the sweep proceeds to delete it.
     """
     with (
-        patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
+        patch(_MOD + ".git.branch_commit", side_effect=lambda ref: f"sha-of-{ref}"),
         patch(_MOD + ".worktrees.closed_pr_for_branch", return_value=_PR_EVIDENCE),
     ):
         yield
@@ -1716,7 +1716,7 @@ def test_sweep_skips_zero_commit_branch(tmp_path: Path, capsys: pytest.CaptureFi
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/1439-fresh"]),
-        patch(_MOD + ".git.commit_sha", return_value="same-sha"),
+        patch(_MOD + ".git.branch_commit", return_value="same-sha"),
         patch(_MOD + ".worktrees.closed_pr_for_branch") as evidence,
         patch(_MOD + "._report_cd_run"),
     ):
@@ -1748,7 +1748,7 @@ def test_sweep_skips_branch_without_merge_evidence(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/77-stale-tip"]),
-        patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
+        patch(_MOD + ".git.branch_commit", side_effect=lambda ref: f"sha-of-{ref}"),
         patch(_MOD + ".worktrees.closed_pr_for_branch", return_value=None),
         patch(_MOD + "._report_cd_run"),
     ):
@@ -1805,7 +1805,7 @@ def test_explicit_target_cleanup_bypasses_sweep_guards(tmp_path: Path) -> None:
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
-        patch(_MOD + ".git.commit_sha") as sha,
+        patch(_MOD + ".git.branch_commit") as sha,
         patch(_MOD + ".worktrees.closed_pr_for_branch") as evidence,
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=(0, [])),
@@ -2896,7 +2896,9 @@ def test_stage_cd_check_falls_back_to_target_tip(tmp_path: Path) -> None:
         patch(_MOD + "._report_cd_run") as wait,
     ):
         _stage_cd_check(ctx)
-    read.assert_called_once_with("rev-parse", "develop")
+    read.assert_called_once_with(
+        "rev-parse", "--verify", "--end-of-options", "refs/heads/develop^{commit}"
+    )
     wait.assert_called_once_with("develop", "tip1234sha", root=tmp_path)
 
 
@@ -3018,7 +3020,7 @@ def test_sweep_keeps_reused_branch_name_worktree(tmp_path: Path) -> None:
         # Real gather_worktree_status: stub only its primitives.
         patch(_wt_mod + ".git.commits_ahead", return_value=9),
         patch(_wt_mod + ".git.read_output", return_value=""),
-        patch(_wt_mod + ".git.commit_sha", return_value="7ead128"),
+        patch(_wt_mod + ".git.branch_commit", return_value="7ead128"),
         patch(
             _wt_mod + ".branch_prs",
             return_value=[_pr_ref(293, "docs", state="MERGED", head_oid="0ldd0cs")],
@@ -4209,7 +4211,9 @@ def test_synced_commits_unknown_without_a_range() -> None:
 def test_head_of_reads_the_branch() -> None:
     with patch(_MOD + ".git.read_output", return_value="abc123\n") as read:
         assert _head_of("develop") == "abc123"
-    read.assert_called_once_with("rev-parse", "develop")
+    read.assert_called_once_with(
+        "rev-parse", "--verify", "--end-of-options", "refs/heads/develop^{commit}"
+    )
 
 
 def test_head_of_failure_fails_the_stage() -> None:

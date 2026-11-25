@@ -565,7 +565,7 @@ def test_gather_merged_pr_is_removable() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
@@ -581,7 +581,7 @@ def test_gather_dirty_overlay_blocks_removal() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=" M file.py"),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
@@ -601,7 +601,7 @@ def test_gather_merged_dirty_flags_attention_with_dirt_detail() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=porcelain),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
@@ -625,7 +625,7 @@ def test_gather_merged_dirt_detail_truncates_long_lists() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=0),
         patch(_MOD + ".git.read_output", return_value=porcelain),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
@@ -641,7 +641,7 @@ def test_gather_merged_clean_has_no_attention_or_dirt_detail() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="cafef00d")],
@@ -660,7 +660,7 @@ def test_gather_reused_branch_name_is_not_removable() -> None:
         patch(_MOD + ".git.commits_ahead", return_value=9),
         patch(_MOD + ".git.read_output", return_value=""),
         # The local tip is a fresh commit; the merged PR points at an old one.
-        patch(_MOD + ".git.commit_sha", return_value="7ead128"),
+        patch(_MOD + ".git.branch_commit", return_value="7ead128"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(293, "docs", state="MERGED", head_oid="0ldd0cs")],
@@ -681,7 +681,7 @@ def test_gather_missing_head_sha_withholds_removal() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".git.commit_sha", return_value="7ead128"),
+        patch(_MOD + ".git.branch_commit", return_value="7ead128"),
         patch(
             _MOD + ".branch_prs",
             return_value=[_pr_ref(11, "t", state="MERGED", head_oid="")],
@@ -753,7 +753,7 @@ def test_worktree_state_ignores_fork_pr(
     with (
         patch(_MOD + ".git.commits_ahead", return_value=2),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".git.branch_commit", return_value="cafef00d"),
         patch(_MOD + ".github.current_repo", return_value="o/r"),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=authors),
         patch(

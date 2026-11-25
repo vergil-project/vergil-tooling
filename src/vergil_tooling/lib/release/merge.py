@@ -160,7 +160,7 @@ def sync_local_branch(pr_url: str, *, branch: str, worktree: Path, phase: str) -
     not descend from the local tip — it never resets over local commits.
     """
     head = github.head_sha(pr_url)
-    local = git.read_output("rev-parse", branch)
+    local = git.branch_commit(branch)
     if local == head:
         return
     checked_out = git.read_output("-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD")
