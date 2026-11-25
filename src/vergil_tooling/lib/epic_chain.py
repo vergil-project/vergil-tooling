@@ -35,6 +35,18 @@ that creates an issue before linking it. While :data:`ROLLOVER_ENABLED` is
 off, no writer creates, adopts or links a continuation: the head is the only
 container and takes up to GitHub's 100 items, and a full one is refused by
 name (:class:`RolloverDisabledError`).
+
+**Races** (spec §4.4). GitHub offers no lock, so a chain is kept whole by
+reading back. A link GitHub refuses into a container whose fresh read holds
+100 sub-issues is a racing writer's doing, whatever the error text says: the
+writer re-reads, heals or rolls over, and tries again, at most
+:data:`LINK_RETRIES` times in all (:class:`ChainLimitError`). After every
+link the chain is read back: a tail left at 100 items with no continuation
+is healed by moving one item into a new continuation and linking that into
+the freed slot (:func:`heal_full_tail`), and two continuations under one
+container are merged into the lower-numbered (:func:`heal_duplicate_continuations`).
+Each heal prints one line. :func:`close_chain` closes a chain head first,
+then every continuation (spec §4.6).
 """
 
 from __future__ import annotations
@@ -71,6 +83,11 @@ MAX_DEPTH = 8
 #: only container and takes up to :data:`SUBISSUE_LIMIT` items, and a link into
 #: a full head raises :class:`RolloverDisabledError` before any write.
 ROLLOVER_ENABLED: bool = False
+
+#: The most times a writer tries a link that GitHub refuses as full (spec §4.4):
+#: each refusal is re-read, healed or rolled over, and tried again, and the
+#: last raises :class:`ChainLimitError`.
+LINK_RETRIES = 3
 
 # GitHub's depth refusal, as the live probe recorded it: "... You can’t add
 # more than 7 layers of sub-issues. ..."
@@ -183,34 +200,47 @@ class _Step:
     items: tuple[epics.ChildState, ...]
 
 
+def _continuations_under(
+    head: IssueRef, current: IssueRef, listing: epics._ContainerListing
+) -> list[IssueRef]:
+    """The continuations of *head*'s chain that *listing*, the read of *current*, holds.
+
+    Each is checked against the rules of spec §4.1, and a broken rule raises
+    :class:`ChainDriftError`. More than one is returned as found: the readers
+    raise on it, and :func:`heal_duplicate_continuations` heals it.
+    """
+    found: list[IssueRef] = []
+    for entry in listing.children:
+        child = entry.child.ref
+        claim = _claim(child, entry.labels)
+        if claim is None:
+            continue
+        named = _accept(child, entry.labels, claim)
+        if named != head:
+            raise ChainDriftError(
+                child,
+                "continues-mismatch",
+                f"its Continues: line names {named.slug}, not {head.slug}",
+            )
+        parent = epics._container_parent(child)
+        if parent != current:
+            where = parent.slug if parent is not None else "no parent"
+            raise ChainDriftError(
+                child,
+                "not-native-child",
+                f"it is listed under {current.slug} but its native parent is {where}",
+            )
+        found.append(child)
+    return found
+
+
 def _walk(head: IssueRef) -> list[_Step]:
     """Walk *head*'s chain, one raw container read each, checking every continuation."""
     steps: list[_Step] = []
     current = head
     while True:
         listing = epics._container_listing(current)
-        continuations: list[IssueRef] = []
-        for entry in listing.children:
-            child = entry.child.ref
-            claim = _claim(child, entry.labels)
-            if claim is None:
-                continue
-            named = _accept(child, entry.labels, claim)
-            if named != head:
-                raise ChainDriftError(
-                    child,
-                    "continues-mismatch",
-                    f"its Continues: line names {named.slug}, not {head.slug}",
-                )
-            parent = epics._container_parent(child)
-            if parent != current:
-                where = parent.slug if parent is not None else "no parent"
-                raise ChainDriftError(
-                    child,
-                    "not-native-child",
-                    f"it is listed under {current.slug} but its native parent is {where}",
-                )
-            continuations.append(child)
+        continuations = _continuations_under(head, current, listing)
         if len(continuations) > 1:
             raise ChainDriftError(
                 current,
@@ -343,6 +373,38 @@ class ChainDepthError(EpicRefusalError, RuntimeError):
         self.task = task
 
 
+class ChainLimitError(EpicRefusalError, RuntimeError):
+    """A link into *container* of *head*'s chain was refused as full every time it was tried.
+
+    GitHub refuses a link into a parent that already holds
+    :data:`SUBISSUE_LIMIT` sub-issues. A racing writer can fill the container
+    a writer chose between its read and its link (spec §4.4), so a link
+    refused as full is re-read and retried, at most :data:`LINK_RETRIES`
+    times in all; this is raised once every try was refused. *item* is what
+    was being linked (``None`` when the full-tail heal had no item of its
+    own); *note*, when given, says where an item the heal moved is left.
+    """
+
+    def __init__(
+        self, head: IssueRef, container: IssueRef, item: IssueRef | None, *, note: str = ""
+    ) -> None:
+        what = item.slug if item is not None else "a continuation"
+        message = (
+            f"could not link {what} into {container.slug} of epic {head.slug}: GitHub refused it "
+            f"at its limit of {SUBISSUE_LIMIT} sub-issues in {LINK_RETRIES} "
+            + ("try" if LINK_RETRIES == 1 else "tries")
+        )
+        super().__init__(f"{message}; {note}" if note else message)
+        self.head = head
+        self.container = container
+        self.item = item
+
+
+def _is_full(container: IssueRef) -> bool:
+    """Whether *container*, read afresh, holds GitHub's :data:`SUBISSUE_LIMIT` sub-issues."""
+    return epics._container_listing(container).total >= SUBISSUE_LIMIT
+
+
 def _level(ref: IssueRef) -> int:
     """*ref*'s level in GitHub's sub-issue tree: 1 for a top issue, one more per ancestor."""
     level = 1
@@ -448,32 +510,77 @@ def _link_rewording_depth(
 
 
 def _place(head: IssueRef, task: IssueRef, write: Callable[[IssueRef, IssueRef], None]) -> IssueRef:
-    """Put *task* into the first container of *head*'s chain with a free slot, rolling over."""
-    for _ in range(MAX_DEPTH + 1):
+    """Put *task* into the first container of *head*'s chain with a free slot, rolling over.
+
+    A link GitHub refuses, into a container whose fresh read holds
+    :data:`SUBISSUE_LIMIT` sub-issues, is a racing writer's doing whatever
+    the error says (``LIMIT_ERROR`` is a hint only): the chain is re-read and
+    the link tried again, at most :data:`LINK_RETRIES` times in all
+    (spec §4.4). Any other failure is raised with GitHub's error. A full tail
+    with no continuation is healed by the rollover
+    (:func:`find_or_create_continuation`), and once *task* is linked the
+    chain is read back and healed (:func:`_settle`).
+    """
+    refusals = 0
+    rollovers = 0
+    while True:
         fit = _fit(head)
-        if fit.target is not None:
-            _link_rewording_depth(write, fit.target, task, head=head, fit=fit, task=task)
-            return fit.target
-        if fit.tail.item_count >= SUBISSUE_LIMIT:
+        container = fit.target if fit.target is not None else fit.tail.ref
+        if fit.target is None and rollovers > MAX_DEPTH:
             raise RuntimeError(
-                f"the tail {fit.tail.ref.slug} of epic {head.slug} holds {SUBISSUE_LIMIT} items "
-                "and no continuation, so it has no slot for one; it needs the full-tail heal"
+                f"no container of epic {head.slug} had a free slot for {task.slug} after "
+                f"{rollovers} rollovers"
             )
-        find_or_create_continuation(head, fit.tail.ref)
-    raise RuntimeError(
-        f"no container of epic {head.slug} had a free slot for {task.slug} after "
-        f"{MAX_DEPTH + 1} rollovers"
-    )
+        try:
+            if fit.target is None:
+                rollovers += 1
+                find_or_create_continuation(head, fit.tail.ref)
+                continue
+            _link_rewording_depth(write, fit.target, task, head=head, fit=fit, task=task)
+        except github.GitHubAPIError as exc:
+            if not _is_full(container):
+                raise
+            refusals += 1
+            if refusals >= LINK_RETRIES:
+                raise ChainLimitError(head, container, task) from exc
+            print(
+                f"{container.slug} of epic {head.slug} was full when {task.slug} was linked "
+                f"(a racing writer); re-reading the chain to try again ({refusals} of "
+                f"{LINK_RETRIES})"
+            )
+            continue
+        return _settle(head, task, fit.target)
+
+
+def _settle(head: IssueRef, task: IssueRef, linked: IssueRef) -> IssueRef:
+    """Read *head*'s chain back after *task*'s link into *linked*, heal it, and say where *task* is.
+
+    Racing writers can leave two continuations under one container, or a
+    tail at :data:`SUBISSUE_LIMIT` with no continuation (spec §4.4); either
+    heal can move *task* itself, so after one the container is read afresh.
+    """
+    if not ROLLOVER_ENABLED:
+        return linked
+    healed = heal_duplicate_continuations(head)
+    healed = heal_full_tail(head, own_item=task) or healed
+    if not healed:
+        return linked
+    where = epics._container_parent(task)
+    if where is None:
+        raise RuntimeError(f"{task.slug} has no parent after the chain of epic {head.slug} healed")
+    return where
 
 
 def link_into(head: IssueRef, task: IssueRef) -> IssueRef:
     """Link *task* into *head*'s chain by first fit, rolling over when every container is full.
 
-    Returns the container *task* was linked into. A closed head raises
+    Returns the container *task* is in once the chain is read back and
+    healed (a heal can move it). A closed head raises
     :class:`ClosedEpicError` and is never reopened; the depth limit raises
     :class:`ChainDepthError` before any write; a full head while rollover is
-    off raises :class:`RolloverDisabledError`. A closed continuation is
-    skipped, never linked into.
+    off raises :class:`RolloverDisabledError`; a link refused as full
+    :data:`LINK_RETRIES` times raises :class:`ChainLimitError`. A closed
+    continuation is skipped, never linked into.
     """
     return _place(head, task, epics.add_child)
 
@@ -639,7 +746,9 @@ def _renumber(head: IssueRef, continuation: IssueRef, k: int) -> None:
     )
 
 
-def find_or_create_continuation(head: IssueRef, tail: IssueRef) -> IssueRef:
+def find_or_create_continuation(
+    head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
+) -> IssueRef:
     """The next continuation of *head*'s chain after *tail*, linked into *tail*'s last slot.
 
     An existing continuation under *tail* (a concurrent writer's) is
@@ -652,12 +761,26 @@ def find_or_create_continuation(head: IssueRef, tail: IssueRef) -> IssueRef:
     container takes (spec §4.2), and stays closed. Every growth of the chain
     is reported (:func:`_announce`). While rollover is off this raises
     :class:`RolloverDisabledError` and writes nothing.
+
+    A *tail* holding :data:`SUBISSUE_LIMIT` items has no slot for its
+    continuation (racing writers filled it, spec §4.4), so one is freed
+    first: the continuation is found or created unlinked, one item is moved
+    from *tail* into it with an atomic re-parent (*own_item* when it is in
+    *tail*, else *tail*'s newest item), and the continuation is linked into
+    the freed slot, so no item is ever left outside a container. If that
+    link fails, the moved item is put back. When a racing writer took the
+    slot, it goes into the first container with room (:func:`_rehome`) and
+    GitHub's error is raised for the caller to re-read and retry. Otherwise
+    it goes back into *tail*, and the failure is raised as a
+    :class:`ChainDepthError` or a :class:`RuntimeError` carrying GitHub's
+    text, never as a GitHub error a caller would take for a race.
     """
     if not ROLLOVER_ENABLED:
         raise RolloverDisabledError(head)
     if epics._issue_state(head) == "CLOSED":
         raise ClosedEpicError(head)
-    chain = containers(head)
+    steps = _walk(head)
+    chain = [step.container for step in steps]
     refs = [container.ref for container in chain]
     if tail not in refs:
         raise ValueError(f"{tail.slug} is not a container of the chain of epic {head.slug}")
@@ -682,13 +805,206 @@ def find_or_create_continuation(head: IssueRef, tail: IssueRef) -> IssueRef:
         continuation = IssueRef(
             owner=head.owner, repo=head.repo, number=int(url.rstrip("/").rsplit("/", 1)[-1])
         )
-    if chain[-1].state == "CLOSED":
-        _link_rewording_depth(
-            epics._add_child_unchecked, tail, continuation, head=head, fit=fit, task=None
+    moved: IssueRef | None = None
+    if chain[-1].item_count >= SUBISSUE_LIMIT:
+        items = [item.ref for item in steps[-1].items]
+        moved = own_item if own_item in items else items[-1]
+        try:
+            epics.reparent_child(continuation, moved)
+        except github.GitHubAPIError as exc:
+            # A move into an unlinked continuation never meets the sub-issue
+            # limit, so this is never a race: nothing moved, nothing to put back.
+            raise RuntimeError(
+                f"could not move {moved.slug} from the full tail {tail.slug} of epic "
+                f"{head.slug} into continuation {continuation.slug}: {error_text(exc)}"
+            ) from exc
+    write = epics._add_child_unchecked if chain[-1].state == "CLOSED" else epics.add_child
+    try:
+        _link_rewording_depth(write, tail, continuation, head=head, fit=fit, task=None)
+    except (github.GitHubAPIError, ChainDepthError) as exc:
+        if moved is None:
+            raise
+        if isinstance(exc, github.GitHubAPIError) and _is_full(tail):
+            _rehome(head, tail, moved, continuation, exc)
+            raise
+        epics.reparent_child(tail, moved)
+        print(
+            f"epic {head.slug}: moved {moved.slug} back into {tail.slug}, since continuation "
+            f"{continuation.slug} could not be linked into the slot it freed"
         )
-    else:
-        _link_rewording_depth(epics.add_child, tail, continuation, head=head, fit=fit, task=None)
+        if isinstance(exc, ChainDepthError):
+            raise
+        # Not a race: raised so that no caller takes the full tail for one and retries.
+        raise RuntimeError(
+            f"could not link continuation {continuation.slug} into {tail.slug} of epic "
+            f"{head.slug}: {error_text(exc)}"
+        ) from exc
     if orphans:
         _renumber(head, continuation, k)
+    if moved is not None:
+        print(
+            f"healed epic {head.slug}: its tail {tail.slug} held {SUBISSUE_LIMIT} items and no "
+            f"continuation; moved {moved.slug} into continuation {continuation.slug} and linked "
+            "it into the freed slot"
+        )
     _announce(head, continuation)
     return continuation
+
+
+def _rehome(
+    head: IssueRef, tail: IssueRef, moved: IssueRef, continuation: IssueRef, exc: Exception
+) -> None:
+    """Put *moved* back in *head*'s chain after a racing writer took the slot it freed in *tail*.
+
+    *moved* sits in the unlinked *continuation*, outside the chain, so it
+    goes into the first container with room, and *continuation* is left
+    unlinked, an orphan the next rollover adopts. With no room anywhere,
+    :class:`ChainLimitError` says where *moved* waits.
+    """
+    fit = _fit(head)
+    if fit.target is None:
+        raise ChainLimitError(
+            head,
+            tail,
+            continuation,
+            note=(
+                f"{moved.slug} waits in the unlinked continuation {continuation.slug}, which the "
+                "next rollover adopts"
+            ),
+        ) from exc
+    epics.reparent_child(fit.target, moved)
+    print(
+        f"epic {head.slug}: a racing writer took the slot freed in {tail.slug}; moved "
+        f"{moved.slug} into {fit.target.slug} and left continuation {continuation.slug} "
+        "unlinked, for the next rollover to adopt"
+    )
+
+
+# -- race heals and closing (spec §4.4, §4.6) ----------------------------------------
+
+
+def heal_full_tail(head: IssueRef, *, own_item: IssueRef | None = None) -> bool:
+    """Heal *head*'s tail when it holds :data:`SUBISSUE_LIMIT` items and no continuation.
+
+    Two writers that each saw room in the tail can both link, taking the
+    slot its continuation needs (spec §4.4). The heal moves one item into a
+    continuation and links that into the freed slot
+    (:func:`find_or_create_continuation`): *own_item*, the item the writer
+    just linked, when it is in the tail, else the tail's newest item. A heal
+    that loses a race to another writer is re-read and tried again, at most
+    :data:`LINK_RETRIES` times in all.
+
+    Returns whether the tail was found full; it is healed on return. It
+    returns ``False`` with no write while rollover is off, for a tail with
+    room, and for a chain at GitHub's nesting limit, which cannot take a
+    continuation and so needs no slot for one.
+    """
+    if not ROLLOVER_ENABLED:
+        return False
+    refused: list[tuple[IssueRef, github.GitHubAPIError]] = []
+    while len(refused) < LINK_RETRIES:
+        chain = containers(head)
+        tail = chain[-1]
+        if tail.item_count < SUBISSUE_LIMIT:
+            return bool(refused)  # a racing writer's heal won, after one of ours was refused
+        if _level(head) + len(chain) + 1 > MAX_DEPTH:
+            return False
+        try:
+            find_or_create_continuation(head, tail.ref, own_item=own_item)
+        except github.GitHubAPIError as exc:
+            if not _is_full(tail.ref):
+                raise
+            refused.append((tail.ref, exc))
+            continue
+        return True
+    container, error = refused[-1]
+    raise ChainLimitError(head, container, None) from error
+
+
+def heal_duplicate_continuations(head: IssueRef) -> bool:
+    """Heal every container of *head*'s chain that holds two continuations or more.
+
+    Two writers that both rolled over can each link a continuation under one
+    container (spec §4.4). The lowest-numbered is kept; each other one's
+    children are moved into it with atomic re-parents, then it is unlinked,
+    then closed as not planned with a comment naming the kept one, so no
+    closed duplicate stays in the chain or holds a slot. Each heal prints one
+    line. A merge that would put more than :data:`SUBISSUE_LIMIT` sub-issues
+    in the kept one is refused by name, before any write to it.
+
+    Returns whether any container was healed; while rollover is off it reads
+    nothing and returns ``False``.
+    """
+    if not ROLLOVER_ENABLED:
+        return False
+    healed = False
+    current = head
+    while True:
+        listing = epics._container_listing(current)
+        found = sorted(_continuations_under(head, current, listing), key=lambda r: r.number)
+        if not found:
+            return healed
+        keep = found[0]
+        for duplicate in found[1:]:
+            _merge_duplicate(head, current, keep, duplicate)
+            healed = True
+        current = keep
+
+
+def _merge_duplicate(head: IssueRef, parent: IssueRef, keep: IssueRef, duplicate: IssueRef) -> None:
+    """Move *duplicate*'s children into *keep*, unlink *duplicate* from *parent*, then close it."""
+    moving = [entry.child.ref for entry in epics._container_listing(duplicate).children]
+    held = epics._container_listing(keep).total
+    if held + len(moving) > SUBISSUE_LIMIT:
+        raise RuntimeError(
+            f"cannot heal the duplicate continuations of epic {head.slug} under {parent.slug}: "
+            f"{keep.slug} holds {held} sub-issues and {duplicate.slug} {len(moving)}, past "
+            f"GitHub's limit of {SUBISSUE_LIMIT}; a person must move some by hand"
+        )
+    for item in moving:
+        epics.reparent_child(keep, item)
+    epics.remove_child(parent, duplicate)
+    github.run(
+        "issue",
+        "close",
+        str(duplicate.number),
+        "--repo",
+        epics._repo_slug(duplicate),
+        "--reason",
+        "not planned",
+        "--comment",
+        f"Closed as a duplicate continuation of epic {head.slug}, left by two racing writers: "
+        f"{keep.slug} is kept, and this issue's sub-issues were moved into it.",
+    )
+    print(
+        f"healed epic {head.slug}: {parent.slug} held two continuations; kept {keep.slug}, "
+        f"moved {_count(len(moving), 'sub-issue')} from {duplicate.slug} into it, then unlinked "
+        f"{duplicate.slug} and closed it as not planned"
+    )
+
+
+def close_chain(head: IssueRef) -> list[IssueRef]:
+    """Close *head*, then every continuation of its chain; return those closed, head first.
+
+    The head is closed first (spec §4.6), so a close interrupted partway
+    leaves a closed head with an open continuation, which the audit reports
+    and the epic sweep heals by calling this again. A container already
+    closed is skipped: closing is never a reopen, so closed is closed holds.
+    Prints one line naming the continuations it closed, when there are any.
+    """
+    chain = containers(head)
+    closed: list[IssueRef] = []
+    for container in chain:
+        if container.state == "CLOSED":
+            continue
+        github.run(
+            "issue", "close", str(container.ref.number), "--repo", epics._repo_slug(container.ref)
+        )
+        closed.append(container.ref)
+    continuations = [ref for ref in closed if ref != head]
+    if continuations:
+        print(
+            f"closed {_count(len(continuations), 'continuation')} of epic {head.slug}: "
+            + ", ".join(ref.slug for ref in continuations)
+        )
+    return closed

@@ -998,16 +998,6 @@ def test_level_refuses_a_parent_cycle(
 
 
 @pytest.mark.usefixtures("rollover")
-def test_full_tail_without_continuation_is_not_linked_past(graph: FakeSubIssueGraph) -> None:
-    _items(graph, HEAD, 100)
-    task = _new_task(graph)
-    graph.clear_log()
-    with pytest.raises(RuntimeError, match="holds 100 items and no continuation"):
-        epic_chain.link_into(HEAD, task)
-    assert graph.events == []
-
-
-@pytest.mark.usefixtures("rollover")
 def test_rollover_that_never_settles_raises(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1069,3 +1059,575 @@ def test_adopted_orphan_whose_body_turns_untrusted_is_not_renumbered(
         epic_chain.find_or_create_continuation(HEAD, HEAD)
     assert (exc.value.rule, exc.value.container) == ("untrusted-body", C3)
     assert graph.issues[C3].title == "Epic: big (continuation 5)"
+
+
+# -- race heals (spec §4.4) -----------------------------------------------------------
+
+C2A = IssueRef("org", ".github", 201)
+C2B = IssueRef("org", ".github", 205)
+RIVAL = IssueRef("org", ".github", 500)
+
+
+def _heal_line(tail: IssueRef, moved: IssueRef, continuation: IssueRef) -> str:
+    return (
+        f"healed epic {HEAD.slug}: its tail {tail.slug} held 100 items and no continuation; "
+        f"moved {moved.slug} into continuation {continuation.slug} and linked it into the "
+        "freed slot"
+    )
+
+
+def _race(
+    graph: FakeSubIssueGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    task: IssueRef,
+    *,
+    fill_to: int = 100,
+    times: int = 1,
+    error: str | None = None,
+) -> list[IssueRef]:
+    """Racing writers fill the parent of *task*'s next *times* links up to *fill_to* children.
+
+    With *error*, the link then fails with that text instead of reaching
+    GitHub. Returns the racers' items, in the order they were linked.
+    """
+    real = epics.add_child
+    racers: list[IssueRef] = []
+    left = [times]
+
+    def racing(parent: IssueRef, child: IssueRef) -> None:
+        if child == task and left[0] > 0:
+            left[0] -= 1
+            while len(graph.children_of(parent)) < fill_to:
+                racer = graph.add_issue(_task(), title="a racing writer's task")
+                graph.link(parent, racer)
+                racers.append(racer)
+            if error is not None:
+                raise subissue_fake._graphql_error(error)
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", racing)
+    return racers
+
+
+def _every_item_parented(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, items: list[IssueRef]
+) -> None:
+    """Assert after every mutation of *graph* that each of *items* has a parent."""
+    real = graph._record
+
+    def checked(event: tuple[object, ...]) -> None:
+        real(event)
+        orphaned = [item.slug for item in items if graph.parent_of(item) is None]
+        assert not orphaned, f"{orphaned} left without a parent by {event}"
+
+    monkeypatch.setattr(graph, "_record", checked)
+
+
+def test_chain_limit_error_is_a_refusal() -> None:
+    task = _task(7)
+    error = epic_chain.ChainLimitError(HEAD, C2, task)
+    assert isinstance(error, EpicRefusalError) and isinstance(error, RuntimeError)
+    assert str(error) == (
+        f"could not link {task.slug} into {C2.slug} of epic {HEAD.slug}: GitHub refused it at "
+        "its limit of 100 sub-issues in 3 tries"
+    )
+    assert epic_chain.LINK_RETRIES == 3
+    noted = epic_chain.ChainLimitError(HEAD, C2, None, note="see here")
+    assert str(noted).startswith("could not link a continuation into")
+    assert str(noted).endswith("; see here")
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_heals_head_at_100_without_continuation(
+    graph: FakeSubIssueGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    items = _items(graph, HEAD, 100)
+    task = _new_task(graph)
+    graph.clear_log()
+    _every_item_parented(graph, monkeypatch, items)
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c2,) = _created(graph)
+    newest = items[-1]
+    assert into == c2
+    assert graph.events == [
+        ("label", "org/.github", "epic"),
+        ("label", "org/.github", "continuation"),
+        ("create", c2),
+        ("reparent", c2, newest),
+        ("add", HEAD, c2),
+        ("comment", HEAD, _rollover_line(HEAD, c2)),
+        ("add", c2, task),
+    ]
+    assert graph.children_of(HEAD) == [*items[:-1], c2]
+    assert graph.children_of(c2) == [newest, task]
+    assert epic_chain.chain_of(HEAD) == [HEAD, c2]
+    out = capsys.readouterr().out.splitlines()
+    assert out == [_heal_line(HEAD, newest, c2), _rollover_line(HEAD, c2)]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_moves_own_item(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 98)
+    task = _new_task(graph)
+    racers = _race(graph, monkeypatch, task, fill_to=99)
+    graph.clear_log()
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c2,) = _created(graph)
+    (racer,) = racers
+    assert into == c2
+    assert graph.events[1:] == [
+        ("add", HEAD, task),
+        ("label", "org/.github", "epic"),
+        ("label", "org/.github", "continuation"),
+        ("create", c2),
+        ("reparent", c2, task),
+        ("add", HEAD, c2),
+        ("comment", HEAD, _rollover_line(HEAD, c2)),
+    ]
+    assert graph.children_of(HEAD) == [*items, racer, c2]
+    assert graph.children_of(c2) == [task]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_without_own_item_in_tail_moves_newest(graph: FakeSubIssueGraph) -> None:
+    items = _items(graph, HEAD, 100)
+    elsewhere = _items(graph, OTHER_HEAD, 1)[0]
+    assert epic_chain.heal_full_tail(HEAD, own_item=elsewhere) is True
+    (c2,) = _created(graph)
+    assert graph.children_of(c2) == [items[-1]]
+    assert graph.parent_of(elsewhere) == OTHER_HEAD
+
+
+@pytest.mark.usefixtures("rollover")
+def test_limit_error_retries_then_succeeds(
+    graph: FakeSubIssueGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _items(graph, HEAD, 98)
+    task = _new_task(graph)
+    racers = _race(graph, monkeypatch, task)
+    assert len(racers) == 0  # the racers link once our writer tries
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c2,) = _created(graph)
+    assert into == c2
+    assert len(racers) == 2
+    assert graph.children_of(c2) == [racers[-1], task]
+    assert graph.children_of(HEAD)[-1] == c2 and len(graph.children_of(HEAD)) == 100
+    out = capsys.readouterr().out
+    assert (
+        f"{HEAD.slug} of epic {HEAD.slug} was full when {task.slug} was linked (a racing writer); "
+        "re-reading the chain to try again (1 of 3)"
+    ) in out
+    assert _heal_line(HEAD, racers[-1], c2) in out
+
+
+@pytest.mark.usefixtures("rollover")
+def test_limit_error_retries_exhausted_names_limit(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 98)
+    task = _new_task(graph)
+    _race(graph, monkeypatch, task, times=epic_chain.LINK_RETRIES)
+
+    with pytest.raises(epic_chain.ChainLimitError) as exc:
+        epic_chain.link_into(HEAD, task)
+
+    c2, c3 = _created(graph)
+    assert epic_chain.chain_of(HEAD) == [HEAD, c2, c3]
+    assert exc.value.container == c3 and exc.value.item == task
+    assert str(exc.value) == (
+        f"could not link {task.slug} into {c3.slug} of epic {HEAD.slug}: GitHub refused it at "
+        "its limit of 100 sub-issues in 3 tries"
+    )
+    assert isinstance(exc.value.__cause__, github.GitHubAPIError)
+    assert graph.parent_of(task) is None
+
+
+@pytest.mark.usefixtures("rollover")
+def test_unrecognised_link_error_at_100_is_full(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 98)
+    task = _new_task(graph)
+    racers = _race(graph, monkeypatch, task, error="Something went wrong on our side")
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c2,) = _created(graph)
+    assert into == c2
+    assert graph.children_of(c2) == [racers[-1], task]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_link_error_below_100_surfaces(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", enabled)
+    _items(graph, HEAD, 5)
+    task = _new_task(graph)
+    _race(graph, monkeypatch, task, fill_to=0, error="Something went wrong on our side")
+    graph.clear_log()
+
+    with pytest.raises(github.GitHubAPIError, match="Something went wrong on our side"):
+        epic_chain.link_into(HEAD, task)
+
+    assert graph.events == []
+    assert graph.parent_of(task) is None
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_lost_to_a_racing_continuation(
+    graph: FakeSubIssueGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Our heal moved the newest item out; a racing healer's continuation took
+    # the freed slot first. The moved item goes into the racer's
+    # continuation, and ours is left unlinked, an orphan for adoption.
+    items = _items(graph, HEAD, 100)
+    _continuation(graph, RIVAL, None, k=2)
+    real = epics.add_child
+    raced = [False]
+
+    def racing(parent: IssueRef, child: IssueRef) -> None:
+        if parent == HEAD and child != RIVAL and not raced[0]:
+            raced[0] = True
+            real(HEAD, RIVAL)
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", racing)
+    monkeypatch.setattr(epic_chain, "find_orphans", lambda head: [])
+    _every_item_parented(graph, monkeypatch, items)
+
+    assert epic_chain.heal_full_tail(HEAD) is True
+
+    (ours,) = _created(graph)
+    assert graph.parent_of(ours) is None and graph.children_of(ours) == []
+    assert graph.children_of(RIVAL) == [items[-1]]
+    assert epic_chain.chain_of(HEAD) == [HEAD, RIVAL]
+    assert (
+        f"epic {HEAD.slug}: a racing writer took the slot freed in {HEAD.slug}; moved "
+        f"{items[-1].slug} into {RIVAL.slug} and left continuation {ours.slug} unlinked, for "
+        "the next rollover to adopt"
+    ) in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_lost_with_no_room_says_where_the_item_waits(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 100)
+    real = epics.add_child
+
+    def racing(parent: IssueRef, child: IssueRef) -> None:
+        if parent == HEAD and len(graph.children_of(HEAD)) < 100:
+            graph.link(HEAD, _new_task(graph))  # a racer's item takes the freed slot
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", racing)
+
+    with pytest.raises(epic_chain.ChainLimitError) as exc:
+        epic_chain.heal_full_tail(HEAD)
+
+    (ours,) = _created(graph)
+    assert graph.children_of(ours) == [items[-1]]
+    assert str(exc.value).endswith(
+        f"; {items[-1].slug} waits in the unlinked continuation {ours.slug}, which the next "
+        "rollover adopts"
+    )
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_link_failure_moves_the_item_back(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 100)
+    real = epics.add_child
+
+    def failing(parent: IssueRef, child: IssueRef) -> None:
+        if parent == HEAD:
+            raise subissue_fake._graphql_error("Something went wrong on our side")
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", failing)
+    _every_item_parented(graph, monkeypatch, items)
+
+    with pytest.raises(RuntimeError, match="Something went wrong on our side") as exc:
+        epic_chain.heal_full_tail(HEAD)
+
+    assert not isinstance(exc.value, github.GitHubAPIError)
+    (ours,) = _created(graph)
+    assert graph.children_of(HEAD) == items
+    assert graph.children_of(ours) == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_reparent_failure_is_not_a_race(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    items = _items(graph, HEAD, 100)
+    task = _new_task(graph)
+
+    def failing(new_parent: IssueRef, child: IssueRef) -> None:
+        raise subissue_fake._graphql_error("Something went wrong on our side")
+
+    monkeypatch.setattr(epics, "reparent_child", failing)
+
+    with pytest.raises(RuntimeError, match="Something went wrong on our side") as exc:
+        epic_chain.link_into(HEAD, task)
+
+    assert not isinstance(exc.value, (github.GitHubAPIError, epic_chain.ChainLimitError))
+    (ours,) = _created(graph)
+    assert str(exc.value).startswith(
+        f"could not move {items[-1].slug} from the full tail {HEAD.slug} of epic {HEAD.slug} "
+        f"into continuation {ours.slug}"
+    )
+    assert graph.children_of(HEAD) == items
+    assert "racing writer" not in capsys.readouterr().out
+    with pytest.raises(RuntimeError, match="Something went wrong on our side"):
+        epic_chain.heal_full_tail(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_depth_error_moves_the_item_back(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 100)
+    real = epics.add_child
+
+    def too_deep(parent: IssueRef, child: IssueRef) -> None:
+        if parent == HEAD:
+            raise subissue_fake._graphql_error(DEPTH_ERROR.format(child=child.number, parent=10))
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", too_deep)
+
+    with pytest.raises(epic_chain.ChainDepthError):
+        epic_chain.heal_full_tail(HEAD)
+
+    assert graph.children_of(HEAD) == items
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_retries_exhausted(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 100)
+
+    def always_full(
+        head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
+    ) -> IssueRef:
+        raise subissue_fake._graphql_error(LIMIT_ERROR.format(child=1, parent=tail.number))
+
+    monkeypatch.setattr(epic_chain, "find_or_create_continuation", always_full)
+    with pytest.raises(epic_chain.ChainLimitError) as exc:
+        epic_chain.heal_full_tail(HEAD)
+    assert exc.value.container == HEAD and exc.value.item is None
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_surfaces_a_failure_once_the_tail_has_room(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 100)
+
+    def unlink_then_fail(
+        head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
+    ) -> IssueRef:
+        graph._remove(tail, items[0])  # someone else freed a slot meanwhile
+        raise subissue_fake._graphql_error("Something went wrong on our side")
+
+    monkeypatch.setattr(epic_chain, "find_or_create_continuation", unlink_then_fail)
+    with pytest.raises(github.GitHubAPIError, match="Something went wrong on our side"):
+        epic_chain.heal_full_tail(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_settle_refuses_an_item_left_without_a_parent(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _new_task(graph)
+    real = epics._container_parent
+    monkeypatch.setattr(epic_chain, "heal_full_tail", lambda head, *, own_item=None: True)
+    monkeypatch.setattr(epics, "_container_parent", lambda ref: None if ref == task else real(ref))
+    with pytest.raises(RuntimeError, match=f"{task.slug} has no parent after the chain"):
+        epic_chain.link_into(HEAD, task)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_needs_nothing_at_room_or_at_the_depth_limit(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 99)
+    graph.clear_log()
+    assert epic_chain.heal_full_tail(HEAD) is False
+    _items(graph, HEAD, 1)
+    monkeypatch.setattr(epic_chain, "MAX_DEPTH", 2)
+    assert epic_chain.heal_full_tail(HEAD) is False
+    assert graph.events[-1][0] == "add" and _created(graph) == []
+
+
+def test_heal_rollover_disabled_creates_nothing(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 100)
+    graph.clear_log()
+    assert epic_chain.heal_full_tail(HEAD) is False
+    assert epic_chain.heal_duplicate_continuations(HEAD) is False
+    assert graph.events == []
+
+    other_items = _items(graph, OTHER_HEAD, 98)
+    task = _new_task(graph)
+    _race(graph, monkeypatch, task)
+    with pytest.raises(epic_chain.RolloverDisabledError):
+        epic_chain.link_into(OTHER_HEAD, task)
+    assert _created(graph) == []
+    assert graph.parent_of(task) is None
+    assert graph.children_of(OTHER_HEAD)[:98] == other_items
+
+
+@pytest.mark.usefixtures("rollover")
+def test_duplicate_continuations_keep_lower(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _items(graph, HEAD, 98)
+    _continuation(graph, C2A, HEAD)
+    (kept_item,) = _items(graph, C2A, 1)
+    _continuation(graph, C2B, HEAD)
+    (moved_item,) = _items(graph, C2B, 1)
+    graph.clear_log()
+
+    assert epic_chain.heal_duplicate_continuations(HEAD) is True
+
+    assert graph.events == [
+        ("reparent", C2A, moved_item),
+        ("remove", HEAD, C2B),
+        ("close", C2B, "not planned"),
+    ]
+    (comment,) = graph.comments[C2B]
+    assert C2A.slug in comment
+    assert graph.issues[C2B].state == "CLOSED" and graph.parent_of(C2B) is None
+    assert graph.children_of(C2A) == [kept_item, moved_item]
+    assert epic_chain.chain_of(HEAD) == [HEAD, C2A]
+    assert capsys.readouterr().out == (
+        f"healed epic {HEAD.slug}: {HEAD.slug} held two continuations; kept {C2A.slug}, moved "
+        f"1 sub-issue from {C2B.slug} into it, then unlinked {C2B.slug} and closed it as not "
+        "planned\n"
+    )
+    graph.clear_log()
+    assert epic_chain.heal_duplicate_continuations(HEAD) is False
+    assert graph.events == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_duplicate_heal_follows_a_duplicate_with_its_own_continuation(
+    graph: FakeSubIssueGraph,
+) -> None:
+    _items(graph, HEAD, 98)
+    _continuation(graph, C2A, HEAD)
+    _continuation(graph, C2B, HEAD)
+    _items(graph, C2B, 2)
+    _continuation(graph, C3, C2B, k=3)
+    (deep_item,) = _items(graph, C3, 1)
+
+    assert epic_chain.heal_duplicate_continuations(HEAD) is True
+
+    assert epic_chain.chain_of(HEAD) == [HEAD, C2A, C3]
+    assert graph.parent_of(deep_item) == C3
+
+
+@pytest.mark.usefixtures("rollover")
+def test_duplicate_heal_refuses_to_overfill_the_kept_one(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 98)
+    _continuation(graph, C2A, HEAD)
+    _items(graph, C2A, 60)
+    _continuation(graph, C2B, HEAD)
+    _items(graph, C2B, 41)
+    graph.clear_log()
+    with pytest.raises(RuntimeError, match="past GitHub's limit of 100; a person must"):
+        epic_chain.heal_duplicate_continuations(HEAD)
+    assert graph.events == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_heals_duplicates_after_its_own_link(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 97)
+    _continuation(graph, C2A, HEAD)
+    _continuation(graph, C2B, None)
+    (rival_item,) = _items(graph, C2B, 1)
+    task = _new_task(graph)
+    real = epics.add_child
+
+    def racing(parent: IssueRef, child: IssueRef) -> None:
+        if child == task:
+            graph.link(HEAD, C2B)  # a racing writer's continuation
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "add_child", racing)
+
+    assert epic_chain.link_into(HEAD, task) == HEAD
+    assert epic_chain.chain_of(HEAD) == [HEAD, C2A]
+    assert graph.children_of(C2A) == [rival_item]
+    assert graph.issues[C2B].state == "CLOSED"
+
+
+# -- close_chain (spec §4.6) ------------------------------------------------------------
+
+
+def test_close_chain_head_first(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _items(graph, HEAD, 1)
+    _continuation(graph, C2, HEAD)
+    _items(graph, C2, 1)
+    _continuation(graph, C3, C2, k=3)
+    graph.clear_log()
+
+    assert epic_chain.close_chain(HEAD) == [HEAD, C2, C3]
+
+    assert graph.events == [
+        ("close", HEAD, "completed"),
+        ("close", C2, "completed"),
+        ("close", C3, "completed"),
+    ]
+    assert capsys.readouterr().out == (
+        f"closed 2 continuations of epic {HEAD.slug}: {C2.slug}, {C3.slug}\n"
+    )
+
+
+def test_close_chain_skips_already_closed(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _continuation(graph, C2, HEAD, state="CLOSED")
+    _continuation(graph, C3, C2, k=3)
+    graph.close(HEAD)
+    graph.clear_log()
+
+    assert epic_chain.close_chain(HEAD) == [C3]
+    assert graph.events == [("close", C3, "completed")]
+    assert capsys.readouterr().out == f"closed 1 continuation of epic {HEAD.slug}: {C3.slug}\n"
+
+    graph.clear_log()
+    assert epic_chain.close_chain(HEAD) == []
+    assert graph.events == []
+    assert capsys.readouterr().out == ""
+
+
+def test_close_chain_of_a_lone_head_prints_nothing(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert epic_chain.close_chain(HEAD) == [HEAD]
+    assert capsys.readouterr().out == ""
