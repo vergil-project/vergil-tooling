@@ -350,7 +350,11 @@ def test_gather_completed_reads_closed_epics_through_the_trust_layer() -> None:
         _hit(6, title="Epic (proxy): x", labels=("epic", "proxy")),
         _hit(8, title="[archived] old attempt"),
     ]
-    skipped = [trust.Skipped("vergil-project/.github", 3, "issue", "outsider", "2026-11-01", "body", trust.UNTRUSTED)]
+    skipped = [
+        trust.Skipped(
+            "vergil-project/.github", 3, "issue", "outsider", "2026-11-01", "body", trust.UNTRUSTED
+        )
+    ]
     children = [
         _child("vergil-project", "vergil-tooling", 1, "CLOSED"),
         _child("vergil-project", ".github", 2, "CLOSED"),
@@ -404,15 +408,15 @@ def test_gather_completed_skips_release_tracking_issue() -> None:
         patch("vergil_tooling.lib.epics.child_states") as mock_children,
     ):
         assert roadmap.gather_completed("vergil-project") == []
-    check.assert_called_once_with(
-        "vergil-project/.github", 373, title="release: 2.1.4", body=body
-    )
+    check.assert_called_once_with("vergil-project/.github", 373, title="release: 2.1.4", body=body)
     mock_children.assert_not_called()
 
 
 def test_gather_completed_refuses_an_epic_with_no_close_time() -> None:
     with (
-        patch("vergil_tooling.lib.trust.search_window", return_value=([_hit(9, closed_at=None)], [])),
+        patch(
+            "vergil_tooling.lib.trust.search_window", return_value=([_hit(9, closed_at=None)], [])
+        ),
         pytest.raises(trust.TrustReadError, match="u9 has no close time"),
     ):
         roadmap.gather_completed("vergil-project")
@@ -436,6 +440,17 @@ def test_gather_completed_epic_with_no_documents_section() -> None:
         result = roadmap.gather_completed("vergil-project")
     assert result[0].documents == ()
     assert result[0].repos == ()
+
+
+def test_gather_completed_defaults_org_to_current_repo_owner() -> None:
+    with (
+        patch("vergil_tooling.lib.github.current_org", return_value="logical-minds-foundry"),
+        patch("vergil_tooling.lib.trust.search_window", return_value=([_hit(9)], [])) as search,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
+    ):
+        roadmap.gather_completed()
+    assert search.call_args.args[0].startswith("repo:logical-minds-foundry/.github ")
+    assert mock_children.call_args.args[0].owner == "logical-minds-foundry"
 
 
 def test_gather_defaults_org_to_current_repo_owner() -> None:
