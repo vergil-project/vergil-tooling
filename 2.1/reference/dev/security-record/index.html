@@ -1496,6 +1496,8 @@
       
         
       
+        
+      
     
     
     
@@ -1548,6 +1550,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.350/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.350
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19081,9 +19111,8 @@ human's own <code>gh</code> login is used.</p>
 <ol>
 <li><strong>Capacity.</strong> Check the intake epic's
    <a href="../../../standards/github-issues/#chained-epics">chain</a> can take the
-   issue: a closed intake epic, one at GitHub's nesting limit and a full one
-   while rollover is off are refused by name (exit 1) before anything is
-   created. The check runs again just before the issue is created (step 4).</li>
+   issue: a closed intake epic and one at GitHub's nesting limit are refused
+   by name (exit 1) before anything is created. The check runs again just before the issue is created (step 4).</li>
 <li><strong>Duplicate guard.</strong> Look for a draft in <code>&lt;org&gt;/.github</code> with the same
    summary and the same affected repo. If one exists, refuse, naming its
    GHSA ID and the command that finishes its pair.</li>

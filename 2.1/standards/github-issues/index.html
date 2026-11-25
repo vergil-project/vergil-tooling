@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.350/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.350
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20149,18 +20179,11 @@ then names it, as <code>under epic &lt;head&gt; (in continuation &lt;continuatio
 task linked anywhere in the target's chain as already there. The commands
 that create an issue and then link it (<code>vrg-issue-create</code>,
 <code>vrg-intake-create</code>, <code>vrg-security-record</code> and the ops reports) check the
-chain's capacity first: a closed epic, the depth limit and a full head while
-rollover is off are refused before anything is created, so no issue is left
-unlinked. If a link still fails after the create, the command names the
-created issue; when the chain refused it, the message says the issue is left
-unlinked and that <code>vrg-epic-move</code> would be refused the same way, instead of
-suggesting it.</p>
-<p><strong>Rollover is not enabled yet.</strong> Until every reader of an epic's children,
-the plugin skills included, reads through the chain, no tool creates a
-continuation: a head takes up to GitHub's 100 items, and a link into a full
-head is refused, naming it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>epic &lt;head&gt; is at GitHub's limit of 100 sub-issues, and rollover into a continuation is not enabled yet
-</code></pre></div>
+chain's capacity first: a closed epic and the depth limit are refused before
+anything is created, so no issue is left unlinked. If a link still fails
+after the create, the command names the created issue; when the chain
+refused it, the message says the issue is left unlinked and that
+<code>vrg-epic-move</code> would be refused the same way, instead of suggesting it.</p>
 <h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
 <p>A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
@@ -20208,15 +20231,15 @@ ad-hoc epic ends up holding only its still-open children.</p>
   rolls over to a new segment.</li>
 </ul>
 <h4 id="running-the-drain">Running the drain<a class="headerlink" href="#running-the-drain" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># which archives would be created, and which past archives would close.</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># Apply the moves and closes.</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;<span class="w"> </span>--apply
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="c1"># Sweep across every repo in an org.</span>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="c1"># which archives would be created, and which past archives would close.</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="c1"># Apply the moves and closes.</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;<span class="w"> </span>--apply
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="c1"># Sweep across every repo in an org.</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
 </code></pre></div>
 <p><code>--repo</code> targets a single repo; <code>--all-in &lt;ORG&gt;</code> sweeps every repo in the org,
 each repo's ad-hoc epic in <code>&lt;org&gt;/.github</code>. Without <code>--apply</code> the command
@@ -20226,11 +20249,11 @@ mutates nothing.</p>
 <code>Epic (ad hoc): &lt;repo&gt; — &lt;YYYY&gt;-Qn</code> title and the <code>epic</code> label. <code>vrg-adhoc-epic
 normalize</code> converts them in place to the current form — retitling to
 <code>Archive (ad hoc): …</code>, adding <code>archive</code>, and removing <code>epic</code> (keeping <code>ad-hoc</code>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Dry-run: list every legacy-form archive that would be converted.</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-adhoc-epic<span class="w"> </span>normalize<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Apply the conversions.</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>vrg-adhoc-epic<span class="w"> </span>normalize<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Dry-run: list every legacy-form archive that would be converted.</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>vrg-adhoc-epic<span class="w"> </span>normalize<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Apply the conversions.</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>vrg-adhoc-epic<span class="w"> </span>normalize<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
 </code></pre></div>
 <p>It scans <code>&lt;org&gt;/.github</code>, the home of every repo's archives, and it converts
 both open and closed archives. It is <strong>idempotent</strong> — an
@@ -20378,13 +20401,13 @@ and any follow-on are inherently agentic judgment.</p>
 <p>Every epic body opens with a <strong>Documents</strong> section that links the epic's spec,
 plan and retrospective, or says why one does not exist. Hidden markers wrap it
 so tools can find and replace it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>&lt;!-- vrg-epic-docs --&gt;
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="gs">**Documents**</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">-</span><span class="w"> </span>Spec: [<span class="sb">`epics/819-epic-docs-links/spec.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/spec.md)
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">-</span><span class="w"> </span>Plan: [<span class="sb">`epics/819-epic-docs-links/plan.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/plan.md)
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="k">-</span><span class="w"> </span>Retrospective: pending
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>&lt;!-- /vrg-epic-docs --&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>&lt;!-- vrg-epic-docs --&gt;
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="gs">**Documents**</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">-</span><span class="w"> </span>Spec: [<span class="sb">`epics/819-epic-docs-links/spec.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/spec.md)
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">-</span><span class="w"> </span>Plan: [<span class="sb">`epics/819-epic-docs-links/plan.md`</span>](https://github.com/vergil-project/.github/blob/develop/epics/819-epic-docs-links/plan.md)
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="k">-</span><span class="w"> </span>Retrospective: pending
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>&lt;!-- /vrg-epic-docs --&gt;
 </code></pre></div>
 <ul>
 <li><strong>Position:</strong> the section is the first thing in the body; the rest of the
@@ -20560,10 +20583,9 @@ epic's chain by first fit (see <a href="#chained-epics">Chained epics</a>), so a
 queue epic never stops the pass. The cap of 95 open items is the signal to run
 intake review: an intake queue that holds 95 open items or more once the pass
 is done is a report line, not a failure:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>intake queue &lt;head&gt; holds &lt;n&gt; open items; run epic-review intake
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>intake queue &lt;head&gt; holds &lt;n&gt; open items; run epic-review intake
 </code></pre></div>
-<p>While rollover is off, a link into a queue epic already at GitHub's 100
-sub-issues is refused like a closed epic's: the item is named on stderr with
+<p>A link into a closed queue epic is refused: the item is named on stderr with
 the refusal, the rest of the pass runs, and the run exits 1. The same pass,
 dispatched once by hand through <code>ops-epic-sweep</code>'s <code>workflow_dispatch</code>, is the
 one-time migration of an org's existing backlog.</p>
@@ -20586,8 +20608,7 @@ heals the chain drift of the home's epics:</p>
 <p>Each heal is listed under <strong>Chains healed</strong>. An orphan of a closed epic is
 never adopted, and a broken chain rule is never guessed past: each is listed
 under <strong>Needs a human</strong>, named on stderr, and the run exits 1 once every pass
-has run. So is a heal that fails, and, while rollover is off, a duplicate or
-an orphan, which only a rollover can mend. A closed continuation in an open
+has run. So is a heal that fails. A closed continuation in an open
 chain is listed under <strong>Chain notes</strong>. Each open development or proxy epic with
 a continuation is listed under <strong>Chained epics</strong>, every run, as a prompt to
 consider splitting it; it is not a failure.</p>
@@ -20669,18 +20690,18 @@ route and takes one human confirmation per batch.</p>
 <p>Capture has near-zero friction: a one-line "don't forget X" is a valid intake
 item, with no category to choose. Create one with the sanctioned tool (the
 <code>intake-capture</code> skill drives it):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>vrg-intake-create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span><span class="o">[</span>--body<span class="w"> </span>TEXT<span class="w"> </span><span class="p">|</span><span class="w"> </span>--body-file<span class="w"> </span>PATH<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>vrg-intake-create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span><span class="o">[</span>--body<span class="w"> </span>TEXT<span class="w"> </span><span class="p">|</span><span class="w"> </span>--body-file<span class="w"> </span>PATH<span class="o">]</span>
 </code></pre></div>
 <p>The issue is filed in the current repo's queue home, <code>&lt;org&gt;/.github</code> (override
 with <code>--repo</code>), and is linked under that home's intake epic as it is created; there is no unlinked
 path.</p>
 <h3 id="viewing-the-queues-vrg-queue">Viewing the queues: <code>vrg-queue</code><a class="headerlink" href="#viewing-the-queues-vrg-queue" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>vrg-queue<span class="w"> </span>adhoc<span class="w">     </span><span class="c1"># open tasks under every live ad-hoc epic, by repo</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>vrg-queue<span class="w"> </span>hoshin<span class="w">    </span><span class="c1"># open tasks under the org's hoshin epic</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>vrg-queue<span class="w"> </span>intake<span class="w">    </span><span class="c1"># open intake items, oldest first</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>vrg-queue<span class="w"> </span>planning<span class="w">  </span><span class="c1"># open planning items: waiting / in-progress / ready-to-close</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>vrg-queue<span class="w"> </span>deferred<span class="w">  </span><span class="c1"># open deferred items, least recently deferred first</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>vrg-queue<span class="w">           </span><span class="c1"># all three queues, in that order</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>vrg-queue<span class="w"> </span>adhoc<span class="w">     </span><span class="c1"># open tasks under every live ad-hoc epic, by repo</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>vrg-queue<span class="w"> </span>hoshin<span class="w">    </span><span class="c1"># open tasks under the org's hoshin epic</span>
 </code></pre></div>
 <p>It defaults to the current org's <code>.github</code> queues; <code>--repo &lt;owner&gt;/&lt;repo&gt;</code>
 selects that repo's org's queues (and narrows <code>adhoc</code> and <code>hoshin</code> to the
@@ -20798,14 +20819,14 @@ reference an untrusted body or link made is reported and does not hold the
 route.</p>
 <p><strong>Every deferral records why, and what to check.</strong> <code>--reason</code> and
 <code>--revisit-when</code> are both required:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>--revisit-when<span class="w"> </span><span class="s2">"&lt;what to check to know it can come back&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>defer<span class="w"> </span>--reason<span class="w"> </span><span class="s2">"&lt;why now is not the time&gt;"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span>--revisit-when<span class="w"> </span><span class="s2">"&lt;what to check to know it can come back&gt;"</span>
 </code></pre></div>
 <p>The tool moves the item under its queue home's deferred epic (removing a
 planning item's <code>in-progress</code> label) and posts the record:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>Revisit when: &lt;conditions&gt;
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Deferred &lt;YYYY-MM-DD&gt;: &lt;reason&gt;
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>Revisit when: &lt;conditions&gt;
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>Deferred from: &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;
 </code></pre></div>
 <p><code>Deferred from:</code> names the container epic the item left. <code>Revisit when:</code> is free
 prose — a date, an event ("<code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> merges", "Zensical 1.0
@@ -20965,7 +20986,7 @@ task count is the estimate, and the size is derived from it:</p>
 issue lists and filters read, and a dated sizing comment with the task count,
 a confidence and a one-line reason. The latest sizing comment is the current
 estimate and the earlier ones are its history.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>size<span class="w"> </span>--tasks<span class="w"> </span>N<span class="w"> </span><span class="o">[</span>--confidence<span class="w"> </span>high<span class="p">|</span>med<span class="p">|</span>low<span class="o">]</span><span class="w"> </span>--reason<span class="w"> </span>TEXT
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>vrg-intake-route<span class="w"> </span>&lt;ref&gt;<span class="w"> </span>size<span class="w"> </span>--tasks<span class="w"> </span>N<span class="w"> </span><span class="o">[</span>--confidence<span class="w"> </span>high<span class="p">|</span>med<span class="p">|</span>low<span class="o">]</span><span class="w"> </span>--reason<span class="w"> </span>TEXT
 </code></pre></div>
 <p><code>size</code> is allowed from planning and deferred only, and neither moves nor
 closes the item; the planning route takes the same options to size an item on
@@ -21224,8 +21245,8 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">"&lt;what&gt;"</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
 <p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
