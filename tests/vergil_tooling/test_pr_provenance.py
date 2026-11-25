@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -625,7 +626,10 @@ def test_untrusted_rules_unchanged(action: str) -> None:
 # repos/<o>/<r>/issues/87/timeline --paginate``, its commit author anonymised),
 # the user agent's first own submit: auto_squash_enabled, then ``merged`` and
 # ``closed`` by the same App, at the same second, ``closed`` right after
-# ``merged`` in the timeline's order.
+# ``merged`` in the timeline's order. ``own_pr_merge_close_next_second.json``
+# is vergil-project/vergil-claude-plugin PR #1375's, read the same way (through
+# ``github.read_json_paginated``) and anonymised the same way: GitHub recorded
+# its ``closed`` one second after its ``merged`` (vergil-tooling#5178).
 
 _RECORDED_AGENT = "wphillipmoore-vergil-user"
 _RECORDED_AUTHORS = TrustedAuthors(
@@ -640,10 +644,24 @@ def _event(name: str, login: str = _AGENT, at: str = _MERGED_AT) -> dict[str, ob
     return {"event": name, "actor": _bot(login), "created_at": at}
 
 
-def test_recorded_own_pr_merge_close_is_allowed() -> None:
-    timeline = _recorded_timeline("own_pr_squash_merge")
+def _after_merge(seconds: int) -> str:
+    """The timestamp *seconds* after ``_MERGED_AT``, as GitHub writes one."""
+    at = datetime.fromisoformat(_MERGED_AT) + timedelta(seconds=seconds)
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.mark.parametrize(
+    ("fixture", "seconds"),
+    [("own_pr_squash_merge", 0), ("own_pr_merge_close_next_second", 1)],
+)
+def test_recorded_own_pr_merge_close_is_allowed(fixture: str, seconds: int) -> None:
+    timeline = _recorded_timeline(fixture)
     names = [event.get("event") for event in timeline]
-    assert names[names.index("merged") + 1] == "closed"
+    merge = names.index("merged")
+    assert names[merge + 1] == "closed"
+    merged_at = datetime.fromisoformat(timeline[merge]["created_at"])
+    closed_at = datetime.fromisoformat(timeline[merge + 1]["created_at"])
+    assert closed_at - merged_at == timedelta(seconds=seconds)
     view = json.dumps({"author": {"login": f"app/{_RECORDED_AGENT}", "is_bot": True}})
     with (
         patch(
@@ -688,9 +706,58 @@ def test_close_and_reopen_before_the_merge_is_violation() -> None:
     assert _violations(_check_actions(timeline)) == [(_AGENT, "closed"), (_AGENT, "reopened")]
 
 
-def test_close_at_another_time_than_the_merge_is_violation() -> None:
-    timeline = [_event("merged"), _event("closed", at="2026-11-24T19:58:12Z")]
+def test_merge_close_window_is_five_seconds() -> None:
+    assert timedelta(seconds=5) == pr_provenance.MERGE_CLOSE_WINDOW
+
+
+@pytest.mark.parametrize("seconds", [1, 5])
+def test_close_within_the_window_after_the_merge_is_allowed(seconds: int) -> None:
+    # GitHub sometimes records the merge's own close a second later (#5178).
+    timeline = [_event("merged"), _event("closed", at=_after_merge(seconds))]
+    assert _check_actions(timeline).ok
+
+
+@pytest.mark.parametrize("seconds", [6, 3600])
+def test_close_outside_the_window_after_the_merge_is_violation(seconds: int) -> None:
+    timeline = [_event("merged"), _event("closed", at=_after_merge(seconds))]
     assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_close_timestamped_before_the_merge_is_violation() -> None:
+    timeline = [_event("merged"), _event("closed", at=_after_merge(-1))]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+@pytest.mark.parametrize("between", ["head_ref_deleted", "labeled", "commented", "renamed"])
+def test_close_with_an_event_between_it_and_the_merge_is_violation(between: str) -> None:
+    # Any timeline event between them, one the check otherwise ignores
+    # included, means the close is not the one GitHub recorded with the merge.
+    timeline = [_event("merged"), _event(between), _event("closed")]
+    assert (_AGENT, "closed") in _violations(_check_actions(timeline))
+
+
+@pytest.mark.parametrize("at", ["not a time", "2026-11-24T19:58:07"])
+def test_close_with_an_unreadable_timestamp_is_violation(at: str) -> None:
+    # Unparseable, or with no zone to compare it in: it fails closed.
+    timeline = [_event("merged"), _event("closed", at=at)]
+    assert _violations(_check_actions(timeline)) == [(_AGENT, "closed")]
+
+
+def test_merge_close_without_timeline_positions_is_violation() -> None:
+    # Actions with no timeline position cannot show the close comes right
+    # after the merge: it fails closed.
+    actor = trust.Identity("a-vergil-user[bot]", "Bot")
+    author = trust.Identity("app/a-vergil-user", "Bot")
+    actions = [
+        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT),
+        Action(_AGENT, Role.USER, "closed", actor, at=_MERGED_AT),
+    ]
+    assert _violations(pr_provenance.evaluate(actions, author=author)) == [(_AGENT, "closed")]
+    adjacent = [
+        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT, position=3),
+        Action(_AGENT, Role.USER, "closed", actor, at=_MERGED_AT, position=4),
+    ]
+    assert pr_provenance.evaluate(adjacent, author=author).ok
 
 
 def test_close_before_the_merge_in_timeline_order_is_violation() -> None:
@@ -716,8 +783,8 @@ def test_merge_close_without_an_actor_is_violation() -> None:
     # No actor to compare with the merge's: it fails closed.
     actor = trust.Identity("a-vergil-user[bot]", "Bot")
     actions = [
-        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT),
-        Action(_AGENT, Role.USER, "closed", None, at=_MERGED_AT),
+        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT, position=0),
+        Action(_AGENT, Role.USER, "closed", None, at=_MERGED_AT, position=1),
     ]
     result = pr_provenance.evaluate(actions, author=trust.Identity("app/a-vergil-user", "Bot"))
     assert _violations(result) == [(_AGENT, "closed")]

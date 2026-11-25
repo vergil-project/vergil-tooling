@@ -866,12 +866,16 @@ def _move_one_off(ref: IssueRef, action: OneOff, old_parent: IssueRef | None) ->
     if epics.container_kind(epic) == epics.HOSHIN.key:
         raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=epic.slug))
     if dest == source:
+        # The link refuses a closed epic before it writes (closed is closed).
         _link_and_check(ref, epic, ref, old_parent)
         return RouteResult(final=ref, moved_by="none")
     # Read before the move: a transfer drops labels the target repo lacks, and
     # a recreate copies this trusted body.
     body, ghsas = _item_security(ref)
     tracked = _tracked_before_move(ref, ghsas)
+    # Closed is closed (.github#1609): a closed target is refused before the
+    # first write, so the item is never moved out from under its queue.
+    epics.require_open_epic(epic)
     unlinked = _unlink_before_transfer(ref, old_parent)
     try:
         output = github.read_output("issue", "transfer", str(ref.number), dest, "--repo", source)
@@ -1546,13 +1550,10 @@ def _link(
         return False
     try:
         if current is None and not replace:
-            epics.add_child(epic, task)  # reopens a closed epic itself
+            epics.add_child(epic, task)  # refuses a closed epic itself
             return False
-        state = github.read_output(
-            "api", f"repos/{epic.owner}/{epic.repo}/issues/{epic.number}", "--jq", ".state"
-        )
-        if state.lower() == "closed":
-            github.run("issue", "reopen", str(epic.number), "--repo", _repo_of(epic))
+        # Closed is closed: a closed epic is refused, never reopened (.github#1609).
+        epics.require_open_epic(epic)
         epics.reparent_child(epic, task)
     except (github.GitHubAPIError, RuntimeError) as exc:
         if item is None or not _is_duplicate_refusal(exc):

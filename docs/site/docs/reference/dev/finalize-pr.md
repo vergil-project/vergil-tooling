@@ -176,9 +176,12 @@ one whose author is that same identity: it may author it, turn
 auto-merge on and merge it, but never edit, close, reopen or approve it.
 GitHub records a `closed` event, by the merging actor, with every merge;
 that one closing is part of the merge and is allowed with it. It is the
-first `closed` event after the PR's one `merged` event, at the same
-second, by the same actor. Any other close, a close and reopen before the
-merge included, stays a violation (issue #5140). An untrusted approval counts for nothing: it is
+first `closed` event after the PR's one `merged` event, by the same
+actor, with no other timeline event between them, timed at most 5 seconds
+after the merge (GitHub times both to the second and sometimes gives the
+close the next one). Any other close, a close and reopen before the merge
+included, stays a violation (issues #5140 and #5178). An untrusted
+approval counts for nothing: it is
 reported on stderr, metadata only, and is no violation. What it does
 depends on whether the PR has merged:
 

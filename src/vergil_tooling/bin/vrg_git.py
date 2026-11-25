@@ -23,14 +23,10 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import branch_names, epics, github, retry, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import (
-    WORKFLOWS_PATH,
-    WorkflowRefusal,
     _git_auth_env,
-    diagnose_workflow_refusal,
     is_workflow_push_refusal,
     main_worktree_root,
-    stale_workflow_refusal_text,
-    unknown_workflow_refusal_note,
+    workflow_push_refusal_text,
 )
 from vergil_tooling.lib.pr_workflow import freeze
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
@@ -393,20 +389,10 @@ def _run(argv: list[str]) -> int:
             and net_result.returncode != 0
             and is_workflow_push_refusal(net_result.stderr)
         ):
-            # A workflow-file push refusal is expected and routine: the agent
-            # never pushes a workflow branch — the human's vrg-submit-pr does,
-            # at submit time. Warn and report success so the agent proceeds to
-            # report-ready instead of mistreating a normal case as a failure
-            # (#2540). Any other push failure keeps its original returncode.
-            # A stale branch, whose own commits change no workflow file but
-            # whose tree carries an outdated one, is refused the same way; its
-            # remedy is a rebase, not report-ready, so it stays a failure (#3814).
-            diagnosis = _diagnose_workflow_refusal(argv[1:])
-            if diagnosis.kind == "stale":
-                _print_stale_workflow_push_guidance(diagnosis)
-                return net_result.returncode
-            _print_workflow_push_guidance(diagnosis)
-            return 0
+            # Every in-scope installation grants the user App
+            # `workflows: write`, so this refusal is a failure: name the
+            # missing grant and keep the push's own returncode (#5176).
+            print(f"\nvrg-git: error: {workflow_push_refusal_text()}", file=sys.stderr)
         return net_result.returncode
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
@@ -1369,102 +1355,6 @@ def _check_frozen_push(args: list[str]) -> str | None:
         "HEAD is still exactly the reported commit, so publishing it is allowed —\n"
         "but only with an explicit push of this branch:\n"
         f"  vrg-git push -u origin {branch}"
-    )
-
-
-# Push flags that leave the pushed commits as named by the refspecs, so the
-# refused push is still "this branch at HEAD" and its workflow refusal can be
-# diagnosed against the branch's own diff. Any other flag (``--all``,
-# ``--mirror``, ``--tags``, ``-o``, ...) leaves the diagnosis unknown (#3814).
-_DIAGNOSABLE_PUSH_FLAGS = _PUBLISH_SAFE_PUSH_FLAGS | {
-    "--force-with-lease",
-    "--force-if-includes",
-    "--no-verify",
-    "--atomic",
-}
-
-
-def _pushed_remote_if_head_only(args: list[str]) -> tuple[str, str | None]:
-    """Return ``(remote, None)`` when ``git push *args`` pushes only HEAD, else a reason.
-
-    A bare push (or one naming only the remote) pushes the current branch
-    under the default ``push.default``; an explicit refspec must take its
-    source from HEAD or the current branch. Fail-closed: anything else is
-    reported as undiagnosable rather than guessed.
-    """
-    positionals: list[str] = []
-    for arg in args:
-        if arg.startswith("-"):
-            if arg not in _DIAGNOSABLE_PUSH_FLAGS and not arg.startswith("--force-with-lease="):
-                return "", f"the push uses {arg}"
-        else:
-            positionals.append(arg)
-    remote = positionals[0] if positionals else "origin"
-    refspecs = positionals[1:]
-    if not refspecs:
-        return remote, None
-    current = subprocess.run(  # noqa: S603
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    branch = current.stdout.strip() if current.returncode == 0 else ""
-    names = {"HEAD"} | ({branch, f"refs/heads/{branch}"} if branch else set())
-    for refspec in refspecs:
-        src = refspec.removeprefix("+").partition(":")[0]
-        if src not in names:
-            return "", f"the push names {refspec!r}, not the current branch"
-    return remote, None
-
-
-def _diagnose_workflow_refusal(args: list[str]) -> WorkflowRefusal:
-    """Diagnose a refused ``git push *args`` with the shared helper (#3814, #4077).
-
-    Only a push of HEAD is diagnosable; any other push is ``unknown``, which
-    keeps the usual hand-off guidance.
-    """
-    remote, not_head = _pushed_remote_if_head_only(args)
-    if not_head is not None:
-        return WorkflowRefusal("unknown", reason=not_head)
-    return diagnose_workflow_refusal(remote)
-
-
-def _print_workflow_push_guidance(diagnosis: WorkflowRefusal) -> None:
-    if diagnosis.kind == "own":
-        cause = (
-            f"  This branch's own commits change {WORKFLOWS_PATH}** "
-            f"({', '.join(diagnosis.files)}),\n"
-            "  which an agent is not permitted to push;\n"
-        )
-    else:
-        cause = (
-            f"  GitHub refused it for {WORKFLOWS_PATH}** changes, which an agent is"
-            " not permitted to push;\n"
-        )
-    print(
-        "\nvrg-git: warning: push skipped for workflow-file changes — this is"
-        " EXPECTED and NOT an error.\n"
-        f"{cause}"
-        "  it does not need an agent push. The human's vrg-submit-pr pushes"
-        " the branch at\n"
-        "  submit time. PROCEED AS USUAL — run `vrg-pr-workflow report-ready`"
-        " to hand off.\n"
-        "  Do NOT remove the workflow files from the commit to force a push.",
-        file=sys.stderr,
-    )
-    if diagnosis.kind == "unknown":
-        print(f"  vrg-git {unknown_workflow_refusal_note(diagnosis)}", file=sys.stderr)
-
-
-def _print_stale_workflow_push_guidance(diagnosis: WorkflowRefusal) -> None:
-    print(
-        f"\nvrg-git: error: {stale_workflow_refusal_text(diagnosis)}"
-        "  then re-run `vrg-container-run -- vrg-validate` and push again"
-        " (with --force-with-lease\n"
-        "  if the branch is already on the remote). Do NOT hand this off with"
-        " `vrg-pr-workflow report-ready`.",
-        file=sys.stderr,
     )
 
 

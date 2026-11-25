@@ -167,9 +167,11 @@ epic's planning issue, on a `- Planning issue: Closes <ref>` line of its own;
 when it cannot, it says why (see
 [the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
 It refuses an issue whose native parent is an intake, planning, deferred or
-operations epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). Human-run: agent
-identities are refused, and agents hand off with
-`vrg-pr-workflow report-ready` instead.
+operations epic (see [`vrg-pr-workflow`](#vrg-pr-workflow)). The user agent
+may submit only in template mode (and its `--all`/`--select` batch), after
+`vrg-pr-workflow report-ready`; the CLI mode, the relay branch mode and
+`--release` are refused to every agent, and the audit agent is refused
+outright (epic vergil-project/.github#1384).
 
 Every mode takes one path (epic vergil-project/.github#1218): one
 table of the selection (no confirmation prompt and no PR-body preview),
@@ -221,13 +223,11 @@ state submitted; from then on the open PR's branch takes fixes, rebases and
 lease pushes again (the `pr-watch` skill). `report-ready` pushes the branch itself, to
 `origin/<branch>` with upstream set, **before** recording anything (#3602),
 so no separate push is needed; a branch already on origin at that commit is a
-no-op push. When the delta touches `.github/workflows/**` GitHub refuses the
-agent push: `report-ready` reports that as expected, records the state anyway,
-and the human's `vrg-submit-pr` pushes the branch. A stale branch, whose own
-commits change no workflow file but whose tree carries an outdated one, gets
-the same refusal: `report-ready` tells it apart as `vrg-git push` does and
-fails with the rebase steps, recording nothing (#4077). Any other push failure
-fails `report-ready` with no local state and no relay ref written. A branch
+no-op push. Any push failure fails `report-ready` with no local state and no
+relay ref written. A push GitHub refuses for `.github/workflows/**` changes is
+such a failure, in `report-ready` and in `vrg-git push` alike: the App lacks
+`workflows: write` in the repository's installation, and the human must accept
+that permission on the installation (#5176). A branch
 with no commits ahead of `--base` is refused before any push, with nothing
 recorded and no freeze (#3870). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
@@ -825,7 +825,8 @@ scaffold, and `--blocked-by` stamps a `Blocked-by:` reference. With
 from a file's `## Intro`, `## Preconditions`, `## Procedure` and
 `## Acceptance` sections (all required) and, for deployment only, an optional
 `## Human-run steps`; the scaffold keeps its frame. `--kind retrospective`
-refuses `--body-file`. If the link
+refuses `--body-file`. A closed epic is refused before the issue is created,
+naming the epic; it is never reopened. If the link
 fails after creation, the created issue's URL is reported for recovery with
 `vrg-epic-move`.
 
@@ -834,7 +835,7 @@ fails after creation, the created issue's URL is reported for recovery with
 | Source | `vergil_tooling.bin.vrg_issue_create` |
 | Args | `--epic` (required), `--title` (required), `--body` / `--body-file`, `--label` (repeatable), `--assignee` (repeatable), `--repo OWNER/NAME`, `--kind {task,validation,deployment,retrospective}`, `--blocked-by REF` (repeatable) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | Refusals and a failed link are reported on stderr; a failed link names the created issue |
+| Failure mode | Refusals (a closed epic among them, before anything is created) and a failed link are reported on stderr; a failed link names the created issue |
 | Exit codes | 0 created and linked, 1 error |
 | Status | Active |
 
@@ -908,9 +909,11 @@ target's `<owner>/.github`, titled `Epic (proxy): OWNER/REPO#N — <primary
 title without "Epic: ">` and labelled `epic` + `proxy`, whose body carries the
 line `Primary: OWNER/REPO#N`. It then posts a comment on the primary carrying
 `Proxy: <owner>/.github#<N>`, alone on its line. An open proxy for the primary
-is reused and a closed one is reopened (it prints which). A reused or reopened
-proxy whose title differs from the derived one is retitled, so a re-run brings
-an older proxy up to date; a proxy is found by its `Primary:` line and labels,
+is reused. When the primary's only proxy is closed, the command refuses before
+any write, naming the proxy: the tooling never reopens a closed epic. A person
+may reopen it by hand, and a re-run then reuses it. A reused proxy whose title
+differs from the derived one is retitled, so a re-run brings an older proxy up
+to date; a proxy is found by its `Primary:` line and labels,
 never its title. The comment is posted only when no trusted comment on the
 primary already names the proxy, so a re-run on an up-to-date proxy writes
 nothing. The `Primary:` lines and `Proxy:` comments are read through the
@@ -1134,16 +1137,17 @@ the current list's order, `removed` in the block's.
 
 ### vrg-epic-link
 
-Link a task under an epic as a native GitHub sub-issue, reopening a closed
-epic first. Used when creating a task under an epic and to backfill
-reflink-only children. A bare `#N` epic ref resolves to the task's epic home.
+Link a task under an epic as a native GitHub sub-issue. A closed epic is
+refused by name and never reopened. Used when creating a task under an epic
+and to backfill reflink-only children. A bare `#N` epic ref resolves to the
+task's epic home.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_epic_link` |
 | Args | `--epic` (required), `--task` (required) |
 | Preconditions | GitHub App credentials for the target org |
-| Failure mode | Refusals and API errors on stderr |
+| Failure mode | Refusals (a closed epic among them) and API errors on stderr |
 | Exit codes | 0 linked, 1 error |
 | Status | Active |
 
@@ -2082,15 +2086,18 @@ org is read under its own App token.
 1. Close the drifted tasks and rolled-up epics. Then close each open proxy
    epic in the home whose primary has closed and which has no open task; a
    proxy that still has an open task is reported and left open, never closed
-   silently. Then reopen each epic closed while a child was still open. Each
-   close and reopen carries an explanatory comment.
+   silently. Each close carries an explanatory comment. An epic closed while a
+   child is still open is reported for a human and never reopened.
 2. Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
    and operations epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
 3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
    nativize body-only `Parent:` links, strip the retired kind labels, and
    attach every orphan to its home's intake epic (never one an outsider
-   opened, which is reported).
+   opened, which is reported). An item whose epic is closed (a `Parent:` line
+   naming a closed epic, or a home whose only intake epic is closed) is named
+   on stderr with that epic and left unlinked; the pass goes on and the run
+   exits 1 at the end.
 
 `--close` makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is `vrg-security-record sync`, run by
@@ -2105,7 +2112,7 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`; outsider report: `lib/outsider_report.py`) |
 | Args | `--window-days N` (positive; default 30), `--epic REF`, `--close`, `--untrusted --since ISO [--org ORG]` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org; the Vergil configuration (under GitHub Actions, the delivered copy), with or without `--close`. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access. `--untrusted` runs anywhere: it needs the Vergil configuration and App credentials for each listed org it reads |
-| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic stops the orphan pass, listing what it did not attach. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, an untrusted `security` issue body found by the security-records preview, or error, 2 bad arguments |
 | Status | Active |
 

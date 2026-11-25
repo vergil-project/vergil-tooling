@@ -1653,52 +1653,71 @@ class TestRemoteTokenInjection:
 
 
 class TestPushWorkflowErrorDetection:
-    """vrg-git push treats a workflow-permission refusal as an expected, non-error case."""
+    """vrg-git push fails loudly on a workflow-permission refusal (#5176).
+
+    Every in-scope installation grants the user App ``workflows: write``
+    (vergil-project/.github#1415), so a refusal means an installation has not
+    accepted that permission: a failure to fix, never an expected hand-off.
+    """
 
     _WORKFLOW_ERR = (
         "refusing to allow a GitHub App to create or update workflow "
         "`.github/workflows/ci.yml` without `workflows` permission"
     )
 
-    def test_workflow_error_warns_and_succeeds(self, capsys: pytest.CaptureFixture[str]) -> None:
-        # A workflow-permission refusal is EXPECTED: the agent never pushes a
-        # workflow branch; the human's vrg-submit-pr pushes it at submit time.
-        # So it exits 0 (success) with a warning, not a non-zero error (#2540).
+    def _refused_push(self, *argv: str, returncode: int = 1) -> int:
         with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
                 args=["git", "push"],
-                returncode=1,
+                returncode=returncode,
                 stdout="",
                 stderr=self._WORKFLOW_ERR,
             )
-            rc = main(["push", "origin", "feature/x"])
-        assert rc == 0
-        err = capsys.readouterr().err
-        assert "warning" in err.lower()
-        assert "workflow" in err.lower()
-        assert "expected" in err.lower()
-        assert "report-ready" in err.lower()
-        # The old error framing is gone.
-        assert "escalate" not in err.lower()
-        assert "human maintainer" not in err.lower()
+            return main(["push", *argv])
 
-    def test_workflow_error_shows_original_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=["git", "push"],
-                returncode=1,
-                stdout="",
-                stderr=self._WORKFLOW_ERR,
-            )
-            main(["push", "origin", "feature/x"])
+    def test_workflow_refusal_fails_naming_the_missing_grant(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc = self._refused_push("origin", "feature/x")
+        assert rc == 1
         err = capsys.readouterr().err
-        assert "refusing to allow" in err
+        assert "vrg-git: error:" in err
+        assert "`workflows: write`" in err
+        assert "installation" in err
+        assert "the human must accept" in err
+        assert "not an expected hand-off" in err
+        # The old "expected, proceed to report-ready" framing is gone.
+        assert "EXPECTED" not in err
+        assert "warning" not in err.lower()
+        assert "PROCEED" not in err
+        assert "report-ready" not in err
+
+    def test_workflow_refusal_gives_no_stale_branch_diagnosis(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The stale-branch diagnosis only made sense while a refusal could be
+        # expected; it is gone with that path (#5176).
+        rc = self._refused_push("-u", "origin", "HEAD")
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "STALE" not in err
+        assert "rebase" not in err
+        assert "could not check the branch's own diff" not in err
+
+    def test_workflow_refusal_shows_original_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._refused_push("origin", "feature/x")
+        assert "refusing to allow" in capsys.readouterr().err
+
+    def test_workflow_refusal_keeps_its_returncode(self) -> None:
+        assert self._refused_push("origin", "feature/x", returncode=128) == 128
 
     def test_non_workflow_push_error_passes_through(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # A push failure that is NOT a workflow-permission refusal keeps its
-        # original non-zero returncode unchanged (#2540).
+        # original non-zero returncode and adds no workflow message.
         with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
                 args=["git", "push"],
@@ -1711,6 +1730,7 @@ class TestPushWorkflowErrorDetection:
         err = capsys.readouterr().err
         assert "fatal: remote rejected" in err
         assert "warning" not in err.lower()
+        assert "workflows: write" not in err
 
     def test_successful_push_unchanged(self) -> None:
         with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:

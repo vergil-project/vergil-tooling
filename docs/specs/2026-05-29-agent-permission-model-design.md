@@ -51,6 +51,8 @@ Three problems converge:
 
 ### Resolution adopted
 
+> **Superseded by epic vergil-project/.github#1384:** the user App holds `workflows: write`, so the agent pushes workflow-file changes itself.
+
 This spec does **not** create an elevated identity that carries
 `workflows: write`. Instead, no agent identity holds `workflows` at
 all. The rare push that touches `.github/workflows/` is carried by
@@ -232,6 +234,8 @@ closes specific gaps that Layer 2 cannot, within the windows that
 section names.
 
 ### Documented gaps
+
+> **Superseded by epic vergil-project/.github#1384** where it treats `pull_requests: read` as the hard gate on submit: the user App holds `pull_requests: write` and submits its own PRs through `vrg-submit-pr`.
 
 Where a soft gate exists without a corresponding hard gate, this
 spec documents it explicitly. Known gaps:
@@ -505,6 +509,8 @@ The template file is ephemeral:
 
 ## Revised Agent Workflow
 
+> **Superseded by epic vergil-project/.github#1384:** the agent records the PR with `vrg-pr-workflow report-ready`, then submits and finalizes it with `vrg-submit-pr` itself; `.vergil/pr-template.yml` is retired.
+
 ### User Identity (Daily Development)
 
 ```text
@@ -545,6 +551,8 @@ why.
 
 ### Workflow File Changes
 
+> **Superseded by epic vergil-project/.github#1384:** the user App holds `workflows: write`, and merge review judges a workflow change as it does any other.
+
 No agent identity can push changes under `.github/workflows/` — the
 server rejects the entire push (not just the offending file) when the
 App token lacks `workflows`. This is deliberate: workflow files
@@ -575,6 +583,8 @@ because issues get caught before the PR exists, and the development
 agent can fix them before submission.
 
 ## `vrg-submit-pr` Changes
+
+> **Superseded by epic vergil-project/.github#1384:** see the [`vrg-submit-pr` reference](../site/docs/reference/dev/submit-pr.md) for its current modes and who may use each.
 
 The tool gains a new operating mode driven by the `.vergil/`
 template, and an ensure-pushed step.

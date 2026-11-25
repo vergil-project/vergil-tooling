@@ -1,0 +1,200 @@
+[
+  {
+    "sha": "55f2eb4229265746fd1f3394a6eb81b9c99673bc",
+    "node_id": "C_kwDORdiGZtoAKDU1ZjJlYjQyMjkyNjU3NDZmZDFmMzM5NGE2ZWI4MWI5Yzk5NjczYmM",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/commits/55f2eb4229265746fd1f3394a6eb81b9c99673bc",
+    "html_url": "https://github.com/vergil-project/vergil-claude-plugin/commit/55f2eb4229265746fd1f3394a6eb81b9c99673bc",
+    "author": {
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
+      "date": "2026-11-25T12:13:00Z"
+    },
+    "committer": {
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
+      "date": "2026-11-25T12:13:16Z"
+    },
+    "tree": {
+      "sha": "6d9e392927691ef32994a850ba840db957670090",
+      "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/trees/6d9e392927691ef32994a850ba840db957670090"
+    },
+    "message": "fix(hooks): name the PR workflow state in the audit write-guard's deny reason\n\nguard-audit-writes still named the retired .vergil/pr-template.yml as the USER agent's artifact. It now names .vergil/pr-workflow.json, the state report-ready writes. The test's rows use the new path and a new check asserts the deny reason names it and never the retired file. Ref #1374.",
+    "parents": [
+      {
+        "sha": "66a2597b715150733b876b792e0ac4be2e17c1a4",
+        "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/commits/66a2597b715150733b876b792e0ac4be2e17c1a4",
+        "html_url": "https://github.com/vergil-project/vergil-claude-plugin/commit/66a2597b715150733b876b792e0ac4be2e17c1a4"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    },
+    "event": "committed"
+  },
+  {
+    "sha": "3666f2ea3fb18cdd8aaa9b9481c4241df471bdc0",
+    "node_id": "C_kwDORdiGZtoAKDM2NjZmMmVhM2ZiMThjZGQ4YWFhOWI5NDgxYzQyNDFkZjQ3MWJkYzA",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/commits/3666f2ea3fb18cdd8aaa9b9481c4241df471bdc0",
+    "html_url": "https://github.com/vergil-project/vergil-claude-plugin/commit/3666f2ea3fb18cdd8aaa9b9481c4241df471bdc0",
+    "author": {
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
+      "date": "2026-11-25T12:15:35Z"
+    },
+    "committer": {
+      "name": "Fixture Author",
+      "email": "fixture-author@example.invalid",
+      "date": "2026-11-25T12:15:35Z"
+    },
+    "tree": {
+      "sha": "064927b77a64b8c182b4f02c32594784f4cfff5e",
+      "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/trees/064927b77a64b8c182b4f02c32594784f4cfff5e"
+    },
+    "message": "docs(site): describe the agent-submitted PR boundary across the plugin docs\n\nSweep items from vergil-project/vergil-tooling#4751 (epic vergil-project/.github#1384, ruling N0.35). The hooks reference, the skills reference and the README now say that the agent records its PR with report-ready, submits and finalizes it itself and watches it to the merge, with the relay kept for cloud sessions and releases and promotion staying human. The merge-review entry gains the record line, vrg-merge-review-close and the exemption; every docs, logbook and retrospective PR runs merge review and is agent-submitted, except that the human's submit stays the logbook's sign-off. pr-watch gains a failed: gates row, merge-review's error rule matches its routing table, fixture-run's in:title note is corrected, and skills-architecture.md is marked a historical record. Ref #1374.",
+    "parents": [
+      {
+        "sha": "55f2eb4229265746fd1f3394a6eb81b9c99673bc",
+        "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/git/commits/55f2eb4229265746fd1f3394a6eb81b9c99673bc",
+        "html_url": "https://github.com/vergil-project/vergil-claude-plugin/commit/55f2eb4229265746fd1f3394a6eb81b9c99673bc"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    },
+    "event": "committed"
+  },
+  {
+    "id": 37249626021,
+    "node_id": "ASEE_lADORdiGZs8AAAABiaW5rM8AAAAIrEAvpQ",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/issues/events/37249626021",
+    "actor": {
+      "login": "wphillipmoore-vergil-user[bot]",
+      "id": 290013077,
+      "node_id": "BOT_kgDOEUk_lQ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3788880?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D",
+      "html_url": "https://github.com/apps/wphillipmoore-vergil-user",
+      "followers_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "event": "auto_squash_enabled",
+    "commit_id": null,
+    "commit_url": null,
+    "created_at": "2026-11-25T12:18:31Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 37249859371,
+    "node_id": "ME_lADORdiGZs8AAAABiaW5rM8AAAAIrEO_Kw",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/issues/events/37249859371",
+    "actor": {
+      "login": "wphillipmoore-vergil-user[bot]",
+      "id": 290013077,
+      "node_id": "BOT_kgDOEUk_lQ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3788880?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D",
+      "html_url": "https://github.com/apps/wphillipmoore-vergil-user",
+      "followers_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "event": "merged",
+    "commit_id": "b6b9e680b5176e00fead27b8652bed0d25e1ec5c",
+    "commit_url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/commits/b6b9e680b5176e00fead27b8652bed0d25e1ec5c",
+    "created_at": "2026-11-25T12:20:59Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 37249859563,
+    "node_id": "CE_lADORdiGZs8AAAABiaW5rM8AAAAIrEO_6w",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/issues/events/37249859563",
+    "actor": {
+      "login": "wphillipmoore-vergil-user[bot]",
+      "id": 290013077,
+      "node_id": "BOT_kgDOEUk_lQ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3788880?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D",
+      "html_url": "https://github.com/apps/wphillipmoore-vergil-user",
+      "followers_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "event": "closed",
+    "commit_id": null,
+    "commit_url": null,
+    "created_at": "2026-11-25T12:21:00Z",
+    "state_reason": null,
+    "intent": null,
+    "performed_via_github_app": null
+  },
+  {
+    "id": 37249862652,
+    "node_id": "HRDE_lADORdiGZs8AAAABiaW5rM8AAAAIrEPL_A",
+    "url": "https://api.github.com/repos/vergil-project/vergil-claude-plugin/issues/events/37249862652",
+    "actor": {
+      "login": "wphillipmoore-vergil-user[bot]",
+      "id": 290013077,
+      "node_id": "BOT_kgDOEUk_lQ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3788880?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D",
+      "html_url": "https://github.com/apps/wphillipmoore-vergil-user",
+      "followers_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/wphillipmoore-vergil-user%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "event": "head_ref_deleted",
+    "commit_id": null,
+    "commit_url": null,
+    "created_at": "2026-11-25T12:21:01Z",
+    "performed_via_github_app": null
+  }
+]

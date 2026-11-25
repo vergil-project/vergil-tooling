@@ -176,6 +176,8 @@ def _proxy_for(args: argparse.Namespace) -> int:
     except (
         proxies.ProxyRefusedError,
         proxies.ProxyLinkError,
+        # The org's proxy is closed: refused by name, never reopened.
+        epics.ClosedEpicError,
         # A proxy or primary the trust layer does not trust, or cannot read in
         # full: a one-line, metadata-only message, before any write.
         trust.UntrustedContentError,
@@ -186,8 +188,6 @@ def _proxy_for(args: argparse.Namespace) -> int:
     proxy = result.proxy.slug
     if result.created:
         print(f"Created proxy {proxy} for {primary.slug}.")
-    elif result.reopened:
-        print(f"Reopened proxy {proxy} for {primary.slug} (it was closed).")
     else:
         print(f"Proxy {proxy} for {primary.slug} already exists.")
     if result.retitled:

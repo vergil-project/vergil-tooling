@@ -17,11 +17,10 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.1
     permissions:
       contents: write
-    # `inherit` is required: the automation App keys live in the `automation`
-    # environment, and environment secrets reach a cross-repo reusable
-    # workflow only under `secrets: inherit` (vergil-project/packages#6).
-    # Allowed only for the App-key workflows (vrg-validate's secrets-inherit
-    # check).
+    # `inherit` within vergil-project: it carries the App keys from the
+    # `automation` environment and any signing or registry secrets the
+    # callee declares. Allowed only for the App-key workflows (vrg-validate's
+    # secrets-inherit check).
     secrets: inherit
 
   release:
@@ -30,11 +29,8 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1
     with:
       language: python
-    # `inherit` is required: environment secrets reach a job in a cross-repo
-    # reusable workflow only when the caller uses `secrets: inherit` (probe in
-    # vergil-project/packages#6). With an explicit map, cd-release's
-    # package-sign job sees an empty PACKAGE_SIGNING_KEY from its
-    # `package-signing` environment. The callee is first-party (same org); it
-    # also uses APP_CLIENT_ID / APP_PRIVATE_KEY for the package-released
-    # dispatch (spec §8.2), read from the `automation` environment.
+    # `inherit` within vergil-project: it carries the App keys from the
+    # `automation` environment and any signing or registry secrets the
+    # callee declares. Allowed only for the App-key workflows (vrg-validate's
+    # secrets-inherit check).
     secrets: inherit

@@ -27,9 +27,9 @@ every PR, its own included. Submit never edits or renames a PR after
 creating it, so ``edited`` stays forbidden on its own PR too. GitHub records
 a ``closed`` event, by the merging actor, for every merge; that one closing
 is part of the merge and is allowed with it (:func:`_merge_close`), while any
-other close stays a violation (vergil-tooling#5140). An action is
-either allowed or a
-violation, and a violation always fails: there is no override
+other close stays a violation (vergil-tooling#5140, vergil-tooling#5178).
+An action is either allowed or a violation, and a violation always fails:
+there is no override
 (vergil-tooling#4695). It is either a real problem to investigate or a bug
 in this classifier to fix.
 
@@ -56,6 +56,7 @@ import enum
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github, trust
@@ -138,8 +139,9 @@ class Action:
 
     *identity* is the actor as GitHub named it; ``None`` (not known) never
     makes the PR the actor's own. *at* is the timeline event's ``created_at``
-    as GitHub gave it; ``None`` (not a timeline event, or none given) never
-    ties a close to the merge.
+    as GitHub gave it, and *position* its index in the PR's whole timeline
+    (every event, those no action records included); ``None`` for either (not
+    a timeline event, or no time given) never ties a close to the merge.
     """
 
     login: str
@@ -147,6 +149,7 @@ class Action:
     action: str
     identity: trust.Identity | None = None
     at: str | None = None
+    position: int | None = None
 
 
 def _same_identity(a: trust.Identity, b: trust.Identity) -> bool:
@@ -259,9 +262,14 @@ def _collect_actions(pr: str) -> _History:
     authors = load_trusted_authors()
     actions: list[Action] = []
 
-    def add(identity: trust.Identity, action: str, at: str | None = None) -> None:
+    def add(
+        identity: trust.Identity,
+        action: str,
+        at: str | None = None,
+        position: int | None = None,
+    ) -> None:
         role = classify(identity, org=org, authors=authors)
-        actions.append(Action(_shown(identity), role, action, identity, at))
+        actions.append(Action(_shown(identity), role, action, identity, at, position))
 
     # ``gh pr view`` names the author's account type by ``is_bot``; an App
     # author's login is ``app/<slug>``, which the trust layer normalises.
@@ -313,7 +321,7 @@ def _collect_actions(pr: str) -> _History:
         "list[dict[str, Any]]",
         github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline"),
     )
-    for event in timeline:
+    for position, event in enumerate(timeline):
         # An event's actor, and the user of an event that names one instead
         # (a review or a comment), acted on the PR. An event naming neither
         # (a commit, whose pusher GitHub does not record) adds no actor.
@@ -328,9 +336,36 @@ def _collect_actions(pr: str) -> _History:
             _identity(event.get("actor")),
             mapped,
             created_at if isinstance(created_at, str) and created_at else None,
+            position,
         )
 
     return _History(author=author, actions=actions, actors=tuple(actors))
+
+
+# How long after the merge GitHub may record the ``closed`` it writes with it.
+# GitHub writes both events for one merge and times each to the second, so
+# the close lands in the merge's second or, when the second ticks between the
+# two writes, the next one (vergil-project/vergil-claude-plugin PR #1375 was
+# 1 second; vergil-tooling#5178). Five seconds covers that tick and a slow
+# write with margin, while staying short: the close must also be the very
+# next timeline event, by the merging actor, so the window only bounds how
+# late that one event may be timed and never admits a close of its own.
+MERGE_CLOSE_WINDOW = timedelta(seconds=5)
+
+
+def _timestamp(value: str | None) -> datetime | None:
+    """*value*, a timeline ``created_at``, as a zone-aware time; ``None`` if unreadable.
+
+    An unreadable or zone-less time cannot tie a close to the merge, so the
+    close stays a violation (it fails closed, reported as one).
+    """
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _merge_close(actions: list[Action]) -> int | None:
@@ -343,16 +378,25 @@ def _merge_close(actions: list[Action]) -> int | None:
     - the close is the first ``closed`` event after it in the timeline's
       order (GitHub lists a timeline oldest first, and lists the merge's
       ``closed`` right after its ``merged``);
-    - its ``created_at`` equals the merge's: GitHub gives both to the second,
-      and gives both the same second (vergil-project/vergil-fixture-python-lib
-      PR #87, recorded in
-      ``tests/vergil_tooling/fixtures/pr_provenance/own_pr_squash_merge.json``);
+    - no other timeline event lies between the two: the close's position in
+      the PR's whole timeline is the one right after the merge's, so an event
+      the check otherwise ignores (a comment, a label, a branch deletion)
+      between them disqualifies it too;
+    - its ``created_at`` is the merge's or later by at most
+      :data:`MERGE_CLOSE_WINDOW`: GitHub gives both to the second, usually
+      the same second (vergil-project/vergil-fixture-python-lib PR #87,
+      recorded in
+      ``tests/vergil_tooling/fixtures/pr_provenance/own_pr_squash_merge.json``)
+      but sometimes the next (vergil-project/vergil-claude-plugin PR #1375,
+      recorded in ``own_pr_merge_close_next_second.json`` beside it;
+      vergil-tooling#5178);
     - its actor is the merge's actor.
 
-    Order and timestamp are both required, so a close before the merge (a
-    close and reopen included) or at another time never qualifies, nor does
-    an event with no timestamp or no actor. ``None`` when no close
-    accompanies a merge.
+    Order, adjacency and timestamp are all required, so a close before the
+    merge (a close and reopen included), one with any event before it since
+    the merge, or one outside the window never qualifies, nor does an event
+    with no position, no readable timestamp or no actor. ``None`` when no
+    close accompanies a merge.
     """
     merges = [i for i, act in enumerate(actions) if act.action == "merged"]
     if len(merges) != 1:
@@ -364,7 +408,13 @@ def _merge_close(actions: list[Action]) -> int | None:
     if close_at is None:
         return None
     close = actions[close_at]
-    if merge.at is None or close.at != merge.at:
+    if merge.position is None or close.position != merge.position + 1:
+        return None
+    merged_when = _timestamp(merge.at)
+    closed_when = _timestamp(close.at)
+    if merged_when is None or closed_when is None:
+        return None
+    if not timedelta(0) <= closed_when - merged_when <= MERGE_CLOSE_WINDOW:
         return None
     if merge.identity is None or close.identity is None:
         return None

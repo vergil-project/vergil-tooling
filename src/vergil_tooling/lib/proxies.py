@@ -188,15 +188,14 @@ _EPIC_TITLE_PREFIX = "Epic: "
 class ProxyResult:
     """What :func:`create_proxy` did.
 
-    *proxy* is the proxy epic; *created*, *reopened*, *retitled* and
-    *commented* say whether it was created, reopened, retitled to the derived
-    title (:func:`proxy_title`), or had its ``Proxy:`` comment posted on the
-    primary. All four False is a re-run that wrote nothing.
+    *proxy* is the proxy epic; *created*, *retitled* and *commented* say
+    whether it was created, retitled to the derived title
+    (:func:`proxy_title`), or had its ``Proxy:`` comment posted on the
+    primary. All three False is a re-run that wrote nothing.
     """
 
     proxy: IssueRef
     created: bool
-    reopened: bool
     retitled: bool
     commented: bool
 
@@ -331,9 +330,13 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
     Every refusal (:class:`ProxyRefusedError`) and every read of both orgs
     comes before any write, so a refusal, or a token that cannot be minted for
     either org, writes nothing. The proxy is found among the home's proxies by
-    its ``Primary:`` line: an open one is reused, a closed one is reopened, and
-    none means it is created, its labels ensured first. A reused or reopened
-    proxy whose title differs from :func:`proxy_title` is retitled, so a re-run
+    its ``Primary:`` line: an open one is reused, and none means it is
+    created, its labels ensured first. When only closed ones exist this
+    raises :class:`~vergil_tooling.lib.epics.ClosedEpicError` naming the
+    lowest-numbered, before any write: closed is closed, so the tooling never
+    reopens a proxy, and a person may reopen it by hand, after which a re-run
+    reuses it. A reused proxy whose title differs from :func:`proxy_title` is
+    retitled, so a re-run
     brings an older proxy's title up to date; a proxy is found by its
     ``Primary:`` line and labels, never its title, so retitling is safe. The
     comment is posted
@@ -363,13 +366,14 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
                 f"{home} has {len(open_refs)} open proxies for {primary.slug}"
                 f" ({', '.join(ref.slug for ref in open_refs)}); keep one and close the rest"
             )
-        created = reopened = retitled = False
+        created = retitled = False
+        if existing and not open_proxies:
+            raise epics.ClosedEpicError(
+                existing[0].ref, "a person may reopen it by hand, and a re-run then reuses it"
+            )
         if existing:
-            found = open_proxies[0] if open_proxies else existing[0]
+            found = open_proxies[0]
             proxy = found.ref
-            if not found.is_open:
-                github.run("issue", "reopen", str(proxy.number), "--repo", home)
-                reopened = True
             if found.title != derived:
                 github.run("issue", "edit", str(proxy.number), "--repo", home, "--title", derived)
                 retitled = True
@@ -393,6 +397,4 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
                 "--body",
                 proxy_comment(proxy),
             )
-    return ProxyResult(
-        proxy=proxy, created=created, reopened=reopened, retitled=retitled, commented=commented
-    )
+    return ProxyResult(proxy=proxy, created=created, retitled=retitled, commented=commented)
