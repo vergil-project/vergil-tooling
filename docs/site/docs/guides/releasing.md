@@ -406,18 +406,24 @@ before judging it:
 
 1. It checks that the recorded run is for `main`'s tip, the release
    merge, and refuses to re-run it otherwise.
-2. It re-runs the release PR's CI run and watches it with
-   `--exit-status`. The release job's evidence gate harvests that run's
-   artifacts, so a fix that changes what CI writes reaches the gate only
-   through a fresh CI attempt. A CI re-run that fails stops the resume
-   before the CD run is touched.
-3. It re-runs the failed CD run and watches it.
+2. It checks that the release PR's head has a CI attempt that passed,
+   and names it in the log. It never re-runs that CI run: its gates were
+   judged before the merge, and a re-run after the merge fails its
+   version check, with the head and `main` at the same version. The
+   newest attempt that passed counts, even when a later re-run of the
+   same run failed. With no attempt that passed, the resume stops before
+   the CD run is touched.
+3. It re-runs the failed CD run, and only it, and watches it.
 4. It judges the CD run's new attempt through the same release-job gate.
+   That job's CI evidence gate takes the same attempt and harvests only
+   what that attempt produced (see the
+   [CI evidence convention](ci-evidence-convention.md)).
    A release job that passes clears the recorded run; one that fails
-   again keeps it recorded, and the next resume recovers it again.
+   again keeps it recorded, and the next resume recovers it again. Once
+   it passes, the stages after `confirm-main` run as in any release.
 
-When the defect is in the release commit itself, so no re-run can pass,
-supersede the release instead (see
+When the defect is in the release commit itself, or in what its CI
+wrote, so no re-run of the CD run can pass, supersede the release instead (see
 [Superseding a release](#superseding-a-release)).
 
 ### Superseding a release

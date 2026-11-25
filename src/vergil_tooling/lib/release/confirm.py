@@ -55,8 +55,8 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
     A release job that did not succeed records its run as
     ``failed_release_run`` in the state block before the stage fails. The
-    resume that follows re-runs the release PR's CI run and then that CD
-    run, watching each, before judging it as here
+    resume that follows re-runs that CD run, and never the merged release
+    PR's CI run, watching it before judging it as here
     (:func:`_recover_failed_release_run`). Every other job that did not
     succeed is recorded in ``failed_jobs`` and deferred to ``cd-publish``
     (spec §4.5 of epic vergil-project/.github#1440).
@@ -637,23 +637,23 @@ def _record_failed_release(ctx: ReleaseContext, cd_run_id: str) -> str:
         write_state(ctx, replace(current, failed_release_run=cd_run_id))
     return (
         f"CD run {cd_run_id} is recorded as the failed release run. Once the cause is "
-        f"fixed, resume with `vrg-release --resume {ctx.version}`: it re-runs the release "
-        "PR's CI run and then this CD run, watching each, and judges the release again."
+        f"fixed, resume with `vrg-release --resume {ctx.version}`: it re-runs this CD run, "
+        "watching it, and judges the release again."
     )
 
 
 def _recover_failed_release_run(ctx: ReleaseContext) -> None:
-    """Re-run the release PR's CI run, then the recorded failed CD release run (spec §4.5).
+    """Re-run the recorded failed CD release run, and only it (spec §4.5, #5153).
 
     A no-op unless the state block records a ``failed_release_run``, which
-    only a run that confirm-main failed on writes. The CI run is re-run
-    first, because the release job's evidence gate harvests that run's
-    artifacts (``ci_evidence.select_ci_run``, newest same-named artifact per
-    #3171): a fix to what CI writes reaches the gate only through a fresh CI
-    attempt. It is watched with ``--exit-status``, so a CI re-run that fails
-    stops the recovery before CD is touched. The CD run is then re-run and
-    watched, and confirm-main judges the new attempt through the unchanged
-    gate. The recorded run must be for main's tip, the release merge.
+    only a run that confirm-main failed on writes. The recorded run must be
+    for main's tip, the release merge. The release PR is merged by now, so
+    its CI run is never re-run: its gates were judged before the merge, and
+    a re-run after it fails the version check. The recovery only checks that
+    the release PR's head has a CI attempt that passed, naming it in the log
+    (:func:`_check_release_ci`). The CD run is then re-run and watched, and
+    confirm-main judges the new attempt through the unchanged gate, the
+    release job's CI evidence gate included.
     """
     if ctx.state is None or ctx.state.failed_release_run is None:
         return
@@ -675,48 +675,38 @@ def _recover_failed_release_run(ctx: ReleaseContext) -> None:
                 "tracking issue and main's CD runs before resuming."
             ),
         )
-    ci_run_id = _release_ci_run(ctx)
-    print(f"Re-running the release PR's CI run {ci_run_id}, so CD harvests fresh evidence...")
-    try:
-        rerun_and_watch(ctx, ci_run_id, check_status=True, phase="confirm-main")
-    except subprocess.CalledProcessError as exc:
-        raise ReleaseError(
-            phase="confirm-main",
-            command=f"gh run watch {ci_run_id} --repo {ctx.repo} --exit-status",
-            message=(
-                f"The re-run of the release PR's CI run {ci_run_id} did not succeed, so the "
-                f"failed CD release run {run_id} was not re-run. Fix the cause, then resume "
-                f"with `vrg-release --resume {ctx.version}`."
-            ),
-            detail=exc.stderr,
-        ) from exc
+    _check_release_ci(ctx)
     print(f"Re-running the failed CD release run {run_id} on main...")
     rerun_and_watch(ctx, run_id, check_status=False, phase="confirm-main")
 
 
-def _release_ci_run(ctx: ReleaseContext) -> str:
-    """The ID of the release PR's CI run that the CD evidence gate harvests.
+def _check_release_ci(ctx: ReleaseContext) -> ci_evidence.PassedAttempt:
+    """Refuse unless the release PR's head has a CI attempt that passed; log which one.
 
-    The newest completed and successful ``CI`` run for the release PR's head
-    commit. A release PR that is not recorded, or a lookup that fails, is a
-    :class:`ReleaseError` naming it, never a skipped re-run.
+    The release PR is merged by the time confirm-main runs, so its CI is
+    never re-run: its gates were judged before the merge, and its version
+    check fails after it, with head and main at the same version (#5153).
+    The newest attempt that passed counts, even when a later re-run of the
+    same run did not (:func:`ci_evidence.select_passed_attempt`), and the log
+    names it. A release PR that is not recorded, or no attempt that passed,
+    is a :class:`ReleaseError` naming it, raised before CD is touched.
     """
     if ctx.release_pr_url is None:
         raise ReleaseError(
             phase="confirm-main",
             command="gh run list --workflow CI",
             message=(
-                "The release PR is not recorded, so its CI run cannot be re-run before "
-                "the failed CD release run."
+                "The release PR is not recorded, so its CI run cannot be checked before "
+                "the failed CD release run is re-run."
             ),
         )
     head_sha: str | None = None
     try:
         head_sha = github.head_sha(ctx.release_pr_url)
-        run = ci_evidence.select_ci_run(ctx.repo, head_sha)
+        passed = ci_evidence.select_passed_attempt(ctx.repo, head_sha)
     except (subprocess.CalledProcessError, ValueError, ci_evidence.NoQualifyingRunError) as exc:
         where = (
-            f"gh run list --repo {ctx.repo} --workflow CI --commit {head_sha}"
+            f"gh api repos/{ctx.repo}/actions/runs?head_sha={head_sha} (and each run's attempts)"
             if head_sha
             else f"gh pr view {ctx.release_pr_url} --json headRefOid"
         )
@@ -725,7 +715,18 @@ def _release_ci_run(ctx: ReleaseContext) -> str:
             command=where,
             message=f"The release PR's CI run could not be looked up: {exc}",
         ) from exc
-    return str(run["id"])
+    named = (
+        f"The release PR's CI run {passed.run_id} passed at attempt {passed.attempt} ({passed.url})"
+    )
+    if passed.is_latest:
+        print(f"{named}; it is not re-run, as its gates were judged before the merge.")
+    else:
+        print(
+            f"{named}; its latest attempt, {passed.latest_attempt}, did not pass. "
+            f"Using attempt {passed.attempt}, the newest that passed. The CI run is not "
+            "re-run: a re-run after the merge fails its version check."
+        )
+    return passed
 
 
 def _unsettled_jobs(jobs: list[dict[str, Any]]) -> list[str]:

@@ -38,6 +38,7 @@ import tempfile
 import time
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -686,7 +687,7 @@ def validate_completeness(
 # All GitHub I/O for the evidence bundle, isolated behind mockable functions so
 # the CLI and the bundle core stay network-free. Every call routes through
 # ``vergil_tooling.lib.github``, whose ``_run_with_retry`` already retries
-# transient API failures. The one bespoke loop is :func:`wait_for_ci_run`,
+# transient API failures. The one bespoke loop is :func:`wait_for_passed_attempt`,
 # which re-queries an *empty* head-SHA run lookup while GitHub's index lags.
 
 # Prefix a gate workflow uploads its evidence artifact under
@@ -878,13 +879,92 @@ def _is_own_run(run: Mapping[str, Any], repo: str) -> bool:
     return isinstance(full_name, str) and full_name.lower() == repo.lower()
 
 
-def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str, Any]:
-    """Return the latest COMPLETED + SUCCESS *workflow* run for ``head_sha``.
+@dataclass(frozen=True)
+class PassedAttempt:
+    """One attempt of a CI run that completed successfully (:func:`select_passed_attempt`).
 
-    Only a run built from *repo* itself counts: a fork's run of the same
-    commit is ignored (:func:`_is_own_run`). Cancelled and in-progress runs
-    are ignored. Raises :class:`NoQualifyingRunError` when no run qualifies
-    (spec §5.2).
+    *latest_attempt* is the run's latest attempt number when it was read; it
+    is *attempt* unless a later re-run of the run did not pass. For such an
+    earlier attempt, *next_started_at* is when the attempt after it started:
+    everything the attempt produced is older (attempts of one run never
+    overlap). It is ``None`` for a latest attempt.
+    """
+
+    run_id: int
+    attempt: int
+    latest_attempt: int
+    url: str
+    check_suite_id: int
+    next_started_at: str | None = None
+
+    @property
+    def is_latest(self) -> bool:
+        return self.attempt == self.latest_attempt
+
+
+def _run_attempt_number(run: Mapping[str, Any]) -> int:
+    """The ``run_attempt`` of workflow *run*, or a ``ValueError`` naming the run."""
+    attempt = run.get("run_attempt")
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+        msg = f"workflow run {run.get('id')!r} has no usable run_attempt ({attempt!r})"
+        raise ValueError(msg)
+    return attempt
+
+
+def _passed_earlier_attempt(
+    repo: str, head_sha: str, run: Mapping[str, Any], workflow: str
+) -> tuple[str, PassedAttempt] | None:
+    """The newest attempt before *run*'s latest that passed, with its start time, or None.
+
+    Each earlier attempt is read from ``actions/runs/{id}/attempts/{n}``,
+    newest first, stopping at the first that is COMPLETED + SUCCESS. An
+    attempt that is not an object, or is for another head commit, raises
+    ``ValueError``: it is never skipped.
+    """
+    run_id = int(run["id"])
+    latest = _run_attempt_number(run)
+    # The run-list entry describes the latest attempt, so its start is when
+    # the attempt after the latest-but-one began.
+    next_started = str(run["run_started_at"])
+    for number in range(latest - 1, 0, -1):
+        data = github.read_json("api", f"repos/{repo}/actions/runs/{run_id}/attempts/{number}")
+        if not isinstance(data, dict):
+            msg = f"attempt {number} of run {run_id} is not a JSON object"
+            raise ValueError(msg)
+        found = cast("dict[str, Any]", data)
+        if found.get("head_sha") != head_sha:
+            msg = (
+                f"attempt {number} of run {run_id} is for head {found.get('head_sha')!r}, "
+                f"not {head_sha}"
+            )
+            raise ValueError(msg)
+        if _is_qualifying_run(found, workflow):
+            passed = PassedAttempt(
+                run_id=run_id,
+                attempt=number,
+                latest_attempt=latest,
+                url=str(found["html_url"]),
+                check_suite_id=_check_suite_id(found),
+                next_started_at=next_started,
+            )
+            return str(found["run_started_at"]), passed
+        next_started = str(found["run_started_at"])
+    return None
+
+
+def select_passed_attempt(repo: str, head_sha: str, *, workflow: str = "CI") -> PassedAttempt:
+    """The most recent COMPLETED + SUCCESS attempt of a *workflow* run for ``head_sha``.
+
+    A run's latest attempt is judged first. When it did not pass, its earlier
+    attempts are read, newest first, and one that passed still counts
+    (#5153): a release PR's CI re-run after the PR merged fails its version
+    check, though the gates were judged and passed before the merge. A
+    failed, cancelled or in-progress attempt never counts. Only runs built
+    from *repo* itself are read: a fork's run of the same commit is ignored
+    (:func:`_is_own_run`). The newest passing attempt across the runs wins,
+    by its start time. Raises :class:`NoQualifyingRunError` when no attempt
+    passed (spec §5.2), and ``ValueError`` on a run or attempt it cannot
+    read.
     """
     # The query string MUST be in the endpoint path, not a ``-f head_sha=…``
     # field: ``gh api`` switches to POST the moment any ``-f``/``-F`` field is
@@ -895,12 +975,32 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     raw = github.read_json_paginated(
         f"repos/{repo}/actions/runs?head_sha={head_sha}", "workflow_runs"
     )
-    runs = [run for run in cast("list[dict[str, Any]]", raw) if _is_own_run(run, repo)]
-    qualifying = [run for run in runs if _is_qualifying_run(run, workflow)]
-    if not qualifying:
-        visible = any(run.get("name") == workflow for run in runs)
-        raise NoQualifyingRunError(head_sha, visible=visible)
-    return max(qualifying, key=lambda run: run["run_started_at"])
+    runs = [
+        run
+        for run in cast("list[dict[str, Any]]", raw)
+        if _is_own_run(run, repo) and run.get("name") == workflow
+    ]
+    if not runs:
+        raise NoQualifyingRunError(head_sha, visible=False)
+    passed: list[tuple[str, PassedAttempt]] = []
+    for run in runs:
+        if _is_qualifying_run(run, workflow):
+            latest = _run_attempt_number(run)
+            attempt = PassedAttempt(
+                run_id=int(run["id"]),
+                attempt=latest,
+                latest_attempt=latest,
+                url=str(run["html_url"]),
+                check_suite_id=_check_suite_id(run),
+            )
+            passed.append((str(run["run_started_at"]), attempt))
+            continue
+        earlier = _passed_earlier_attempt(repo, head_sha, run, workflow)
+        if earlier is not None:
+            passed.append(earlier)
+    if not passed:
+        raise NoQualifyingRunError(head_sha, visible=True)
+    return max(passed, key=lambda item: item[0])[1]
 
 
 # Default grace period for a CI run to appear in GitHub's head-SHA run index.
@@ -909,15 +1009,15 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
 RUN_VISIBILITY_GRACE_SECS = 300.0
 
 
-def wait_for_ci_run(
+def wait_for_passed_attempt(
     repo: str,
     head_sha: str,
     *,
     grace: float = RUN_VISIBILITY_GRACE_SECS,
     sleep: Callable[[float], None] | None = None,
     clock: Callable[[], float] | None = None,
-) -> dict[str, Any]:
-    """:func:`select_ci_run`, re-queried while the head-SHA run index lags.
+) -> PassedAttempt:
+    """:func:`select_passed_attempt`, re-queried while the head-SHA run index lags.
 
     Only an **empty** lookup (no ``CI`` run visible for ``head_sha`` at all)
     is retried: GitHub's run-by-SHA index can trail a run that already completed
@@ -925,8 +1025,8 @@ def wait_for_ci_run(
     :func:`~vergil_tooling.lib.retry.compute_delay`, the last sleep clamped to
     the deadline, then one final query. When *grace* elapses with still nothing
     visible, :class:`NoQualifyingRunError` is raised naming the wait. A visible
-    run that is failed, cancelled or in progress fails at once, as before — the
-    grace period never weakens the completed+success requirement. *sleep* and
+    run with no attempt that passed fails at once, as before — the grace
+    period never weakens the completed+success requirement. *sleep* and
     *clock* default to :func:`time.sleep`/:func:`time.monotonic` and are
     injectable for tests.
     """
@@ -936,7 +1036,7 @@ def wait_for_ci_run(
     attempt = 0
     while True:
         try:
-            return select_ci_run(repo, head_sha)
+            return select_passed_attempt(repo, head_sha)
         except NoQualifyingRunError as exc:
             if exc.visible:
                 raise
@@ -955,8 +1055,173 @@ def wait_for_ci_run(
             attempt += 1
 
 
+class AttemptScopeError(EvidenceArtifactError):
+    """An earlier CI attempt's checks or evidence cannot be tied to that attempt (#5153).
+
+    Raised by the harvest of an earlier attempt that passed when a job, check
+    run or artifact cannot be shown to belong to it. Substantive harvest
+    failure, surfaced by the CLI as a single-line error like its parent.
+    """
+
+
+@dataclass(frozen=True)
+class AttemptScope:
+    """What one earlier, passing attempt of a CI run ran, and its time window (#5153).
+
+    *job_conclusions* maps each job of the attempt (the attempt's own and any
+    it carried over from an earlier attempt, as the attempt's jobs list
+    reports them) to its conclusion. The window runs from the earliest of
+    those jobs' starts to the start of the next attempt, exclusive: attempts
+    of one run never overlap, so anything a later attempt made falls after it.
+    """
+
+    attempt: PassedAttempt
+    start: datetime
+    end: datetime
+    job_conclusions: dict[str, str]
+
+    def holds(self, when: datetime) -> bool:
+        return self.start <= when < self.end
+
+    def describe(self) -> str:
+        return (
+            f"attempt {self.attempt.attempt} of CI run {self.attempt.run_id} "
+            f"({self.start.isoformat()} to {self.end.isoformat()})"
+        )
+
+
+def _timestamp(value: object, what: str) -> datetime:
+    """Parse GitHub's ISO-8601 *value*, or raise :class:`AttemptScopeError` naming *what*."""
+    if not isinstance(value, str) or not value:
+        msg = f"{what} has no timestamp ({value!r})"
+        raise AttemptScopeError(msg)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        msg = f"{what} has an unreadable timestamp {value!r}"
+        raise AttemptScopeError(msg) from exc
+    if parsed.tzinfo is None:
+        msg = f"{what} has a timestamp with no time zone {value!r}"
+        raise AttemptScopeError(msg)
+    return parsed
+
+
+def attempt_scope(repo: str, head_sha: str, passed: PassedAttempt) -> AttemptScope:
+    """The jobs and time window of *passed*, an earlier attempt that passed.
+
+    Read from ``actions/runs/{id}/attempts/{n}/jobs``, which lists every job
+    of that attempt with its own conclusion, whatever later attempts did.
+    Raises :class:`AttemptScopeError` when *passed* is a latest attempt, when
+    the attempt lists no job, and when a job is not a completed job of
+    ``head_sha`` that finished before the next attempt began.
+    """
+    label = f"attempt {passed.attempt} of CI run {passed.run_id}"
+    if passed.next_started_at is None:
+        msg = f"{label} is the run's latest attempt; its evidence is read as the run's own"
+        raise AttemptScopeError(msg)
+    end = _timestamp(
+        passed.next_started_at, f"attempt {passed.attempt + 1} of CI run {passed.run_id}"
+    )
+    raw = github.read_json_paginated(
+        f"repos/{repo}/actions/runs/{passed.run_id}/attempts/{passed.attempt}/jobs", "jobs"
+    )
+    if not raw:
+        msg = f"{label} lists no jobs"
+        raise AttemptScopeError(msg)
+    conclusions: dict[str, str] = {}
+    starts: list[datetime] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            msg = f"{label} lists a job that is not an object: {item!r}"
+            raise AttemptScopeError(msg)
+        job = cast("dict[str, Any]", item)
+        name = job.get("name")
+        what = f"job {name!r} of {label}"
+        if not isinstance(name, str) or not name:
+            msg = f"{label} lists a job with no name (id {job.get('id')!r})"
+            raise AttemptScopeError(msg)
+        if name in conclusions:
+            msg = f"{label} lists job {name!r} more than once"
+            raise AttemptScopeError(msg)
+        if job.get("head_sha") != head_sha:
+            msg = f"{what} is for head {job.get('head_sha')!r}, not {head_sha}"
+            raise AttemptScopeError(msg)
+        if job.get("status") != "completed":
+            msg = f"{what} is {job.get('status')!r}, not completed"
+            raise AttemptScopeError(msg)
+        completed = _timestamp(job.get("completed_at"), what)
+        if completed >= end:
+            msg = f"{what} completed at {completed.isoformat()}, after the next attempt began"
+            raise AttemptScopeError(msg)
+        starts.append(_timestamp(job.get("started_at"), what))
+        conclusions[name] = str(job.get("conclusion") or "")
+    return AttemptScope(attempt=passed, start=min(starts), end=end, job_conclusions=conclusions)
+
+
+def read_attempt_gate_conclusions(
+    repo: str, head_sha: str, scope: AttemptScope, required: Sequence[EvidenceGate]
+) -> dict[str, str]:
+    """The check-run name → conclusion map of the attempt *scope* covers (#5153).
+
+    The attempt-scoped counterpart of :func:`read_gate_conclusions`. The
+    workflow's checks are the attempt's own jobs (:func:`attempt_scope`), so
+    a later failed attempt's check run never stands in for them. The GitHub
+    Advanced Security scanner checks are no job: of every such check run on
+    the commit (``filter=all``), the newest that started inside the
+    attempt's window counts. Raises :class:`AttemptScopeError` when a check
+    a required gate names cannot be tied to the attempt.
+    """
+    conclusions = dict(scope.job_conclusions)
+    raw = github.read_json_paginated(
+        f"repos/{repo}/commits/{head_sha}/check-runs?filter=all", "check_runs"
+    )
+    scanner: dict[str, tuple[datetime, int, str]] = {}
+    for run in cast("list[dict[str, Any]]", raw):
+        name = run.get("name")
+        if _app_id(run) != GHAS_INTEGRATION_ID or name not in github.UPLOADED_CHECK_JOBS:
+            continue
+        started = _timestamp(run.get("started_at"), f"check run {name!r} ({run.get('id')!r})")
+        if not scope.holds(started):
+            continue
+        key = (started, int(run["id"]), str(run.get("conclusion") or ""))
+        if name not in scanner or key[:2] > scanner[name][:2]:
+            scanner[name] = key
+    conclusions.update({name: key[2] for name, key in scanner.items()})
+    missing = [check for gate in required for check in gate.checks if check not in conclusions]
+    if missing:
+        msg = f"required checks {missing} cannot be tied to {scope.describe()}"
+        raise AttemptScopeError(msg)
+    return conclusions
+
+
+def _artifacts_in_scope(
+    gate: str, candidates: Sequence[dict[str, Any]], scope: AttemptScope
+) -> list[dict[str, Any]]:
+    """The copies of *gate*'s artifact created inside *scope*'s window, or a refusal."""
+    kept = [
+        artifact
+        for artifact in candidates
+        if scope.holds(
+            _timestamp(artifact.get("created_at"), f"evidence artifact {artifact.get('id')!r}")
+        )
+    ]
+    if not kept:
+        ids = sorted(int(a["id"]) for a in candidates)
+        msg = (
+            f"gate {gate!r} has evidence artifacts (ids {ids}), but none was created "
+            f"during {scope.describe()}"
+        )
+        raise AttemptScopeError(msg)
+    return kept
+
+
 def download_evidence_artifacts(
-    repo: str, run_id: int, dest: Path, required: Sequence[EvidenceGate]
+    repo: str,
+    run_id: int,
+    dest: Path,
+    required: Sequence[EvidenceGate],
+    *,
+    scope: AttemptScope | None = None,
 ) -> list[Path]:
     """Download *run_id*'s evidence artifacts for the *required* gates only.
 
@@ -977,6 +1242,11 @@ def download_evidence_artifacts(
     and it is fetched **by id** (``actions/artifacts/{id}/zip``), because
     ``gh run download --name`` cannot tell same-named artifacts apart and
     extracting both into one directory collides.
+
+    With *scope* (an earlier attempt that passed, #5153), only the copies
+    created inside that attempt's window are candidates, so a later
+    attempt's artifact is never consumed; a gate with copies but none in the
+    window raises :class:`AttemptScopeError`.
     """
     wanted = {f"{_EVIDENCE_ARTIFACT_PREFIX}{gate.name}": gate.name for gate in required}
     # Every page, not just the first 30: a release PR's CI run uploads more
@@ -990,7 +1260,8 @@ def download_evidence_artifacts(
         if gate is not None:
             by_gate.setdefault(gate, []).append(artifact)
     gate_dirs: list[Path] = []
-    for gate, candidates in sorted(by_gate.items()):
+    for gate, listed in sorted(by_gate.items()):
+        candidates = listed if scope is None else _artifacts_in_scope(gate, listed, scope)
         chosen = _choose_artifact(gate, candidates)
         gate_dir = dest / gate
         gate_dir.mkdir(parents=True, exist_ok=True)
@@ -1243,8 +1514,10 @@ def run_harvest(
     """Harvest a release's CI evidence into ``staging_dir`` (the pre-publish gate).
 
     Each line is one library stage: resolve the release PR, its validated head
-    SHA and the qualifying CI run; derive the required gates and the check-run
-    conclusions; download and parse the evidence artifacts; enforce completeness
+    SHA and the newest passing CI attempt; derive the required gates and the
+    check-run conclusions; download and parse the evidence artifacts (of an
+    earlier attempt, only what :func:`attempt_scope` ties to that attempt,
+    #5153); enforce completeness
     (raises :class:`IncompleteEvidenceError` before any state is persisted on a
     missing gate) and refuse a skip record not of the validated head
     (:func:`validate_skip_heads`). The harvested ``evidence/gates/`` tree and a
@@ -1260,14 +1533,31 @@ def run_harvest(
     head_sha = github.head_sha(f"https://github.com/{repo}/pull/{release_pr}")
     # GitHub's head-SHA run index can lag a just-completed run (#3434), so an
     # empty lookup is re-queried for *run_grace* seconds before failing.
-    run = wait_for_ci_run(repo, head_sha, grace=run_grace)
+    passed = wait_for_passed_attempt(repo, head_sha, grace=run_grace)
 
     # The required set comes from *repo*'s own vergil.toml at the validated
     # head — never the cwd checkout, which may be another repo or none (#3226).
     required = resolve_required_gates(repo, head_sha)
-    conclusions = read_gate_conclusions(repo, head_sha, check_suite_id=_check_suite_id(run))
-
-    gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest, required)
+    if passed.is_latest:
+        conclusions = read_gate_conclusions(repo, head_sha, check_suite_id=passed.check_suite_id)
+        gate_dirs = download_evidence_artifacts(repo, passed.run_id, gates_dest, required)
+    else:
+        # The run's latest attempt did not pass, but an earlier one did (a
+        # re-run after the release PR merged fails its version check, #5153).
+        # Its checks and artifacts are read as that attempt's alone.
+        scope = attempt_scope(repo, head_sha, passed)
+        log.warning(
+            "CI run %s's latest attempt, %s, did not pass; harvesting attempt %s, "
+            "the newest that passed (%s)",
+            passed.run_id,
+            passed.latest_attempt,
+            passed.attempt,
+            passed.url,
+        )
+        conclusions = read_attempt_gate_conclusions(repo, head_sha, scope, required)
+        gate_dirs = download_evidence_artifacts(
+            repo, passed.run_id, gates_dest, required, scope=scope
+        )
     harvested = load_harvested_gates(gate_dirs, required, conclusions)
     validate_completeness(required, harvested)
     validate_skip_heads(harvested, head_sha)
@@ -1277,7 +1567,7 @@ def run_harvest(
         released_commit=merge_sha,
         release_pr=release_pr,
         validated_head_sha=head_sha,
-        ci_run_urls=(str(run["html_url"]),),
+        ci_run_urls=(passed.url,),
         checks=dict(conclusions),
         gate_conclusions={name: gate.conclusion for name, gate in harvested.items()},
     )
