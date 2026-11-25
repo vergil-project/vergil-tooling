@@ -11,17 +11,26 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import epic_audit, github, proxies, roadmap, trust
+from vergil_tooling.lib import (
+    epic_audit,
+    epic_chain,
+    epic_docs,
+    epics,
+    github,
+    proxies,
+    roadmap,
+    trust,
+)
 from vergil_tooling.lib.epic_audit import (
     BodyParents,
     EpicDocsFinding,
     MisplacedArchive,
     Orphan,
     RetiredLabels,
-    StandingEpicFull,
 )
-from vergil_tooling.lib.epics import ChildState, IssueRef
+from vergil_tooling.lib.epics import BlockerState, ChildState, IssueRef
 from vergil_tooling.lib.security_records import Advisory, SecurityIssue
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
@@ -38,8 +47,17 @@ _PX = "vergil_tooling.lib.proxies"
 # The real check, taken before the autouse fixture stubs it out.
 _PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
 _PROXY_CLOSURES = epic_audit.proxy_closures
+_CHAIN_DRIFT = epic_audit.chain_drift
+_CONTAINERS = epic_chain.containers
 # The orgs the tests audit, each a Vergil org with a stanza of its own.
 _ORGS = ("org", "owner", "lab-org", "vergil-project", "logical-minds-foundry")
+
+
+def _one_container(head: IssueRef) -> list[epic_chain.Container]:
+    """The chain of an epic with no continuation: the head alone, open, with no item."""
+    return [epic_chain.Container(ref=head, state="OPEN", item_count=0, continuation=None)]
+
+
 AUTHORS = TrustedAuthors(
     human=("human",),
     agents=("vergil-user",),
@@ -73,6 +91,9 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])),
         patch(f"{_MOD}.epic_audit.misplaced_adhoc", return_value=[]),
+        # No chain is drifted, and every --epic names a one-container epic.
+        patch(f"{_MOD}.epic_audit.chain_drift", return_value=[]),
+        patch(f"{_MOD}.epic_chain.containers", side_effect=_one_container),
     ):
         yield mock_drain
 
@@ -264,23 +285,75 @@ def test_close_does_not_run_the_epic_documents_check() -> None:
 def test_main_epic_enumerates_children_as_json(capsys: pytest.CaptureFixture[str]) -> None:
     # --epic emits the epic's children (mixed open/closed) as machine-readable
     # JSON, bypassing the drift audit (issue #2538).
+    # Each open child carries its open blockers and a blocked flag (#5124).
+    blocker = IssueRef("other-org", "lib", 131)
     children = [
-        ChildState(IssueRef("vergil-project", "vergil-tooling", 2538), "OPEN", "Open child"),
+        ChildState(
+            IssueRef("vergil-project", "vergil-tooling", 2538),
+            "OPEN",
+            "Open child",
+            native_blockers=(BlockerState(blocker, "OPEN"),),
+        ),
+        ChildState(
+            IssueRef("vergil-project", "vergil-tooling", 2539),
+            "OPEN",
+            "Free child",
+            native_blockers=(),
+        ),
         ChildState(IssueRef("vergil-project", "vergil-tooling", 2500), "CLOSED", "Closed child"),
     ]
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=children) as cs,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children) as cs,
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
     ):
         rc = main(["--epic", "vergil-project/.github#201"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["epic"] == "vergil-project/.github#201"
-    states = {c["number"]: c["state"] for c in payload["children"]}
-    assert states == {2500: "CLOSED", 2538: "OPEN"}
-    # child_states is asked about the resolved epic ref.
+    fields = {
+        c["number"]: (c["state"], c["open_blockers"], c["blocked"]) for c in payload["children"]
+    }
+    assert fields == {
+        2500: ("CLOSED", [], False),
+        2538: ("OPEN", ["other-org/lib#131"], True),
+        2539: ("OPEN", [], False),
+    }
+    # The listing is asked about the resolved epic ref.
     assert cs.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        epics.NativeBlockersReadError("org/repo#1 has 2 native blockers but only 1 could be read"),
+        trust.UntrustedContentError(
+            trust.Skipped("org/repo", 1, "issue", "drive-by", "t", "body", "untrusted"),
+            "the issue body is untrusted",
+        ),
+        trust.TrustReadError("read_issue org/repo#1", "truncated"),
+    ],
+    ids=["native", "untrusted", "unreadable"],
+)
+def test_main_epic_blocker_read_failure_exits_1(
+    error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A blocker list that cannot be read in full fails the listing: no JSON,
+    # never "no blockers" (#5124).
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
+    ):
+        rc = main(["--epic", "vergil-project/.github#201"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-epic-audit: {error}\n"
 
 
 def test_main_bare_epic_resolves_against_cwd_epic_home() -> None:
@@ -299,8 +372,9 @@ def test_main_bare_epic_resolves_against_cwd_epic_home() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
-        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
-        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}) as ie,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]) as cs,
     ):
         rc = main(["--epic", "#407"])
     assert rc == 0
@@ -314,8 +388,9 @@ def test_main_qualified_epic_ref_skips_home_lookup() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
         patch("vergil_tooling.lib.github.repo_exists") as probe,
-        patch(f"{_MOD}.epics.is_epic", return_value=True) as ie,
-        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}) as ie,
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]),
     ):
         rc = main(["--epic", "other/repo#12"])
     assert rc == 0
@@ -326,8 +401,9 @@ def test_main_qualified_epic_ref_skips_home_lookup() -> None:
 def test_main_epic_rejects_non_epic_ref(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=False),
-        patch(f"{_MOD}.epics.child_states") as cs,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value=set()),
+        patch(f"{_MOD}.epics.child_states_with_blockers") as cs,
     ):
         rc = main(["--epic", "vergil-project/vergil-tooling#2538"])
     assert rc == 1
@@ -785,14 +861,10 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     assert "org/.github#180 — missing the `archive` label" in out
 
 
-def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    full = StandingEpicFull(
-        IssueRef("org", ".github", 100),
-        95,
-        [IssueRef("org", "tool", n) for n in (5, 6, 7)],
-    )
+def test_orphan_pass_past_95_links_and_nudges(capsys: pytest.CaptureFixture[str]) -> None:
+    # A queue past the cap is the review nudge, never a stop (spec §4.7 of
+    # .github#1609): the pass links, prints the nudge and exits 0.
+    nudge = "intake queue org/.github#100 holds 98 open items; run epic-review intake"
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
         patch(f"{_MOD}.github.detect_org", return_value="org"),
@@ -801,18 +873,55 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
             _close_patches(
                 nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
                 strip_retired_labels=MagicMock(return_value=0),
-                attach_orphans=MagicMock(side_effect=full),
+                attach_orphans=MagicMock(
+                    return_value=epic_audit.LinkPass(linked=3, nudges=(nudge,))
+                ),
+            )
+        ),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert f"Orphans attached to intake: 3.\n{nudge}\n" in captured.out
+    assert nudge not in captured.err
+
+
+def test_close_heals_chains_and_reports_chained_epics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The sweep heals from the home's chain drift, reports each heal, note and
+    # chained development epic, and exits 1 on drift it could not heal, after
+    # the orphan pass has run.
+    drift = [epic_audit.ChainDrift(IssueRef("org", ".github", 40), "orphan", ())]
+    heals = epic_audit.ChainHeals(healed=("healed A",), unhealed=("broken B",), notes=("note C",))
+    heal = MagicMock(return_value=heals)
+    attach = MagicMock(return_value=epic_audit.LinkPass(linked=0))
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.chain_drift", return_value=drift) as chain_drift,
+        patch(f"{_MOD}.epic_audit.heal_chains", heal),
+        patch(f"{_MOD}.epic_audit.chained_epics", return_value=["epic D spans 2"]) as chained,
+        _patched(
+            _close_patches(
+                nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+                strip_retired_labels=MagicMock(return_value=0),
+                attach_orphans=attach,
             )
         ),
     ):
         rc = main(["--close"])
     assert rc == 1
+    chain_drift.assert_called_once_with("org/.github", listing=[])
+    heal.assert_called_once_with(drift)
+    chained.assert_called_once_with("org/.github", listing=[])
+    attach.assert_called_once()
     captured = capsys.readouterr()
-    assert (
-        "intake epic org/.github#100 is full (95 open); 3 orphan(s) not attached: "
-        "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake." in captured.err
-    )
-    assert "Orphans attached" not in captured.out
+    assert "## Chains healed\n\n- healed A\n" in captured.out
+    assert "## Chain notes\n\n- note C\n" in captured.out
+    assert "## Chained epics (report only)\n\n- epic D spans 2\n" in captured.out
+    assert "vrg-epic-audit: chain drift not healed: broken B" in captured.err
 
 
 def test_close_orphan_pass_reports_closed_epics_and_exits_1(
@@ -956,7 +1065,7 @@ def test_close_makes_no_security_advisory_call(
     # Contents read, so --close must not list, read or write a security
     # advisory (vergil-tooling#4313): vrg-security-record sync owns that pass.
     # A closed security issue with a draft advisory would sync if the pass ran.
-    full = StandingEpicFull(IssueRef("org", ".github", 100), 95, [IssueRef("org", "tool", 5)])
+    refused = epic_audit.LinkPass(linked=0, refused=("org/tool#5 not linked: closed",))
     write = MagicMock()
     spies = {
         name: MagicMock(name=name)
@@ -978,7 +1087,7 @@ def test_close_makes_no_security_advisory_call(
             issues=[_security_issue()],
             advisories=None,
             write=write,
-            attach=MagicMock(side_effect=full) if orphan_pass_fails else None,
+            attach=MagicMock(return_value=refused) if orphan_pass_fails else None,
         )
     assert rc == (1 if orphan_pass_fails else 0)
     for spy in spies.values():
@@ -1109,15 +1218,18 @@ _PROXY = IssueRef("logical-minds-foundry", ".github", 320)
 
 
 def test_vrg_epic_audit_epic_lists_proxy_children(capsys: pytest.CaptureFixture[str]) -> None:
-    def child_states(epic: IssueRef) -> list[ChildState]:
+    def child_states(epic: IssueRef, **_: object) -> list[ChildState]:
         if epic == _PRIMARY:
             return [ChildState(IssueRef("vergil-project", "vergil-tooling", 1), "OPEN", "own")]
         return [ChildState(IssueRef("logical-minds-foundry", "mq-rest-admin", 7), "OPEN", "px")]
 
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", side_effect=child_states),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", side_effect=child_states),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
@@ -1135,8 +1247,9 @@ def test_vrg_epic_audit_epic_lists_proxy_children(capsys: pytest.CaptureFixture[
 def test_vrg_epic_audit_epic_link_drift_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=[]) as cs,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]) as cs,
         patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=IssueRef("vergil-project", ".github", 9)),
@@ -1157,8 +1270,11 @@ def test_vrg_epic_audit_epic_on_proxy_reports_primary(capsys: pytest.CaptureFixt
     children = [ChildState(IssueRef("logical-minds-foundry", "mq-rest-admin", 7), "OPEN", "px")]
     with (
         patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+        patch(f"{_MOD}.epics.native_blockers_of", return_value=()),
         patch(f"{_PX}.proxies_of", side_effect=lambda ref: (_PROXY,) if ref == _PRIMARY else ()),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
@@ -1176,8 +1292,9 @@ def test_vrg_epic_audit_epic_on_proxy_without_primary_comment_exits_1(
 ) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="logical-minds-foundry/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-        patch(f"{_MOD}.epics.child_states", return_value=[]),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=[]),
         patch(f"{_PX}.proxies_of", return_value=()),
         patch(f"{_PX}.is_proxy_ref", side_effect=lambda ref: ref == _PROXY),
         patch(f"{_PX}.primary_of", return_value=_PRIMARY),
@@ -1263,10 +1380,11 @@ def test_vrg_epic_audit_epic_proxy_link_error_while_listing_exits_1(
     # in between): still exit 1 with no JSON.
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
         patch(
-            f"{_MOD}.epic_audit.epic_children",
+            f"{_MOD}.epic_audit.epic_children_with_blockers",
             side_effect=proxies.ProxyLinkError("proxy has no 'Primary:' line"),
         ),
     ):
@@ -1324,8 +1442,11 @@ def test_proxy_unreadable_primary_reported_and_run_fails(
     assert "## Proxies closed (primary closed, no open task)" in captured.out
     assert "- org/.github#4" in captured.out
     assert "- proxy org/.github#3 has no 'Primary:' line in its body" in captured.out
-    assert run.call_count == 1
-    assert run.call_args.args[:5] == ("issue", "close", "4", "--repo", "org/.github")
+    # The proxy closes with its chain, then is commented (.github#1609).
+    assert [c.args[:5] for c in run.call_args_list] == [
+        ("issue", "close", "4", "--repo", "org/.github"),
+        ("issue", "comment", "4", "--repo", "org/.github"),
+    ]
     for writer in writers.values():
         writer.assert_called_once()
 
@@ -1557,7 +1678,8 @@ def test_close_stop_is_per_item_and_exits_nonzero(
     rc, out, err, run = _run_close_with_an_outsider_close(capsys)
     assert rc == 1
     assert [c.args[:5] for c in run.call_args_list] == [
-        ("issue", "close", "5", "--repo", "org/.github")
+        ("issue", "close", "5", "--repo", "org/.github"),
+        ("issue", "comment", "5", "--repo", "org/.github"),
     ]
     assert "- org/.github#5" in out
     assert "org/.github#4" not in out
@@ -1597,12 +1719,172 @@ def test_vrg_epic_audit_epic_untrusted_proxy_body_exits_1(
     # stops, metadata only, with no JSON.
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
-        patch(f"{_MOD}.epic_audit.epic_children", side_effect=error),
+        patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
     ):
         rc = main(["--epic", _PROXY.slug])
     assert rc == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == f"vrg-epic-audit: {error}\n"
+
+
+def test_epic_audit_continuation_uses_head(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --epic naming a continuation lists the head's chain, with a line saying so.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(IssueRef("org", ".github", 40), title="Epic: big", labels=["epic"])
+    continuation = graph.add_continuation(IssueRef("org", ".github", 50), head, head)
+    graph.clear_log()
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/tooling"),
+        patch(f"{_MOD}._epic_listing", return_value=0) as listing,
+    ):
+        assert main(["--epic", continuation.slug]) == 0
+    listing.assert_called_once_with(head)
+    assert "org/.github#50 is a continuation of org/.github#40; using org/.github#40" in (
+        capsys.readouterr().err
+    )
+    assert graph.events == []
+
+
+# -- chained epics (epic vergil-project/.github#1609, Task 9a) -------------------
+
+_CHAIN_HEAD = IssueRef("org", ".github", 40)
+
+
+def _chain_cli_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """The fake graph, read from ``org/tooling``."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    monkeypatch.setattr(github, "current_repo", lambda: "org/tooling")
+    return graph
+
+
+@contextlib.contextmanager
+def _real_chain() -> Generator[None]:
+    """The real chain walk and chain-drift check, in place of the autouse fixture's stubs."""
+    with (
+        patch(f"{_MOD}.epic_chain.containers", _CONTAINERS),
+        patch(f"{_MOD}.epic_audit.chain_drift", _CHAIN_DRIFT),
+    ):
+        yield
+
+
+def _fill(graph: FakeSubIssueGraph, container: IssueRef, first: int, count: int) -> None:
+    """Link *count* closed items of ``org/tool``, numbered from *first*, under *container*."""
+    for n in range(first, first + count):
+        item = graph.add_issue(IssueRef("org", "tool", n), title=f"t{n}", state="CLOSED")
+        graph.link(container, item)
+
+
+def test_audit_epic_shows_container_count(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = IssueRef("org", ".github", 50)
+    c3 = IssueRef("org", ".github", 60)
+    _fill(graph, _CHAIN_HEAD, 1, 99)
+    graph.add_continuation(c2, _CHAIN_HEAD, _CHAIN_HEAD)
+    _fill(graph, c2, 100, 99)
+    graph.add_continuation(c3, _CHAIN_HEAD, c2, k=3)
+    _fill(graph, c3, 199, 1)
+    lone = graph.add_issue(IssueRef("org", ".github", 70), title="Epic: small", labels=["epic"])
+    _fill(graph, lone, 300, 2)
+    graph.clear_log()
+
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)  # stdout is one JSON object and nothing else
+    assert payload["containers"] == 3
+    assert len(payload["children"]) == 199
+    assert {c["number"] for c in payload["children"]} == set(range(1, 200))
+
+    with _real_chain():
+        assert main(["--epic", lone.slug]) == 0
+    assert json.loads(capsys.readouterr().out)["containers"] == 1
+    assert graph.events == []
+
+
+def test_audit_epic_chain_drift_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = graph.add_issue(
+        IssueRef("org", ".github", 50),
+        title="Epic: big (continuation 2)",
+        labels=["epic", epics.CONTINUATION_LABEL],
+        body="Continues: org/.github#999\nContainer: 2\n",
+    )
+    graph.link(_CHAIN_HEAD, c2)
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(
+        "vrg-epic-audit: epic org/.github#40: chain drift: org/.github#50 breaks the"
+        " continues-mismatch rule"
+    )
+
+
+def test_audit_epic_notes_closed_continuation_in_open_chain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A closed continuation in an open chain is counted and noted; exit 0.
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = graph.add_continuation(IssueRef("org", ".github", 50), _CHAIN_HEAD, _CHAIN_HEAD)
+    _fill(graph, c2, 1, 1)
+    graph.close(c2)
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["containers"] == 2
+    assert [c["number"] for c in payload["children"]] == [1]
+    assert captured.err == (
+        "vrg-epic-audit: note: continuation org/.github#50 of epic org/.github#40 is closed;"
+        " its items are still listed\n"
+    )
+
+
+def test_audit_report_lists_chain_drift(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The org report lists an orphaned continuation under Chain drift, report
+    # only: the exit status is unchanged and nothing is written.
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(IssueRef("org", ".github", 50), _CHAIN_HEAD, None)
+    graph.clear_log()
+    listing = [
+        epic_docs.EpicRecord(
+            number=ref.number,
+            title=issue.title,
+            state=issue.state,
+            stateReason=None,
+            createdAt="2026-11-01T00:00:00Z",
+            labels=list(issue.labels),
+            body=issue.body,
+        )
+        for ref, issue in graph.issues.items()
+    ]
+    with (
+        _patched(_report_patches()),
+        _real_chain(),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=listing),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "## Chain drift (report only)" in out
+    assert (
+        "- epic org/.github#40: org/.github#50 is an orphaned continuation, open and not"
+        " reached from the head"
+    ) in out
+    assert graph.events == []

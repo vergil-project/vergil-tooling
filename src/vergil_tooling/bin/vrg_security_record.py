@@ -5,8 +5,9 @@ The ``vrg-security-record`` command over :mod:`vergil_tooling.lib.security_recor
 repository security advisory in ``<org>/.github`` holding the details, and a
 neutral ``security``-labelled intake issue carrying only a pointer to it.
 
-- ``create`` makes the pair: duplicate check, advisory, issue in the affected
-  repo's queue home, link under its intake epic, then the advisory's
+- ``create`` makes the pair: the intake epic's capacity check (refused with
+  nothing created), duplicate check, advisory, issue in the affected
+  repo's queue home, link into its intake epic's chain, then the advisory's
   ``Tracking issue:`` line. ``--issue`` attaches the advisory to an existing
   issue instead (attach mode), and ``--resume`` finishes a pair whose advisory
   already exists. A failure after the advisory exists prints the exact command
@@ -65,7 +66,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import epics, github, security_records, trust
+from vergil_tooling.lib import epic_chain, epics, github, security_records, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.labels import ensure_labels_or_report
@@ -78,7 +79,6 @@ _PROG = "vrg-security-record"
 _GHSA_RE = re.compile(r"^GHSA(?:-[0-9a-z]{4}){3}$")
 _SUMMARY_MAX = 1024
 _STATES = ("draft", "closed", "all")
-_SUB_ISSUES_JQ = '[.[] | {number, repository_url, body: (.body // "")}]'
 
 
 class _RefusedError(Exception):
@@ -225,33 +225,35 @@ def _names_line(body: str, line: str) -> bool:
 
 
 def _find_resumed_issue(intake: IssueRef, home: str, ghsa_id: str) -> IssueRef | None:
-    """The intake child whose trusted ``Security advisory:`` line names *ghsa_id*, or None.
+    """The intake item whose trusted ``Security advisory:`` line names *ghsa_id*, or None.
 
-    Reads the intake epic's sub-issues through REST, never through search,
-    whose index can lag. A child whose listed body has the line is then read
-    through the trust layer, and counts only when its body is trusted and
-    still has the line: a body the layer does not trust (its author or an
-    editor holds no role) is skipped and reported on stderr, metadata only.
+    Reads the items of the intake epic's whole chain
+    (:func:`epic_chain.chain_child_states`, epic vergil-project/.github#1609),
+    so an item in a continuation is found, never through search, whose index
+    can lag. Their bodies are read through the trust layer
+    (:func:`trust.read_bodies`), and an item counts only when its body is
+    trusted and has the line. A body the layer does not trust (its author or
+    an editor holds no role) is never read for the line, so when no item
+    matches, each one skipped is reported on stderr, metadata only: it may be
+    the issue sought.
     """
-    rows = github.read_json_paginated(
-        f"repos/{intake.owner}/{intake.repo}/issues/{intake.number}/sub_issues",
-        jq=_SUB_ISSUES_JQ,
-    )
     line = security_records.advisory_line(home, ghsa_id)
-    for row in rows:
-        item: Any = row
-        if not _names_line(str(item.get("body") or ""), line):
-            continue
-        owner, repo = str(item["repository_url"]).rstrip("/").split("/")[-2:]
-        ref = IssueRef(owner=owner, repo=repo, number=int(item["number"]))
-        content = trust.read_issue(f"{owner}/{repo}", ref.number)
-        if content.body is None:
-            trust.report_skipped(
-                [skip for skip in content.skipped if skip.field == "body"], stream=sys.stderr
-            )
-            continue
-        if _names_line(content.body, line):
-            return ref
+    by_repo: dict[str, list[IssueRef]] = {}
+    for child in epic_chain.chain_child_states(intake):
+        by_repo.setdefault(f"{child.ref.owner}/{child.ref.repo}", []).append(child.ref)
+    skipped: list[trust.Skipped] = []
+    for repo, refs in by_repo.items():
+        bodies = trust.read_bodies(repo, [ref.number for ref in refs])
+        for ref in refs:
+            content = bodies[ref.number]
+            if content.body is None:
+                if content.skipped is None:
+                    raise RuntimeError(f"the trust layer read no body of {ref.slug} and no skip")
+                skipped.append(content.skipped)
+                continue
+            if _names_line(content.body, line):
+                return ref
+    trust.report_skipped(skipped, stream=sys.stderr)
     return None
 
 
@@ -274,6 +276,12 @@ def _create(args: argparse.Namespace) -> int:
         queue_home = epics.queue_home(args.repo)[0]
         intake = epics.ensure_intake_epic(args.repo)
         if args.resume is None:
+            if attach is None:
+                # The chain layer's capacity check before anything is created
+                # (epic vergil-project/.github#1609, spec §4.5): a refusal of
+                # the intake epic (closed, full while rollover is off, at the
+                # depth limit) leaves neither an advisory nor an issue behind.
+                epic_chain.check_capacity(intake)
             duplicate = security_records.find_duplicate(
                 home, summary=summary, affected_repo=args.repo
             )
@@ -337,10 +345,15 @@ def _finish_pair(
         elif issue is not None:
             paired = issue
         else:
+            # Checked again just before the create (and first, on --resume):
+            # a refusal here leaves the advisory with no issue, which the
+            # resume command finishes once the intake epic has room.
+            step = f"checking the capacity of intake epic {intake.slug}"
+            epic_chain.check_capacity(intake)
             step = "creating the issue"
             paired = issue = _create_issue(args, home, queue_home, ghsa_id, body)
             step = f"linking {paired.slug} under intake epic {intake.slug}"
-            epics.add_child(intake, paired)
+            epic_chain.link_into(intake, paired)
         step = f"writing the tracking line for {paired.slug}"
         security_records.pair(home, ghsa_id, paired)
     except security_records.RetargetRefusedError as exc:
@@ -383,10 +396,11 @@ def _link_if_unparented(intake: IssueRef, issue: IssueRef) -> None:
 
     On resume this re-runs the link a failed create left undone, and is a
     no-op once linked. An issue that already has another parent (an attached
-    existing issue) keeps it.
+    existing issue) keeps it. The link goes through the chain layer
+    (:func:`epic_chain.link_into`).
     """
     if epics.native_parent_of(issue) is None:
-        epics.add_child(intake, issue)
+        epic_chain.link_into(intake, issue)
 
 
 # --- list, show, retarget ---------------------------------------------------

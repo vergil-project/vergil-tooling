@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import epics, github, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.lib import epic_chain, epics, github, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.pr_workflow.batch_rules import (
@@ -84,6 +85,8 @@ class FakeGitHub:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(epics, "_labels", self.labels)
+        # Every epic here is top-level, so no epic is asked whether it is a continuation.
+        monkeypatch.setattr(epics, "_container_parent", lambda ref: None)
         monkeypatch.setattr(
             epics, "native_parent_of", lambda ref: self._get("parent", ref).native_parent
         )
@@ -680,3 +683,46 @@ def test_check_closing_refs_refuses_a_duplicate_close() -> None:
 def test_check_closing_refs_refuses_a_malformed_issue() -> None:
     message = _closing_refused("Closes #10\nCloses #11\n", ["#10", "eleven"])
     assert "'eleven' is not an issue ref" in message
+
+
+# -- the same-epic rule across a chain (epic vergil-project/.github#1609) ----------
+
+
+def _chained_epic(graph: FakeSubIssueGraph, head: IssueRef, c2: IssueRef) -> IssueRef:
+    """*head* holding 99 items and *c2* in its last slot: the new task's (*c2*) home."""
+    for number in range(500, 500 + epic_chain.ITEM_CAP):
+        graph.link(head, graph.add_issue(_ref(number), title="an item"))
+    graph.add_continuation(c2, head, head)
+    return head
+
+
+def test_submit_pr_batch_same_epic_across_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The batch rule vrg-submit-pr runs: a task in the head and a task in its
+    # continuation share one epic, the head, so the batch is accepted.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(EPIC, title="Epic: big", labels=["epic", "epic-development"])
+    c2 = IssueRef("acme", ".github", 70)
+    _chained_epic(graph, head, c2)
+    first = _ref(500)
+    second = graph.add_issue(_ref(20), title="in the continuation")
+    graph.link(c2, second)
+    graph.clear_log()
+    batch_rules._check_shared_parent(["#500", "#20"], [first, second])
+    assert graph.events == []
+
+
+def test_batch_same_epic_in_queue_continuation_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A continuation carries no kind label: the queue check reads its head's.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(
+        INTAKE_EPIC, title="Epic (intake): acme", labels=["epic", "intake", "epic-management"]
+    )
+    c2 = IssueRef("acme", ".github", 70)
+    _chained_epic(graph, head, c2)
+    tasks = [graph.add_issue(_ref(n), title="queued") for n in (20, 21)]
+    for task in tasks:
+        graph.link(c2, task)
+    with pytest.raises(BatchRuleError) as info:
+        batch_rules._check_shared_parent(["#20", "#21"], tasks)
+    assert info.value.rule == "same epic"
+    assert "acme/.github#2 is the intake queue epic" in str(info.value)

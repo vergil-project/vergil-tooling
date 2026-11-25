@@ -95,12 +95,26 @@ JUNIT_REPORT = "junit.xml"
 PIP_AUDIT_REPORT = "pip-audit.json"
 LICENSES_REPORT = "licenses.json"
 
+# The transcripts vrg-validate writes for the gate tools that write no report
+# of their own (vergil-project/vergil-tooling#4953): ``ty``, ``rustfmt``,
+# Prettier and the release build. Each holds the tool's version, the command,
+# its output and its exit status, so the evidence shows the tool ran even when
+# it printed nothing. See :class:`Transcript`. The names are the contract with
+# vergil-actions' ``reports.sh``, so keep them exact. The managed
+# ``.gitignore``'s base fragment already ignores ``*.log``, so Prettier never
+# reads one and none is committed.
+TY_REPORT = "quality-ty.log"
+RUSTFMT_REPORT = "quality-rustfmt.log"
+PRETTIER_REPORT = "quality-prettier.log"
+BUILD_REPORT = "quality-build.log"
+
 # The workspace-root report files the Python gate commands emit. Exposed as a
 # single source of truth so consumers (and tests) can assert the contract
 # without re-deriving the individual filenames.
 PYTHON_REPORT_FILES = (
     RUFF_REPORT,
     MYPY_REPORT,
+    TY_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     PIP_AUDIT_REPORT,
@@ -122,13 +136,16 @@ CARGO_DENY_REPORT = "cargo-deny.json"
 CLIPPY_REPORT = "quality-clippy.json"
 CARGO_CHECK_REPORT = "quality-cargo-check.json"
 
-# The workspace-root report files the Rust gate commands emit: the LINT and
-# TYPECHECK gates' cargo JSON messages, the TEST gate's Cobertura coverage and
-# cargo-nextest JUnit report (vergil-project/vergil-tooling#4394, #4395) and the
-# AUDIT gate's cargo-deny diagnostics.
+# The workspace-root report files the Rust gate commands emit: the LINT gate's
+# rustfmt transcript and the LINT and TYPECHECK gates' cargo JSON messages, the
+# BUILD gate's transcript, the TEST gate's Cobertura coverage and cargo-nextest
+# JUnit report (vergil-project/vergil-tooling#4394, #4395) and the AUDIT gate's
+# cargo-deny diagnostics.
 RUST_REPORT_FILES = (
+    RUSTFMT_REPORT,
     CLIPPY_REPORT,
     CARGO_CHECK_REPORT,
+    BUILD_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     CARGO_DENY_REPORT,
@@ -150,10 +167,110 @@ TYPESCRIPT_REPORT_FILES = (
     COVERAGE_REPORT,
     JUNIT_REPORT,
     NPM_AUDIT_REPORT,
+    PRETTIER_REPORT,
     ESLINT_REPORT,
     TSC_REPORT,
+    BUILD_REPORT,
     LICENSES_REPORT,
 )
+
+
+@dataclass(frozen=True)
+class Transcript:
+    """The evidence vrg-validate records for a gate command that writes no report.
+
+    ``tool`` is the tool's name as the evidence lists it and ``report`` the
+    workspace-root file vrg-validate writes. ``prefix`` is the leading
+    arguments of the command it records; an empty prefix records every
+    command of its gate. ``version_cmds`` are the commands whose output names
+    the tool's version. The transcript holds each version command and its
+    output, the command, every line the command printed and its exit status,
+    and is rewritten on every run (vergil-project/vergil-tooling#4953).
+    """
+
+    tool: str
+    report: str
+    prefix: tuple[str, ...]
+    version_cmds: tuple[tuple[str, ...], ...]
+
+
+# The gate commands vrg-validate records a transcript for, by language and
+# check kind. BUILD's command is the ecosystem's ``build_cmd``, the one the
+# release job runs. vrg-validate records it without changing it, so the
+# release job's build is unchanged.
+_TRANSCRIPTS: dict[str, dict[CheckKind, tuple[Transcript, ...]]] = {
+    "python": {
+        CheckKind.TYPECHECK: (
+            Transcript("ty", TY_REPORT, ("ty", "check"), (("ty", "--version"),)),
+        ),
+    },
+    "rust": {
+        CheckKind.LINT: (
+            Transcript(
+                "rustfmt", RUSTFMT_REPORT, ("cargo", "fmt"), (("cargo", "fmt", "--version"),)
+            ),
+        ),
+        CheckKind.BUILD: (
+            Transcript("cargo", BUILD_REPORT, (), (("cargo", "--version"), ("rustc", "--version"))),
+        ),
+    },
+    "typescript": {
+        CheckKind.LINT: (
+            Transcript("prettier", PRETTIER_REPORT, ("prettier",), (("prettier", "--version"),)),
+        ),
+        CheckKind.BUILD: (
+            Transcript("npm", BUILD_REPORT, (), (("node", "--version"), ("npm", "--version"))),
+        ),
+    },
+}
+
+
+def command_transcript(language: str | None, kind: CheckKind, cmd: list[str]) -> Transcript | None:
+    """The transcript vrg-validate records for *cmd* of *language*'s *kind* gate, if any."""
+    if language is None:
+        return None
+    for transcript in language_transcripts(language, kind):
+        if tuple(cmd[: len(transcript.prefix)]) == transcript.prefix:
+            return transcript
+    return None
+
+
+def language_transcripts(language: str, kind: CheckKind) -> tuple[Transcript, ...]:
+    """Every transcript declared for *language*'s *kind* gate."""
+    return _TRANSCRIPTS.get(language, {}).get(kind, ())
+
+
+# The evidence each gate leaves for each tool it runs, by language: the
+# vergil-tooling side of the tools lists in vergil-actions' ``reports.sh``,
+# whose ``evidence.json`` fragments the bundle manifest's tools come from.
+# Every tool named here has at least one evidence file, and every file is one
+# its gate writes (vergil-project/vergil-tooling#4953); the tests hold both.
+# A language with no report contract yet (go, cpp) has no entry.
+TOOL_EVIDENCE: dict[str, dict[CheckKind, dict[str, tuple[str, ...]]]] = {
+    "python": {
+        CheckKind.LINT: {"ruff": (RUFF_REPORT,)},
+        CheckKind.TYPECHECK: {"mypy": (MYPY_REPORT,), "ty": (TY_REPORT,)},
+        CheckKind.TEST: {"pytest": (JUNIT_REPORT,), "coverage.py": (COVERAGE_REPORT,)},
+        CheckKind.AUDIT: {"pip-audit": (PIP_AUDIT_REPORT,), "pip-licenses": (LICENSES_REPORT,)},
+    },
+    "rust": {
+        CheckKind.LINT: {"rustfmt": (RUSTFMT_REPORT,), "clippy": (CLIPPY_REPORT,)},
+        CheckKind.TYPECHECK: {"cargo": (CARGO_CHECK_REPORT,)},
+        CheckKind.BUILD: {"cargo": (BUILD_REPORT,)},
+        CheckKind.TEST: {"cargo-llvm-cov": (COVERAGE_REPORT,), "cargo-nextest": (JUNIT_REPORT,)},
+        CheckKind.AUDIT: {"cargo-deny": (CARGO_DENY_REPORT,)},
+    },
+    "typescript": {
+        CheckKind.LINT: {"prettier": (PRETTIER_REPORT,), "eslint": (ESLINT_REPORT,)},
+        CheckKind.TYPECHECK: {"tsc": (TSC_REPORT,)},
+        CheckKind.BUILD: {"npm": (BUILD_REPORT,)},
+        CheckKind.TEST: {"vitest": (JUNIT_REPORT,), "@vitest/coverage-v8": (COVERAGE_REPORT,)},
+        CheckKind.AUDIT: {
+            "npm audit": (NPM_AUDIT_REPORT,),
+            "vrg-npm-license-gate": (LICENSES_REPORT,),
+        },
+    },
+}
 
 # The pip-audit input: every package pinned in ``uv.lock`` — all dependency
 # groups and extras, not just the synced ``dev`` environment (issue #3498). An

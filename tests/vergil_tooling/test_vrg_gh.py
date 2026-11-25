@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
-from vergil_tooling.lib import gh_version, github, identity_mode
+from vergil_tooling.lib import epics, gh_version, github, identity_mode, trust
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -244,6 +248,73 @@ def test_denied_pair(top: str, sub: str, capsys: pytest.CaptureFixture[str]) -> 
 def test_pr_close_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["pr", "close"]) != 0
     assert "denied" in capsys.readouterr().err.lower()
+
+
+# -- issue edit's raw sub-issue flags (epic chain, .github#1609) -------------
+
+
+# The audit identity has no issue edit at all; every identity that has one is refused.
+@pytest.mark.parametrize("mode", ["human", "user"])
+@pytest.mark.parametrize(
+    ("flag", "argv"),
+    [
+        ("--parent", ["issue", "edit", "42", "--parent", "7"]),
+        ("--parent", ["issue", "edit", "42", "--title", "t", "--parent=7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "--add-sub-issue", "7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "--add-sub-issue=o/r#7"]),
+        ("--remove-sub-issue", ["issue", "edit", "42", "--remove-sub-issue", "7"]),
+        ("--remove-sub-issue", ["issue", "edit", "--remove-sub-issue=7", "42"]),
+        # A `--` taken as a value-taking flag's value does not end the flags:
+        # gh reads it as the title and still applies the raw flag after it.
+        ("--parent", ["issue", "edit", "42", "--title", "--", "--parent", "7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "-t", "--", "--add-sub-issue", "7"]),
+        ("--remove-sub-issue", ["issue", "edit", "42", "--body", "--", "--remove-sub-issue", "7"]),
+    ],
+)
+def test_issue_edit_refuses_raw_subissue_flags(
+    mode: str,
+    flag: str,
+    argv: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+    with (
+        patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mint,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        assert main(argv) != 0
+    mock_run.assert_not_called()
+    mint.assert_not_called()
+    err = capsys.readouterr().err
+    assert f"issue edit {flag} is refused" in err
+    assert "vrg-epic-link" in err
+    assert "vrg-epic-move" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["issue", "edit", "42", "--add-label", "chore", "--title", "t"],
+        # A token after `--` is a positional, never the flag.
+        ["issue", "edit", "--title", "t", "--", "--parent"],
+        # The flag's name inside another flag's value is not the flag.
+        ["issue", "edit", "42", "--body", "use --parent with care"],
+        # A value that is exactly a raw flag's name is a value, not the flag.
+        ["issue", "edit", "42", "--body", "--parent"],
+    ],
+)
+def test_issue_edit_without_raw_subissue_flags_runs(argv: list[str]) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        assert main(argv) == 0
+    assert mock_run.call_args[0][0][:3] == ["gh", "issue", "edit"]
 
 
 def test_issue_create_denied_redirects_to_vrg_issue_create(
@@ -944,11 +1015,13 @@ class TestAgentDenials:
                 "vergil_tooling.bin.vrg_gh.github.get_installation_token",
                 return_value=None,
             ),
+            patch("vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None) as gate,
             patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed()
-            rc = main(["issue", "close", "42"])
+            rc = main(["issue", "close", "42", "--repo", "org/repo"])
         assert rc == 0
+        gate.assert_called_once_with(epics.IssueRef("org", "repo", 42))
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "close"]
 
@@ -1023,6 +1096,81 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args == ["gh", "run", "rerun", "123", *extra]
 
+    @pytest.mark.parametrize(
+        ("rerun_args", "expected"),
+        [
+            (["123"], "Requested rerun of run 123"),
+            (["123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["--repo", "o/r", "123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["-R", "o/r", "123"], "Requested rerun of run 123"),
+            (["--debug", "123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["--job", "456"], "Requested rerun of job 456"),
+            (["--job=456", "--repo", "o/r"], "Requested rerun of job 456"),
+            (["-j", "456"], "Requested rerun of job 456"),
+            (["--job", "x\x1b[2J"], "Requested rerun"),
+            (["12\x1b]0;x"], "Requested rerun"),
+        ],
+    )
+    def test_run_rerun_confirms_success(
+        self,
+        rerun_args: list[str],
+        expected: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # gh prints its "Requested rerun" line only to a terminal, and vrg-gh
+        # captures gh's output, so the wrapper confirms the rerun itself;
+        # otherwise a success looks the same as a silent no-op (#5175).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["run", "rerun", *rerun_args])
+        assert rc == 0
+        assert capsys.readouterr().out == f"{expected}\n"
+
+    @pytest.mark.parametrize("help_args", [["--help"], ["-h"], ["123", "--help"]])
+    def test_run_rerun_help_prints_no_confirmation(
+        self, help_args: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Help forwards to gh and exits 0 without requesting a rerun, so no
+        # confirmation may follow it.
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="Usage: gh run rerun [<run-id>]\n")
+            rc = main(["run", "rerun", *help_args])
+        assert rc == 0
+        assert capsys.readouterr().out == "Usage: gh run rerun [<run-id>]\n"
+
+    def test_run_rerun_failure_prints_no_confirmation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["gh"], output="", stderr="run 123 cannot be rerun\n"
+                ),
+            ),
+        ):
+            rc = main(["run", "rerun", "123"])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Requested rerun" not in captured.out
+        assert "cannot be rerun" in captured.err
+
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1040,6 +1188,114 @@ class TestAgentDenials:
         assert "denied" in err.lower()
         assert "vrg-pr-workflow report-ready" in err
         assert "vrg-submit-pr" in err
+
+
+class TestOperationalCloseGate:
+    """An agent closes an operational task as completed only after its result (#4997)."""
+
+    @pytest.fixture(autouse=True)
+    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+
+    @pytest.fixture
+    def gh(self) -> Iterator[MagicMock]:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            yield mock_run
+
+    @pytest.mark.parametrize(
+        ("args", "ref"),
+        [
+            (["42", "--repo", "org/repo"], epics.IssueRef("org", "repo", 42)),
+            (["-R", "org/repo", "#42"], epics.IssueRef("org", "repo", 42)),
+            (["42", "--repo=github.com/org/repo"], epics.IssueRef("org", "repo", 42)),
+            (["https://github.com/org/repo/issues/42"], epics.IssueRef("org", "repo", 42)),
+            (
+                ["42", "-R", "org/repo", "--reason", "completed", "-c", "done"],
+                epics.IssueRef("org", "repo", 42),
+            ),
+        ],
+    )
+    def test_refused_without_outcome(
+        self,
+        gh: MagicMock,
+        args: list[str],
+        ref: epics.IssueRef,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value="post it first"
+        ) as gate:
+            assert main(["issue", "close", *args]) == 1
+        gate.assert_called_once_with(ref)
+        gh.assert_not_called()
+        assert "issue close is refused. post it first" in capsys.readouterr().err
+
+    def test_number_resolves_against_cwd_repo(self, gh: MagicMock) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_gh.github.current_repo", return_value="org/here"),
+            patch("vergil_tooling.bin.vrg_gh.operational_close.refusal", return_value=None) as gate,
+        ):
+            assert main(["issue", "close", "9", "--comment", "Validated"]) == 0
+        gate.assert_called_once_with(epics.IssueRef("org", "here", 9))
+        assert gh.call_args[0][0][:3] == ["gh", "issue", "close"]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["42", "--reason", "not planned"],
+            ["42", "-r", "Not Planned"],
+            ["42", "--reason=duplicate"],
+            ["42", "--duplicate-of", "41"],
+            ["--help"],
+        ],
+    )
+    def test_not_gated(self, gh: MagicMock, args: list[str]) -> None:
+        with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
+            assert main(["issue", "close", *args]) == 0
+        gate.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("args", "detail"),
+        [
+            ([], "exactly one issue number or URL"),
+            (["1", "2"], "exactly one issue number or URL"),
+            (["my-branch"], "not an issue number or URL"),
+            (["1", "--repo", "justone"], "--repo value is not OWNER/REPO"),
+        ],
+    )
+    def test_unresolvable_target_refused(
+        self, gh: MagicMock, args: list[str], detail: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["issue", "close", *args]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "does not close it" in err
+        assert detail in err
+
+    def test_failed_read_refused(self, gh: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.operational_close.refusal",
+            side_effect=trust.TrustReadError("test", "comments unreadable"),
+        ):
+            assert main(["issue", "close", "42", "--repo", "org/repo"]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "does not close it: cannot read who wrote the content" in err
+        assert "comments unreadable" in err
+
+    def test_human_close_not_gated(self, gh: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
+            assert main(["issue", "close", "42", "--repo", "org/repo"]) == 0
+        gate.assert_not_called()
 
 
 class TestHumanAllowlist:

@@ -1045,3 +1045,10 @@ def test_is_skipped_proxy() -> None:
     # A proxy carries no documents of its own: its primary does (#1417). The
     # label decides, whatever the title says.
     assert epic_docs.is_skipped("Epic: anything", {"epic", "proxy"}) is True
+
+
+def test_is_skipped_continuation() -> None:
+    # A continuation is a container of its head's chain: the head carries the
+    # documents (epic vergil-project/.github#1609), whatever the title says.
+    assert epic_docs.is_skipped("Epic: big (continuation 2)", {"epic", "continuation"}) is True
+    assert epic_docs.is_skipped("Epic: big", {"epic"}) is False

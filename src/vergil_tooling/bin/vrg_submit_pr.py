@@ -1688,13 +1688,12 @@ def _check_origin_tip(branch: str, expected: str) -> None:
     open). ``gh pr create --head`` opens the PR at whatever origin's branch
     holds, so this is the check that ties the PR to the recorded head.
     """
-    listing = git.read_output("ls-remote", "origin", f"refs/heads/{branch}")
-    if not listing:
+    origin_sha = git.remote_branch_tip(branch)
+    if origin_sha is None:
         raise SystemExit(
             f"vrg-submit-pr: branch '{branch}' is not on origin; a relay submit "
             "needs the branch already pushed."
         )
-    origin_sha = listing.split()[0]
     if origin_sha != expected:
         raise SystemExit(
             f"vrg-submit-pr: origin/{branch} tip ({origin_sha[:12]}) does not "
@@ -1809,9 +1808,8 @@ def _local_worktree_with_state(root: Path, branch: str) -> Path | None:
 
 
 def _origin_has_branch(branch: str) -> bool:
-    """True when origin already carries *branch* (``ls-remote`` finds its ref)."""
-    listing = git.read_output("ls-remote", "origin", f"refs/heads/{branch}")
-    return bool(listing)
+    """True when origin already carries *branch* (``ls-remote`` finds its exact ref)."""
+    return git.remote_branch_tip(branch) is not None
 
 
 def _relay_prepare(root: Path, branch: str, args: argparse.Namespace) -> _Submission:

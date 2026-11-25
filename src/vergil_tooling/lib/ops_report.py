@@ -46,11 +46,10 @@ import sys
 import time
 from typing import TYPE_CHECKING, Literal, get_args
 
-from vergil_tooling.lib import epics, github, retry, trust
+from vergil_tooling.lib import epic_chain, epics, github, retry, trust
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.markdown_escape import escape_inline
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.shell_ref import quoted_slug
 from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
@@ -291,21 +290,26 @@ def _text(
 
 
 def _ensure_linked(issue: epics.IssueRef, epic: epics.IssueRef) -> None:
-    """Link *issue* under *epic* when its native parent is missing or another issue."""
+    """Link *issue* into *epic*'s chain when it is unlinked or under another epic.
+
+    The parent read is chain-aware, so an issue linked in a continuation of
+    *epic* counts as linked. The link goes through the chain layer
+    (:func:`epic_chain.link_into`, or :func:`epic_chain.move_into` for an issue
+    under another epic, in one atomic re-parent).
+    """
     parent = epics.native_parent_of(issue)
     if parent == epic:
         return
     try:
         if parent is None:
-            epics.add_child(epic, issue)
+            epic_chain.link_into(epic, issue)
         else:
-            epics.reparent_child(epic, issue)
+            epic_chain.move_into(epic, issue)
     except Exception as exc:
         raise OpsReportError(
             f"{issue.slug} is not linked under the operations epic {epic.slug}"
             f" (its parent: {parent.slug if parent else 'none'}) and linking it failed:"
-            f" {error_text(exc)}. Link it with: vrg-epic-move --task {quoted_slug(issue)}"
-            f" --epic {quoted_slug(epic)}"
+            f" {error_text(exc)}. {epic_chain.unlinked_hint(issue, epic, exc)}"
         ) from exc
 
 
@@ -434,6 +438,11 @@ def _create(
     Its body names each skipped, edited open ops issue in *edited* by number.
     """
     epic = epics.ensure_operations_epic(repo)
+    # The chain layer's capacity check, before the create (epic
+    # vergil-project/.github#1609, spec §4.5): a closed epic, a full one while
+    # rollover is off and the depth limit raise an EpicRefusalError with
+    # nothing created, so a refused link never orphans an ops issue.
+    epic_chain.check_capacity(epic)
     previous = previous_occurrence(repo, job, authors=authors)
     ensure_labels(repo, [LABEL])
     body = _text(

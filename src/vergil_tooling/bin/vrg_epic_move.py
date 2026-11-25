@@ -1,9 +1,18 @@
 """Move a task issue to a different epic (idempotent re-parent).
 
-GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
-The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
-``adhoc``, ``intake``, ``planning``, ``hoshin`` and ``operations`` sentinels and validating
-epic-ness); moving a task already under the target epic is a no-op.
+The move goes through the chain layer (epic vergil-project/.github#1609): the
+task lands in the first container of the target epic's chain with a free slot,
+rolling over into a continuation when every one is full. A task with a parent
+moves in one atomic re-parent (:func:`epic_chain.move_into`, ``addSubIssue``
+with ``replaceParent: true``), never unlink-then-link, so a failed move leaves
+the task under its old epic; a task with no parent is linked with
+:func:`epic_chain.link_into`. A closed target epic is refused by name before any
+write: closed epics are not reopened by the tooling. So are a full target while
+rollover is off and one at GitHub's nesting limit. The target epic is resolved
+via :func:`epics.resolve_epic_ref` (accepting the ``adhoc``, ``intake``,
+``planning``, ``hoshin`` and ``operations`` sentinels and validating
+epic-ness); moving a task already linked anywhere in the open target epic's
+chain (:func:`epic_chain.chain_contains`) is a no-op.
 
 The sentinels and a bare ``#N`` epic ref are read against the **task's** repo,
 never the cwd repo: ``adhoc`` is the task repo's ad-hoc epic, ``intake`` and
@@ -24,7 +33,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_chain, epics, github
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -77,6 +86,10 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            # Closed is closed: refuse a closed target before reading the
+            # task's parent or writing anything. ClosedEpicError is an
+            # EpicRefusalError, which cli_main reports in one line, exit 1.
+            epics.require_open_epic(epic)
             current = epics.parent_of(task)
             if current is not None and epics.queue_kind(current) == epics.DEFERRED.key:
                 print(
@@ -85,16 +98,34 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            if current == epic:
+            # Already linked anywhere in the target's chain, the head or a
+            # continuation: nothing to move.
+            if epic_chain.chain_contains(epic, task):
                 print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
                 return 0
-            if current is not None:
-                epics.remove_child(current, task)
-            epics.add_child(epic, task)
+            try:
+                if current is None:
+                    container = epic_chain.link_into(epic, task)
+                else:
+                    # One re-parent, so a failed move never leaves the task unparented.
+                    container = epic_chain.move_into(epic, task)
+            except (RuntimeError, github.GitHubAPIError) as exc:
+                # A GraphQL error (RuntimeError) or a failed gh call: report it
+                # in one line. The write is a single call, so no earlier
+                # unlink has to be undone. A missing token keeps cli_main's
+                # own message, and a refusal of the chain layer (the depth
+                # limit, a full epic while rollover is off) its own one line.
+                if isinstance(exc, (github.MissingGitHubTokenError, epics.EpicRefusalError)):
+                    raise
+                print(
+                    f"vrg-epic-move: moving {task.slug} under epic {epic.slug} failed: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
     except github.NoInstallationError as exc:
         print(f"vrg-epic-move: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
-    print(f"Moved {task.slug} under epic {epic.slug}.")
+    print(f"Moved {task.slug} under epic {epic.slug}{epic_chain.container_note(epic, container)}.")
     return 0
 
 

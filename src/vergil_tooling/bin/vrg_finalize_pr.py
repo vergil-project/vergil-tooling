@@ -17,7 +17,11 @@ turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    by a closing reference the trust layer counts, before the lock is taken,
-   since it touches only GitHub. Then, under the checkout lock
+   since it touches only GitHub. ``advisory-sync`` then syncs the security
+   advisories those closed issues name (``security_records.sync_issues``,
+   vergil-tooling#4583): an advisory whose tracked issues are now all
+   closed as completed is closed, one the sync close guard holds is a
+   warning, and a broken pair or a failed sync fails the stage. Then, under the checkout lock
    (``lib/checkout_lock.py``, spec §6.4), it syncs the main worktree to
    ``origin/develop``, cleans up merged branches and worktrees, provisions
    the dev image, and runs one ``vrg-container-run -- vrg-validate`` on the
@@ -116,6 +120,7 @@ from vergil_tooling.lib import (
     github,
     identity_mode,
     progress,
+    security_records,
     text_table,
     trust,
     worktrees,
@@ -141,6 +146,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import PackageJsonError, resolve_language
 from vergil_tooling.lib.container_cache import provision_dev_image
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.live_branches import RepoSetError, default_repo_roots, discover_repos
 from vergil_tooling.lib.open_prs import classify_open
 from vergil_tooling.lib.pr_workflow import github_transport
@@ -159,6 +165,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from vergil_tooling.lib.finalize_watch import PRResult
+    from vergil_tooling.lib.github import ClosingIssue
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "docs-single-branch": ["develop"],
@@ -755,6 +762,9 @@ class FinalizeContext:
     # The PRs the watch saw merge, whose closing references and branches the
     # settle phase handles. Empty for --cleanup-only.
     merged_prs: list[str] = field(default_factory=list)
+    # The closing-reference issues of the merged PRs that close-refs found
+    # closed (or closed itself), whose advisories advisory-sync syncs.
+    closed_issues: list[IssueRef] = field(default_factory=list)
     lock_purpose: str = "vrg-finalize-pr --cleanup-only"
     # The target branch's head before and after the sync, for the CD check
     # and for the report of a develop that did not validate.
@@ -1416,7 +1426,7 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
     failures: list[str] = []
     for pr in ctx.merged_prs:
         try:
-            _close_refs_of(pr, dry_run=ctx.args.dry_run)
+            _close_refs_of(pr, dry_run=ctx.args.dry_run, closed=ctx.closed_issues)
         except FinalizeError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             failures.append(str(exc))
@@ -1424,8 +1434,17 @@ def _stage_close_refs(ctx: FinalizeContext) -> None:
         raise FinalizeError("; ".join(failures))
 
 
-def _close_refs_of(pr: str, *, dry_run: bool) -> None:
-    """Close the closing-reference issues of merged *pr* that GitHub left open."""
+def _issue_ref(issue: ClosingIssue) -> IssueRef:
+    owner, repo = issue.repo.split("/", 1)
+    return IssueRef(owner=owner, repo=repo, number=issue.number)
+
+
+def _close_refs_of(pr: str, *, dry_run: bool, closed: list[IssueRef]) -> None:
+    """Close the closing-reference issues of merged *pr* that GitHub left open.
+
+    Each counted reference that ends closed (GitHub's close or this one) is
+    appended to *closed*, for the advisory sync.
+    """
     if dry_run:
         print(f"  [dry-run] close any closing-reference issue of PR {pr} that GitHub left open")
         return
@@ -1441,6 +1460,7 @@ def _close_refs_of(pr: str, *, dry_run: bool) -> None:
         refs = _read_closing_refs(pr)
     trust.report_skipped(refs.skipped, stream=sys.stderr)
     still_open = [issue for issue in refs.counted if issue.state == "OPEN"]
+    closed.extend(_issue_ref(issue) for issue in refs.counted if issue.state != "OPEN")
     for issue in (*refs.counted, *refs.uncounted):
         if issue.state != "OPEN":
             print(f"  {issue.ref}: closed")
@@ -1460,6 +1480,7 @@ def _close_refs_of(pr: str, *, dry_run: bool) -> None:
             print(f"ERROR: could not close {issue.ref}: {error_text(exc)}", file=sys.stderr)
             failures.append(issue.ref)
             continue
+        closed.append(_issue_ref(issue))
         print(f"  {issue.ref}: GitHub left it open after the merge; closed it as completed")
     if failures:
         msg = (
@@ -1469,10 +1490,67 @@ def _close_refs_of(pr: str, *, dry_run: bool) -> None:
         raise FinalizeError(msg)
 
 
+_ADVISORY_SYNC_RECOVERY = "run vrg-security-record sync to see and finish the rest"
+
+
+def _stage_advisory_sync(ctx: FinalizeContext) -> None:
+    """Sync the advisories of the security issues the merged PRs closed (vergil-tooling#4583).
+
+    Takes the closing-reference issues close-refs found closed and hands them
+    to :func:`security_records.sync_issues`, which syncs only the advisories
+    their ``security`` issues name: a draft advisory whose tracked issues are
+    now all closed as completed is closed. An issue with no ``security``
+    label makes no advisories call. Each advisory set is reported by GHSA ID
+    and state. One the sync close guard holds marks the stage as a warning,
+    naming the next step. A broken pair, an untrusted body, a guard read
+    that failed, and any failed read or write fail the stage, naming what to
+    run; the PRs have merged, so develop is still settled. It runs before the
+    checkout lock is taken: it touches only GitHub.
+    """
+    if ctx.args.dry_run:
+        print("  [dry-run] sync the advisories of any security issue a merged PR closed")
+        return
+    if not ctx.closed_issues:
+        print("No closed issue to sync advisories for.")
+        return
+    try:
+        result = security_records.sync_issues(ctx.closed_issues)
+    except (
+        subprocess.CalledProcessError,
+        RuntimeError,
+        ValueError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+        github.NoInstallationError,
+        github.AppAuthError,
+    ) as exc:
+        cause = " ".join(error_text(exc).split())
+        msg = f"the advisory sync failed: {cause}; {_ADVISORY_SYNC_RECOVERY}"
+        raise FinalizeError(msg) from exc
+    for ghsa_id, state in result.synced:
+        print(f"  {ghsa_id}: set to {state}")
+    for ghsa_id, refs in result.held:
+        print(f"  {security_records.held_line(ghsa_id, refs)}")
+    for problem in result.problems:
+        print(f"ERROR: advisory sync: {problem}", file=sys.stderr)
+    if not (result.synced or result.held or result.problems):
+        print("No advisory state to sync.")
+    if result.problems:
+        raise FinalizeError(
+            f"the advisory sync left {len(result.problems)} problem(s) unsynced: "
+            f"{'; '.join(result.problems)}; {_ADVISORY_SYNC_RECOVERY}"
+        )
+    if result.held:
+        held = ", ".join(ghsa_id for ghsa_id, _refs in result.held)
+        progress.mark_warn(
+            f"held {held}: retarget each to a fix task, or close it with vrg-security-record close"
+        )
+
+
 def _head_of(branch: str) -> str:
     """The commit *branch* points at; a failed read fails the stage."""
     try:
-        return git.read_output("rev-parse", branch).strip()
+        return git.branch_commit(branch).strip()
     except subprocess.CalledProcessError as exc:
         msg = f"could not read the head of {branch}: {error_text(exc)}"
         raise FinalizeError(msg) from exc
@@ -1644,7 +1722,7 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         # target's carries no merged work, so deleting it saves nothing;
         # it is also exactly what an in-flight branch looks like before
         # its first commit.
-        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
+        if git.branch_commit(branch) == git.branch_commit(args.target_branch):
             print(
                 f"  Skipping {branch}: tip matches {args.target_branch} "
                 "(zero-commit branch, nothing to clean up)"
@@ -1952,7 +2030,7 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     head_sha = ctx.synced_to
     if not head_sha:
         try:
-            head_sha = git.read_output("rev-parse", args.target_branch).strip()
+            head_sha = git.branch_commit(args.target_branch).strip()
         except subprocess.CalledProcessError:
             head_sha = ""
     if not head_sha:
@@ -2073,7 +2151,9 @@ def build_stages(*, close_refs: bool) -> tuple[Stage, ...]:
     close-refs runs only when the watch saw a PR merge (*close_refs*), before
     the checkout lock is taken: it touches only GitHub. fail_defer: an issue
     left open must fail finalize, but the PRs are merged, so develop is still
-    settled (issue #4002). checkout-lock then takes the lock (spec §6.4) for
+    settled (issue #4002). advisory-sync follows it, on the issues it found
+    closed, for the same reasons and in the same mode (vergil-tooling#4583).
+    checkout-lock then takes the lock (spec §6.4) for
     cleanup (the sync included), provision and validation. provision warms the
     target-branch image (fail_fast, before it is used: issue #2462);
     validation is fail_defer so a validation failure still lets cd-check run
@@ -2085,6 +2165,7 @@ def build_stages(*, close_refs: bool) -> tuple[Stage, ...]:
     stages: list[Stage] = []
     if close_refs:
         stages.append(Stage("close-refs", _stage_close_refs, "fail_defer"))
+        stages.append(Stage("advisory-sync", _stage_advisory_sync, "fail_defer"))
     stages.append(Stage("checkout-lock", _stage_lock, "fail_fast"))
     stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
     stages.append(Stage("provision", _stage_provision, "fail_fast"))

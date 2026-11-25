@@ -155,10 +155,22 @@ _CONFIG_READ_FLAGS: frozenset[str] = frozenset(
     }
 )
 _CONFIG_READ_FLAG_PREFIXES: tuple[str, ...] = ("--type=",)
+# Git 2.46's subcommand forms (#5018): `config list` and `config get <name>`,
+# taking the same scope and output flags. `get` also takes its own read-only
+# options; a value-taking one is allowed only in its `--opt=<value>` form, so
+# its value can never be read as the name. Every writing subcommand (set,
+# unset, rename-section, remove-section, edit) is refused, and a subcommand
+# name is recognized only as the first argument, as git parses it.
+_CONFIG_GET_FLAGS: frozenset[str] = frozenset(
+    {"--all", "--regexp", "--fixed-value", "--show-names"}
+)
+_CONFIG_GET_FLAG_PREFIXES: tuple[str, ...] = ("--value=", "--url=", "--default=")
 _CONFIG_READ_USAGE = (
     "config is denied except its read forms: config [<scope>] "
-    "--get|--get-all|--get-regexp <name> [<value-pattern>], or "
-    "config [<scope>] --list|-l"
+    "--get|--get-all|--get-regexp <name> [<value-pattern>], "
+    "config [<scope>] --list|-l, config get [<scope>] [--all] [--regexp] "
+    "[--value=<pattern>] [--fixed-value] [--url=<url>] [--default=<value>] "
+    "[--show-names] <name>, or config list [<scope>]"
 )
 
 # tag: the list forms only. With no positional `tag` lists; a positional needs
@@ -429,6 +441,8 @@ def _check_remote_read(args: list[str]) -> str | None:
 
 def _check_config_read(args: list[str]) -> str | None:
     """Refuse every config form except one read action with read-only flags."""
+    if args and args[0] in ("get", "list"):
+        return _check_config_subcommand_read(args[0], args[1:])
     actions = [a for a in args if a in _CONFIG_READ_ACTIONS]
     others = [a for a in args if a not in _CONFIG_READ_ACTIONS]
     flags = [a for a in others if a.startswith("-")]
@@ -442,6 +456,23 @@ def _check_config_read(args: list[str]) -> str | None:
         return _CONFIG_READ_USAGE
     low, high = _CONFIG_READ_ACTIONS[actions[0]]
     if not low <= len(positionals) <= high:
+        return _CONFIG_READ_USAGE
+    return None
+
+
+def _check_config_subcommand_read(sub: str, args: list[str]) -> str | None:
+    """Refuse a ``config get``/``config list`` form unless every flag is a read flag.
+
+    ``list`` takes no positional and ``get`` exactly one, the name. The
+    legacy action flags (``--get``, ``--list`` and the rest) are not taken
+    after a subcommand.
+    """
+    flags = [a for a in args if a.startswith("-")]
+    positionals = [a for a in args if not a.startswith("-")]
+    allowed = _CONFIG_READ_FLAGS | (_CONFIG_GET_FLAGS if sub == "get" else frozenset())
+    prefixes = _CONFIG_READ_FLAG_PREFIXES + (_CONFIG_GET_FLAG_PREFIXES if sub == "get" else ())
+    bad_flags = [f for f in flags if f not in allowed and not f.startswith(prefixes)]
+    if bad_flags or len(positionals) != (1 if sub == "get" else 0):
         return _CONFIG_READ_USAGE
     return None
 
@@ -519,19 +550,35 @@ def _is_protected_branch() -> bool:
 
 
 def _is_upstream_gone(branch_name: str) -> bool:
-    result = subprocess.run(
-        ["git", "branch", "-vv"],  # noqa: S603, S607
+    """Return True only if the local branch's upstream is recorded as gone.
+
+    Reads the branch's own tracking state with ``for-each-ref`` rather than
+    parsing ``git branch -vv``, whose line also carries the commit subject
+    and marks worktree branches with ``+`` (GHSA-rp4r-x254-p53h). A
+    ``for-each-ref`` pattern also matches as a prefix, so the ref name is
+    checked exactly. The track text is untranslated for ``for-each-ref``;
+    ``LC_ALL=C`` pins it all the same.
+    """
+    ref = f"refs/heads/{branch_name}"
+    result = subprocess.run(  # noqa: S603
+        ["git", "for-each-ref", "--format=%(refname)%00%(upstream:track)", ref],  # noqa: S607
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "LC_ALL": "C"},
     )
+    if result.returncode != 0:
+        # Fail closed (the -D is denied), but say why rather than let the
+        # denial read as a live upstream.
+        print(
+            f"vrg-git: could not read the upstream state of {branch_name}: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return False
     for line in result.stdout.splitlines():
-        stripped = line.lstrip("* ").strip()
-        if not stripped:
-            continue
-        parts = stripped.split(None, 1)
-        if parts and parts[0] == branch_name:
-            return ": gone]" in line
+        refname, sep, track = line.partition("\0")
+        if sep and refname == ref:
+            return track == "[gone]"
     return False
 
 
@@ -1417,7 +1464,8 @@ def _print_help() -> None:
         "    symbolic-ref [-q|--quiet] [--short] <name> (setting a ref,\n"
         "    -d/--delete and -m are denied); remote [-v], remote get-url\n"
         "    [--push] [--all] <name> and remote show -n <name>...; config\n"
-        "    --get/--get-all/--get-regexp/--list (every write is denied);\n"
+        "    --get/--get-all/--get-regexp/--list, config get <name> and\n"
+        "    config list (every write is denied);\n"
         "    tag with no tag name or with a list flag (-l/--list, --contains,\n"
         "    --no-contains, --points-at, --merged, --no-merged).\n"
         f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"

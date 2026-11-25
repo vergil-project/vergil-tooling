@@ -1,0 +1,3 @@
+Errors during downloading metadata for repository 'vergil':
+  - Curl error (7): Couldn't connect to server for http://127.0.0.1:8081/rpm/el9/aarch64/repodata/repomd.xml [Failed to connect to 127.0.0.1 port 8081: Connection refused]
+Error: Failed to download metadata for repo 'vergil': Cannot download repomd.xml: Cannot download repodata/repomd.xml: All mirrors were tried

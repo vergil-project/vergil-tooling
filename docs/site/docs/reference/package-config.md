@@ -617,6 +617,18 @@ starts with no earlier generation. Any other failure to read the live site, a
 malformed `index-generations.json`, or a listed file that is missing or does
 not match its digest, fails the index build.
 
+`repomd.xml` and its detached signature `repomd.xml.asc` are not named by
+their digest, and each is cached on its own. For up to ten minutes after a
+publish, a CDN edge can serve one from the new index and the other from the
+old. dnf's `repo_gpgcheck=1` then fails its signature check, on RHEL 9 with
+`repomd.xml GPG signature verification error: Bad GPG signature` (RHEL 10
+says `Bad PGP signature`). apt is unaffected, because `InRelease` carries
+its signature inline. The dnf metadata refreshes that the repository
+bootstrap, the python builder's runtime install and `vrg-package
+install-test` run retry through the window, on that error alone, for up to
+750 seconds. On your own RHEL host, wait about
+ten minutes, then run `sudo dnf makecache --refresh`.
+
 ### Checking `packages.toml` without building
 
 ```bash

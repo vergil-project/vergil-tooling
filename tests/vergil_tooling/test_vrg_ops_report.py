@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from vergil_tooling.bin import vrg_ops_report
-from vergil_tooling.lib import github, identity_mode, ops_report, trust
+from vergil_tooling.lib import epic_chain, epics, github, identity_mode, ops_report, trust
 from vergil_tooling.lib.automation_identity import AutomationIdentityError
 from vergil_tooling.lib.identity_mode import IdentityMode
 
@@ -78,6 +78,22 @@ def test_report_error_exits_1(
     monkeypatch.setattr(ops_report, "report", broken)
     assert vrg_ops_report.main([*ARGS, "--results", "failure"]) == 1
     assert "acme/docs#100" in capsys.readouterr().err
+
+
+def test_epic_refusal_exits_1_in_one_line(
+    monkeypatch: pytest.MonkeyPatch, recorder: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refusal of the chain layer is named on stderr in one line (epic .github#1609)."""
+    error = epic_chain.RolloverDisabledError(epics.IssueRef("acme", ".github", 900))
+
+    def refused(*_args: Any, **_kwargs: Any) -> ops_report.Outcome:
+        raise error
+
+    monkeypatch.setattr(ops_report, "report", refused)
+    assert vrg_ops_report.main([*ARGS, "--results", "failure"]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == f"vrg-ops-report: acme/docs / docs-refresh: {error}\n"
+    assert captured.out == ""
 
 
 def test_results_combined_from_cli(recorder: Recorder, capsys: pytest.CaptureFixture[str]) -> None:

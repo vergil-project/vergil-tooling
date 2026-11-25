@@ -443,8 +443,10 @@ def _complete_nodes(
     """The nodes of *connection*, raising when they fall short of its *count* field.
 
     A ``timelineItems(itemTypes: ...)`` connection passes ``filteredCount``:
-    GitHub's ``totalCount`` there counts every timeline item, whatever the
-    type filter.
+    GitHub's ``totalCount`` there counts every timeline item of a PR, whatever
+    the type filter. Each connection here is one page read with no cursor,
+    where ``filteredCount`` is the whole filtered count; after a cursor it
+    counts only from the cursor onward (both read live, issue #5007).
     """
     nodes = [_obj(n, f"{what} node") for n in _list(connection["nodes"], f"{what} nodes")]
     if _int(connection[count], f"{what} {count}") > len(nodes):

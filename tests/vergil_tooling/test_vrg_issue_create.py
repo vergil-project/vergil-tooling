@@ -9,8 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_issue_create import _render_scaffold_body, main, parse_args
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_chain, epics, github
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 _MOD = "vergil_tooling.bin.vrg_issue_create"
 
 EPIC = epics.IssueRef("org", "repo", 710)
+TASK = epics.IssueRef("org", "repo", 123)
 _URL = "https://github.com/org/repo/issues/123"
 
 
@@ -36,10 +38,27 @@ def queue_kind() -> Iterator[MagicMock]:
 
 
 @pytest.fixture(autouse=True)
-def epic_open() -> Iterator[MagicMock]:
-    """The resolved epic is open unless a test says otherwise (.github#1609)."""
-    with patch(f"{_MOD}.epics.require_open_epic") as mock_open:
-        yield mock_open
+def graph(label_gh: MagicMock, monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """The sub-issue graph the chain layer reads and links in (.github#1609).
+
+    It holds the open epic ``EPIC`` and the issue ``TASK`` a patched
+    ``create_issue`` reports (``_URL``). ``github.run`` stays ``label_gh``,
+    so the label tests see the label writes; the chain layer's plain link
+    makes no ``github.run`` call.
+    """
+    fake = FakeSubIssueGraph().install(monkeypatch)
+    monkeypatch.setattr(github, "run", label_gh)
+    fake.add_issue(EPIC, title="Epic", labels=["epic"])
+    fake.add_issue(TASK, title="T")
+    return fake
+
+
+def _assert_linked(
+    graph: FakeSubIssueGraph, container: epics.IssueRef, task: epics.IssueRef
+) -> None:
+    """*task* is linked under *container*, by one link and no other write."""
+    assert graph.parent_of(task) == container
+    assert graph.mutations == [("add", container, task)]
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +71,11 @@ def dep_kind() -> Iterator[MagicMock]:
 @pytest.mark.parametrize("kind", ["epic", "archive"])
 @pytest.mark.parametrize("issue_kind", ["task", "validation"])
 def test_blocked_by_epic_or_archive_creates_nothing(
-    dep_kind: MagicMock, capsys: pytest.CaptureFixture[str], kind: str, issue_kind: str
+    dep_kind: MagicMock,
+    graph: FakeSubIssueGraph,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    issue_kind: str,
 ) -> None:
     # #2842: a dependency names the task this one waits on, never an umbrella.
     dep_kind.side_effect = lambda ref: kind if ref.number == 6 else None
@@ -60,7 +83,6 @@ def test_blocked_by_epic_or_archive_creates_nothing(
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(
             [
@@ -78,7 +100,7 @@ def test_blocked_by_epic_or_archive_creates_nothing(
         )
     assert rc == 1
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []
     assert f"vrg-issue-create: --blocked-by (org/repo#6) is an {kind}, not a task" in (
         capsys.readouterr().err
     )
@@ -93,7 +115,6 @@ def test_blocked_by_task_deps_are_checked_and_pass(dep_kind: MagicMock) -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
     assert rc == 0
@@ -108,7 +129,6 @@ def test_blocked_by_lookup_failure_creates_nothing(dep_kind: MagicMock) -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
         pytest.raises(subprocess.CalledProcessError),
     ):
         main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
@@ -127,7 +147,6 @@ def test_main_ensures_labels_in_target_repo_before_create(label_gh: MagicMock) -
             f"{_MOD}.github.create_issue",
             side_effect=lambda **kw: order.append("create") or _URL,
         ),
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--kind", "validation", "--label", "bug"])
     assert rc == 0
@@ -139,7 +158,6 @@ def test_main_without_labels_makes_no_label_calls(label_gh: MagicMock) -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 0
@@ -147,36 +165,34 @@ def test_main_without_labels_makes_no_label_calls(label_gh: MagicMock) -> None:
 
 
 def test_main_unknown_label_creates_nothing(
-    label_gh: MagicMock, capsys: pytest.CaptureFixture[str]
+    label_gh: MagicMock, graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--label", "no-such-label"])
     assert rc == 1
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []
     label_gh.assert_not_called()
     assert "vrg-issue-create: unknown label 'no-such-label'" in capsys.readouterr().err
 
 
 def test_main_label_create_failure_creates_nothing(
-    label_gh: MagicMock, capsys: pytest.CaptureFixture[str]
+    label_gh: MagicMock, graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
 ) -> None:
     label_gh.side_effect = github.GitHubAPIError(1, ["gh"], "", "HTTP 403: forbidden")
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--label", "bug"])
     assert rc == 1
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []
     err = capsys.readouterr().err
     assert "vrg-issue-create: could not ensure label(s) bug exist in org/repo" in err
     assert "HTTP 403: forbidden" in err
@@ -193,41 +209,135 @@ def test_parse_args_requires_title() -> None:
 
 
 def test_issue_create_closed_epic_refused_before_create(
-    epic_open: MagicMock, capsys: pytest.CaptureFixture[str]
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Closed is closed (.github#1609): refused before the issue is created, so
-    # the refused link never orphans a new issue.
-    epic_open.side_effect = epics.ClosedEpicError(EPIC)
+    # Closed is closed (.github#1609): the chain layer's capacity check refuses
+    # it before the issue is created, so the refused link never orphans a new issue.
+    graph.close(EPIC)
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(
+            f"{_MOD}.epic_chain.check_capacity", wraps=epic_chain.check_capacity
+        ) as mock_capacity,
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "#710", "--title", "T"])
     assert rc == 1
-    epic_open.assert_called_once_with(EPIC)
+    mock_capacity.assert_called_once_with(EPIC)
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []
+    assert graph.events == []
     assert capsys.readouterr().err == (
         "vrg-issue-create: epic org/repo#710 is closed; closed epics are not reopened "
         "by the tooling\n"
     )
 
 
-def test_main_creates_issue_and_links_under_epic() -> None:
+def _deepen(graph: FakeSubIssueGraph, head: epics.IssueRef) -> None:
+    """Put *head* at GitHub's nesting limit: seven ancestors above it."""
+    above = [epics.IssueRef("org", "repo", 800 + i) for i in range(1, 8)]
+    for ref in above:
+        graph.add_issue(ref, title=f"Level {ref.number - 799}", labels=["epic"])
+    for parent, child in zip(above, [*above[1:], head], strict=True):
+        graph.link(parent, child)
+    graph.clear_log()
+
+
+def test_issue_create_depth_refusal_creates_nothing(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An epic at the nesting limit has no level left for its items (.github#1609):
+    # refused by the capacity check before the issue is created.
+    _deepen(graph, EPIC)
+    before = set(graph.issues)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch.object(github, "create_issue", wraps=graph.create_issue) as mock_create,
+    ):
+        rc = main(["--epic", "#710", "--title", "T"])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert set(graph.issues) == before
+    assert graph.events == []
+    message = str(epic_chain.ChainDepthError(EPIC, items=0, containers=1))
+    assert "nesting limit" in message
+    assert capsys.readouterr().err == f"vrg-issue-create: {message}\n"
+
+
+def _fill(graph: FakeSubIssueGraph, head: epics.IssueRef, count: int) -> None:
+    """Link *count* new issues under *head*, numbered from 1."""
+    for number in range(1, count + 1):
+        ref = graph.add_issue(epics.IssueRef("org", "repo", number), title=f"Item {number}")
+        graph.link(head, ref)
+    graph.clear_log()
+
+
+def test_issue_create_rollover_disabled_full_epic_creates_nothing(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Rollover is off by default: a head at GitHub's 100 sub-issues is refused
+    # before the issue is created, never left with an unlinked new issue.
+    assert epic_chain.ROLLOVER_ENABLED is False
+    _fill(graph, EPIC, 100)
+    before = set(graph.issues)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch.object(github, "create_issue", wraps=graph.create_issue) as mock_create,
+    ):
+        rc = main(["--epic", "#710", "--title", "T"])
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert set(graph.issues) == before
+    assert graph.events == []
+    assert len(graph.children_of(EPIC)) == 100
+    message = str(epic_chain.RolloverDisabledError(EPIC))
+    assert capsys.readouterr().err == f"vrg-issue-create: {message}\n"
+
+
+def test_issue_create_lands_in_continuation_names_it(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With rollover on, a head holding its 99 items rolls the new issue into a
+    # continuation, and the closing line names the epic by its head and the container.
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    monkeypatch.setattr(github, "run", graph.run)  # the rollover's label and announce writes
+    _fill(graph, EPIC, 99)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+    ):
+        rc = main(["--epic", "#710", "--title", "New"])
+    assert rc == 0
+    created = [event[1] for event in graph.events if event[0] == "create"]
+    assert len(created) == 2  # the task, then its continuation
+    task, continuation = created
+    assert graph.issues[task].title == "New"
+    assert epics.CONTINUATION_LABEL in graph.issues[continuation].labels
+    assert graph.parent_of(continuation) == EPIC
+    assert graph.parent_of(task) == continuation
+    assert len(graph.children_of(EPIC)) == 100
+    out = capsys.readouterr().out
+    assert out.endswith(
+        f"Created https://github.com/org/repo/issues/{task.number}, linked under epic "
+        f"{EPIC.slug} (in continuation {continuation.slug}).\n"
+    )
+
+
+def test_main_creates_issue_and_links_under_epic(graph: FakeSubIssueGraph) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--body", "B", "--label", "bug"])
     assert rc == 0
     mock_resolve.assert_called_once_with("adhoc", repo="org/repo")
     assert mock_create.call_args.kwargs["title"] == "T"
     assert mock_create.call_args.kwargs["labels"] == ["bug"]
-    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, EPIC, epics.IssueRef("org", "repo", 123))
 
 
 def test_kind_validation_applies_label_and_scaffold() -> None:
@@ -235,7 +345,6 @@ def test_kind_validation_applies_label_and_scaffold() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             [
@@ -264,7 +373,6 @@ def test_kind_deployment_applies_label_and_scaffold() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             [
@@ -304,7 +412,6 @@ def test_deployment_scaffold_names_check_command() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             ["--epic", "adhoc", "--kind", "deployment", "--title", "Deploy it"]
@@ -328,7 +435,6 @@ def test_kind_retrospective_applies_label_and_scaffold() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             ["--epic", "adhoc", "--kind", "retrospective", "--title", "Retrospective: the epic"]
@@ -403,7 +509,6 @@ def test_kind_validation_without_blockers_has_no_dependency_reflink() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--kind", "validation", "--title", "V"])
     assert rc == 0
@@ -492,7 +597,6 @@ def _run_kind(kind: str, extra: list[str]) -> tuple[int, MagicMock]:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--kind", kind, "--title", "T", *extra])
     return rc, mock_create
@@ -671,7 +775,6 @@ def test_kind_defaults_to_task_without_validation_label() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--label", "bug"])
     assert rc == 0
@@ -683,7 +786,6 @@ def test_plain_task_stamps_blocked_by_reflink_from_body() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             [
@@ -713,7 +815,6 @@ def test_plain_task_blocked_by_with_empty_body_is_just_the_section() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
     assert rc == 0
@@ -729,7 +830,6 @@ def test_plain_task_blocked_by_appends_to_body_file(tmp_path: Path) -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(
             [
@@ -758,7 +858,6 @@ def test_plain_task_without_blocked_by_leaves_body_file_passthrough(tmp_path: Pa
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--epic", "adhoc", "--title", "T", "--body-file", str(body_file)])
     assert rc == 0
@@ -801,19 +900,18 @@ def test_plain_task_blocked_by_reports_unreadable_body_file(
     assert "cannot read --body-file" in capsys.readouterr().err
 
 
-def test_main_adhoc_sentinel_skips_cross_org_guard() -> None:
+def test_main_adhoc_sentinel_skips_cross_org_guard(graph: FakeSubIssueGraph) -> None:
     # 'adhoc' resolves within the repo's org (.github), so it must skip the
     # explicit-ref cross-org guard and link.
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 0
     mock_resolve.assert_called_once_with("adhoc", repo="org/repo")
-    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, EPIC, epics.IssueRef("org", "repo", 123))
 
 
 def test_main_epic_resolution_failure_creates_nothing() -> None:
@@ -849,31 +947,64 @@ def test_main_unconfirmed_standing_epic_exits_1_naming_it(
     mock_create.assert_not_called()
 
 
-def test_main_link_failure_reports_created_issue(capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_link_failure_reports_created_issue(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An ordinary link failure: GitHub refuses the link because the issue
+    # already has a parent, so vrg-epic-move is the recovery.
+    other = graph.add_issue(epics.IssueRef("org", "repo", 900), title="Other", labels=["epic"])
+    graph.link(other, TASK)
+    graph.clear_log()
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child", side_effect=RuntimeError("link failed")),
     ):
         rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 1
+    assert graph.mutations == []
+    assert graph.parent_of(TASK) == other
     err = capsys.readouterr().err
     assert _URL in err  # orphan-safe: the created issue is surfaced
+    assert "Sub issue may only have one parent" in err
     # The fix names both refs in full, single-quoted for the shell (#3966).
     assert err.rstrip().endswith(
         "Link it with: vrg-epic-move --task 'org/repo#123' --epic 'org/repo#710'"
     )
 
 
-def test_main_scopes_token_to_repo_owner() -> None:
+def test_main_chain_refused_link_reports_created_issue_unlinked(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A link the chain layer refuses after the create (here the depth limit,
+    # met by a race past the capacity check) would refuse vrg-epic-move the
+    # same way, so the move is not suggested.
+    refusal = epic_chain.ChainDepthError(EPIC, items=3, containers=1, task=TASK)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+        patch(f"{_MOD}.epic_chain.link_into", side_effect=refusal),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert err == (
+        f"vrg-issue-create: created {_URL} but failed to link it under epic org/repo#710: "
+        f"{refusal}. org/repo#123 is left unlinked, and vrg-epic-move would be refused the "
+        "same way until that is resolved\n"
+    )
+    assert "vrg-epic-move --task" not in err
+
+
+def test_main_scopes_token_to_repo_owner(graph: FakeSubIssueGraph) -> None:
     """Issue creation + linking run under the --repo owner installation (#2070)."""
+    task = graph.add_issue(epics.IssueRef("other-org", "repo", 123), title="T")
     with (
         patch(f"{_MOD}.github.target_org") as mock_scope,
         patch(f"{_MOD}.github.current_repo") as mock_cur,
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child"),
     ):
         rc = main(["--repo", "other-org/repo", "--epic", "adhoc", "--title", "T"])
     assert rc == 0
@@ -881,13 +1012,16 @@ def test_main_scopes_token_to_repo_owner() -> None:
     # 'adhoc' resolves against --repo, never the cwd repo (#3409).
     mock_resolve.assert_called_once_with("adhoc", repo="other-org/repo")
     mock_cur.assert_not_called()
+    _assert_linked(graph, EPIC, task)
 
 
-def test_main_bare_epic_resolves_against_target_epic_home() -> None:
+def test_main_bare_epic_resolves_against_target_epic_home(graph: FakeSubIssueGraph) -> None:
     """A bare '--epic #N' reads against --repo's epic home, not the cwd repo (#3411).
 
     The home's existence check runs under the --repo owner's App token.
     """
+    home_epic = graph.add_issue(epics.IssueRef("org", ".github", 407), title="E", labels=["epic"])
+    task = graph.add_issue(epics.IssueRef("org", "lab", 9), title="T")
     seen: list[tuple[str, str, str | None]] = []
 
     def exists(owner: str, name: str) -> bool:
@@ -897,15 +1031,13 @@ def test_main_bare_epic_resolves_against_target_epic_home() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
         patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.github.create_issue", return_value="https://github.com/org/lab/issues/9"),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--repo", "org/lab", "--epic", "#407", "--title", "T"])
     assert rc == 0
-    mock_add.assert_called_once_with(
-        epics.IssueRef("org", ".github", 407), epics.IssueRef("org", "lab", 9)
-    )
+    _assert_linked(graph, home_epic, task)
     assert seen == [("org", ".github", "org")]
 
 
@@ -954,16 +1086,15 @@ def test_main_epic_home_api_error_is_a_clean_failure(capsys: pytest.CaptureFixtu
     mock_create.assert_not_called()
 
 
-def test_main_explicit_same_org_epic_proceeds() -> None:
+def test_main_explicit_same_org_epic_proceeds(graph: FakeSubIssueGraph) -> None:
     """An explicit epic ref in the issue's own org passes the guard and links."""
     with (
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--repo", "org/repo", "--epic", "org/.github#5", "--title", "T"])
     assert rc == 0
-    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, EPIC, epics.IssueRef("org", "repo", 123))
 
 
 def test_main_rejects_bad_epic_ref() -> None:
@@ -1002,36 +1133,38 @@ def test_main_reports_missing_installation() -> None:
 
 
 @pytest.mark.parametrize("epic_sentinel", ["adhoc", "intake", "planning", "operations"])
-def test_main_accepts_every_standing_sentinel(epic_sentinel: str) -> None:
+def test_main_accepts_every_standing_sentinel(epic_sentinel: str, graph: FakeSubIssueGraph) -> None:
     """Every standing sentinel passes the cross-org guard and resolves (#3514)."""
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", epic_sentinel, "--title", "T"])
     assert rc == 0
     mock_resolve.assert_called_once_with(epic_sentinel, repo="org/repo")
-    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, EPIC, epics.IssueRef("org", "repo", 123))
 
 
-def test_main_planning_ensures_in_progress_label_in_target_repo(label_gh: MagicMock) -> None:
+def test_main_planning_ensures_in_progress_label_in_target_repo(
+    label_gh: MagicMock, graph: FakeSubIssueGraph
+) -> None:
     """Creating an issue into planning ensures 'in-progress' in its repo (#3520)."""
-    planning = epics.IssueRef("org", ".github", 439)
+    planning = graph.add_issue(
+        epics.IssueRef("org", ".github", 439), title="Planning", labels=["epic"]
+    )
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.epics._find_epic_by_title", return_value=planning),
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "planning", "--title", "T"])
     assert rc == 0
     ensured = [(c.args[2], c.args[4]) for c in label_gh.call_args_list]
     assert ("in-progress", "org/.github") in ensured
     assert ("in-progress", "org/repo") in ensured
-    mock_add.assert_called_once_with(planning, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, planning, epics.IssueRef("org", "repo", 123))
 
 
 def test_epic_help_names_every_standing_sentinel(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1051,51 +1184,52 @@ def test_epic_help_lists_hoshin(capsys: pytest.CaptureFixture[str]) -> None:
     assert "'hoshin'" in out
 
 
-def test_epic_operations_sentinel_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+def test_epic_operations_sentinel_accepted(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
     """--epic operations is listed and resolves the org's operations epic (#1494)."""
     with pytest.raises(SystemExit):
         parse_args(["--help"])
     assert "'operations'" in " ".join(capsys.readouterr().out.split())
-    ops = epics.IssueRef("org", ".github", 31)
+    ops = graph.add_issue(epics.IssueRef("org", ".github", 31), title="Operations", labels=["epic"])
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch("vergil_tooling.lib.epics.ensure_operations_epic", return_value=ops) as mock_ensure,
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "operations", "--title", "T"])
     assert rc == 0
     mock_ensure.assert_called_once_with("org/repo")
-    mock_add.assert_called_once_with(ops, epics.IssueRef("org", "repo", 123))
+    _assert_linked(graph, ops, epics.IssueRef("org", "repo", 123))
 
 
 # -- Deferred queue: entered only through vrg-intake-route (#3673) -----------
 
 
-def test_issue_create_refuses_deferred_epic(capsys: pytest.CaptureFixture[str]) -> None:
+def test_issue_create_refuses_deferred_epic(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref") as mock_resolve,
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "deferred", "--title", "T"])
     assert rc == 1
     assert "vrg-intake-route" in capsys.readouterr().err
     mock_resolve.assert_not_called()  # the deferred epic is never created
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []
 
 
 def test_issue_create_refuses_deferred_epic_number(
-    queue_kind: MagicMock, capsys: pytest.CaptureFixture[str]
+    queue_kind: MagicMock, graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
 ) -> None:
     queue_kind.return_value = "deferred"
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
         patch(f"{_MOD}.github.create_issue") as mock_create,
-        patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--epic", "org/repo#710", "--title", "T"])
     assert rc == 1
@@ -1104,4 +1238,4 @@ def test_issue_create_refuses_deferred_epic_number(
     assert "org/repo#710" in err
     queue_kind.assert_called_once_with(EPIC)
     mock_create.assert_not_called()
-    mock_add.assert_not_called()
+    assert graph.mutations == []

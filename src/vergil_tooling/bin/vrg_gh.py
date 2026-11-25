@@ -13,8 +13,17 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import gh_version, github, identity_mode, retry
+from vergil_tooling.lib import (
+    epics,
+    gh_version,
+    github,
+    identity_mode,
+    operational_close,
+    retry,
+    trust,
+)
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -274,7 +283,69 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return _exec_gh(argv)
+    if top == "issue" and sub == "edit":
+        raw = _raw_subissue_flag(argv[2:])
+        if raw is not None:
+            print(
+                f"vrg-gh: issue edit {raw} is refused. A raw sub-issue write bypasses "
+                "the epic chain, which links past GitHub's 100-child limit through "
+                "continuations (vergil-project/.github#1609): link a task with "
+                "vrg-epic-link and move one with vrg-epic-move.",
+                file=sys.stderr,
+            )
+            return 1
+
+    if top == "issue" and sub == "close" and identity_mode.is_agent():
+        refused = _operational_close_refusal(argv[2:])
+        if refused is not None:
+            print(f"vrg-gh: issue close is refused. {refused}", file=sys.stderr)
+            return 1
+
+    rc = _exec_gh(argv)
+    # `--help` forwards to gh's own help and exits 0 with no rerun requested.
+    if (
+        top == "run"
+        and sub == "rerun"
+        and rc == 0
+        and not any(arg in ("-h", "--help") for arg in argv[2:])
+    ):
+        print(_rerun_confirmation(argv[2:]))
+    return rc
+
+
+def _rerun_confirmation(args: list[str]) -> str:
+    """Return the line confirming a successful ``run rerun`` of *args*.
+
+    gh prints its own "Requested rerun" line only when its stdout is a
+    terminal, and vrg-gh captures gh's output, so a successful rerun would
+    otherwise print nothing and look the same as a no-op (#5175). A run or
+    job ID is named only when it is all digits, so no argument text reaches
+    the terminal unchecked.
+    """
+    job: str | None = None
+    run: str | None = None
+    failed = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg in ("--job", "-j") and i < len(args):
+            job = args[i]
+            i += 1
+        elif arg.startswith("--job="):
+            job = arg.removeprefix("--job=")
+        elif arg in ("--repo", "-R"):
+            i += 1
+        elif arg == "--failed":
+            failed = True
+        elif not arg.startswith("-") and run is None:
+            run = arg
+    if job is not None:
+        return f"Requested rerun of job {job}" if _JOB_ID_RE.fullmatch(job) else "Requested rerun"
+    scope = " (failed jobs)" if failed else ""
+    if run is not None and _JOB_ID_RE.fullmatch(run):
+        return f"Requested rerun{scope} of run {run}"
+    return f"Requested rerun{scope}"
 
 
 def _get_allowed() -> dict[str, set[str]]:
@@ -319,8 +390,8 @@ def _api_is_get(argv: list[str]) -> bool:
     return not has_fields
 
 
-def _parse_repo_owner(value: str) -> str | None:
-    """Extract the owner from a repository value (``-R``/``--repo``, ``repo view``).
+def _parse_repo_slug(value: str) -> str | None:
+    """``OWNER/REPO`` of a repository value (``-R``/``--repo``, ``repo view``).
 
     gh accepts ``OWNER/REPO``, ``HOST/OWNER/REPO``, and full URL forms.
     """
@@ -330,19 +401,120 @@ def _parse_repo_owner(value: str) -> str | None:
             break
     parts = [part for part in value.split("/") if part]
     if len(parts) >= 3:  # noqa: PLR2004 -- HOST/OWNER/REPO
-        return parts[1]
+        return f"{parts[1]}/{parts[2]}"
     if len(parts) == 2:  # noqa: PLR2004 -- OWNER/REPO
-        return parts[0]
+        return f"{parts[0]}/{parts[1]}"
     return None
+
+
+def _parse_repo_owner(value: str) -> str | None:
+    """Extract the owner from a repository value (``-R``/``--repo``, ``repo view``)."""
+    slug = _parse_repo_slug(value)
+    return slug.split("/", 1)[0] if slug is not None else None
+
+
+# The `issue close` reasons that do not claim the task was done; any other
+# close (gh's default reason is "completed") is gated for an operational task.
+_NOT_DONE_REASONS = frozenset({"not planned", "duplicate"})
+_ISSUE_NUMBER_RE = re.compile(r"#?([1-9][0-9]*)")
+_ISSUE_URL_RE = re.compile(
+    r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/([1-9][0-9]*)/?(?:[?#]\S*)?"
+)
+
+
+def _operational_close_refusal(args: list[str]) -> str | None:
+    """Why an agent's ``issue close`` *args* must not run, or ``None`` when they may.
+
+    An operational task closes as completed only once a trusted comment on it
+    records ``Outcome: SUCCESS`` (:func:`operational_close.refusal`), so a close
+    sent in one batch with a result comment that failed is refused rather than
+    closing the task with no result above it (#4997). A close as ``not
+    planned`` or a duplicate claims no result and is not gated, and neither is
+    ``--help``. A target this cannot resolve, or a read that cannot complete,
+    refuses the close rather than letting it through unchecked.
+    """
+    if any(arg in ("-h", "--help") for arg in args):
+        return None
+    parsed = _parse_args(args, _VALUE_FLAGS[("issue", "close")])
+    reason = "completed"
+    for flag, value in parsed.flag_values:
+        if flag in ("--reason", "-r"):
+            reason = value.strip().lower()
+    if any(flag == "--duplicate-of" for flag, _ in parsed.flag_values):
+        reason = "duplicate"
+    if reason in _NOT_DONE_REASONS:
+        return None
+    try:
+        ref = _close_target(parsed)
+        return operational_close.refusal(ref)
+    except (
+        subprocess.CalledProcessError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+        ValueError,
+        github.NoInstallationError,
+        github.AppAuthError,
+    ) as exc:
+        return (
+            "vrg-gh could not check whether the issue is an operational task with a "
+            f"recorded 'Outcome: SUCCESS', so it does not close it: {exc}"
+        )
+
+
+_RAW_SUBISSUE_FLAGS = ("--parent", "--add-sub-issue", "--remove-sub-issue")
+
+
+def _raw_subissue_flag(args: list[str]) -> str | None:
+    """Return the first raw sub-issue flag of an ``issue edit``'s *args*, or ``None``.
+
+    The epic chain owns every sub-issue write (spec §4.2 of epic
+    vergil-project/.github#1609), so ``--parent``, ``--add-sub-issue`` and
+    ``--remove-sub-issue`` are refused for every identity, in the
+    separate-value and ``=`` forms alike. The args are parsed as gh parses
+    them (:func:`_parse_args`), so a value-taking flag's value is never read
+    as a flag, and a ``--`` taken as such a value (``--title -- --parent 7``)
+    does not end the flags.
+    """
+    parsed = _parse_args(args, _VALUE_FLAGS[("issue", "edit")])
+    for flag, _value in parsed.flag_values:
+        if flag in _RAW_SUBISSUE_FLAGS:
+            return flag
+    return None
+
+
+def _close_target(parsed: _ParsedArgs) -> epics.IssueRef:
+    """The issue an ``issue close`` names: a URL, or a number in ``--repo`` or the cwd repo."""
+    if len(parsed.positionals) != 1:
+        msg = "issue close takes exactly one issue number or URL"
+        raise ValueError(msg)
+    target = parsed.positionals[0]
+    url = _ISSUE_URL_RE.fullmatch(target)
+    if url is not None:
+        return epics.IssueRef(owner=url[1], repo=url[2], number=int(url[3]))
+    number = _ISSUE_NUMBER_RE.fullmatch(target)
+    if number is None:
+        msg = "the issue close target is not an issue number or URL"
+        raise ValueError(msg)
+    if parsed.repo_values:
+        slug = _parse_repo_slug(parsed.repo_values[-1])
+        if slug is None:
+            msg = "the issue close --repo value is not OWNER/REPO"
+            raise ValueError(msg)
+    else:
+        slug = github.current_repo()
+    owner, repo = slug.split("/", 1)
+    return epics.IssueRef(owner=owner, repo=repo, number=int(number[1]))
 
 
 @dataclass
 class _ParsedArgs:
-    """The parts of a wrapped argv that can name a target owner."""
+    """The parts of a wrapped argv that can name a target owner, and every flag's value."""
 
     repo_values: list[str] = field(default_factory=list)
     owner_values: list[str] = field(default_factory=list)
     positionals: list[str] = field(default_factory=list)
+    # Every value-taking flag's value, as (flag, value), in argv order.
+    flag_values: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _parse_args(
@@ -366,6 +538,7 @@ def _parse_args(
     parsed = _ParsedArgs()
 
     def record(flag: str, value: str) -> None:
+        parsed.flag_values.append((flag, value))
         if flag in ("-R", "--repo"):
             parsed.repo_values.append(value)
         elif flag in owner_flags:
@@ -888,6 +1061,10 @@ def _print_help() -> None:
         "    edit/create/delete, workflow run.\n"
         "  - gh api is gated by identity: human full, audit read-only GET, user\n"
         "    denied.\n"
+        "  - An agent's issue close of an operational task as completed is\n"
+        "    refused until a trusted comment on it records 'Outcome: SUCCESS'.\n"
+        "  - issue edit's raw sub-issue flags (--parent, --add-sub-issue,\n"
+        "    --remove-sub-issue) are refused: use vrg-epic-link or vrg-epic-move.\n"
         "  - run job-log --repo <owner>/<repo> --job <id> prints one Actions\n"
         "    job's log from the read-only per-job log endpoint, for every identity.\n"
         "\n"

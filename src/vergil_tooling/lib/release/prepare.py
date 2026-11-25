@@ -179,7 +179,7 @@ def _adopt_merged_pr(ctx: ReleaseContext, branch: str, merged: PRRef) -> None:
     """
     url = merged.url
     head = merged.head_oid
-    local = git.read_output("rev-parse", branch)
+    local = git.branch_commit(branch)
     if head != local:
         git.run("fetch", "origin", f"pull/{merged.number}/head")
         if not git.is_ancestor(local, head):
@@ -243,7 +243,7 @@ def _create_pr(ctx: ReleaseContext, branch: str) -> str:
         f"Generated with `vrg-release`\n"
     )
     spec = pr_create.PRSpec(
-        head=branch, base="main", title=title, head_oid=git.read_output("rev-parse", branch)
+        head=branch, base="main", title=title, head_oid=git.branch_commit(branch)
     )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)

@@ -85,7 +85,7 @@ shell expansion, no pipes, no redirection.
 | `show-ref` | — | Read-only — list refs |
 | `symbolic-ref` | `<name> <ref>`, `-d`/`--delete`, `-m` | Read form only — one ref, optionally `-q`/`--quiet`/`--short` |
 | `remote` | `add`, `remove`, `rename`, `set-url`, `set-head`, `prune`, `update` and every other form | Read forms only — `remote [-v\|--verbose]`, `remote get-url [--push] [--all] <name>`, `remote show -n <name>...` |
-| `config` | every write (`<name> <value>`, `--add`, `--unset`, `--replace-all`, section edits, `-e`) | Read forms only — one of `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, with scope and output flags |
+| `config` | every write (`<name> <value>`, `--add`, `--unset`, `--replace-all`, section edits, `-e`, and the `set`, `unset`, `rename-section`, `remove-section` and `edit` subcommands) | Read forms only — one of `--get`, `--get-all`, `--get-regexp`, `--list`/`-l`, or the `get <name>` and `list` subcommands (`get` with `--all`, `--regexp`, `--fixed-value`, `--show-names`, `--value=`, `--url=`, `--default=`), with scope and output flags |
 | `tag` | `-a`, `-s`, `-u`, `-m`, `-F`, `-f`, `-d`, `-v`, `-e`, and a tag name without a list flag | List forms only — no tag name, or `-l`/`--list`, `--contains`, `--no-contains`, `--points-at`, `--merged`, `--no-merged`, `-n<num>` |
 | `var` | — | Read-only — logical git variables |
 | `verify-commit` | — | Read-only — signature verification |
@@ -151,9 +151,9 @@ rejected as not recognized.
 |---|---|---|---|---|
 | `issue view` | yes | yes | — | Read-only |
 | `issue list` | yes | yes | — | Read-only |
-| `issue edit` | yes | yes | — | Updating metadata |
+| `issue edit` | yes | yes | — | Updating metadata; the raw sub-issue flags (`--parent`, `--add-sub-issue`, `--remove-sub-issue`) are refused for every identity, since the epic chain owns sub-issue links: use `vrg-epic-link` or `vrg-epic-move` |
 | `issue comment` | yes | yes | — | Adding comments |
-| `issue close` | yes | yes | — | Closing is mechanical and reversible |
+| `issue close` | yes | yes | — | Closing is mechanical and reversible; an agent's completed close of an operational task waits for its result (see [Operational task close](#operational-task-close)) |
 | `issue reopen` | yes | yes | — | Non-destructive; an errant reopen is re-closed |
 | `issue transfer` | yes | yes | — | Intra-org issue move (finite-epic relocation) |
 | `pr view` | yes | yes | yes | Read-only |
@@ -217,6 +217,26 @@ Other write actions of allowed top-level commands (`release
 create`, `workflow enable`/`disable`, `cache delete`, `variable
 set`/`delete` and so on)
 are rejected by the allowlist's deny-by-default.
+
+### Operational task close
+
+An operational task (a `validation` or `deployment` issue) is accepted
+by a recorded `Outcome: SUCCESS` comment, and closes only once that
+result has posted. For an agent identity, `vrg-gh issue close` makes
+that order mechanical: before it closes an issue as completed (gh's
+default reason), it reads the issue's labels and, for an operational
+task, its trusted comments through the trust layer. It refuses the
+close while no trusted comment carries an `Outcome: SUCCESS` line
+(`Outcome: PASS` is the legacy alias), so a close sent in one batch
+with a result comment that failed cannot close the task with no result
+above it. The close's own `--comment` does not count as the result.
+
+A close as `not planned` or a duplicate claims no result and is not
+gated, and a human's close is not gated either. A target the wrapper
+cannot resolve (a positional that is not one issue number or URL, or a
+`--repo` that is not `OWNER/REPO`) and a read that cannot complete
+refuse the close rather than let it through unchecked. The success
+marker is the one `vrg-epic-audit` checks on closed operational tasks.
 
 ### `gh api` by Identity
 
@@ -283,7 +303,7 @@ token `gh` runs with:
 `vrg-branch-sweep`, `vrg-ci-evidence`,
 `vrg-container-docs`, `vrg-dependabot-audit`, `vrg-docs-stage`,
 `vrg-ensure-label`, `vrg-epic-audit`, `vrg-epic-create`,
-`vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-rollup`,
+`vrg-epic-docs`, `vrg-epic-link`, `vrg-epic-move`, `vrg-epic-parent`, `vrg-epic-rollup`,
 `vrg-finalize-pr`, `vrg-github-repo-config`,
 `vrg-github-repo-init`, `vrg-intake-create`, `vrg-intake-route`,
 `vrg-issue-create`, `vrg-pr-await`, `vrg-pr-workflow`, `vrg-promote`,

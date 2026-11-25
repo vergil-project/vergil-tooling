@@ -432,6 +432,7 @@ def test_dnf_bootstrap_with_prerequisites_present_skips_their_install() -> None:
     assert run.calls[6][:2] == ("bash", "-c")
     _assert_rpm_write(run.calls[6], key_tmp)
     assert run.flat[7:] == [
+        "dnf -y makecache --refresh --repo vergil-bootstrap",
         "dnf install -y --repo vergil-bootstrap vergil-archive-keyring",
         _RPM_STALE,
         f"bash -c {_RPM_PROBE}",
@@ -618,7 +619,7 @@ def test_dnf_rerun_on_a_migrated_host_skips_the_bootstrap() -> None:
         f"bash -c {repo_setup.RPM_PREREQ_PROBE}",
         f"bash -c {_RPM_PROBE}",
         "gpg --show-keys --with-colons /etc/pki/rpm-gpg/RPM-GPG-KEY-vergil",
-        "dnf makecache --refresh --repo vergil",
+        "dnf -y makecache --refresh --repo vergil",
     ]
 
 
@@ -685,3 +686,186 @@ def test_keyring_install_that_leaves_its_setup_incomplete_is_fatal(fmt: str) -> 
     with pytest.raises(PackageError, match=r"did not leave its setup in place \(missing: source;"):
         repo_setup.bootstrap(run, _ORG, fmt, "noble", sudo=False)
     assert run.flat[-1] == f"rm -rf {_TMP}"
+
+
+# --- dnf_refresh: the Pages cache window (#4663) ------------------------------------
+
+_DNF_FIXTURES = Path(__file__).parent / "fixtures" / "dnf"
+_RELEASES = ("el9", "el10")
+_REFRESH = "dnf -y makecache --refresh --repo vergil"
+
+
+def _dnf_failure(
+    release: str, case: str, argv: tuple[str, ...] = ()
+) -> subprocess.CalledProcessError:
+    """The ``CalledProcessError`` dnf's captured run of ``case`` on ``release`` raises (exit 1)."""
+    out = (_DNF_FIXTURES / f"{release}-{case}.stdout.txt").read_text()
+    err = (_DNF_FIXTURES / f"{release}-{case}.stderr.txt").read_text()
+    return subprocess.CalledProcessError(1, list(argv), out, err)
+
+
+class ScriptedRun:
+    """Answers the refresh with each scripted failure in turn, then succeeds; records every call."""
+
+    def __init__(self, *failures: subprocess.CalledProcessError) -> None:
+        self.failures = list(failures)
+        self.calls: list[str] = []
+
+    def __call__(self, *argv: str) -> subprocess.CompletedProcess[str]:
+        self.calls.append(" ".join(argv))
+        if "makecache" in argv and self.failures:
+            raise self.failures.pop(0)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def test_refresh_schedule_outlasts_the_pages_cache_window() -> None:
+    # Pages serves max-age=600; the window must exceed it with a margin, about 12 minutes.
+    assert 600 + 60 <= sum(repo_setup.DNF_REFRESH_DELAYS) <= 15 * 60
+    assert all(d > 0 for d in repo_setup.DNF_REFRESH_DELAYS)
+
+
+def test_refresh_that_succeeds_at_once_neither_sleeps_nor_logs() -> None:
+    run = ScriptedRun()
+    slept: list[float] = []
+    logged: list[str] = []
+    repo_setup.dnf_refresh(run, "vergil", sudo=False, sleep=slept.append, log=logged.append)
+    assert run.calls == [_REFRESH]
+    assert slept == []
+    assert logged == []
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+def test_signature_mismatch_is_retried_until_the_refresh_succeeds(release: str) -> None:
+    race = _dnf_failure(release, "mismatch-makecache")
+    run = ScriptedRun(race, race)
+    slept: list[float] = []
+    logged: list[str] = []
+    repo_setup.dnf_refresh(run, "vergil", sudo=True, sleep=slept.append, log=logged.append)
+    assert run.calls == [f"sudo {_REFRESH}"] * 3
+    assert slept == list(repo_setup.DNF_REFRESH_DELAYS[:2])
+    total = len(repo_setup.DNF_REFRESH_DELAYS) + 1
+    assert len(logged) == 2
+    assert logged[0].startswith(f"vrg-package: dnf refresh of vergil, attempt 1/{total}: ")
+    assert "repomd.xml does not match its signature" in logged[0]
+    assert logged[1].startswith(f"vrg-package: dnf refresh of vergil, attempt 2/{total}: ")
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+@pytest.mark.parametrize("case", ["missing-asc", "missing-repomd", "unreachable", "unknown-repo"])
+def test_any_other_dnf_failure_propagates_at_once(release: str, case: str) -> None:
+    failure = _dnf_failure(release, case)
+    run = ScriptedRun(failure)
+    slept: list[float] = []
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        repo_setup.dnf_refresh(run, "vergil", sudo=False, sleep=slept.append, log=print)
+    assert caught.value is failure
+    assert run.calls == [_REFRESH]
+    assert slept == []
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+def test_a_signature_failure_of_another_repo_is_not_retried(release: str) -> None:
+    race = _dnf_failure(release, "mismatch-makecache")
+    run = ScriptedRun(race)
+    slept: list[float] = []
+    with pytest.raises(subprocess.CalledProcessError):
+        repo_setup.dnf_refresh(run, "vergil-bootstrap", sudo=False, sleep=slept.append, log=print)
+    assert slept == []
+
+
+@pytest.mark.parametrize(("release", "reads_as_race"), [("el9", True), ("el10", False)])
+def test_a_declined_key_import_on_el9_reads_as_the_race_so_the_refresh_passes_yes(
+    release: str, reads_as_race: bool
+) -> None:
+    # Captured without -y on a fresh cache, with a good repomd.xml/.asc pair: dnf
+    # declines the key import. RHEL 9 then reports the race's own error (RHEL 10
+    # says "Signing key not found"), so the helper passes -y and never retries it.
+    declined = _dnf_failure(release, "decline-import")
+    assert "Is this ok [y/N]:" in declined.stdout
+    assert bool(repo_setup._REPOMD_SIGNATURE.search(declined.stderr)) is reads_as_race
+    run = ScriptedRun()
+    repo_setup.dnf_refresh(run, "vergil", sudo=False, sleep=print, log=print)
+    assert run.calls[0].split()[:2] == ["dnf", "-y"]
+
+
+@pytest.mark.parametrize("release", _RELEASES)
+def test_an_exhausted_window_fails_loudly_with_dnfs_output(release: str) -> None:
+    race = _dnf_failure(release, "mismatch-makecache")
+    attempts = len(repo_setup.DNF_REFRESH_DELAYS) + 1
+    run = ScriptedRun(*[race] * attempts)
+    slept: list[float] = []
+    logged: list[str] = []
+    with pytest.raises(PackageError) as caught:
+        repo_setup.dnf_refresh(run, "vergil", sudo=False, sleep=slept.append, log=logged.append)
+    msg = str(caught.value)
+    assert msg.startswith(
+        f"dnf could not refresh the vergil repository: repomd.xml failed its signature check "
+        f"on all {attempts} attempts over {sum(repo_setup.DNF_REFRESH_DELAYS):.0f}s."
+    )
+    assert "GitHub Pages can serve repomd.xml and repomd.xml.asc from different publishes" in msg
+    assert race.stderr.strip() in msg
+    assert caught.value.__cause__ is race
+    assert len(run.calls) == attempts
+    assert slept == list(repo_setup.DNF_REFRESH_DELAYS)
+    assert len(logged) == attempts - 1
+
+
+def test_refresh_sleeps_and_logs_by_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(repo_setup.time, "sleep", slept.append)
+    run = ScriptedRun(_dnf_failure("el9", "mismatch-makecache"))
+    repo_setup.dnf_refresh(run, "vergil", sudo=False)
+    assert slept == [repo_setup.DNF_REFRESH_DELAYS[0]]
+    assert "attempt 1/" in capsys.readouterr().err
+
+
+def test_bootstrap_refreshes_the_bootstrap_repo_through_the_helper_before_the_keyring_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    race = _dnf_failure("el10", "mismatch-makecache").stderr.replace(
+        "'vergil'", "'vergil-bootstrap'"
+    )
+    slept: list[float] = []
+    monkeypatch.setattr(repo_setup.time, "sleep", slept.append)
+    calls: list[str] = []
+    fake = FakeRun()
+    failures = [subprocess.CalledProcessError(1, [], "", race)]
+
+    def run(*argv: str) -> subprocess.CompletedProcess[str]:
+        calls.append(" ".join(argv))
+        if "makecache" in argv and failures:
+            raise failures.pop(0)
+        return fake(*argv)
+
+    repo_setup.bootstrap(run, _ORG, "rpm", "el10", sudo=True)
+    refresh = "sudo dnf -y makecache --refresh --repo vergil-bootstrap"
+    install = "sudo dnf install -y --repo vergil-bootstrap vergil-archive-keyring"
+    assert calls.count(refresh) == 2
+    last_refresh = max(i for i, c in enumerate(calls) if c == refresh)
+    assert calls[last_refresh + 1] == install
+    assert calls.count(install) == 1
+    assert slept == [repo_setup.DNF_REFRESH_DELAYS[0]]
+
+
+def test_bootstrap_on_an_installed_keyring_refreshes_through_the_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        repo_setup, "dnf_refresh", lambda run, repo, *, sudo: seen.append((repo, sudo))
+    )
+    repo_setup.bootstrap(FakeRun(state=(_FULL,)), _ORG, "rpm", "el9", sudo=True)
+    assert seen == [("vergil", True)]
+
+
+def test_keyring_install_failure_is_never_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr(repo_setup.time, "sleep", slept.append)
+    run = FakeRun(fail_on="dnf install -y --repo vergil-bootstrap")
+    with pytest.raises(subprocess.CalledProcessError):
+        repo_setup.bootstrap(run, _ORG, "rpm", "el9", sudo=False)
+    assert run.flat.count("dnf install -y --repo vergil-bootstrap vergil-archive-keyring") == 1
+    assert slept == []
+    assert run.flat[-2] == _RPM_STALE

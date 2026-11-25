@@ -111,6 +111,19 @@ reference the trust layer counts (:mod:`~vergil_tooling.lib.closing_refs`); an
 untrusted body or hand link never holds the route. The whole route runs under
 the item owner's App token (:func:`github.target_org`).
 
+Every epic a route reads or writes may be a **chain** of containers past
+GitHub's 100-sub-issue limit (epic vergil-project/.github#1609): every link,
+move and unlink goes through :mod:`~vergil_tooling.lib.epic_chain`, so an
+item in a continuation is found there and a link into a full queue rolls
+over. Settling after a transfer is the chain layer's too: the parent field
+is observed against the listings of every container of the epic's chain
+(:func:`~vergil_tooling.lib.epic_chain.observe_parent`), a stale listing is
+cleared from the container that holds it
+(:func:`~vergil_tooling.lib.epic_chain.clear_stale_listing`), and a forced
+re-link goes into the container the parent field names
+(:func:`~vergil_tooling.lib.epic_chain.relink`). The route makes no raw
+sub-issue read or write of its own.
+
 An item opened by an outsider (its author holds no role, as the trust layer
 judges it) is never routed or sized: every route on it is a stop before
 anything resolves or is written
@@ -132,6 +145,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from vergil_tooling.lib import (
     closing_refs,
+    epic_chain,
     epics,
     github,
     security_records,
@@ -925,9 +939,9 @@ def _unlink_before_transfer(ref: IssueRef, old_parent: IssueRef | None) -> Issue
     if old_parent is None or epics.native_parent_of(ref) != old_parent:
         return None
     try:
-        epics.remove_child(old_parent, ref)
+        epic_chain.unlink_from(old_parent, ref)
         current = epics.native_parent_of(ref)
-    except (github.GitHubAPIError, RuntimeError) as exc:
+    except (github.GitHubAPIError, RuntimeError, ValueError) as exc:
         raise RouteHalfAppliedError(
             f"unlinking {ref.slug} from {old_parent.slug} before its transfer failed "
             f"({error_text(exc)}); nothing was moved. Check where it is with vrg-queue; if it "
@@ -948,8 +962,8 @@ def _relink_after_failed_transfer(
 ) -> None:
     """Put *ref* back under *old_parent* when the transfer is refused, before the recreate."""
     try:
-        epics.add_child(old_parent, ref)
-    except (github.GitHubAPIError, RuntimeError) as exc:
+        epic_chain.link_into(old_parent, ref)
+    except (github.GitHubAPIError, RuntimeError, ValueError) as exc:
         raise RouteHalfAppliedError(
             f"the transfer of {ref.slug} to {dest} failed "
             f"({' '.join(error_text(transfer_error).split())}), and linking it back under "
@@ -1136,7 +1150,9 @@ def _one_off_target(item: IssueRef, action: OneOff) -> IssueRef | None:
         return epics.find_standing_epic(epics.ADHOC, epics.resolve_epic_home(owner, bare), bare)
     if action.epic == epics.OPERATIONS.sentinel:
         return epics.find_standing_epic(epics.OPERATIONS, *epics.operations_home(dest))
-    target = epics.qualify_epic_ref(action.epic, repo=dest)
+    # No sentinel reaches here but ad-hoc and operations, so none is created; a
+    # continuation's ref resolves to its chain's head, as the route itself does.
+    target = epics.resolve_epic_ref(action.epic, repo=dest, sentinels=False)
     return target if target.owner == item.owner else None
 
 
@@ -1219,11 +1235,11 @@ def _clear_stale_queue_listing(item: IssueRef, action: OneOff, parent: IssueRef)
                 "lists it as a sub-issue; removing the stale listing",
                 file=sys.stderr,
             )
-            epics.remove_child(queue, item)
+            epic_chain.clear_stale_listing(queue, item, keep=parent)
         placement = _settled_placement(item, parent, queues)
-    except RouteHalfAppliedError, github.MissingGitHubTokenError:
+    except RouteHalfAppliedError, github.MissingGitHubTokenError, epics.ClosedEpicError:
         raise
-    except (github.GitHubAPIError, RuntimeError) as exc:
+    except (github.GitHubAPIError, RuntimeError, ValueError) as exc:
         raise RouteHalfAppliedError(
             f"{item.slug} reads {parent.slug} as its parent but was not settled there, and "
             f"settling it or reading it back failed ({error_text(exc)}). {fix}"
@@ -1303,14 +1319,16 @@ def _observe(
 ) -> tuple[IssueRef | None, str]:
     """Read *task*'s parent, *epic*'s sub-issue list and, if set, *old_parent*'s.
 
-    Returns the parent and the placement text, empty when *task* is settled
-    under *epic*: its parent field names *epic*, *epic* lists it, and
-    *old_parent* no longer lists it.
+    Returns the parent (the head of the chain its parent field names) and the
+    placement text, empty when *task* is settled under *epic*: its parent
+    field names a container of *epic*'s chain, that container lists it, and
+    *old_parent*'s chain no longer lists it.
     """
-    current = epics.native_parent_of(task)
+    field, listings = epic_chain.observe_parent(epic, task)
+    current = field if field is None or field == epic else epic_chain.head_of(field)
     if current != epic:
         return current, _placement(current)
-    if task not in epics.native_children(epic):
+    if field not in listings:
         return current, f"{_NOT_LISTED} {epic.slug} (its parent reads {epic.slug})"
     if old_parent is not None and old_parent != epic and task in epics.native_children(old_parent):
         return current, (
@@ -1537,8 +1555,13 @@ def _link(
     ``replaceParent``, so a parent that surfaces between the read and the link
     is replaced rather than refusing the link ("Sub issue may only have one
     parent"). With *force*, a *task* whose parent field already reads *epic*
-    is linked again with ``replaceParent``: *epic*'s sub-issue list lacks it,
-    so the parent field is not to be trusted (#4291).
+    is linked again with ``replaceParent`` into the container of *epic*'s
+    chain its parent field names (:func:`epic_chain.relink`): that
+    container's sub-issue list lacks it, so the parent field is not to be
+    trusted (#4291). Every other link goes into *epic*'s chain by first fit
+    (:func:`epic_chain.link_into`, or :func:`epic_chain.move_into` to replace
+    a parent), rolling over when the chain is full. Closed is closed: a
+    closed epic is refused, never reopened (.github#1609).
 
     With *item* (the routed item, for its one-off's messages), a link GitHub
     refuses as a duplicate sub-issue is recovered by :func:`_clear_duplicate`
@@ -1549,12 +1572,12 @@ def _link(
     if current == epic and not force:
         return False
     try:
-        if current is None and not replace:
-            epics.add_child(epic, task)  # refuses a closed epic itself
-            return False
-        # Closed is closed: a closed epic is refused, never reopened (.github#1609).
-        epics.require_open_epic(epic)
-        epics.reparent_child(epic, task)
+        if current == epic:
+            epic_chain.relink(epic, task)
+        elif current is None and not replace:
+            epic_chain.link_into(epic, task)
+        else:
+            epic_chain.move_into(epic, task)
     except (github.GitHubAPIError, RuntimeError) as exc:
         if item is None or not _is_duplicate_refusal(exc):
             raise
@@ -1583,11 +1606,17 @@ def _clear_duplicate(
     with no parent at all, *epic*'s own listing is removed and the link made
     again. Nothing is removed unless *epic*'s list really holds *task*. The
     caller reads the parent back afterwards: this only clears the way.
+
+    *current* and *epic* are chain heads: the stale link is cleared from
+    whichever container of *current*'s chain lists *task*, keeping the
+    container of *epic*'s chain that lists it
+    (:func:`epic_chain.clear_stale_listing`), and *epic*'s own listing, when
+    there is no parent, from whichever container of its chain holds it.
     """
     moved = _moved(item, task)
     fix = f"Set the parent of {task.slug} to {epic.slug} in the GitHub UI"
     try:
-        listed = task in epics.native_children(epic)
+        _, listings = epic_chain.observe_parent(epic, task)
     except (github.GitHubAPIError, RuntimeError) as exc:
         raise RouteHalfAppliedError(
             f"{moved}, but GitHub refused to link it under {epic.slug} "
@@ -1595,7 +1624,7 @@ def _clear_duplicate(
             f"({error_text(exc)}); it is {_placement(current)}; the route is half-applied. "
             f"{fix}"
         ) from exc
-    if not listed:
+    if not listings:
         raise RouteHalfAppliedError(
             f"{moved}, but GitHub refused to link it under {epic.slug} "
             f"({_DUPLICATE_SUB_ISSUE}) although {epic.slug} does not list it; it is "
@@ -1611,10 +1640,12 @@ def _clear_duplicate(
         file=sys.stderr,
     )
     try:
-        epics.remove_child(stale, task)
         if current is None:
-            epics.reparent_child(epic, task)
-    except (github.GitHubAPIError, RuntimeError) as exc:
+            epic_chain.unlink_from(epic, task)
+            epic_chain.move_into(epic, task)
+        else:
+            epic_chain.clear_stale_listing(current, task, keep=listings[0])
+    except (github.GitHubAPIError, RuntimeError, ValueError) as exc:
         raise RouteHalfAppliedError(
             f"{moved}, but it is {_placement(current)} while {epic.slug} already lists it "
             f"as a sub-issue, and {action} failed ({error_text(exc)}); the route is "

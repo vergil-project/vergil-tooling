@@ -392,7 +392,7 @@ def gather_worktree_status(
 
     merged_head_matches_tip = True
     if pr_state in ("MERGED", "CLOSED"):
-        tip = git.commit_sha(worktree.branch)
+        tip = git.branch_commit(worktree.branch)
         # A missing head SHA is treated as a mismatch: without positive
         # proof the PR covers this tip, withholding removal is the safe
         # default (never delete unproven-merged work — issue #1719).

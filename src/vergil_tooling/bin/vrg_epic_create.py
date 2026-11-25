@@ -14,7 +14,8 @@ explicitly with ``--repo``. This is the sanctioned path for creating epics —
 **proxy epic** for another org's primary epic in the target's org home, and the
 ``Proxy:`` comment on the primary (:func:`vergil_tooling.lib.proxies.create_proxy`,
 vergil-project/.github#1417). Its title and body are derived, so it takes no
-``--title``, ``--body``, ``--label`` or ``--assignee``.
+``--title``, ``--body``, ``--label`` or ``--assignee``. A continuation's ref
+means its chain's head, with a line on stderr saying so.
 
 ``--standing <kind> --org <org>`` instead ensures the org's standing epic of
 that kind in ``<org>/.github`` (``intake``, ``planning``, ``deferred``,
@@ -172,6 +173,10 @@ def _proxy_for(args: argparse.Namespace) -> int:
         )
         return 1
     try:
+        # The shared ref resolution's last step: a continuation's ref (copied
+        # from GitHub's UI) means its chain's head, which the proxy names.
+        with github.target_org(primary.owner):
+            primary = epics.epic_head(primary)
         result = proxies.create_proxy(primary, args.repo)
     except (
         proxies.ProxyRefusedError,

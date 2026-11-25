@@ -58,13 +58,14 @@ the dev-tree override venv.
 | [vrg-scorecard](cli-tools-overview.md#vrg-scorecard) | Run OpenSSF Scorecard in a dev container with a GitHub App token |
 | [vrg-generate-commands](cli-tools-overview.md#vrg-generate-commands) | Generate MQSC command methods |
 | [vrg-host](dev/host.md) | Report, upgrade and pin the macOS host dependencies |
-| [vrg-tooling-install](cli-tools-overview.md#vrg-tooling-install) | Install an exact vergil-tooling release on the host, locked to its `uv.lock` |
+| [vrg-tooling-install](cli-tools-overview.md#vrg-tooling-install) | Install a vergil-tooling release, or any branch, tag or commit of it, on the host, locked to its commit's `uv.lock` |
 | [vrg-issue-create](cli-tools-overview.md#vrg-issue-create) | Create an issue and link it under an epic in one step |
 | [vrg-issue-read](cli-tools-overview.md#vrg-issue-read) | Print an issue's or PR's trusted content, or the trusted results of a search or list |
 | [vrg-epic-create](cli-tools-overview.md#vrg-epic-create) | Create a top-level epic in its home repo |
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
 | [vrg-checkpoint](cli-tools-overview.md#vrg-checkpoint) | Keep a workflow's stage checklist in a tracking issue's body |
 | [vrg-epic-link](cli-tools-overview.md#vrg-epic-link) | Link a task under an epic as a native sub-issue |
+| [vrg-epic-parent](dev/epic-parent.md) | Print a task's epic (its chain's head) and the epic's kind |
 | [vrg-epic-move](cli-tools-overview.md#vrg-epic-move) | Move a task under a different epic |
 | [vrg-epic-rollup](cli-tools-overview.md#vrg-epic-rollup) | Close a finite epic once all its tasks are closed |
 | [vrg-adhoc-epic](cli-tools-overview.md#vrg-adhoc-epic) | Ensure, archive or normalize a repo's ad-hoc epic |

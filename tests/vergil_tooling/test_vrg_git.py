@@ -15,6 +15,7 @@ from vergil_tooling.bin.vrg_git import (
     _check_local_rewrite,
     _check_new_branch_name,
     _checkout_has_pathspec,
+    _is_upstream_gone,
     _noninteractive_rebase_env,
     _org_from_clone_url,
     _parse_branch_create,
@@ -299,6 +300,21 @@ def test_remote_write_forms_are_refused(
         ["--null", "--list"],
         ["--type=bool", "--get", "core.bare"],
         ["--bool", "--get", "core.bare"],
+        # Git 2.46's subcommand forms (#5018).
+        ["get", "user.email"],
+        ["get", "--global", "user.name"],
+        ["get", "--all", "remote.origin.fetch"],
+        ["get", "--regexp", "^remote\\."],
+        ["get", "--all", "--show-names", "--regexp", "^branch\\."],
+        ["get", "--value=^git@", "--fixed-value", "remote.origin.url"],
+        ["get", "--url=https://github.com", "http.extraHeader"],
+        ["get", "--default=main", "init.defaultBranch"],
+        ["get", "--type=bool", "core.bare"],
+        ["get", "--show-origin", "--show-scope", "-z", "user.name"],
+        ["list"],
+        ["list", "--local", "--show-origin"],
+        ["list", "--name-only", "--null"],
+        ["list", "--includes"],
     ],
 )
 def test_config_read_forms_are_allowed(args: list[str]) -> None:
@@ -329,6 +345,29 @@ def test_config_read_forms_are_allowed(args: list[str]) -> None:
         ["--file", "/etc/gitconfig", "--list"],
         ["set", "user.email", "x@example.com"],
         ["unset", "user.email"],
+        # Every writing subcommand, and malformed read subcommands (#5018).
+        ["set", "--global", "user.email", "x@example.com"],
+        ["set", "--append", "remote.origin.fetch", "+refs/*:refs/*"],
+        ["unset", "--all", "remote.origin.fetch"],
+        ["rename-section", "user", "who"],
+        ["remove-section", "user"],
+        ["edit"],
+        ["edit", "--global"],
+        ["get"],
+        ["get", "user.email", "x@example.com"],
+        ["get", "--value", "^git@", "remote.origin.url"],
+        ["get", "--default", "main", "init.defaultBranch"],
+        ["get", "--add", "user.email"],
+        ["get", "--unset", "user.email"],
+        ["get", "--get", "user.email"],
+        ["get", "--file", "/etc/gitconfig", "user.email"],
+        ["get", "--", "user.email"],
+        ["list", "user.email"],
+        ["list", "--list"],
+        ["list", "--all"],
+        ["list", "--file", "/etc/gitconfig"],
+        ["--global", "get", "user.name"],
+        ["--global", "list"],
     ],
 )
 def test_config_write_forms_are_refused(
@@ -406,6 +445,7 @@ def test_help_lists_remote_config_and_tag_read_forms(
     out = capsys.readouterr().out
     assert "remote get-url" in out
     assert "--get-regexp" in out
+    assert "config get <name>" in out
     assert "--points-at" in out
 
 
@@ -554,75 +594,99 @@ def test_is_protected_branch_feature() -> None:
 
 
 # -- helper: _is_upstream_gone ------------------------------------------------
+#
+# These run real git: the guard reads git's own tracking state, so a mocked
+# output would only test the parse, not what git really reports.
 
 
-def test_is_upstream_gone_true() -> None:
-    vv_output = (
-        "  develop                  abc1234 [origin/develop] latest commit\n"
-        "  feature/123-foo          def5678 [origin/feature/123-foo: gone] old commit\n"
-        "* feature/827-force-push   ghi9012 [origin/feature/827-force-push] current\n"
+@pytest.fixture
+def upstream_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A repo on ``develop`` whose ``origin`` remote is a local bare repo."""
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
+    _git(repo, "push", "-q", "-u", "origin", "develop")
+    monkeypatch.chdir(repo)
+    return repo
+
+
+def _pushed_branch(repo: Path, name: str, subject: str = "work") -> None:
+    _git(repo, "checkout", "-q", "-b", name)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", subject)
+    _git(repo, "push", "-q", "-u", "origin", name)
+    _git(repo, "checkout", "-q", "develop")
+
+
+def _delete_on_origin(repo: Path, name: str) -> None:
+    _git(repo, "push", "-q", "origin", "--delete", name)
+
+
+def test_is_upstream_gone_true(upstream_repo: Path) -> None:
+    _pushed_branch(upstream_repo, "feature/123-foo")
+    _delete_on_origin(upstream_repo, "feature/123-foo")
+
+    assert _is_upstream_gone("feature/123-foo") is True
+
+
+def test_is_upstream_gone_active_upstream(upstream_repo: Path) -> None:
+    _pushed_branch(upstream_repo, "feature/123-foo")
+
+    assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_no_upstream(upstream_repo: Path) -> None:
+    _git(upstream_repo, "branch", "feature/123-foo")
+
+    assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_branch_not_found(upstream_repo: Path) -> None:
+    assert _is_upstream_gone("feature/nonexistent") is False
+
+
+def test_is_upstream_gone_fails_closed_and_says_why(capsys: pytest.CaptureFixture[str]) -> None:
+    failed = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="fatal: boom\n")
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", return_value=failed):
+        assert _is_upstream_gone("feature/123-foo") is False
+    assert "could not read the upstream state of feature/123-foo: fatal: boom" in (
+        capsys.readouterr().err
     )
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=vv_output,
-        )
-        from vergil_tooling.bin.vrg_git import _is_upstream_gone
-
-        assert _is_upstream_gone("feature/123-foo") is True
 
 
-def test_is_upstream_gone_active_upstream() -> None:
-    vv_output = "  feature/123-foo abc1234 [origin/feature/123-foo] some commit\n"
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=vv_output,
-        )
-        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+def test_is_upstream_gone_ignores_a_crafted_commit_subject(upstream_repo: Path) -> None:
+    """GHSA-rp4r-x254-p53h: a subject holding ``: gone]`` is not a gone upstream."""
+    _pushed_branch(upstream_repo, "feature/123-foo", subject="fix [origin/x: gone] marker")
 
-        assert _is_upstream_gone("feature/123-foo") is False
+    assert _is_upstream_gone("feature/123-foo") is False
 
 
-def test_is_upstream_gone_no_upstream() -> None:
-    vv_output = "  feature/123-foo abc1234 some commit with no tracking\n"
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=vv_output,
-        )
-        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+def test_is_upstream_gone_matches_the_ref_exactly(upstream_repo: Path) -> None:
+    """A ref pattern also matches below it: a gone ``feature/123/x`` is not ``feature/123``."""
+    _pushed_branch(upstream_repo, "feature/123/x")
+    _delete_on_origin(upstream_repo, "feature/123/x")
 
-        assert _is_upstream_gone("feature/123-foo") is False
+    assert _is_upstream_gone("feature/123") is False
+    assert _is_upstream_gone("feature/123/x") is True
 
 
-def test_is_upstream_gone_skips_empty_lines() -> None:
-    vv_output = "\n  feature/123-foo abc1234 [origin/feature/123-foo: gone] old\n\n"
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=vv_output,
-        )
-        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+def test_is_upstream_gone_sees_a_branch_checked_out_in_a_worktree(
+    upstream_repo: Path, tmp_path: Path
+) -> None:
+    """``git branch -vv`` marks such a branch with ``+``; the ref read does not."""
+    _pushed_branch(upstream_repo, "feature/123-foo")
+    _git(upstream_repo, "worktree", "add", "-q", str(tmp_path / "wt"), "feature/123-foo")
+    _delete_on_origin(upstream_repo, "feature/123-foo")
 
-        assert _is_upstream_gone("feature/123-foo") is True
-
-
-def test_is_upstream_gone_branch_not_found() -> None:
-    vv_output = "  develop abc1234 [origin/develop] latest commit\n"
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=vv_output,
-        )
-        from vergil_tooling.bin.vrg_git import _is_upstream_gone
-
-        assert _is_upstream_gone("feature/nonexistent") is False
+    assert _is_upstream_gone("feature/123-foo") is True
 
 
 # -- helper: _upstream_is_integration_branch ----------------------------------

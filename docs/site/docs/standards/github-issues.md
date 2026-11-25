@@ -330,6 +330,125 @@ registered label from the registry. Nothing checks the labels after that: an epi
 outside the tools, or whose label is removed by hand, stays unlabelled until
 someone fixes it, which changes no behaviour.
 
+### Chained epics
+
+GitHub allows at most 100 sub-issues under one parent. An epic of any kind
+grows past that as a **chain**: its **head** (the epic as created, the ref
+everything names) followed by zero or more **continuations**, in order. Each
+continuation is a native sub-issue of the container before it, in that
+container's last slot, so a container holds at most 99 items and, when it is
+not the last, exactly one continuation.
+
+A continuation is an issue in the head's repo, labelled `epic` and
+`continuation` and none of the head's kind labels, titled
+`<head title> (continuation <k>)` with `k` from 2 (the head is container 1).
+Its body says it holds the head's overflow and is managed by the tooling, and
+carries two lines, each alone on its line:
+
+```text
+Continues: <owner>/<repo>#<head>
+Container: <k>
+```
+
+The `Container:` line and the title's number are for display only: a
+container's position is the native chain's, and nothing checks the number. A
+continuation's kind is always its head's, and it is never a standing,
+proxy or development epic in its own right: no lookup of a canonical epic by
+label or title finds one.
+
+**A continuation's ref means its head.** GitHub's UI shows a continuation as a
+task's parent, so its ref gets copied into commands. Every command that takes
+an epic ref (`vrg-epic-link --epic`, `vrg-epic-audit --epic`,
+`vrg-epic-docs set --epic`, `vrg-epic-create --proxy-for`, `vrg-issue-create
+--epic`, `vrg-epic-move --epic`, `vrg-intake-route`'s targets) resolves it to
+the head and prints a line saying so:
+
+```text
+<continuation> is a continuation of <head>; using <head>
+```
+
+Every kind check then runs against the head.
+
+**The readers answer for the whole chain.** An epic's children are its
+chain's items, in container order, the continuations themselves left out; a
+task's epic is the head of the chain it is linked in, whichever container
+holds it. The rollup closes a development epic only when every item across
+its chain is closed, and then closes the head first, then each
+continuation; a continuation closing rolls nothing up on its own. A closed
+item of a standing epic drains to its archive from any container, judged by
+the head's title and kind.
+
+**Trust.** A continuation is followed only when it carries the label, its body
+passes the trust layer, its `Continues:` line names the head being walked,
+and it is a native sub-issue of the container before it. Anything else is
+**chain drift**: the reader stops with an error naming the container and the
+rule it broke (`label`, `untrusted-body`, `continues-mismatch`,
+`not-native-child` or `two-continuations`), and never guesses past it. A
+continuation closed by hand in an open chain is not drift: its items are
+still read. `vrg-epic-audit` reports every chain's drift in its **Chain
+drift** section, and each closed continuation of an open chain as a note,
+and `vrg-epic-audit --epic` counts an epic's containers in its `containers`
+key.
+
+**Orphaned continuations.** A continuation that is open but not reachable
+from the head its `Continues:` line names (left by a writer that stopped
+partway) is an orphan. A reader resolves an item in one to the head its
+trusted `Continues:` line names and reports the drift, writing nothing.
+Before the rollup judges an epic it adopts each orphan of the head that passes
+the trust rules, linking it into the chain's last slot, and it refuses to
+close the epic while an orphan it cannot adopt exists. The daily sweep adopts
+the orphans of open heads the same way (see
+[The chain heals](#the-chain-heals)). An orphan of a closed head is reported,
+never adopted.
+
+**First fit and rollover.** A link goes into the first open container, in
+chain order, with fewer than 99 items, so a slot a drain or a move frees is
+reused before the chain grows. Only when every container is full does the
+writer roll over: it finds or creates the next continuation, links it into
+the last container's last slot, then links the item. A development or proxy
+epic's rollover prints, and comments on the head:
+
+```text
+epic <head> rolled over into continuation <continuation> at 99 children; consider splitting it
+```
+
+A queue's rollover prints `queue <head> rolled over into continuation
+<continuation>; run epic-review <kind>`, and any other standing epic's a plain
+`epic <head> rolled over into continuation <continuation>`.
+
+**The depth limit.** Each continuation sits one level deeper than the
+container before it, and GitHub nests sub-issues at most eight levels deep.
+A link that would need a container past that limit is refused before
+anything is created or linked:
+
+```text
+epic <head> cannot grow: <n> items in <k> containers, at GitHub's nesting limit of 8; split the epic
+```
+
+**Every writer goes through the chain.** `vrg-epic-link`, `vrg-epic-move`,
+`vrg-issue-create`, `vrg-intake-create`, `vrg-security-record` and the ops
+reports of unattended jobs link and move only by first fit across the chain,
+so an item may land in a continuation. The closing line of the first four
+then names it, as `under epic <head> (in continuation <continuation>)`. `vrg-epic-move` treats a
+task linked anywhere in the target's chain as already there. The commands
+that create an issue and then link it (`vrg-issue-create`,
+`vrg-intake-create`, `vrg-security-record` and the ops reports) check the
+chain's capacity first: a closed epic, the depth limit and a full head while
+rollover is off are refused before anything is created, so no issue is left
+unlinked. If a link still fails after the create, the command names the
+created issue; when the chain refused it, the message says the issue is left
+unlinked and that `vrg-epic-move` would be refused the same way, instead of
+suggesting it.
+
+**Rollover is not enabled yet.** Until every reader of an epic's children,
+the plugin skills included, reads through the chain, no tool creates a
+continuation: a head takes up to GitHub's 100 items, and a link into a full
+head is refused, naming it:
+
+```text
+epic <head> is at GitHub's limit of 100 sub-issues, and rollover into a continuation is not enabled yet
+```
+
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in
@@ -707,13 +826,47 @@ naming a closed epic, or a home whose only intake epic is closed): it is named
 on stderr with that epic and left unlinked, the epic is never reopened, the
 rest of the pass runs, and the run exits 1.
 
-The pass is idempotent and never closes an item. Before each link it checks the
-target queue epic's open children against the cap (95, under GitHub's
-100-sub-issue limit); a full queue epic **stops the pass** with
-exit 1, listing every item it did not link — never a silent skip. A full intake
-queue is a signal to run intake review. The same pass, dispatched once by hand
-through `ops-epic-sweep`'s `workflow_dispatch`, is the one-time migration of an
-org's existing backlog.
+The pass is idempotent and never closes an item. Every link goes into the
+epic's chain by first fit (see [Chained epics](#chained-epics)), so a full
+queue epic never stops the pass. The cap of 95 open items is the signal to run
+intake review: an intake queue that holds 95 open items or more once the pass
+is done is a report line, not a failure:
+
+```text
+intake queue <head> holds <n> open items; run epic-review intake
+```
+
+While rollover is off, a link into a queue epic already at GitHub's 100
+sub-issues is refused like a closed epic's: the item is named on stderr with
+the refusal, the rest of the pass runs, and the run exits 1. The same pass,
+dispatched once by hand through `ops-epic-sweep`'s `workflow_dispatch`, is the
+one-time migration of an org's existing backlog.
+
+#### The chain heals
+
+Before its drains and the orphan pass, `vrg-epic-audit --close` closes each
+rolled-up epic and each finished proxy with its whole chain, head first, then
+heals the chain drift of the home's epics:
+
+- **A full tail with no continuation** (two writers took its last slot): one
+  item moves into a new continuation, which is linked into the freed slot.
+- **Two continuations under one container**: the lower-numbered is kept, the
+  other's items move into it, and the other is unlinked and closed as not
+  planned.
+- **A closed epic with an open continuation** (a close stopped partway, or a
+  close by hand): the open continuations are closed. Closing is not a reopen.
+- **An orphaned continuation of an open epic**: it is adopted into the
+  chain's last slot, then the rollup runs again for the epic, since an item
+  that closed inside the orphan fired no rollup the epic could see.
+
+Each heal is listed under **Chains healed**. An orphan of a closed epic is
+never adopted, and a broken chain rule is never guessed past: each is listed
+under **Needs a human**, named on stderr, and the run exits 1 once every pass
+has run. So is a heal that fails, and, while rollover is off, a duplicate or
+an orphan, which only a rollover can mend. A closed continuation in an open
+chain is listed under **Chain notes**. Each open development or proxy epic with
+a continuation is listed under **Chained epics**, every run, as a prompt to
+consider splitting it; it is not a failure.
 
 #### The security-records pass
 
@@ -725,6 +878,8 @@ ops App needs no Repository security advisories access (see
 draft advisories in the org's `.github`, under an identity that holds
 Repository security advisories: Read and write (see
 [Security Records](../guides/security-records.md#managing-a-record-through-its-issue)).
+`vrg-finalize-pr` also syncs, by the same rules, the advisories of the
+`security` issues a merged PR closes.
 
 - **State sync.** Each paired advisory follows its `security` issues: closed
   once every issue it tracks is closed as completed and none is a queue item,
@@ -1090,6 +1245,7 @@ up to date (see
 | `operations` | Marks the standing operations epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `ops-report` | Ops issue filed for an unattended job, under the operations epic; never auto-closes |
 | `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
+| `continuation` | Marks a [continuation](#chained-epics) (with `epic`): an overflow container of an epic past GitHub's 100-sub-issue limit, managed by the tooling; its kind is its head's |
 | `epic-development` | Development epic: planned with epic-create, closes when its tasks close (a display-only [category label](#epic-categories)) |
 | `epic-management` | Management epic: the intake, planning, deferred, hoshin or operations epic; never auto-closes (a display-only [category label](#epic-categories)) |
 | `in-progress` | Planning item whose `epic-create` session is underway |

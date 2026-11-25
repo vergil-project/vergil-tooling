@@ -448,6 +448,29 @@ def test_run_check_false_returns_code() -> None:
     assert rc == 2
 
 
+def test_run_writes_every_output_line_to_the_transcript() -> None:
+    progress._session = None
+    transcript = io.StringIO()
+    code = "import sys; print('out1'); print('err1', file=sys.stderr); sys.exit(1)"
+    rc = progress.run((sys.executable, "-c", code), check=False, transcript=transcript)
+    assert rc == 1
+    assert sorted(transcript.getvalue().splitlines()) == ["err1", "out1"]
+
+
+def test_run_raises_a_transcript_write_error_once_the_command_exits() -> None:
+    progress._session = None
+
+    class _Full(io.StringIO):
+        def write(self, s: str) -> int:
+            msg = "disk full"
+            raise OSError(msg)
+
+    with pytest.raises(OSError, match="disk full"):
+        progress.run(
+            (sys.executable, "-c", "print('a'); print('b')"), check=False, transcript=_Full()
+        )
+
+
 def test_run_stdin_devnull_gives_child_eof() -> None:
     """Issue #1470: ``stdin=subprocess.DEVNULL`` reaches the child, which
     sees immediate EOF instead of inheriting (and potentially blocking on)

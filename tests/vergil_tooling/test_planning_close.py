@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import planning_close, queue_view, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.lib import epic_chain, planning_close, queue_view, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.planning_close import PlanningClose
 from vergil_tooling.lib.queue_view import AdvisoryHold
@@ -493,3 +494,44 @@ def test_describe_a_close() -> None:
         "acme/.github#20 is the documentation task of planning issue acme/.github#7; "
         "the PR also closes it on merge."
     )
+
+
+# -- a docs task and a planning issue in continuations (epic .github#1609) --------
+
+
+def _fill(graph: FakeSubIssueGraph, head: IssueRef, c2: IssueRef, first: int) -> None:
+    """Link 99 items into *head*, then *c2* into its last slot."""
+    for number in range(first, first + epic_chain.ITEM_CAP):
+        graph.link(head, graph.add_issue(IssueRef("acme", "tool", number), title="an item"))
+    graph.add_continuation(c2, head, head)
+
+
+def test_planning_close_reads_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The docs task sits in its epic's continuation, and the planning issue in
+    # the planning queue's: the epic is the head, whose body names the
+    # planning issue, and the planning issue is still in the planning queue.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(
+        EPIC,
+        title="Epic: big",
+        labels=["epic", "epic-development"],
+        body=f"Planning: {PLANNING.slug}\n\nThe epic.",
+    )
+    graph.add_issue(
+        QUEUE, title="Epic (planning): acme", labels=["epic", "planning", "epic-management"]
+    )
+    _fill(graph, EPIC, IssueRef("acme", ".github", 30), 1000)
+    _fill(graph, QUEUE, IssueRef("acme", ".github", 31), 2000)
+    graph.add_issue(TASK, title="Docs task")
+    graph.link(IssueRef("acme", ".github", 30), TASK)
+    graph.add_issue(PLANNING, title="Plan it")
+    graph.link(IssueRef("acme", ".github", 31), PLANNING)
+    graph.layer.items[(f"{PLANNING.owner}/{PLANNING.repo}", PLANNING.number)] = trust_stubs.item(
+        body="", nodes=_numbered([_docs_marker()])
+    )
+    monkeypatch.setattr(
+        planning_close.queue_view, "read_advisory_hold", lambda *_args: AdvisoryHold()
+    )
+    graph.clear_log()
+    assert planning_close.find(TASK) == PlanningClose(TASK, PLANNING, None)
+    assert graph.events == []
