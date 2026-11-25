@@ -232,10 +232,21 @@ def proxy_comment(proxy: IssueRef) -> str:
     )
 
 
-def _require_open_development_epic(primary: IssueRef) -> str:
-    """Refuse unless *primary* is an open development epic; return its title."""
+def _require_open_development_epic(primary: IssueRef) -> tuple[IssueRef, str]:
+    """Refuse unless *primary* is an open development epic; return it and its title.
+
+    A continuation's ref means its chain's head (epic
+    vergil-project/.github#1609, spec §4.1): it is mapped to the head, with a
+    line on stderr saying so (:func:`epics.epic_head`), and the kind checks run
+    against the head, which is returned.
+    """
     view = _view(primary, "labels,state,title")
     labels = _label_names(view)
+    head = epics.epic_head(primary, labels=labels)
+    if head != primary:
+        primary = head
+        view = _view(primary, "labels,state,title")
+        labels = _label_names(view)
     title = str(view.get("title") or "")
     problem = None
     if "epic" not in labels:
@@ -252,7 +263,7 @@ def _require_open_development_epic(primary: IssueRef) -> str:
         raise ProxyRefusedError(
             f"{primary.slug} is {problem}; a proxy stands in only for an open development epic"
         )
-    return title
+    return primary, title
 
 
 def _proxy_rows(home: str) -> list[dict[str, Any]]:
@@ -353,7 +364,8 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
             f" file the task under {primary.slug} itself"
         )
     with github.target_org(primary.owner):
-        title = _require_open_development_epic(primary)
+        # A continuation's ref is mapped to its head, which the proxy names.
+        primary, title = _require_open_development_epic(primary)
         listed = proxies_of(primary)
     home = f"{owner}/{PROXY_HOME_REPO}"
     with github.target_org(owner):

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.lib import epics, github, intake_route, security_records, trust
 from vergil_tooling.lib.epic_size import Sizing
 from vergil_tooling.lib.epics import IssueRef
@@ -280,13 +281,6 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.queue_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.operations_home", side_effect=lambda repo: ("org/.github", "org")),
         patch(f"{_MOD}.epics.find_standing_epic", side_effect=state.find_standing_epic),
-        patch(
-            f"{_MOD}.epics.qualify_epic_ref",
-            side_effect=lambda ref, repo: epics.parse_issue_ref(
-                ref.replace("#", "org/.github#") if ref.startswith("#") else ref,
-                default_repo=repo,
-            ),
-        ),
         patch("vergil_tooling.lib.github.graphql", state.graphql),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
         patch(f"{_MOD}.load_trusted_authors", return_value=trust_stubs.AUTHORS),
@@ -2751,9 +2745,13 @@ def test_route_one_off_rerun_clears_a_stale_listing_under_a_finite_epic(env: Env
     env.parent = finite
     env.native_parent[MOVED] = finite
     env.stale_listing[PLANNING] = {MOVED}
+    env.resolve_epic_ref.return_value = finite
     result = route(MOVED, OneOff(repo="org/tool", epic="#50"), today=TODAY)
     assert result == RouteResult(final=MOVED, moved_by="none")
     env.remove_child.assert_called_once_with(PLANNING, MOVED)
+    # The re-run's target goes through the shared resolution with no sentinel,
+    # so a continuation's ref would mean its head and nothing is created.
+    env.resolve_epic_ref.assert_called_once_with("#50", repo="org/tool", sentinels=False)
 
 
 def test_route_one_off_rerun_with_no_stale_listing_is_still_refused(env: Env) -> None:
@@ -3549,3 +3547,20 @@ def test_one_off_outsider_sizing_comment_posts_no_cleared_marker(
         assert "SPAM-MARKER-TEXT" not in text
         assert "example.invalid" not in text
         assert "Sized " not in text
+
+
+def test_one_off_target_continuation_uses_head(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A one-off's --epic naming a continuation (copied from GitHub's UI) targets
+    # its chain's head, so a re-run compares the item's parent with the head.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(IssueRef("org", ".github", 40), title="Epic: big", labels=["epic"])
+    continuation = graph.add_continuation(IssueRef("org", ".github", 41), head, head)
+    graph.clear_log()
+    target = intake_route._one_off_target(MOVED, OneOff(repo="org/tool", epic=continuation.slug))
+    assert target == head
+    assert "org/.github#41 is a continuation of org/.github#40; using org/.github#40" in (
+        capsys.readouterr().err
+    )
+    assert graph.events == []

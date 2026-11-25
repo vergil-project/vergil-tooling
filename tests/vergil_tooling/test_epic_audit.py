@@ -2055,6 +2055,7 @@ def test_task_drift_skips_ops_issue() -> None:
     with (
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json),
         patch("vergil_tooling.lib.epics.parent_of", return_value=ops_epic) as parent,
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
     ):
         assert _drift(prs, "org") == []
     parent.assert_called_once_with(epics.IssueRef("org", "repo", 8))

@@ -10,6 +10,8 @@ and to backfill reflink-only children.
 Refs are ``owner/repo#N`` or bare ``#N``. A bare task ref resolves to the
 current repo. A bare epic ref resolves to the **task's** epic home, never the
 cwd repo: ``<org>/.github`` (#3411). A fully qualified epic ref is taken as written.
+The epic must carry the ``epic`` label, and a continuation's ref resolves to its
+chain's head, with a line on stderr saying so.
 """
 
 from __future__ import annotations
@@ -50,7 +52,14 @@ def _link(epic_ref: str, task: epics.IssueRef, task_repo: str) -> int:
     Runs under the task owner's App token, so the epic-home probe never uses a
     cwd-scoped token.
     """
-    epic = epics.qualify_epic_ref(epic_ref, repo=task_repo)
+    # The shared ref resolution: it refuses an issue that is not an epic, and a
+    # continuation's ref (copied from GitHub's UI) means its chain's head. No
+    # sentinel: this command links only into an epic it is given.
+    try:
+        epic = epics.resolve_epic_ref(epic_ref, repo=task_repo, sentinels=False)
+    except ValueError as exc:
+        print(f"vrg-epic-link: {exc}", file=sys.stderr)
+        return 1
     # Task guard (#2842): --task must be a task, never an epic or a standing
     # epic's archive — linking one would nest an umbrella under an epic as
     # though it were work. A failed label read propagates (fail closed).

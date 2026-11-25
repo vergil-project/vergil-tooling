@@ -1141,7 +1141,9 @@ the current list's order, `removed` in the block's.
 Link a task under an epic as a native GitHub sub-issue. A closed epic is
 refused by name and never reopened. Used when creating a task under an epic
 and to backfill reflink-only children. A bare `#N` epic ref resolves to the
-task's epic home.
+task's epic home. An `--epic` without the `epic` label is refused, and a
+[continuation](../standards/github-issues.md#chained-epics)'s ref resolves to
+its chain's head, with a line saying so.
 
 | Attribute | Value |
 |---|---|

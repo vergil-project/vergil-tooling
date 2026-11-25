@@ -1136,7 +1136,9 @@ def _one_off_target(item: IssueRef, action: OneOff) -> IssueRef | None:
         return epics.find_standing_epic(epics.ADHOC, epics.resolve_epic_home(owner, bare), bare)
     if action.epic == epics.OPERATIONS.sentinel:
         return epics.find_standing_epic(epics.OPERATIONS, *epics.operations_home(dest))
-    target = epics.qualify_epic_ref(action.epic, repo=dest)
+    # No sentinel reaches here but ad-hoc and operations, so none is created; a
+    # continuation's ref resolves to its chain's head, as the route itself does.
+    target = epics.resolve_epic_ref(action.epic, repo=dest, sentinels=False)
     return target if target.owner == item.owner else None
 
 
