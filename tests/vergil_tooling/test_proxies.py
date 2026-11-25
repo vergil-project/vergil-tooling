@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
-from vergil_tooling.lib import proxies, trust
+from vergil_tooling.lib import epics, proxies, trust
 from vergil_tooling.lib.epics import EpicListTruncatedError, IssueRef
 from vergil_tooling.lib.proxies import ProxyLinkError
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
@@ -512,9 +512,7 @@ def test_proxy_for_creates_and_comments() -> None:
     fake = FakeGitHub()
     result = fake.create()
     created = IssueRef("logical-minds-foundry", ".github", 400)
-    assert result == proxies.ProxyResult(
-        created, created=True, reopened=False, retitled=False, commented=True
-    )
+    assert result == proxies.ProxyResult(created, created=True, retitled=False, commented=True)
     (_, create_org, kwargs), (_, comment_org, comment) = fake.writes()[1:]
     assert create_org == "logical-minds-foundry"
     assert kwargs["repo"] == HOME
@@ -533,7 +531,6 @@ def test_proxy_for_created_link_reads_back_through_proxies_of() -> None:
     assert fake.create() == proxies.ProxyResult(
         IssueRef("logical-minds-foundry", ".github", 400),
         created=False,
-        reopened=False,
         retitled=False,
         commented=False,
     )
@@ -610,33 +607,47 @@ def test_proxy_for_existing_open_proxy_reused() -> None:
     result = fake.create()
     assert result.proxy == PROXY
     assert not result.created
-    assert not result.reopened
 
 
-def test_proxy_for_closed_proxy_reopened() -> None:
+def test_create_proxy_refuses_closed_proxy() -> None:
+    # Closed is closed (.github#1609): a closed proxy naming the primary is
+    # refused by name before any write, and never reopened.
     fake = FakeGitHub(comments=[_recorded()], proxies_in_home={320: _home_proxy("CLOSED")})
-    result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, reopened=True, retitled=False, commented=False
+    with pytest.raises(epics.ClosedEpicError) as excinfo:
+        fake.create()
+    assert excinfo.value.epic == PROXY
+    assert str(excinfo.value) == (
+        "epic logical-minds-foundry/.github#320 is closed; closed epics are not reopened "
+        "by the tooling; a person may reopen it by hand, and a re-run then reuses it"
     )
-    assert [(kind, org) for kind, org, _ in fake.writes()] == [("reopen", "logical-minds-foundry")]
-    assert fake.home[320]["state"] == "OPEN"
+    assert fake.writes() == []
+    assert fake.home[320]["state"] == "CLOSED"
 
 
-def test_proxy_for_closed_proxy_reopened_lowest_when_several() -> None:
+def test_create_proxy_refuses_naming_lowest_closed_when_several() -> None:
     fake = FakeGitHub(
         proxies_in_home={322: _home_proxy("CLOSED"), 320: _home_proxy("CLOSED")},
         comments=[_recorded(), _recorded(IssueRef("logical-minds-foundry", ".github", 322))],
     )
-    assert fake.create().proxy == PROXY
+    with pytest.raises(epics.ClosedEpicError) as excinfo:
+        fake.create()
+    assert excinfo.value.epic == PROXY
+    assert fake.writes() == []
+
+
+def test_create_proxy_reuses_open_beside_closed() -> None:
+    fake = FakeGitHub(
+        proxies_in_home={320: _home_proxy("CLOSED"), 322: _home_proxy()},
+        comments=[_recorded(), _recorded(IssueRef("logical-minds-foundry", ".github", 322))],
+    )
+    assert fake.create().proxy == IssueRef("logical-minds-foundry", ".github", 322)
+    assert fake.writes() == []
 
 
 def test_proxy_for_rerun_posts_missing_comment() -> None:
     fake = FakeGitHub(proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, reopened=False, retitled=False, commented=True
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=False, commented=True)
     ((kind, org, body),) = fake.writes()
     assert (kind, org) == ("comment", "vergil-project")
     assert "Proxy: logical-minds-foundry/.github#320" in body.splitlines()
@@ -645,9 +656,7 @@ def test_proxy_for_rerun_posts_missing_comment() -> None:
 def test_proxy_for_rerun_is_noop() -> None:
     fake = FakeGitHub(comments=[_recorded()], proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, reopened=False, retitled=False, commented=False
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=False, commented=False)
     assert fake.writes() == []
 
 
@@ -657,9 +666,7 @@ def test_proxy_for_stale_title_retitled() -> None:
         proxies_in_home={320: _home_proxy(title="Epic (proxy): keep ad-hoc queues standalone")},
     )
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, reopened=False, retitled=True, commented=False
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=True, commented=False)
     ((kind, org, args),) = fake.writes()
     assert (kind, org) == ("retitle", "logical-minds-foundry")
     assert args == ("issue", "edit", "320", "--repo", HOME, "--title", DERIVED_TITLE)
@@ -667,18 +674,6 @@ def test_proxy_for_stale_title_retitled() -> None:
     # A second run finds the title current and writes nothing.
     assert not fake.create().retitled
     assert len(fake.writes()) == 1
-
-
-def test_proxy_for_closed_stale_proxy_reopened_then_retitled() -> None:
-    fake = FakeGitHub(
-        comments=[_recorded()], proxies_in_home={320: _home_proxy("CLOSED", title="old")}
-    )
-    result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, reopened=True, retitled=True, commented=False
-    )
-    assert [kind for kind, _, _ in fake.writes()] == ["reopen", "retitle"]
-    assert fake.home[320] == {**_home_proxy(), "state": "OPEN"}
 
 
 def test_proxy_for_unlisted_stale_proxy_retitled() -> None:
@@ -759,7 +754,7 @@ def test_proxy_for_unlisted_proxy_found_through_comment() -> None:
         comments=[_recorded()], proxies_in_home={320: _home_proxy()}, unlisted=frozenset({320})
     )
     assert fake.create() == proxies.ProxyResult(
-        PROXY, created=False, reopened=False, retitled=False, commented=False
+        PROXY, created=False, retitled=False, commented=False
     )
 
 

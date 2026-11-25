@@ -453,7 +453,6 @@ def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -
         patch(f"{_MOD}.epic_audit.task_drift", return_value=["T"]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=["E"]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
@@ -473,7 +472,6 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
         patch(f"{_MOD}.epic_audit.task_drift", return_value=["T"]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=["E"]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
@@ -493,7 +491,6 @@ def test_close_sweep_also_drains_adhoc(monkeypatch: pytest.MonkeyPatch) -> None:
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]) as mock_drain,
     ):
@@ -526,7 +523,6 @@ def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> 
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
         patch(f"{_MOD}.epics.drain_adhoc_org", side_effect=_drain),
     ):
@@ -548,7 +544,6 @@ def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[plan]),
     ):
@@ -579,11 +574,12 @@ def test_report_path_previews_adhoc_drain(capsys: pytest.CaptureFixture[str]) ->
     assert "Ad-hoc drain (preview): 2 child(ren) would be archived." in capsys.readouterr().out
 
 
-def test_close_reopens_closed_epic_with_open_child(capsys: pytest.CaptureFixture[str]) -> None:
-    # The --close path remediates the closed-epic-with-open-child invariant by
-    # reopening each violating epic (issue #2259, Fix C).
-    violations = [("EPIC_VIOLATION",)]
-    reopen = MagicMock(return_value=["vergil-project/.github#19"])
+def test_audit_reports_closed_epic_open_child_without_reopen(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Closed is closed (.github#1609): --close prints the violation for the
+    # human and never reopens the epic.
+    violations = [(IssueRef("vergil-project", ".github", 19), (IssueRef("org", "lab", 462),))]
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
@@ -591,15 +587,16 @@ def test_close_reopens_closed_epic_with_open_child(capsys: pytest.CaptureFixture
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=violations),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", reopen),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         rc = main(["--close"])
     assert rc == 0
-    reopen.assert_called_once_with(violations)
     out = capsys.readouterr().out
-    assert "Reopened" in out
-    assert "vergil-project/.github#19" in out
+    assert "Closed epics with open children" in out
+    assert "- vergil-project/.github#19 — open children: org/lab#462" in out
+    assert "Reopened" not in out
+    assert not [c for c in mock_run.call_args_list if c.args[:2] == ("issue", "reopen")]
 
 
 # -- intake/planning queue drain (epic vergil-project/.github#176, Task 2) -----
@@ -632,7 +629,6 @@ def test_epic_audit_close_runs_standing_drain(
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
-        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
@@ -703,7 +699,6 @@ def _close_patches(**extra: MagicMock) -> list[Any]:
         "epic_drift": MagicMock(return_value=[]),
         "closed_epic_open_child": MagicMock(return_value=[]),
         "close_drift": MagicMock(return_value=[]),
-        "reopen_epics_with_open_children": MagicMock(return_value=[]),
         **_derivations(),
         **extra,
     }
@@ -757,13 +752,13 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     scope.return_value.__enter__ = lambda *_: order.append("enter")
     scope.return_value.__exit__ = lambda *_: order.append("exit") or False
 
-    def _writer(name: str, result: int) -> MagicMock:
+    def _writer(name: str, result: object) -> MagicMock:
         return MagicMock(side_effect=lambda *_a, **_k: order.append(name) or result)
 
     writers = {
-        "nativize_parents": _writer("nativize", 1),
+        "nativize_parents": _writer("nativize", epic_audit.LinkPass(linked=1)),
         "strip_retired_labels": _writer("strip", 2),
-        "attach_orphans": _writer("attach", 3),
+        "attach_orphans": _writer("attach", epic_audit.LinkPass(linked=3)),
     }
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
@@ -804,7 +799,7 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
         _patched(
             _close_patches(
-                nativize_parents=MagicMock(return_value=0),
+                nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
                 strip_retired_labels=MagicMock(return_value=0),
                 attach_orphans=MagicMock(side_effect=full),
             )
@@ -818,6 +813,41 @@ def test_vrg_epic_audit_close_reports_full_queue_and_exits_1(
         "org/tool#5, org/tool#6, org/tool#7. Run epic-review intake." in captured.err
     )
     assert "Orphans attached" not in captured.out
+
+
+def test_close_orphan_pass_reports_closed_epics_and_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An item a link pass refuses because its epic is closed is named on
+    # stderr; every pass still runs, and the run exits 1 at the end.
+    nativize = MagicMock(
+        return_value=epic_audit.LinkPass(linked=1, refused=("org/tool#5 not linked: closed A",))
+    )
+    attach = MagicMock(
+        return_value=epic_audit.LinkPass(linked=2, refused=("org/tool#8 not linked: closed B",))
+    )
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        _patched(
+            _close_patches(
+                nativize_parents=nativize,
+                strip_retired_labels=MagicMock(return_value=0),
+                attach_orphans=attach,
+            )
+        ),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    attach.assert_called_once()
+    captured = capsys.readouterr()
+    assert captured.err.splitlines() == [
+        "vrg-epic-audit: org/tool#5 not linked: closed A",
+        "vrg-epic-audit: org/tool#8 not linked: closed B",
+    ]
+    assert "Body-only Parent: links nativized: 1." in captured.out
+    assert "Orphans attached to intake: 2." in captured.out
 
 
 # -- security-records pass: preview only; --close runs none (vergil-tooling#4313) --
@@ -865,9 +895,9 @@ def _run_close(
         patch(f"{_SEC}.github.write_json", write),
         _patched(
             _close_patches(
-                nativize_parents=MagicMock(return_value=0),
+                nativize_parents=MagicMock(return_value=epic_audit.LinkPass(linked=0)),
                 strip_retired_labels=MagicMock(return_value=0),
-                attach_orphans=attach or MagicMock(return_value=0),
+                attach_orphans=attach or MagicMock(return_value=epic_audit.LinkPass(linked=0)),
             )
         ),
     ):
@@ -1065,8 +1095,11 @@ def test_report_only_mode_fails_loud_when_the_read_fails(
 
 def _no_op_writers() -> dict[str, MagicMock]:
     """The orphan pass's writers, each a no-op, for a --close run that is not about them."""
-    names = ("nativize_parents", "strip_retired_labels", "attach_orphans")
-    return {name: MagicMock(return_value=0) for name in names}
+    return {
+        "nativize_parents": MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+        "strip_retired_labels": MagicMock(return_value=0),
+        "attach_orphans": MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+    }
 
 
 # --- proxies (epic .github#1417) --------------------------------------------------
@@ -1299,7 +1332,6 @@ def test_proxy_unreadable_primary_reported_and_run_fails(
 
 def test_proxy_link_error_does_not_stop_other_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
-    reopen = MagicMock(return_value=[])
     close_proxies = MagicMock(return_value=[])
     writers = _no_op_writers()
     with (
@@ -1310,11 +1342,10 @@ def test_proxy_link_error_does_not_stop_other_passes(monkeypatch: pytest.MonkeyP
             f"{_MOD}.epic_audit.proxy_closures", return_value=([], ["proxy org/.github#3 broke"])
         ),
         patch(f"{_MOD}.epic_audit.close_proxies", close_proxies),
-        _patched(_close_patches(reopen_epics_with_open_children=reopen, **writers)),
+        _patched(_close_patches(**writers)),
     ):
         rc = main(["--close"])
     assert rc == 1
-    reopen.assert_called_once()
     drain.assert_called_once()
     close_proxies.assert_called_once_with([])
     for writer in writers.values():

@@ -9,8 +9,9 @@ mutates interpreter-global state.
 
 It does the same for the trust layer's failures (an untrusted-content stop,
 a trust read failure, a missing trusted-authors configuration), whose
-messages are metadata only, and for a gh the tools cannot use (missing,
-unreadable, or older than the minimum, #5046).
+messages are metadata only, for a gh the tools cannot use (missing,
+unreadable, or older than the minimum, #5046), and for every refusal to
+write to an epic (``epics.EpicRefusalError``, a closed epic for one).
 
 A command that already catches one of these errors inside ``main`` (to add
 command-specific context) keeps its own message and exit code; the decorator
@@ -77,9 +78,13 @@ def _auth_error_message(prog: str, exc: Exception) -> str | None:
     # (#3603), so it gets the same clean exit. So does a standing epic created
     # but not confirmed listed: its message names the new epic to check before
     # retrying, and every command that can create one lets it reach here (#3820).
+    # So does every refusal to write to an epic (a closed epic, say): each is an
+    # EpicRefusalError with a complete message (epic vergil-project/.github#1609).
     from vergil_tooling.lib import epics
 
-    if isinstance(exc, (epics.EpicHomeError, epics.StandingEpicNotVisibleError)):
+    if isinstance(
+        exc, (epics.EpicHomeError, epics.StandingEpicNotVisibleError, epics.EpicRefusalError)
+    ):
         return f"{prog}: {exc}"
     # A gh that is missing, unreadable or older than the minimum is refused
     # before any gh call (github.require_gh, #5046); its message names the

@@ -299,9 +299,6 @@ def _close(  # noqa: PLR0913 - the passes' shared reads, made once by _audit
     closed = epic_audit.close_drift(tasks, epics_drift, org=org)
     proxy_drift = epic_audit.close_proxies(proxy_plan)
     proxies_closed = [c.proxy.slug for c in proxy_plan if not c.open_tasks]
-    # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
-    # each epic that was wrongly closed while a child was still open.
-    reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
     # Backstop ad-hoc drain (epic #238): drain closed children of every live
     # ad-hoc epic into per-quarter archives and close past archives, under the
     # org's token that main() scopes the whole audit to (spec §7), matching
@@ -326,7 +323,8 @@ def _close(  # noqa: PLR0913 - the passes' shared reads, made once by _audit
             closed,
             org=org,
             window_days=args.window_days,
-            reopened=reopened,
+            # Closed is closed (.github#1609): reported for a human, never reopened.
+            closed_epic_open_children=closed_epic_open_children,
             misplaced=epic_audit.misplaced_archives(org, issues=issues),
             proxies_closed=proxies_closed,
             proxy_drift=proxy_drift,
@@ -355,12 +353,16 @@ def _apply_orphan_pass(
     Order: nativize body-only ``Parent:`` links -> strip retired kind labels ->
     attach orphans to intake. Every write runs under the org's token that
     main() scopes the whole audit to. A full queue epic stops the pass with the
-    unlinked items on stderr and exit 1 — never a silent skip. An issue the
+    unlinked items on stderr and exit 1 — never a silent skip. An item whose
+    epic is closed is not linked and the epic is not reopened: it is named on
+    stderr with the closed epic, the pass goes on, and it exits 1 at the end
+    (closed is closed, epic vergil-project/.github#1609). An issue the
     trust layer cannot read is a stop on that issue alone, added to *stops*.
     """
     parents = epic_audit.body_only_parents(org, stops=stops, authors=authors, issues=issues)
     nativized = epic_audit.nativize_parents(list(parents.pairs))
-    print(f"Body-only Parent: links nativized: {nativized}.")
+    _print_refused(nativized)
+    print(f"Body-only Parent: links nativized: {nativized.linked}.")
     stripped = epic_audit.strip_retired_labels(epic_audit.retired_label_drift(org, issues=issues))
     print(f"Retired kind labels stripped: {stripped} issue(s).")
     orphans = epic_audit.orphan_drift(org, parents=parents, issues=issues)
@@ -369,8 +371,15 @@ def _apply_orphan_pass(
     except epic_audit.StandingEpicFull as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
         return 1
-    print(f"Orphans attached to intake: {attached}.")
-    return 0
+    _print_refused(attached)
+    print(f"Orphans attached to intake: {attached.linked}.")
+    return 1 if nativized.refused or attached.refused else 0
+
+
+def _print_refused(result: epic_audit.LinkPass) -> None:
+    """Name on stderr each item a link pass left unlinked because its epic is closed."""
+    for line in result.refused:
+        print(f"vrg-epic-audit: {line}", file=sys.stderr)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -425,15 +434,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--close",
         action="store_true",
         help=(
-            "Close the drifted task issues and rolled-up epics, and reopen any "
-            "epic wrongly closed while a child was still open (with an "
-            "explanatory comment on each), instead of only reporting them. Close "
+            "Close the drifted task issues and rolled-up epics instead of only "
+            "reporting them; an epic closed while a child is still open is "
+            "reported for a human and never reopened. Close "
             "each proxy epic whose primary has closed and which has no open task "
             "(one with an open task is reported and left open). Then "
             "run the org-wide orphan pass: link body-only Parent: lines natively, "
             "remove the retired triage/idea/research labels, and attach every "
             "orphan to its intake epic (exit 1, listing what was not attached, if an intake "
-            "epic is full). --close makes no security-advisory call: it does "
+            "epic is full, or naming each item whose epic is closed, after the rest "
+            "of the pass). --close makes no security-advisory call: it does "
             "not sync advisory states or check advisory/issue pairs; run "
             "'vrg-security-record sync' for that. A "
             "human action (or the scheduled reconciliation sweep) — refused in "

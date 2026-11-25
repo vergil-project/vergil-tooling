@@ -2,9 +2,10 @@
 
 The rollup (``vrg-finalize-pr``) decides whether to close an epic by querying its
 native sub-issues; a ``Parent:`` reflink alone is only a flaky ``gh search``
-fallback. This CLI creates the reliable native link via ``epics.add_child``
-(which reopens a closed epic first, per the reopen-on-late-child rule). Use it
-when creating a task under an epic, and to backfill reflink-only children.
+fallback. This CLI creates the reliable native link via ``epics.add_child``,
+which refuses a closed epic by name and never reopens it (closed is closed,
+epic vergil-project/.github#1609). Use it when creating a task under an epic,
+and to backfill reflink-only children.
 
 Refs are ``owner/repo#N`` or bare ``#N``. A bare task ref resolves to the
 current repo. A bare epic ref resolves to the **task's** epic home, never the

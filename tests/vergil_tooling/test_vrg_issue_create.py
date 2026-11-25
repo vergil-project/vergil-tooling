@@ -36,6 +36,13 @@ def queue_kind() -> Iterator[MagicMock]:
 
 
 @pytest.fixture(autouse=True)
+def epic_open() -> Iterator[MagicMock]:
+    """The resolved epic is open unless a test says otherwise (.github#1609)."""
+    with patch(f"{_MOD}.epics.require_open_epic") as mock_open:
+        yield mock_open
+
+
+@pytest.fixture(autouse=True)
 def dep_kind() -> Iterator[MagicMock]:
     """Every --blocked-by dependency is a plain task unless a test says otherwise."""
     with patch(f"{_MOD}.epics.non_task_kind", return_value=None) as mock_kind:
@@ -183,6 +190,29 @@ def test_parse_args_requires_epic() -> None:
 def test_parse_args_requires_title() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--epic", "adhoc"])  # missing --title
+
+
+def test_issue_create_closed_epic_refused_before_create(
+    epic_open: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Closed is closed (.github#1609): refused before the issue is created, so
+    # the refused link never orphans a new issue.
+    epic_open.side_effect = epics.ClosedEpicError(EPIC)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "#710", "--title", "T"])
+    assert rc == 1
+    epic_open.assert_called_once_with(EPIC)
+    mock_create.assert_not_called()
+    mock_add.assert_not_called()
+    assert capsys.readouterr().err == (
+        "vrg-issue-create: epic org/repo#710 is closed; closed epics are not reopened "
+        "by the tooling\n"
+    )
 
 
 def test_main_creates_issue_and_links_under_epic() -> None:

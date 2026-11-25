@@ -93,6 +93,24 @@ class TestCliMain:
     @pytest.mark.parametrize(
         "exc",
         [
+            epics.EpicRefusalError("a refusal from a later chain-layer subclass"),
+            epics.ClosedEpicError(epics.IssueRef("org", ".github", 40)),
+            epics.ClosedStandingEpicError(epics.IssueRef("org", ".github", 5)),
+        ],
+        ids=["base", "closed", "closed-standing"],
+    )
+    def test_cli_main_maps_epic_refusal_to_one_line(
+        self, exc: Exception, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Every EpicRefusalError subclass (.github#1609) exits 1 with exactly one
+        # stderr line, `<prog>: <message>`, and no traceback.
+        err = _exit_message(exc, capsys)
+        assert err.splitlines() == [f"{_PROG}: {exc}"]
+        assert err == f"{_PROG}: {exc}\n"
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
             epics.StandingEpicNotVisibleError(
                 "created intake epic org/.github#10 ('Epic (intake): org') but checking "
                 "that it is listed in org/.github failed: HTTP 502"

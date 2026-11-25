@@ -257,6 +257,10 @@ repos. The link runs both ways, each side on a line alone on its line:
   nothing. A proxy is never removed
   from the list: one created by mistake is closed and stays listed.
 
+`vrg-epic-create --proxy-for` reuses an open proxy. When the primary's only
+proxy is closed it refuses before any write, naming the proxy, and never
+reopens it: a person may reopen it by hand, and a re-run then reuses it.
+
 A missing, duplicated or malformed `Primary:` line, one naming an issue that
 is not an epic, or a malformed trusted `Proxy:` line is an error in every tool
 that reads them, never a skipped item. `vrg-epic-audit --epic` lists a
@@ -647,7 +651,15 @@ org's `.github`.
 - **An epic is never closed while a child is open.** A closed finite epic with an
   open child is a violation (perpetual standing epics are exempt — they never
   roll up; their closed children are drained into per-quarter archives
-  instead, see [Ad-hoc epic archiving](#ad-hoc-epic-archiving)).
+  instead, see [Ad-hoc epic archiving](#ad-hoc-epic-archiving)). It is
+  reported for a human; neither the audit nor the sweep reopens the epic.
+- **Closed is closed.** No tool reopens a closed epic. Linking a task under a
+  closed epic (`vrg-epic-link`, `vrg-issue-create`, `vrg-intake-route` and the
+  orphan pass alike) is refused, naming the epic; `vrg-issue-create` refuses
+  before it creates the issue. A missing standing epic is created on demand,
+  but when the only one with its title is closed the command refuses, naming
+  it, and never reopens or replaces it. A person may reopen a closed epic by
+  hand.
 - **Every issue has an epic parent** (the
   [invariant](#the-invariant-every-issue-belongs-to-an-epic)). The audit lists
   each **orphan** — an open issue in a managed repo (non-archived, with a
@@ -690,7 +702,10 @@ with an org-wide **orphan pass**, in order:
 
 An issue whose body the trust layer cannot read in full is a stop on that
 issue alone: it is neither nativized nor attached, the rest of the pass runs,
-and the run exits 1.
+and the run exits 1. So is an issue whose epic is closed (a `Parent:` line
+naming a closed epic, or a home whose only intake epic is closed): it is named
+on stderr with that epic and left unlinked, the epic is never reopened, the
+rest of the pass runs, and the run exits 1.
 
 The pass is idempotent and never closes an item. Before each link it checks the
 target queue epic's open children against the cap (95, under GitHub's

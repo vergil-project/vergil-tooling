@@ -587,14 +587,56 @@ def parent_of(task: IssueRef) -> IssueRef | None:
     return None
 
 
-def add_child(epic: IssueRef, task: IssueRef) -> None:
-    """Link *task* under *epic*. Reopen the epic first if it is closed.
+class EpicRefusalError(Exception):
+    """The base of every refusal to write to an epic (epic vergil-project/.github#1609).
 
-    Adding a task to an already-closed finite epic must reopen it (the
-    reopen-on-late-child rule); the later finalize rollup closes it again.
+    Carries a complete one-line, user-facing message; :func:`cli.cli_main`
+    prints it as ``<prog>: <message>`` and exits 1, with no traceback.
     """
+
+
+class ClosedEpicError(EpicRefusalError, ValueError):
+    """*epic* is closed, and closed epics are not reopened by the tooling.
+
+    Closed is closed (spec §4.2 of epic vergil-project/.github#1609): a closed
+    target is an error, never a state to repair by reopening. *hint*, when
+    given, is appended to the message (what a person may do about it).
+    """
+
+    def __init__(self, epic: IssueRef, hint: str = "") -> None:
+        message = f"epic {epic.slug} is closed; closed epics are not reopened by the tooling"
+        super().__init__(f"{message}; {hint}" if hint else message)
+        self.epic = epic
+
+
+class ClosedStandingEpicError(ClosedEpicError):
+    """No open standing epic has the canonical title, and a closed one does.
+
+    Raised by :func:`ensure_standing_epic`, which never reopens or replaces a
+    closed standing epic. *epic* is the lowest-numbered closed match; *others*
+    are any further closed epics with the same title.
+    """
+
+    def __init__(self, epic: IssueRef, others: Sequence[IssueRef] = ()) -> None:
+        hint = "a person may reopen it by hand"
+        if others:
+            hint += f" (also closed with that title: {', '.join(r.slug for r in others)})"
+        super().__init__(epic, hint)
+        self.others = tuple(others)
+
+
+def require_open_epic(epic: IssueRef) -> None:
+    """Raise :class:`ClosedEpicError` if *epic* is closed; a failed state read raises."""
     if _issue_state(epic) == "CLOSED":
-        github.run("issue", "reopen", str(epic.number), "--repo", f"{epic.owner}/{epic.repo}")
+        raise ClosedEpicError(epic)
+
+
+def add_child(epic: IssueRef, task: IssueRef) -> None:
+    """Link *task* under *epic*; a closed *epic* raises :class:`ClosedEpicError`.
+
+    Closed is closed: the epic is never reopened, and nothing is linked.
+    """
+    require_open_epic(epic)
     github.graphql(_ADD_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
 
 
@@ -960,8 +1002,15 @@ def _find_epic_by_title(
     *,
     prefer_oldest: bool = False,
     labels: Sequence[str] = ("epic", "ad-hoc"),
+    states: Literal["open", "all"] = "open",
 ) -> IssueRef | None:
     """Return the open issue in *home* carrying *labels* whose title is exactly *title*.
+
+    With *states* ``"all"`` the one listing reads closed issues too: an open
+    match is returned whatever closed ones share its title, and when only
+    closed ones match this raises :class:`ClosedStandingEpicError` naming them
+    (closed is closed). An archive never carries the ``epic`` label, so the
+    closed rows do not crowd the listing's bound.
 
     Shared title search for the standing-epic and archive finders. Scoped to open
     issues in *home* carrying every one of *labels* (default ``epic`` +
@@ -977,30 +1026,9 @@ def _find_epic_by_title(
     then be truncated and neither "absent" nor a single match can be trusted.
     """
     owner, home_repo = home.split("/", 1)
-    raw: Any = github.read_json(
-        "issue",
-        "list",
-        "--repo",
-        home,
-        *[arg for label in labels for arg in ("--label", label)],
-        "--state",
-        "open",
-        "--limit",
-        str(EPIC_TITLE_LIST_LIMIT),
-        "--json",
-        "number,title",
-    )
-    if isinstance(raw, list) and len(raw) >= EPIC_TITLE_LIST_LIMIT:
-        raise EpicListTruncatedError(
-            f"{home} has {EPIC_TITLE_LIST_LIMIT}+ open issues labelled "
-            f"{' + '.join(labels)}; refusing to look up {title!r} on a possibly "
-            "truncated list — pass an explicit --epic"
-        )
-    rows = (
-        [r for r in raw if isinstance(r, dict) and r.get("title") == title]
-        if isinstance(raw, list)
-        else []
-    )
+    rows = _titled_rows(home, title, labels, states)
+    closed = sorted(int(r["number"]) for r in rows if r["state"] == "CLOSED")
+    rows = [r for r in rows if r["state"] == "OPEN"]
     if len(rows) > 1:
         if prefer_oldest:
             oldest = min(int(r["number"]) for r in rows)
@@ -1016,7 +1044,56 @@ def _find_epic_by_title(
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
+    if closed:
+        refs = [IssueRef(owner=owner, repo=home_repo, number=number) for number in closed]
+        raise ClosedStandingEpicError(refs[0], refs[1:])
     return None
+
+
+def _titled_rows(
+    home: str, title: str, labels: Sequence[str], states: Literal["open", "all"]
+) -> list[dict[str, Any]]:
+    """The *states* issues in *home* carrying every one of *labels*, titled exactly *title*.
+
+    Each row carries its ``state`` (``"OPEN"`` or ``"CLOSED"``): an ``"open"``
+    listing's rows are open by the query; an ``"all"`` listing asks GitHub for
+    each row's state, and a row without a readable one raises
+    :class:`ValueError` rather than be guessed. Lists up to
+    :data:`EPIC_TITLE_LIST_LIMIT` rows and raises
+    :class:`EpicListTruncatedError` when it gets that many.
+    """
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        *[arg for label in labels for arg in ("--label", label)],
+        "--state",
+        states,
+        "--limit",
+        str(EPIC_TITLE_LIST_LIMIT),
+        "--json",
+        "number,title,state",
+    )
+    if isinstance(raw, list) and len(raw) >= EPIC_TITLE_LIST_LIMIT:
+        kind = "open issues" if states == "open" else "issues, open and closed,"
+        raise EpicListTruncatedError(
+            f"{home} has {EPIC_TITLE_LIST_LIMIT}+ {kind} labelled "
+            f"{' + '.join(labels)}; refusing to look up {title!r} on a possibly "
+            "truncated list — pass an explicit --epic"
+        )
+    if not isinstance(raw, list):
+        return []
+    rows = [r for r in raw if isinstance(r, dict) and r.get("title") == title]
+    if states == "open":
+        return [{**r, "state": "OPEN"} for r in rows]
+    for row in rows:
+        if row.get("state") not in ("OPEN", "CLOSED"):
+            raise ValueError(
+                f"listing {home} for {title!r} gave #{row.get('number')} no readable state "
+                f"({row.get('state')!r})"
+            )
+    return rows
 
 
 def ensure_adhoc_epic(target_repo: str) -> IssueRef:
@@ -1148,9 +1225,12 @@ def ensure_standing_epic(
     """Return the *kind* standing epic ``<title_prefix><name>`` in *home*, creating it if absent.
 
     Idempotent: an open issue in *home* carrying ``kind.labels`` with exactly
-    that title is reused; none means ensure the labels exist and create it,
-    adding its derived category label (:func:`category_labels`); two sharing
-    the title is ambiguous and raises rather than guessing.
+    that title is reused, whatever closed ones share it; two open ones sharing
+    the title is ambiguous and raises rather than guessing. With no open one,
+    a closed one with the title raises :class:`ClosedStandingEpicError`
+    naming it: closed is closed, so it is never reopened or replaced, and a
+    person may reopen it by hand. Neither means ensure the labels exist and
+    create it, adding its derived category label (:func:`category_labels`).
 
     After a create it does not return until the title lookup lists exactly the
     new epic (see :func:`_await_listed`), so a back-to-back caller finds it
@@ -1164,7 +1244,7 @@ def ensure_standing_epic(
     """
     home_owner, home_repo = home.split("/", 1)
     title = f"{kind.title_prefix}{name}"
-    found = _find_epic_by_title(home, title, labels=kind.labels)
+    found = _find_epic_by_title(home, title, labels=kind.labels, states="all")
     if found is not None:
         return found
     # The derived category label (epic-management for every kind but ad-hoc) is

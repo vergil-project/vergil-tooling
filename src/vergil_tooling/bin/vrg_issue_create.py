@@ -159,6 +159,13 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            # Closed is closed (.github#1609): a closed epic is refused before the
+            # issue is created, so the refused link never orphans a new issue.
+            try:
+                epics.require_open_epic(epic)
+            except epics.ClosedEpicError as exc:
+                print(f"vrg-issue-create: {exc}", file=sys.stderr)
+                return 1
 
             # Dependency guard (#2842): a Blocked-by ref names the task this one
             # waits on, never an epic or a standing epic's archive. Checked
