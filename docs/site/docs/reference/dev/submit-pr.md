@@ -246,8 +246,7 @@ For each branch, the tool:
    branch is already on origin.
 
 When a branch has a local worktree ready-state **and** origin lacks the
-branch (for example a workflow-file change the agent's token could not
-push), it is pushed with the human's credentials and opened locally
+branch, it is pushed with the human's credentials and opened locally
 instead (issue #2794).
 
 The PRs then follow the one submit path and the same finalize as
