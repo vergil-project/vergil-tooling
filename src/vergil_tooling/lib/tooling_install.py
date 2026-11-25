@@ -494,13 +494,21 @@ def _resolve_any(ref: str, *, ls_refs: Callable[[str, tuple[str, ...]], str]) ->
     A 40-character SHA names its commit and makes no call. Any other ref is
     looked up with one *ls_refs* call among the branches and tags of
     :data:`GIT_URL` (never its pull-request or other refs): it must name
-    exactly one, else the resolution fails, naming the URL and the ref.
+    exactly one, else the resolution fails, naming the URL and the ref. Each
+    tag name is also asked for as ``<tag>^{}``: ``ls-remote`` lists an
+    annotated tag's peeled commit only under that pattern, and the commit,
+    not the tag object, is what is fetched and checked.
     """
     if _SHA.fullmatch(ref):
         return _Target(ref, f"commit {ref}", ref, ref, "ref names")
     names = (ref,) if ref.startswith(_REF_NAMESPACES) else tuple(p + ref for p in _REF_NAMESPACES)
+    patterns = tuple(
+        pattern
+        for name in names
+        for pattern in ((name, f"{name}^{{}}") if name.startswith("refs/tags/") else (name,))
+    )
     try:
-        listing = ls_refs(GIT_URL, names)
+        listing = ls_refs(GIT_URL, patterns)
     except (ToolingInstallError, OSError, subprocess.SubprocessError) as exc:
         msg = f"could not list the refs of {GIT_URL} to resolve {ref}: {exc}"
         raise ToolingInstallError(msg) from exc

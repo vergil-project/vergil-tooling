@@ -167,7 +167,7 @@ def test_a_branch_installs_its_commit_with_its_lock(stubs: Path) -> None:
         ref="develop", sha=STUB_SHA
     )
     # One lookup, among the branches and tags only.
-    assert calls == [("refs/heads/develop", "refs/tags/develop")]
+    assert calls == [("refs/heads/develop", "refs/tags/develop", "refs/tags/develop^{}")]
     git = _calls(stubs, "git")
     src = git[0][2]
     # The commit the branch named is fetched, by its SHA.
@@ -186,10 +186,38 @@ def test_a_full_branch_name_is_looked_up_as_itself(stubs: Path) -> None:
     assert calls == [("refs/heads/develop",)]
 
 
-def test_a_non_release_tag_installs_its_peeled_commit(stubs: Path) -> None:
-    listing = f"{'d' * 40}\trefs/tags/rc-test\n{STUB_SHA}\trefs/tags/rc-test^{{}}\n"
-    assert install_ref("rc-test", ls_refs=_refs(listing)) == Installed(ref="rc-test", sha=STUB_SHA)
+def _like_ls_remote(refs: dict[str, str]) -> Callable[..., str]:
+    """An *ls_refs* listing only the *refs* that one of its patterns names exactly.
+
+    Real ``git ls-remote`` lists an annotated tag's peeled ``<tag>^{}`` line only
+    when a pattern asks for it, so a lookup that forgets it gets the tag object.
+    """
+
+    def ls_refs(_url: str, patterns: tuple[str, ...]) -> str:
+        return "".join(f"{sha}\t{name}\n" for name, sha in refs.items() if name in patterns)
+
+    return ls_refs
+
+
+_ANNOTATED = {"refs/tags/rc-test": "d" * 40, "refs/tags/rc-test^{}": STUB_SHA}
+
+
+@pytest.mark.parametrize("ref", ["rc-test", "refs/tags/rc-test"])
+def test_an_annotated_non_release_tag_installs_its_peeled_commit(stubs: Path, ref: str) -> None:
+    assert install_ref(ref, ls_refs=_like_ls_remote(_ANNOTATED)) == Installed(ref=ref, sha=STUB_SHA)
     assert _calls(stubs, "git")[1][-1] == STUB_SHA
+
+
+def test_a_full_tag_name_asks_for_its_peeled_line(stubs: Path) -> None:
+    calls: list[tuple[str, ...]] = []
+    listing = f"{STUB_SHA}\trefs/tags/rc-test\n"
+    assert install_ref("refs/tags/rc-test", ls_refs=_refs(listing, calls)).sha == STUB_SHA
+    assert calls == [("refs/tags/rc-test", "refs/tags/rc-test^{}")]
+
+
+def test_a_lightweight_non_release_tag_installs_its_commit(stubs: Path) -> None:
+    refs = {"refs/tags/rc-test": STUB_SHA}
+    assert install_ref("rc-test", ls_refs=_like_ls_remote(refs)).sha == STUB_SHA
 
 
 def test_a_commit_sha_installs_itself_with_no_lookup(stubs: Path) -> None:
@@ -257,7 +285,10 @@ def test_a_branch_lookup_uses_git_ls_refs_by_default(
     monkeypatch.setenv("STUB_LS_REMOTE", f"{STUB_SHA}\trefs/heads/develop\n")
     assert install_ref("develop").sha == STUB_SHA
     (lookup,) = [c for c in _calls(stubs, "git") if c[0] == "ls-remote"]
-    assert lookup == ["ls-remote", GIT_URL, "refs/heads/develop", "refs/tags/develop"]
+    assert lookup == [
+        *("ls-remote", GIT_URL),
+        *("refs/heads/develop", "refs/tags/develop", "refs/tags/develop^{}"),
+    ]
 
 
 def test_git_ls_refs_failure_names_url_and_patterns(
