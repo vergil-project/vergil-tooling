@@ -1728,7 +1728,7 @@ def _chain_cli_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
 
 
 @contextlib.contextmanager
-def _real_chain() -> Iterator[None]:
+def _real_chain() -> Generator[None]:
     """The real chain walk and chain-drift check, in place of the autouse fixture's stubs."""
     with (
         patch(f"{_MOD}.epic_chain.containers", _CONTAINERS),

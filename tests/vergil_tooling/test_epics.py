@@ -4971,3 +4971,23 @@ def test_list_open_issues_refuses_an_unreadable_repo(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(github, "graphql", lambda _query, **_variables: {"repository": None})
     with pytest.raises(RuntimeError, match="org/tool is listed but its issues cannot be read"):
         epics.list_open_issues("org/tool")
+
+
+def test_list_open_issues_refuses_a_parent_read_cut_short(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A listed parent that does not say whether it has a parent of its own
+    # cannot be told from a continuation: it fails loud, never read as a head.
+    node = {
+        "number": 1,
+        "title": "t1",
+        "body": "",
+        "labels": {"totalCount": 0, "nodes": []},
+        "parent": {
+            "number": 40,
+            "repository": {"name": ".github", "owner": {"login": "org"}},
+            "labels": {"totalCount": 1, "nodes": [{"name": "epic"}]},
+        },
+    }
+    page = {"repository": {"issues": {"pageInfo": {"hasNextPage": False}, "nodes": [node]}}}
+    monkeypatch.setattr(github, "graphql", lambda _query, **_variables: page)
+    with pytest.raises(RuntimeError, match="did not say whether it has a parent"):
+        epics.list_open_issues("org/tool")

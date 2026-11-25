@@ -1752,8 +1752,8 @@ def chain_drift(
     Then every open continuation no walk reached is resolved to its head
     (:func:`epic_chain.head_of`): one whose head's chain is whole is an
     ``orphan``, of an open or a closed head; one whose head's walk already
-    broke is that drift, reported once; one that cannot be resolved is
-    ``drift``.
+    broke is that drift, reported once; one that cannot be resolved, or
+    whose head is no epic of *home*, is ``drift``.
 
     *listing* is :func:`list_home_epics`, read here when not given. The
     reads run under *home*'s owner's token. Nothing is written: the sweep
@@ -1797,7 +1797,11 @@ def chain_drift(
                 found.append(ChainDrift(continuation, "drift", (exc.container,), exc.rule))
                 continue
             if head not in walked:
-                walk(head)
+                # Its trusted Continues: line names no epic of this home.
+                found.append(
+                    ChainDrift(continuation, "drift", (continuation,), "continues-mismatch")
+                )
+                continue
             if head in broken or continuation in reached:
                 continue
             found.append(ChainDrift(head, "orphan", (continuation,)))

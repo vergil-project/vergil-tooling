@@ -4386,3 +4386,31 @@ def test_misplaced_archives_still_sees_native_parent(monkeypatch: pytest.MonkeyP
     assert found == [
         epic_audit.MisplacedArchive(archive, "parented under the intake queue epic org/.github#40")
     ]
+
+
+def test_chain_drift_lists_the_home_when_not_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = _chain_graph(monkeypatch)
+    graph.close(_C2)
+    with patch.object(epic_audit, "list_home_epics", return_value=_home_listing(graph)) as listing:
+        found = epic_audit.chain_drift(_HOME)
+    listing.assert_called_once_with(_HOME)
+    assert [d.kind for d in found] == ["closed-continuation"]
+
+
+def test_audit_orphan_naming_no_epic_of_the_home_is_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unlinked continuation whose trusted Continues: line names an issue
+    # that is no epic of the home is never walked from: it is drift.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="not an epic")
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.clear_log()
+    found = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    assert found == [epic_audit.ChainDrift(_C2, "drift", (_C2,), "continues-mismatch")]
+    assert graph.events == []
+
+
+def test_chain_drift_line_refuses_an_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="unknown chain drift kind 'other'"):
+        epic_audit.chain_drift_line(epic_audit.ChainDrift(_HEAD, "other", (_HEAD,)))
