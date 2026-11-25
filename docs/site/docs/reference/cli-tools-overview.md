@@ -2921,13 +2921,27 @@ through its `[publish].install`; any other host runs it to upgrade. A
 fresh host, or one whose installed copy fails, installs by hand (see
 [Getting Started](../getting-started.md)).
 
+It also takes any other git ref of vergil-tooling, for a hand install of a
+specific commit: a branch such as `develop` (to work around a tooling bug),
+another tag, or a full 40-character commit SHA. A branch or tag is resolved
+with one `git ls-remote` among the vergil-tooling remote's branches and tags
+only (a name that is both is refused: name `refs/heads/<name>` or
+`refs/tags/<name>`), and a SHA names itself. The commit it resolves to is
+fetched by its SHA and installed the same way, locked to that commit's own
+`uv.lock`, and reported with the ref as given. The argument is a ref name
+only: anything starting with `-`, a URL, a refspec or anything else git's
+ref-name rules refuse is rejected before any network call, and the remote is
+always vergil-tooling's. A ref that does not resolve fails at the
+resolution. The workflows and scripts that call it keep passing release
+tags, so the next normal install replaces a hand install.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_tooling_install` |
-| Args | `vX.Y` (a release line) or `vX.Y.Z` (an exact release tag) |
+| Args | `ref`: `vX.Y` (a release line), `vX.Y.Z` (an exact release tag), or any other branch, tag or full commit SHA of vergil-tooling |
 | Preconditions | `git` and `uv` on PATH; network access to github.com |
-| Failure mode | Names the failed step (line resolution, fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
-| Exit codes | 0 installed; 1 a step failed, the line did not resolve, or the argument is neither `vX.Y` nor `vX.Y.Z`; 2 usage error |
+| Failure mode | Names the failed step (ref check, resolution, fetch, checkout, lock export, constraints check or install) and its error output on stderr; the temporary directory is removed either way |
+| Exit codes | 0 installed; 1 a step failed, the ref did not resolve, or the argument is not a ref name; 2 usage error |
 | Status | Active |
 
 ### vrg-generate-commands
