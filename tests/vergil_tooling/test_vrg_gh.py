@@ -1023,6 +1023,81 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args == ["gh", "run", "rerun", "123", *extra]
 
+    @pytest.mark.parametrize(
+        ("rerun_args", "expected"),
+        [
+            (["123"], "Requested rerun of run 123"),
+            (["123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["--repo", "o/r", "123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["-R", "o/r", "123"], "Requested rerun of run 123"),
+            (["--debug", "123", "--failed"], "Requested rerun (failed jobs) of run 123"),
+            (["--job", "456"], "Requested rerun of job 456"),
+            (["--job=456", "--repo", "o/r"], "Requested rerun of job 456"),
+            (["-j", "456"], "Requested rerun of job 456"),
+            (["--job", "x\x1b[2J"], "Requested rerun"),
+            (["12\x1b]0;x"], "Requested rerun"),
+        ],
+    )
+    def test_run_rerun_confirms_success(
+        self,
+        rerun_args: list[str],
+        expected: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # gh prints its "Requested rerun" line only to a terminal, and vrg-gh
+        # captures gh's output, so the wrapper confirms the rerun itself;
+        # otherwise a success looks the same as a silent no-op (#5175).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["run", "rerun", *rerun_args])
+        assert rc == 0
+        assert capsys.readouterr().out == f"{expected}\n"
+
+    @pytest.mark.parametrize("help_args", [["--help"], ["-h"], ["123", "--help"]])
+    def test_run_rerun_help_prints_no_confirmation(
+        self, help_args: list[str], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Help forwards to gh and exits 0 without requesting a rerun, so no
+        # confirmation may follow it.
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="Usage: gh run rerun [<run-id>]\n")
+            rc = main(["run", "rerun", *help_args])
+        assert rc == 0
+        assert capsys.readouterr().out == "Usage: gh run rerun [<run-id>]\n"
+
+    def test_run_rerun_failure_prints_no_confirmation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                side_effect=subprocess.CalledProcessError(
+                    1, ["gh"], output="", stderr="run 123 cannot be rerun\n"
+                ),
+            ),
+        ):
+            rc = main(["run", "rerun", "123"])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Requested rerun" not in captured.out
+        assert "cannot be rerun" in captured.err
+
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -274,7 +274,51 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return _exec_gh(argv)
+    rc = _exec_gh(argv)
+    # `--help` forwards to gh's own help and exits 0 with no rerun requested.
+    if (
+        top == "run"
+        and sub == "rerun"
+        and rc == 0
+        and not any(arg in ("-h", "--help") for arg in argv[2:])
+    ):
+        print(_rerun_confirmation(argv[2:]))
+    return rc
+
+
+def _rerun_confirmation(args: list[str]) -> str:
+    """Return the line confirming a successful ``run rerun`` of *args*.
+
+    gh prints its own "Requested rerun" line only when its stdout is a
+    terminal, and vrg-gh captures gh's output, so a successful rerun would
+    otherwise print nothing and look the same as a no-op (#5175). A run or
+    job ID is named only when it is all digits, so no argument text reaches
+    the terminal unchecked.
+    """
+    job: str | None = None
+    run: str | None = None
+    failed = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg in ("--job", "-j") and i < len(args):
+            job = args[i]
+            i += 1
+        elif arg.startswith("--job="):
+            job = arg.removeprefix("--job=")
+        elif arg in ("--repo", "-R"):
+            i += 1
+        elif arg == "--failed":
+            failed = True
+        elif not arg.startswith("-") and run is None:
+            run = arg
+    if job is not None:
+        return f"Requested rerun of job {job}" if _JOB_ID_RE.fullmatch(job) else "Requested rerun"
+    scope = " (failed jobs)" if failed else ""
+    if run is not None and _JOB_ID_RE.fullmatch(run):
+        return f"Requested rerun{scope} of run {run}"
+    return f"Requested rerun{scope}"
 
 
 def _get_allowed() -> dict[str, set[str]]:
