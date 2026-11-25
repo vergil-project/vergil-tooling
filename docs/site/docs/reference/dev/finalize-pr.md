@@ -331,6 +331,40 @@ any issue, makes finalize exit 1. Every merged PR is handled first, and
 the error names each issue still open. The rest of the settle phase
 still runs, because the PRs have merged.
 
+#### Sync the advisories of the closed issues
+
+Once the issues are closed, finalize syncs the security advisories
+they name (vergil-tooling#4583), so a record's state follows its issue
+at merge without waiting for someone to run `vrg-security-record sync`.
+It takes every counted closing reference that is now closed (closed by
+GitHub, or by the step above) and syncs only the advisories that the
+`security`-labelled ones name, reading only the issues each of those
+advisories tracks. Each advisory is decided as `sync` decides it (see
+[Security Records](../../guides/security-records.md#managing-a-record-through-its-issue)):
+a draft whose tracked issues are now all closed as completed, none of
+them a queue item, is closed, and each state set is reported as
+`GHSA-…: set to closed`. An issue without the `security` label is read
+for its labels only, so a merge that closes no security issue makes no
+advisories call.
+
+- **Held.** An advisory the close guard holds stays `draft` and is
+  reported on a `- held:` line, as `sync` reports it. The stage ends as
+  a warning (⚠), naming the next step: retarget it to a fix task, or
+  close it with `vrg-security-record close`.
+- **Fails.** A broken pair, an untrusted body on an issue it reads, a
+  guard read that failed, or any failed read or write (an identity
+  without advisories access included) is reported on stderr and makes
+  finalize exit 1, naming `vrg-security-record sync` to finish the
+  rest. The advisories it could sync are still synced, and the rest of
+  the settle phase still runs, because the PRs have merged.
+
+Whenever a merged PR closes a security issue, this step needs
+**Repository security advisories: Read and write** on the org's
+`.github`: the user App holds it, as does a human's own `gh` login with
+access. A reopened issue, an issue closed any other way, and a closing
+reference the trust layer does not count are not synced here; run
+`vrg-security-record sync` for those.
+
 #### The checkout lock
 
 The sync, cleanup, provision and validate run under the checkout lock,

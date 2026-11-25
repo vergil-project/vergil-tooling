@@ -33,6 +33,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _prune_orphan_relay_refs,
     _report_cd_run,
     _resolve_open_prs,
+    _stage_advisory_sync,
     _stage_cd_check,
     _stage_close_refs,
     _stage_provision,
@@ -44,7 +45,15 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import closing_refs, github, progress, text_table, trust, worktrees
+from vergil_tooling.lib import (
+    closing_refs,
+    github,
+    progress,
+    security_records,
+    text_table,
+    trust,
+    worktrees,
+)
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
     CDRunProblem,
@@ -54,6 +63,7 @@ from vergil_tooling.lib.cd_runs import (
 )
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.closing_refs import ClosingRefs
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.finalize_watch import FinalizeWatchError, Outcome, PRResult
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError
 from vergil_tooling.lib.live_branches import RepoSetError
@@ -229,6 +239,15 @@ def _no_closing_refs() -> Iterator[None]:
         patch(_MOD + ".load_trusted_authors", return_value=trust_stubs.AUTHORS),
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_advisory_sync() -> Iterator[MagicMock]:
+    """Default: the advisory sync syncs nothing, with no gh call (vergil-tooling#4583)."""
+    with patch(
+        _MOD + ".security_records.sync_issues", return_value=security_records.IssueSyncResult()
+    ) as sync:
+        yield sync
 
 
 _SYNCED_HEAD = "5ced5ced5ced"
@@ -2122,6 +2141,7 @@ def test_build_stages_after_a_merge() -> None:
     names = [s.name for s in build_stages(close_refs=True)]
     assert names == [
         "close-refs",
+        "advisory-sync",
         "checkout-lock",
         "cleanup",
         "provision",
@@ -2140,6 +2160,8 @@ def test_build_stages_failure_modes() -> None:
     # An issue left open fails finalize, but the merged PRs still settle
     # (issue #4002).
     assert modes["close-refs"] == "fail_defer"
+    # A failed advisory sync fails finalize the same way (vergil-tooling#4583).
+    assert modes["advisory-sync"] == "fail_defer"
     assert modes["checkout-lock"] == "fail_fast"
     assert modes["cleanup"] == "fail_fast"
     # Provisioning is a prerequisite: fail_fast so validation never runs against
@@ -2151,6 +2173,153 @@ def test_build_stages_failure_modes() -> None:
     # cd-check is fail_fast: with --wait-cd, a CD run that did not succeed is a
     # hard finalize failure (issue #2753).
     assert modes["cd-check"] == "fail_fast"
+
+
+# -- advisory-sync: sync the advisories of the closed issues (vergil-tooling#4583)
+
+_GHSA = "GHSA-abcd-2345-wxyz"
+_I7 = IssueRef("o", "r", 7)
+_I8 = IssueRef("o", "r", 8)
+
+
+def test_close_refs_records_every_closed_counted_issue() -> None:
+    """Auto-closed and finalize-closed issues both reach the sync; uncounted ones do not."""
+    ctx = _stage_ctx(["123"])
+    refs = _refs(
+        _issue(7, "CLOSED"), _issue(8, "OPEN"), uncounted=(_issue(9, "CLOSED", repo="o/x"),)
+    )
+    with (
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=refs),
+        patch(_MOD + ".github.close_issue"),
+        patch(_MOD + ".time.sleep"),
+    ):
+        _stage_close_refs(ctx)
+    assert ctx.closed_issues == [_I7, _I8]
+
+
+def test_close_refs_does_not_record_an_issue_it_failed_to_close() -> None:
+    ctx = _stage_ctx(["123"])
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502")
+    with (
+        patch(_MOD + ".closing_refs.read_closing_refs", return_value=_refs(_issue(8, "OPEN"))),
+        patch(_MOD + ".github.close_issue", side_effect=err),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(FinalizeError),
+    ):
+        _stage_close_refs(ctx)
+    assert ctx.closed_issues == []
+
+
+def test_advisory_sync_reports_each_state_it_set(
+    _no_advisory_sync: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(["123"])
+    ctx.closed_issues.extend([_I7, _I8])
+    _no_advisory_sync.return_value = security_records.IssueSyncResult(synced=[(_GHSA, "closed")])
+    _stage_advisory_sync(ctx)
+    _no_advisory_sync.assert_called_once_with([_I7, _I8])
+    assert f"  {_GHSA}: set to closed" in capsys.readouterr().out
+
+
+def test_advisory_sync_with_no_closed_issue_calls_nothing(
+    _no_advisory_sync: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stage_advisory_sync(_stage_ctx(["123"]))
+    _no_advisory_sync.assert_not_called()
+    assert "No closed issue to sync advisories for." in capsys.readouterr().out
+
+
+def test_advisory_sync_says_when_nothing_changed(
+    _no_advisory_sync: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(["123"])
+    ctx.closed_issues.append(_I7)
+    _stage_advisory_sync(ctx)
+    assert "No advisory state to sync." in capsys.readouterr().out
+
+
+def test_advisory_sync_dry_run_syncs_nothing(_no_advisory_sync: MagicMock) -> None:
+    ctx = _stage_ctx(["123", "--dry-run"])
+    ctx.closed_issues.append(_I7)
+    _stage_advisory_sync(ctx)
+    _no_advisory_sync.assert_not_called()
+
+
+def test_advisory_sync_held_is_a_warning_naming_the_next_step(
+    _no_advisory_sync: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(["123"])
+    ctx.closed_issues.append(_I7)
+    _no_advisory_sync.return_value = security_records.IssueSyncResult(held=[(_GHSA, (_I7,))])
+    with patch(_MOD + ".progress.mark_warn") as warn:
+        _stage_advisory_sync(ctx)
+    warn.assert_called_once()
+    assert _GHSA in warn.call_args.args[0]
+    assert "vrg-security-record close" in warn.call_args.args[0]
+    assert f"- held: {_GHSA} (o/r#7)" in capsys.readouterr().out
+
+
+def test_advisory_sync_problem_fails_the_stage_after_the_rest(
+    _no_advisory_sync: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx(["123"])
+    ctx.closed_issues.append(_I7)
+    problem = f"o/r#7: names {_GHSA}, which does not track it"
+    _no_advisory_sync.return_value = security_records.IssueSyncResult(
+        synced=[("GHSA-zzzz-9999-aaaa", "closed")], problems=[problem]
+    )
+    with pytest.raises(FinalizeError, match="vrg-security-record sync") as raised:
+        _stage_advisory_sync(ctx)
+    assert problem in str(raised.value)
+    captured = capsys.readouterr()
+    assert "GHSA-zzzz-9999-aaaa: set to closed" in captured.out
+    assert f"ERROR: advisory sync: {problem}" in captured.err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GitHubAPIError(1, ("gh", "api"), stderr="HTTP 403"),
+        TrustReadError("read_bodies o/r#7…#7", "a missing field"),
+        TrustedAuthorsNotConfiguredError("no trusted authors"),
+        github.NoInstallationError("o", []),
+    ],
+)
+def test_advisory_sync_failure_fails_the_stage_loudly(
+    _no_advisory_sync: MagicMock, error: Exception
+) -> None:
+    ctx = _stage_ctx(["123"])
+    ctx.closed_issues.append(_I7)
+    _no_advisory_sync.side_effect = error
+    with pytest.raises(FinalizeError, match="the advisory sync failed: .*vrg-security-record sync"):
+        _stage_advisory_sync(ctx)
+
+
+def test_advisory_sync_failure_still_cleans_up_and_exits_one(
+    tmp_path: Path, _no_advisory_sync: MagicMock
+) -> None:
+    """A failed sync fails finalize, but the merged PR is still cleaned up."""
+    _no_advisory_sync.side_effect = GitHubAPIError(1, ("gh", "api"), stderr="HTTP 403")
+    with (
+        patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged),
+        patch(
+            f"{_MOD}.closing_refs.read_closing_refs",
+            return_value=_refs(_issue(7, "CLOSED")),
+        ),
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
+        patch(f"{_MOD}.git.current_branch", return_value="develop") as branch,
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}._report_cd_run"),
+    ):
+        result = main(["42"])
+    assert result == 1
+    _no_advisory_sync.assert_called_once_with([_I7])
+    branch.assert_called()  # cleanup ran despite the advisory-sync failure
 
 
 def test_stage_provision_warms_image(tmp_path: Path) -> None:

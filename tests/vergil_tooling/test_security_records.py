@@ -55,6 +55,7 @@ from vergil_tooling.lib.security_records import (
     retarget,
     security_issues,
     set_state,
+    sync_issues,
     sync_states,
     tracking_line,
     unmark_issue,
@@ -3318,3 +3319,294 @@ def test_security_records_reads_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     assert changes == []
     assert guard == GuardResult(held=[(GHSA, (A,))], errors=[])
     assert graph.events == []
+
+
+# --- sync of known issues (vergil-tooling#4583) ------------------------------
+
+OTHER_ORG = IssueRef("other", "tool", 30)
+
+
+def _known(
+    monkeypatch: pytest.MonkeyPatch,
+    issue_list: list[SecurityIssue],
+    advisories: list[Advisory] | None,
+    *,
+    write: MagicMock | None = None,
+) -> tuple[MagicMock, list[list[IssueRef]]]:
+    """Serve *issue_list* to the known-issue read and *advisories* to the listing.
+
+    With *advisories* None any advisory listing fails the test. Returns the
+    write mock and each set of refs the known-issue read was asked for.
+    """
+    by_ref = {issue.ref: issue for issue in issue_list}
+    asked: list[list[IssueRef]] = []
+
+    def known(refs: Any, _authors: Any) -> list[SecurityIssue]:
+        asked.append(list(refs))
+        return [by_ref[ref] for ref in refs if ref in by_ref]
+
+    monkeypatch.setattr(security_records, "_known_security_issues", known)
+    monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
+    if advisories is None:
+        listing = MagicMock(side_effect=AssertionError("no advisories call"))
+    else:
+        listing = MagicMock(return_value=advisories)
+    monkeypatch.setattr(security_records, "list_advisories", listing)
+    write = write or MagicMock()
+    monkeypatch.setattr(github, "write_json", write)
+    if not isinstance(getattr(epics.native_parent_of, "__self__", None), Parents):
+        Parents(monkeypatch)
+    return write, asked
+
+
+def test_sync_issues_closes_an_advisory_once_its_last_issue_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, asked = _known(
+        monkeypatch, [_iss(C, open_=False), _iss(A, open_=False)], [_adv(tracking=(A, C))]
+    )
+    result = sync_issues([C])
+    assert result.synced == [(GHSA, "closed")]
+    assert (result.held, result.problems) == ([], [])
+    assert write.call_args_list == [_patched_state(GHSA, "closed")]
+    # The closed issue first, then only the other issue the advisory tracks.
+    assert asked == [[C], [A]]
+
+
+def test_sync_issues_keeps_draft_while_another_tracked_issue_is_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, _ = _known(monkeypatch, [_iss(C, open_=False), _iss(A)], [_adv(tracking=(A, C))])
+    result = sync_issues([C])
+    assert (result.synced, result.held, result.problems) == ([], [], [])
+    write.assert_not_called()
+
+
+def test_sync_issues_reopens_a_closed_advisory_tracking_an_open_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, _ = _known(monkeypatch, [_iss(C)], [_adv(tracking=(C,), state="closed")])
+    assert sync_issues([C]).synced == [(GHSA, "draft")]
+    assert write.call_args_list == [_patched_state(GHSA, "draft")]
+
+
+def test_sync_issues_makes_no_advisories_call_without_a_security_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, _ = _known(monkeypatch, [], None)
+    result = sync_issues([C, A])
+    assert (result.synced, result.held, result.problems) == ([], [], [])
+    write.assert_not_called()
+
+
+def test_sync_issues_of_no_issue_reads_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    write, asked = _known(monkeypatch, [], None)
+    monkeypatch.setattr(
+        security_records,
+        "load_trusted_authors",
+        MagicMock(side_effect=AssertionError("no authors load")),
+    )
+    assert sync_issues([]) == security_records.IssueSyncResult()
+    assert asked == []
+    write.assert_not_called()
+
+
+def test_sync_issues_holds_a_queue_item(monkeypatch: pytest.MonkeyPatch, parents: Parents) -> None:
+    parents.of[C] = PLANNING_EPIC
+    write, _ = _known(monkeypatch, [_iss(C, open_=False)], [_adv(tracking=(C,))])
+    result = sync_issues([C])
+    assert result.held == [(GHSA, (C,))]
+    assert (result.synced, result.problems) == ([], [])
+    write.assert_not_called()
+
+
+def test_sync_issues_holds_a_close_other_than_completed(monkeypatch: pytest.MonkeyPatch) -> None:
+    write, _ = _known(
+        monkeypatch, [_iss(C, open_=False, reason="not_planned")], [_adv(tracking=(C,))]
+    )
+    assert sync_issues([C]).held == [(GHSA, (C,))]
+    write.assert_not_called()
+
+
+def test_sync_issues_reports_a_broken_pair_and_syncs_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # C names both advisories; OTHER does not track it back.
+    issue = _iss(C, (GHSA, OTHER), open_=False)
+    write, _ = _known(monkeypatch, [issue], [_adv(tracking=(C,)), _adv(OTHER, tracking=(A,))])
+    result = sync_issues([C])
+    assert result.synced == [(GHSA, "closed")]
+    assert f"{C.slug}: names {OTHER}, which does not track it" in result.problems
+    assert write.call_args_list == [_patched_state(GHSA, "closed")]
+
+
+@pytest.mark.parametrize("with_other", [False, True])
+def test_sync_issues_reports_a_security_issue_with_no_line(
+    monkeypatch: pytest.MonkeyPatch, *, with_other: bool
+) -> None:
+    # Broken on its own, whether or not another issue in the call names an
+    # advisory, and with no advisories call when none does.
+    no_line = _iss(A, None, open_=False)
+    issue_list = [no_line, _iss(C, open_=False)] if with_other else [no_line]
+    write, _ = _known(monkeypatch, issue_list, [_adv(tracking=(C,))] if with_other else None)
+    result = sync_issues([A, C] if with_other else [A])
+    assert result.problems == [f"{A.slug}: security label but no Security advisory: line"]
+    assert result.synced == ([(GHSA, "closed")] if with_other else [])
+    assert write.call_count == (1 if with_other else 0)
+
+
+def test_sync_issues_reports_an_advisory_that_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, _ = _known(monkeypatch, [_iss(C, open_=False)], [])
+    result = sync_issues([C])
+    assert result.problems == [f"{C.slug}: names {GHSA}, which does not exist"]
+    write.assert_not_called()
+
+
+def test_sync_issues_reports_a_tracked_issue_without_the_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A is not a security issue: the known-issue read leaves it out.
+    write, _ = _known(monkeypatch, [_iss(C, open_=False)], [_adv(tracking=(A, C))])
+    result = sync_issues([C])
+    assert result.problems == [f"{GHSA}: tracks {A.slug}, which is not a security-labelled issue"]
+    write.assert_not_called()
+
+
+def _untrusted(ref: IssueRef, *, open_: bool) -> SecurityIssue:
+    skipped = trust.Skipped(
+        repo=f"{ref.owner}/{ref.repo}",
+        number=ref.number,
+        kind="body",
+        login="drive-by",
+        at="2026-11-01T09:30:00Z",
+        field="body",
+        cause="untrusted",
+    )
+    return SecurityIssue(ref, open_, (), None if open_ else "completed", skipped=skipped)
+
+
+def test_sync_issues_reports_an_untrusted_closed_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+    write, _ = _known(monkeypatch, [_untrusted(C, open_=False)], None)
+    result = sync_issues([C])
+    assert result.problems == [
+        f"{C.slug}: its body is untrusted, so the advisories it names were not synced"
+    ]
+    write.assert_not_called()
+
+
+def test_sync_issues_leaves_an_advisory_tracking_an_untrusted_issue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write, _ = _known(
+        monkeypatch,
+        [_iss(C, open_=False), _untrusted(A, open_=False)],
+        [_adv(tracking=(A, C))],
+    )
+    result = sync_issues([C])
+    assert result.problems == [f"{GHSA}: an issue it tracks has an untrusted body, left unchanged"]
+    write.assert_not_called()
+
+
+def test_sync_issues_leaves_moved_and_external_advisories_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    moved = Advisory(GHSA, "closed", "tool", (C,), external=False, moved_to=(("other", OTHER),))
+    external = Advisory(OTHER, "triage", "tool", (C,), external=True)
+    write, asked = _known(monkeypatch, [_iss(C, (GHSA, OTHER))], [moved, external])
+    result = sync_issues([C])
+    assert (result.synced, result.held, result.problems) == ([], [], [])
+    write.assert_not_called()
+    assert asked == [[C], []]
+
+
+def test_sync_issues_reports_a_failed_guard_read(
+    monkeypatch: pytest.MonkeyPatch, parents: Parents
+) -> None:
+    parents.fail[C] = github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 502")
+    write, _ = _known(monkeypatch, [_iss(C, open_=False)], [_adv(tracking=(C,))])
+    [problem] = sync_issues([C]).problems
+    assert problem.startswith(f"{GHSA} ({C.slug}): reading its parent failed, left unchanged:")
+    assert SECRET not in problem
+    write.assert_not_called()
+
+
+def test_sync_issues_write_failure_propagates_scrubbed(monkeypatch: pytest.MonkeyPatch) -> None:
+    write = MagicMock(side_effect=github.GitHubAPIError(1, ["gh"], SECRET, "HTTP 403"))
+    _known(monkeypatch, [_iss(C, open_=False)], [_adv(tracking=(C,))], write=write)
+    with pytest.raises(github.GitHubAPIError) as excinfo:
+        sync_issues([C])
+    assert SECRET not in str(excinfo.value)
+    assert excinfo.value.stdout is None
+
+
+def test_sync_issues_runs_each_org_in_its_own_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    other_adv = _adv(OTHER, tracking=(OTHER_ORG,))
+    issue_list = [_iss(C, open_=False), _iss(OTHER_ORG, OTHER, open_=False)]
+    write, _ = _known(monkeypatch, issue_list, None)
+    homes: dict[str, list[Advisory]] = {
+        "org/.github": [_adv(tracking=(C,))],
+        "other/.github": [other_adv],
+    }
+    orgs: list[str | None] = []
+
+    def listing(home: str) -> list[Advisory]:
+        orgs.append(github._target_org.get())  # noqa: SLF001 - the scope under test
+        return homes[home]
+
+    monkeypatch.setattr(security_records, "list_advisories", listing)
+    result = sync_issues([C, OTHER_ORG])
+    assert result.synced == [(GHSA, "closed"), (OTHER, "closed")]
+    assert orgs == ["org", "other"]
+    assert write.call_args_list == [
+        _patched_state(GHSA, "closed"),
+        call("PATCH", f"repos/other/.github/security-advisories/{OTHER}", {"state": "closed"}),
+    ]
+
+
+def test_known_security_issues_reads_labels_then_trusted_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    moved = IssueRef("org", "tool", 99)
+    rows = {
+        f"repos/org/tool/issues/{C.number}": {
+            "number": C.number,
+            "repository_url": "https://api.github.com/repos/org/tool",
+            "state": "closed",
+            "state_reason": "COMPLETED",
+            "labels": ["security"],
+        },
+        "repos/org/.github/issues/10": {
+            "number": 10,
+            "repository_url": "https://api.github.com/repos/org/.github",
+            "state": "closed",
+            "state_reason": "completed",
+            "labels": ["bug"],
+        },
+        # A transferred issue: the read at its old number returns the moved one.
+        f"repos/org/tool/issues/{moved.number}": {
+            "number": 40,
+            "repository_url": "https://api.github.com/repos/org/app",
+            "state": "open",
+            "state_reason": None,
+            "labels": ["security"],
+        },
+    }
+    monkeypatch.setattr(github, "read_json", lambda _api, endpoint, *_a: rows[endpoint])
+    body = advisory_line(HOME, GHSA)
+    # A's body is never read: it has no security label.
+    _trusted_bodies(
+        monkeypatch,
+        {
+            ("org/tool", C.number): trust_stubs.item(body=body),
+            ("org/app", 40): trust_stubs.item(body=advisory_line(HOME, OTHER)),
+        },
+    )
+    found = security_records._known_security_issues(  # noqa: SLF001 - the read under test
+        [C, A, moved, C], trust_stubs.AUTHORS
+    )
+    assert found == [
+        SecurityIssue(C, open=False, ghsa_ids=(GHSA,), state_reason="completed"),
+        SecurityIssue(IssueRef("org", "app", 40), open=True, ghsa_ids=(OTHER,), state_reason=None),
+    ]
