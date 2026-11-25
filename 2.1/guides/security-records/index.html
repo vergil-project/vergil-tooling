@@ -1494,6 +1494,8 @@
       
         
       
+        
+      
     
     
     
@@ -1546,6 +1548,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.349/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.349
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15370,6 +15400,8 @@
       
         
       
+        
+      
     
     
     
@@ -15738,6 +15770,34 @@
     
   
     vrg-scope-change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/epic-parent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-epic-parent
   
 
     
@@ -19237,8 +19297,9 @@ is given a severity by whoever records it.</p>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--details-file<span class="w"> </span>details.md<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--severity<span class="w"> </span>low
 </code></pre></div>
-<p><code>create</code> runs the steps in a fixed order: a duplicate check, the advisory,
-the issue, the link under the intake epic, then the advisory's
+<p><code>create</code> runs the steps in a fixed order: a capacity check of the intake
+epic, a duplicate check, the advisory,
+the issue, the link into the intake epic's chain, then the advisory's
 <code>Tracking issue:</code> line. If a step fails after the advisory exists, it
 prints the exact command that finishes the pair and exits 1. Drafts can't
 be deleted, so never re-run the original command; run the printed one.
@@ -19255,6 +19316,12 @@ that holds Repository security advisories: Read and write (see
 <a href="#permissions">Permissions</a>); <code>--dry-run</code> previews it and changes nothing.
 The scheduled sweep (<code>vrg-epic-audit --close</code>) does not run it: the sweep
 makes no security-advisory call, so its token needs no advisories access.
+<code>vrg-finalize-pr</code> syncs the advisories of the issues a merged PR closes, by
+the same rules, once the merge has closed them (see
+<a href="../../reference/dev/finalize-pr/#sync-the-advisories-of-the-closed-issues">vrg-finalize-pr</a>),
+so a fix task's record usually closes at its merge. Run <code>sync</code> for
+everything else: a reopened issue, an issue closed another way, and the
+broken-pair check across the org.
 On each run of <code>sync</code>:</p>
 <ul>
 <li>the advisory is <strong>closed</strong> when <strong>every</strong> issue it tracks is closed as
@@ -19687,9 +19754,10 @@ identity's App token or, in human mode, the human's own <code>gh</code> login. I
 does not go through <code>vrg-gh api</code>, which stays denied to the user agent.</p>
 <p>Every user App (<code>&lt;username&gt;-vergil-user</code>) needs <strong>Repository security
 advisories: Read and write</strong>, for <code>vrg-security-record</code> (<code>sync</code>, <code>close</code> and
-<code>note</code> included) and the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>. A human
-running <code>vrg-security-record</code> in human mode needs the same access through
-their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read. A move to another
+<code>note</code> included), the hooks in <code>vrg-intake-route</code> and <code>vrg-queue</code>, and the
+advisory sync in <code>vrg-finalize-pr</code> when a merged PR closes a <code>security</code>
+issue. A human running <code>vrg-security-record</code> or <code>vrg-finalize-pr</code> in human
+mode needs the same access through their own <code>gh</code> login. <code>sync --dry-run</code> needs only Read. A move to another
 org (<code>retarget</code> with every <code>--to</code> there) needs Read and write in both
 orgs' <code>.github</code>, and <code>sync</code> of an org with a moved advisory also needs Read
 in the org it moved to.</p>

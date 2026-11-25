@@ -1494,6 +1494,8 @@
       
         
       
+        
+      
     
     
     
@@ -1546,6 +1548,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.349/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.349
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15383,6 +15413,8 @@
       
         
       
+        
+      
     
     
     
@@ -15784,6 +15816,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sync-the-advisories-of-the-closed-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync the advisories of the closed issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-checkout-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -16084,6 +16127,34 @@
     
   
     vrg-scope-change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../epic-parent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-epic-parent
   
 
     
@@ -19036,6 +19107,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sync-the-advisories-of-the-closed-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync the advisories of the closed issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-checkout-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19543,6 +19625,38 @@ read in full included, or no trusted authors configured), or to close
 any issue, makes finalize exit 1. Every merged PR is handled first, and
 the error names each issue still open. The rest of the settle phase
 still runs, because the PRs have merged.</p>
+<h4 id="sync-the-advisories-of-the-closed-issues">Sync the advisories of the closed issues<a class="headerlink" href="#sync-the-advisories-of-the-closed-issues" title="Permanent link">&para;</a></h4>
+<p>Once the issues are closed, finalize syncs the security advisories
+they name (vergil-tooling#4583), so a record's state follows its issue
+at merge without waiting for someone to run <code>vrg-security-record sync</code>.
+It takes every counted closing reference that is now closed (closed by
+GitHub, or by the step above) and syncs only the advisories that the
+<code>security</code>-labelled ones name, reading only the issues each of those
+advisories tracks. Each advisory is decided as <code>sync</code> decides it (see
+<a href="../../../guides/security-records/#managing-a-record-through-its-issue">Security Records</a>):
+a draft whose tracked issues are now all closed as completed, none of
+them a queue item, is closed, and each state set is reported as
+<code>GHSA-…: set to closed</code>. An issue without the <code>security</code> label is read
+for its labels only, so a merge that closes no security issue makes no
+advisories call.</p>
+<ul>
+<li><strong>Held.</strong> An advisory the close guard holds stays <code>draft</code> and is
+  reported on a <code>- held:</code> line, as <code>sync</code> reports it. The stage ends as
+  a warning (⚠), naming the next step: retarget it to a fix task, or
+  close it with <code>vrg-security-record close</code>.</li>
+<li><strong>Fails.</strong> A broken pair, an untrusted body on an issue it reads, a
+  guard read that failed, or any failed read or write (an identity
+  without advisories access included) is reported on stderr and makes
+  finalize exit 1, naming <code>vrg-security-record sync</code> to finish the
+  rest. The advisories it could sync are still synced, and the rest of
+  the settle phase still runs, because the PRs have merged.</li>
+</ul>
+<p>Whenever a merged PR closes a security issue, this step needs
+<strong>Repository security advisories: Read and write</strong> on the org's
+<code>.github</code>: the user App holds it, as does a human's own <code>gh</code> login with
+access. A reopened issue, an issue closed any other way, and a closing
+reference the trust layer does not count are not synced here; run
+<code>vrg-security-record sync</code> for those.</p>
 <h4 id="the-checkout-lock">The checkout lock<a class="headerlink" href="#the-checkout-lock" title="Permanent link">&para;</a></h4>
 <p>The sync, cleanup, provision and validate run under the checkout lock,
 an exclusive lock on <code>&lt;main clone&gt;/build/.vergil-state/checkout.lock</code>

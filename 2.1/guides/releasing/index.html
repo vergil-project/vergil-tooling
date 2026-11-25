@@ -1492,6 +1492,8 @@
       
         
       
+        
+      
     
     
     
@@ -1544,6 +1546,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.349/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.349
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15368,6 +15398,8 @@
       
         
       
+        
+      
     
     
     
@@ -15736,6 +15768,34 @@
     
   
     vrg-scope-change
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/dev/epic-parent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-epic-parent
   
 
     
@@ -19610,7 +19670,11 @@ and then installs and reports that exact release. Given an exact tag
 <code>vX.Y.Z</code> (which cannot move, under tag protection, so it needs no
 <code>git ls-remote</code>), it fetches that tag. Either way it installs the commit the
 release's tag names with that commit's <code>uv.lock</code> as constraints, and runs on
-uv's managed 3.15.</p>
+uv's managed 3.15. By hand it also takes any other git ref of vergil-tooling
+(a branch such as <code>develop</code>, another tag, or a full commit SHA), resolved to
+one commit and locked to that commit's <code>uv.lock</code>; the next release install
+replaces it (see
+<a href="../../reference/cli-tools-overview/#vrg-tooling-install"><code>vrg-tooling-install</code></a>).</p>
 <p>A fresh host has no <code>vrg-tooling-install</code> yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
 <a href="../../getting-started/">Getting Started</a>), with <code>VERSION</code> set to the
