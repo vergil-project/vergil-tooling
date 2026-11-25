@@ -75,6 +75,7 @@ from vergil_tooling.lib.session import filter_recent
 from vergil_tooling.lib.session_store import SessionInfo
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_guest import (
+    ProbeError,
     VmUnreachableError,
     check_tooling,
     copy_claude_config,
@@ -2381,8 +2382,12 @@ def discover_dedicated(
     return rows
 
 
-# (agents, humans, fingerprint) from one combined vm_probe round-trip.
-ProbeResult = tuple[int, int, str | None]
+# (agents, humans, fingerprint) from one combined vm_probe round-trip, or the
+# ProbeError of a VM whose probe failed.
+ProbeResult = tuple[int, int, str | None] | ProbeError
+
+# The AGENTS and HUMANS cells of a running VM whose probe failed.
+_PROBE_FAILED = "error"
 
 
 def _probe_running(
@@ -2396,8 +2401,10 @@ def _probe_running(
     compare it; base and orphaned VMs get the occupancy-only probe. The
     probes are subprocess-bound (one SSH session each), so a thread pool
     makes wall-clock ≈ one round-trip regardless of running-VM count.
-    Failures beyond vm_probe's documented (0, 0, None) contract propagate
-    out of Future.result() rather than being swallowed.
+    A VM whose probe raises :class:`ProbeError` keeps that error as its
+    result, with a warning naming it, so one VM's failure neither aborts the
+    listing nor reads as unoccupied (GHSA-ch78-r3p7-2wmx). Any other error
+    propagates out of Future.result() rather than being swallowed.
     """
     wants: dict[str, bool] = {}
     for id_name, identity in identities.items():
@@ -2413,13 +2420,22 @@ def _probe_running(
             instance: pool.submit(vm_probe, LimaTransport(instance), fingerprint=want_fp)
             for instance, want_fp in wants.items()
         }
-        return {instance: future.result() for instance, future in futures.items()}
+        probes: dict[str, ProbeResult] = {}
+        for instance, future in futures.items():
+            try:
+                probes[instance] = future.result()
+            except ProbeError as exc:
+                print(f"WARNING: {instance}: {exc}", file=sys.stderr)
+                probes[instance] = exc
+        return probes
 
 
 def _occupancy(instance: str, probes: Mapping[str, ProbeResult]) -> tuple[str, str]:
     probe = probes.get(instance)
     if probe is None:  # not running -> not probed
         return "—", "—"
+    if isinstance(probe, ProbeError):
+        return _PROBE_FAILED, _PROBE_FAILED
     return str(probe[0]), str(probe[1])
 
 
@@ -2430,7 +2446,10 @@ def _present_spec_state(
     probe = probes.get(instance)
     if probe is None:  # not running -> not probed
         return "ok"
-    state = "ok" if probe[2] == spec_fingerprint(spec) else "NEEDS-REBUILD"
+    if isinstance(probe, ProbeError):  # no fingerprint read: drift is unknown
+        state = "unknown (probe failed)"
+    else:
+        state = "ok" if probe[2] == spec_fingerprint(spec) else "NEEDS-REBUILD"
     if spec.under:
         state = f"{state} ⚠ under ({','.join(spec.under)})"
     return state
