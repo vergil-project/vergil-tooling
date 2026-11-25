@@ -27,7 +27,7 @@ vrg-github-repo-config audit [--repo OWNER/REPO] [--config PATH] [--in-tree-temp
 | Subcommands | `audit` (report), `diff` (report GitHub half only), [`update`](#the-update-command) (reconcile both halves), [`apply`](#the-apply-command-deprecated) (reconcile GitHub half; deprecated) |
 | Args | `--repo OWNER/REPO` (defaults to the current git remote), `--config PATH` (local `vergil.toml`), `--in-tree-templates` (`audit` only, vergil-tooling only: see [Auditing vergil-tooling against its own templates](#auditing-vergil-tooling-against-its-own-templates)) |
 | Preconditions | Local checks clone the repo's `develop` over HTTPS, so git's credential helper must reach it (`gh auth setup-git`); GitHub checks require `gh` credentials |
-| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `update`: see [its exit codes](#update-exit-codes). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused |
+| Exit codes | `audit`: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings [not checked](#settings-the-identity-cannot-read)). `diff`: 0 whether or not it finds drift, 2 could not complete (including settings not checked). `update`: see [its exit codes](#update-exit-codes). `apply`: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or managed-file drift), 2 could not complete or refused |
 | Status | Active |
 
 Every subcommand runs the managed-file checks against what is committed
@@ -129,7 +129,7 @@ to date.
 | Exit | Meaning |
 |---|---|
 | 0 | The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged |
-| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
+| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, or a branch named like a rolling tag, which must be deleted by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
 | 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
 
 ## The `apply` command (deprecated)

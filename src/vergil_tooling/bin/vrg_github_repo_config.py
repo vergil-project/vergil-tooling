@@ -176,8 +176,9 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
     - **0:** the GitHub side converged and the managed files are in sync:
       no sync PR was needed, or the one opened this run merged;
     - **1:** drift that could not be fixed: a managed-file check with no
-      fixer, a fix that cannot be computed (:class:`CannotFix`), or an
-      undeclared ruleset parameter. The sync PR for the fixable drift is
+      fixer, a fix that cannot be computed (:class:`CannotFix`), an
+      undeclared ruleset parameter, or a branch named like a rolling tag,
+      which must be deleted by hand. The sync PR for the fixable drift is
       still opened, and exit 1 applies only once it has merged;
     - **2:** something could not be audited or converged: an agent identity,
       a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
