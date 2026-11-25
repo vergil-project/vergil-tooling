@@ -46,7 +46,7 @@ not a control: the credential the process holds is the boundary.
 | Mode | Identity | How it resolves | Rights in the tooling |
 |---|---|---|---|
 | `human` | The human's own `gh` login | The fall-through when no other signal is present | Everything, including submitting and merging PRs |
-| `user` | `<username>-vergil-user` | `VRG_IDENTITY_MODE`, the mode file, or the provisioned App key or ID in an agent VM | The narrowest: stops at `vrg-pr-workflow report-ready`, never submits or merges |
+| `user` | `<username>-vergil-user` | `VRG_IDENTITY_MODE`, the mode file, or the provisioned App key or ID in an agent VM | Submits and finalizes its own PRs into `develop` in template mode, after `vrg-pr-workflow report-ready` and the merge-review gate; refused the CLI and relay branch modes and `--release` |
 | `audit` | `<username>-vergil-audit` | As for `user` | Dormant (see the note below) |
 | `automation` | The org automation App, `<org>-automation` | Only when `VRG_AUTOMATION_APP` is set and the token verifies as that App's installation token; no mode signal selects it | A subset of the human's: `vrg-github-repo-config update`, which converges a repo and merges its own sync PR, and `vrg-upstream-refresh publish`, which opens a refresh PR on `automation/upstream-refresh/<run-id>` and merges it once CI passes |
 
