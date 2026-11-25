@@ -22338,11 +22338,13 @@ task's epic home.</p>
 </tbody>
 </table>
 <h3 id="vrg-epic-move">vrg-epic-move<a class="headerlink" href="#vrg-epic-move" title="Permanent link">&para;</a></h3>
-<p>Move a task under a different epic (unlink, then link). <code>--epic</code> accepts
-<code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>operations</code>, <code>#N</code> or
-<code>owner/repo#N</code>, read against the task's repo. Moving a task already under the target is a no-op. The deferred
-queue is entered and left only through <code>vrg-intake-route</code>, so this refuses
-it.</p>
+<p>Move a task under a different epic in one atomic re-parent, so a failed
+move leaves the task under its old epic; a task with no epic is linked.
+<code>--epic</code> accepts <code>adhoc</code>, <code>intake</code>, <code>planning</code>, <code>hoshin</code>, <code>operations</code>,
+<code>#N</code> or <code>owner/repo#N</code>, read against the task's repo. A closed target epic
+is refused by name, since the tooling never reopens a closed epic. Moving a
+task already under an open target is a no-op. The deferred queue is
+entered and left only through <code>vrg-intake-route</code>, so this refuses it.</p>
 <table>
 <thead>
 <tr>
@@ -22365,7 +22367,7 @@ it.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Every refusal runs before any write and is reported on stderr</td>
+<td>Every refusal (a closed target epic among them) runs before any write and is reported on stderr; a failed move is reported in one line and leaves the task where it was</td>
 </tr>
 <tr>
 <td>Exit codes</td>
