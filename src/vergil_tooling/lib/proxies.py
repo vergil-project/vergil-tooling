@@ -397,6 +397,4 @@ def create_proxy(primary: IssueRef, target_repo: str) -> ProxyResult:
                 "--body",
                 proxy_comment(proxy),
             )
-    return ProxyResult(
-        proxy=proxy, created=created, retitled=retitled, commented=commented
-    )
+    return ProxyResult(proxy=proxy, created=created, retitled=retitled, commented=commented)

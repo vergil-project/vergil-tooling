@@ -1956,6 +1956,8 @@ _TASK_CLOSE_COMMENT = (
 _EPIC_CLOSE_COMMENT = (
     "Closed by `vrg-epic-audit`: all {total} child tasks are closed; the epic rolled up."
 )
+
+
 def close_drift(
     tasks: list[TaskDrift],
     epics: list[roadmap.EpicSummary],

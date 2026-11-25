@@ -512,9 +512,7 @@ def test_proxy_for_creates_and_comments() -> None:
     fake = FakeGitHub()
     result = fake.create()
     created = IssueRef("logical-minds-foundry", ".github", 400)
-    assert result == proxies.ProxyResult(
-        created, created=True, retitled=False, commented=True
-    )
+    assert result == proxies.ProxyResult(created, created=True, retitled=False, commented=True)
     (_, create_org, kwargs), (_, comment_org, comment) = fake.writes()[1:]
     assert create_org == "logical-minds-foundry"
     assert kwargs["repo"] == HOME
@@ -649,9 +647,7 @@ def test_create_proxy_reuses_open_beside_closed() -> None:
 def test_proxy_for_rerun_posts_missing_comment() -> None:
     fake = FakeGitHub(proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, retitled=False, commented=True
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=False, commented=True)
     ((kind, org, body),) = fake.writes()
     assert (kind, org) == ("comment", "vergil-project")
     assert "Proxy: logical-minds-foundry/.github#320" in body.splitlines()
@@ -660,9 +656,7 @@ def test_proxy_for_rerun_posts_missing_comment() -> None:
 def test_proxy_for_rerun_is_noop() -> None:
     fake = FakeGitHub(comments=[_recorded()], proxies_in_home={320: _home_proxy()})
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, retitled=False, commented=False
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=False, commented=False)
     assert fake.writes() == []
 
 
@@ -672,9 +666,7 @@ def test_proxy_for_stale_title_retitled() -> None:
         proxies_in_home={320: _home_proxy(title="Epic (proxy): keep ad-hoc queues standalone")},
     )
     result = fake.create()
-    assert result == proxies.ProxyResult(
-        PROXY, created=False, retitled=True, commented=False
-    )
+    assert result == proxies.ProxyResult(PROXY, created=False, retitled=True, commented=False)
     ((kind, org, args),) = fake.writes()
     assert (kind, org) == ("retitle", "logical-minds-foundry")
     assert args == ("issue", "edit", "320", "--repo", HOME, "--title", DERIVED_TITLE)

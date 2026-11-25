@@ -1916,7 +1916,10 @@ def test_body_only_parents_pairs_task_with_body_epic() -> None:
 def test_nativize_skips_closed_epic_and_continues() -> None:
     # Closed is closed (.github#1609): the task naming a closed epic is reported
     # naming both, the next task is still linked, and nothing is reopened.
-    closed_task, closed_epic = epics.IssueRef("org", "tool", 5), epics.IssueRef("org", ".github", 40)
+    closed_task, closed_epic = (
+        epics.IssueRef("org", "tool", 5),
+        epics.IssueRef("org", ".github", 40),
+    )
     open_task, open_epic = epics.IssueRef("org", "tool", 6), epics.IssueRef("org", ".github", 41)
     linked: list[tuple[epics.IssueRef, epics.IssueRef]] = []
 
@@ -3457,9 +3460,7 @@ def test_nativize_skips_untrusted_body_parent(
     task, epic = epics.IssueRef("org", "tool", 7), epics.IssueRef("org", ".github", 40)
     assert parents.pairs == ((task, epic),)
     with patch("vergil_tooling.lib.epics.add_child") as add:
-        assert epic_audit.nativize_parents(list(parents.pairs)) == epic_audit.LinkPass(
-            linked=1
-        )
+        assert epic_audit.nativize_parents(list(parents.pairs)) == epic_audit.LinkPass(linked=1)
     add.assert_called_once_with(epic, task)
     assert [o.ref.number for o in orphans] == [5, 6]
     err = capsys.readouterr().err

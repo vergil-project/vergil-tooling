@@ -2753,6 +2753,12 @@ def test_ensure_standing_epic_creates_when_none() -> None:
     mock_create.assert_called_once()
 
 
+def test_find_epic_by_title_non_list_listing_finds_nothing() -> None:
+    # A listing that is not a list holds no rows, as before the closed check.
+    with patch("vergil_tooling.lib.github.read_json", return_value={}):
+        assert epics._find_epic_by_title("org/.github", "Epic (intake): org", states="all") is None
+
+
 def test_ensure_standing_epic_row_without_state_raises() -> None:
     # A row the "all" listing gives no readable state for is never guessed open.
     rows = [{"number": 5, "title": "Epic (intake): org"}]
