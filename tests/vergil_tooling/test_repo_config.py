@@ -345,6 +345,16 @@ class TestClaudeMdTemplate:
         assert "vrg-container-run -- vrg-validate --markdown" in section
         assert "vrg-container-run -- markdownlint" not in _TEMPLATE_TEXT
 
+    def test_template_prefers_machine_readable_tool_output(self) -> None:
+        # The engineering principles carry the machine-readable output rule
+        # and the lesson that a switch needs a test of the old misread (#4645).
+        section = _TEMPLATE_TEXT.split("## Engineering principles\n", 1)[1].split("\n## ", 1)[0]
+        assert "machine-readable output" in section
+        assert "`--json`" in section
+        assert "fail loudly" in section
+        assert "not as a sweep" in section
+        assert "old parse misread" in section
+
     def test_previous_template_files_are_gone(self) -> None:
         assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
         assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()
