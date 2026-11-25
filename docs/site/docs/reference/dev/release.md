@@ -72,8 +72,8 @@ A CD publish job that fails is recorded in the state block, by its run
 and full job name, and the `cd-publish` stage delivers it on `--resume`:
 it re-runs `main`'s failed jobs, and re-runs a `develop` job only when
 no later `develop` CD run's same job has succeeded. A failed CD release
-job is recorded too, and the resume's `confirm-main` re-runs the release
-PR's CI run and then that CD run before judging it again; see
+job is recorded too, and the resume's `confirm-main` re-runs that CD run,
+never the merged release PR's CI run, before judging it again; see
 [Failed CD publish jobs](../../guides/releasing.md#failed-cd-publish-jobs)
 and [A failed release job](../../guides/releasing.md#a-failed-release-job).
 

@@ -143,7 +143,7 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     """Harvest the release's CI evidence into a staging dir (pre-publish gate).
 
     Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_harvest`, which
-    resolves the release PR, selects the qualifying CI run, downloads the
+    resolves the release PR, selects the newest passing CI attempt, downloads the
     evidence artifacts, enforces completeness, and persists the harvested tree
     plus a state file into ``--out-dir`` for a later network-free assemble. An
     empty head-SHA run lookup is re-queried for ``--run-grace-secs`` before the

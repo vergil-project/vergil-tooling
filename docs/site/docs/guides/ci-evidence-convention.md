@@ -474,6 +474,22 @@ harvest fails rather than take the first PR of the commit. The CI run is the
 latest green `CI` run built from the repo itself; a fork's run of the same
 commit is ignored.
 
+A run is green when its latest attempt passed, or when an earlier attempt
+passed and a later re-run did not. The second case happens when the release
+PR's CI is re-run after the PR merged, because its version check then fails.
+A failed, cancelled or in-progress attempt never counts. The harvest then
+reads only what that earlier attempt produced:
+
+- **Workflow checks:** the conclusions come from that attempt's own jobs, not
+  the commit's latest check runs.
+- **Scanner checks:** the `CodeQL`, `Semgrep OSS` and `Trivy` checks are the
+  newest that started between the attempt's first job and the next attempt.
+- **Artifacts:** only an evidence artifact created in that same window is
+  used.
+
+If a required check or an evidence artifact cannot be tied to the attempt,
+the harvest fails and names it. The manifest's CI run URL names the attempt.
+
 ## Verification: how a downstream auditor checks the bundle
 
 An auditor who pulls a release months later verifies the bundle in two steps:

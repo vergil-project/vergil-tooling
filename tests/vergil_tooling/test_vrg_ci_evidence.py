@@ -50,12 +50,14 @@ def _wire_github_stages(
     monkeypatch.setattr(github, "head_sha", lambda _pr: "cafef00d")
     monkeypatch.setattr(
         ci_evidence,
-        "select_ci_run",
-        lambda _repo, _sha: {
-            "id": 123,
-            "html_url": "https://github.com/o/r/actions/runs/123",
-            "check_suite_id": 501,
-        },
+        "select_passed_attempt",
+        lambda _repo, _sha: ci_evidence.PassedAttempt(
+            run_id=123,
+            attempt=1,
+            latest_attempt=1,
+            url="https://github.com/o/r/actions/runs/123",
+            check_suite_id=501,
+        ),
     )
     monkeypatch.setattr(ci_evidence, "resolve_required_gates", lambda _repo, _ref: required)
     monkeypatch.setattr(
@@ -202,7 +204,7 @@ def test_bundle_no_qualifying_run_errors(
     def _raise(_repo: str, _sha: str) -> Any:
         raise NoQualifyingRunError("cafef00d")
 
-    monkeypatch.setattr(ci_evidence, "select_ci_run", _raise)
+    monkeypatch.setattr(ci_evidence, "select_passed_attempt", _raise)
     out_dir = tmp_path / "out"
 
     rc = main(_argv(out_dir))
@@ -309,7 +311,7 @@ def _break_github_stages(monkeypatch: pytest.MonkeyPatch) -> None:
 
     for name in (
         "resolve_release_pr",
-        "select_ci_run",
+        "select_passed_attempt",
         "resolve_required_gates",
         "read_gate_conclusions",
         "download_evidence_artifacts",
