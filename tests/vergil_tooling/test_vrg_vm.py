@@ -54,10 +54,10 @@ from vergil_tooling.bin.vrg_vm import (
     warn_if_off_host,
 )
 from vergil_tooling.lib import identity_mode, vm_cloud, vm_memory
-from vergil_tooling.lib.vm_guest import ProbeError
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
+from vergil_tooling.lib.vm_guest import ProbeError
 from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
 from vergil_tooling.lib.vm_transport import LimaTransport
 

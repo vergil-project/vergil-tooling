@@ -14,8 +14,8 @@ from vergil_tooling.bin.vrg_git import (
     _check_issue_is_open_task,
     _check_local_rewrite,
     _check_new_branch_name,
-    _is_upstream_gone,
     _checkout_has_pathspec,
+    _is_upstream_gone,
     _noninteractive_rebase_env,
     _org_from_clone_url,
     _parse_branch_create,
@@ -651,6 +651,15 @@ def test_is_upstream_gone_no_upstream(upstream_repo: Path) -> None:
 
 def test_is_upstream_gone_branch_not_found(upstream_repo: Path) -> None:
     assert _is_upstream_gone("feature/nonexistent") is False
+
+
+def test_is_upstream_gone_fails_closed_and_says_why(capsys: pytest.CaptureFixture[str]) -> None:
+    failed = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="fatal: boom\n")
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run", return_value=failed):
+        assert _is_upstream_gone("feature/123-foo") is False
+    assert "could not read the upstream state of feature/123-foo: fatal: boom" in (
+        capsys.readouterr().err
+    )
 
 
 def test_is_upstream_gone_ignores_a_crafted_commit_subject(upstream_repo: Path) -> None:

@@ -398,7 +398,9 @@ def branch_commit(branch: str) -> str:
     would shadow it (GHSA-j7c6-37h8-hjvg). The full ref, ``--verify`` and
     ``--end-of-options`` resolve the branch or fail.
     """
-    return read_output("rev-parse", "--verify", "--end-of-options", f"refs/heads/{branch}^{{commit}}")
+    return read_output(
+        "rev-parse", "--verify", "--end-of-options", f"refs/heads/{branch}^{{commit}}"
+    )
 
 
 def remote_tracking_branches(remote: str = "origin", repo: Path | None = None) -> set[str]:
@@ -645,7 +647,9 @@ def remote_branch_tip(branch: str, remote: str = "origin") -> str | None:
     ref = f"refs/heads/{branch}"
     listing = read_output("ls-remote", remote, ref)
     shas = [
-        sha for sha, _tab, name in (line.partition("\t") for line in listing.splitlines()) if name == ref
+        sha
+        for sha, _tab, name in (line.partition("\t") for line in listing.splitlines())
+        if name == ref
     ]
     return shas[0] if shas else None
 

@@ -568,6 +568,12 @@ def _is_upstream_gone(branch_name: str) -> bool:
         env={**os.environ, "LC_ALL": "C"},
     )
     if result.returncode != 0:
+        # Fail closed (the -D is denied), but say why rather than let the
+        # denial read as a live upstream.
+        print(
+            f"vrg-git: could not read the upstream state of {branch_name}: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
         return False
     for line in result.stdout.splitlines():
         refname, sep, track = line.partition("\0")
