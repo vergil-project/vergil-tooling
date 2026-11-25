@@ -1657,7 +1657,13 @@ def _sync_org(org: str, refs: Sequence[IssueRef], authors: TrustedAuthors) -> Is
         for issue in issues
         if issue.skipped is not None
     ]
-    named = [issue for issue in issues if issue.skipped is None]
+    trusted = [issue for issue in issues if issue.skipped is None]
+    # A security issue with no advisory line is a broken pair on its own,
+    # whatever else the call holds, and needs no advisories call to say so.
+    result.problems += [
+        line for issue in trusted if not issue.ghsa_ids for line in _issue_problems(issue, {})
+    ]
+    named = [issue for issue in trusted if issue.ghsa_ids]
     ghsa_ids = tuple(dict.fromkeys(ghsa_id for issue in named for ghsa_id in issue.ghsa_ids))
     if not ghsa_ids:
         return result

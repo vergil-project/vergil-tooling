@@ -3440,6 +3440,21 @@ def test_sync_issues_reports_a_broken_pair_and_syncs_the_rest(
     assert write.call_args_list == [_patched_state(GHSA, "closed")]
 
 
+@pytest.mark.parametrize("with_other", [False, True])
+def test_sync_issues_reports_a_security_issue_with_no_line(
+    monkeypatch: pytest.MonkeyPatch, *, with_other: bool
+) -> None:
+    # Broken on its own, whether or not another issue in the call names an
+    # advisory, and with no advisories call when none does.
+    no_line = _iss(A, None, open_=False)
+    issue_list = [no_line, _iss(C, open_=False)] if with_other else [no_line]
+    write, _ = _known(monkeypatch, issue_list, [_adv(tracking=(C,))] if with_other else None)
+    result = sync_issues([A, C] if with_other else [A])
+    assert result.problems == [f"{A.slug}: security label but no Security advisory: line"]
+    assert result.synced == ([(GHSA, "closed")] if with_other else [])
+    assert write.call_count == (1 if with_other else 0)
+
+
 def test_sync_issues_reports_an_advisory_that_does_not_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
