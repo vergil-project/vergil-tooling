@@ -980,6 +980,134 @@ def test_unlink_from_finds_container(graph: FakeSubIssueGraph) -> None:
         epic_chain.unlink_from(HEAD, C2)
 
 
+# -- settling after a transfer (spec §4.2) ------------------------------------------
+
+
+def _chain_with_task_in_c2(graph: FakeSubIssueGraph) -> IssueRef:
+    """HEAD full, then C2 holding one task, which is returned."""
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    (task,) = _items(graph, C2, 1)
+    return task
+
+
+def test_move_into_task_already_in_chain_is_noop(graph: FakeSubIssueGraph) -> None:
+    # Its parent field names a container of the chain whose listing holds it:
+    # nothing changes, rollover on or off, and that container is returned.
+    (task,) = _items(graph, HEAD, 1)
+    graph.clear_log()
+    assert epic_chain.move_into(HEAD, task) == HEAD
+    assert graph.events == []
+    assert graph.parent_of(task) == HEAD
+    assert graph.children_of(HEAD) == [task]
+
+
+def test_move_into_task_its_container_does_not_list_is_moved(graph: FakeSubIssueGraph) -> None:
+    # The parent field alone is not proof of the link (#4291): a task the
+    # named container does not list is moved like any other, never left out.
+    _items(graph, HEAD, 3)
+    (task,) = _items(graph, HEAD, 1)
+    graph.unlist(HEAD, task)
+    graph.clear_log()
+    assert epic_chain.move_into(HEAD, task) == HEAD
+    assert graph.events == [("reparent", HEAD, task)]
+    assert task in graph.children_of(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_observe_parent_reads_field_and_listings(graph: FakeSubIssueGraph) -> None:
+    task = _chain_with_task_in_c2(graph)
+    (moved,) = _items(graph, OTHER_HEAD, 1)
+    graph.clear_log()
+    assert epic_chain.observe_parent(HEAD, task) == (C2, [C2])
+    # Its field names C2 while C2 lists it no longer.
+    graph.unlist(C2, task)
+    assert epic_chain.observe_parent(HEAD, task) == (C2, [])
+    # A listing left in the chain after it moved to another epic (#4004).
+    graph.list_stale(C2, moved)
+    assert epic_chain.observe_parent(HEAD, moved) == (OTHER_HEAD, [C2])
+    assert graph.events == []
+
+
+def test_clear_stale_listing_clears_the_container_that_holds_it(
+    graph: FakeSubIssueGraph,
+) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    (moved,) = _items(graph, OTHER_HEAD, 1)
+    graph.list_stale(C2, moved)
+    graph.clear_log()
+    epic_chain.clear_stale_listing(HEAD, moved, keep=OTHER_HEAD)
+    assert graph.events == [("remove", C2, moved)]
+    assert moved not in graph.children_of(C2)
+    assert graph.parent_of(moved) == OTHER_HEAD
+    assert graph.children_of(OTHER_HEAD) == [moved]
+    # Nothing is left to clear: refused by name, nothing written.
+    graph.clear_log()
+    with pytest.raises(ValueError, match=f"no container of epic {HEAD.slug} but"):
+        epic_chain.clear_stale_listing(HEAD, moved, keep=OTHER_HEAD)
+    assert graph.events == []
+
+
+def test_clear_stale_listing_never_clears_keep(graph: FakeSubIssueGraph) -> None:
+    (task,) = _items(graph, HEAD, 1)
+    graph.clear_log()
+    with pytest.raises(ValueError, match=task.slug):
+        epic_chain.clear_stale_listing(HEAD, task, keep=HEAD)
+    assert graph.events == []
+    assert graph.children_of(HEAD) == [task]
+
+
+def test_relink_forces_listing_in_continuation(graph: FakeSubIssueGraph) -> None:
+    # The #4291 case in a continuation: the task's parent field names C2, but
+    # C2's listing lacks it. One replaceParent link into C2 lists it again.
+    task = _chain_with_task_in_c2(graph)
+    graph.unlist(C2, task)
+    graph.clear_log()
+    assert epic_chain.relink(HEAD, task) == C2
+    assert graph.mutations == [("reparent", C2, task)]
+    assert graph.children_of(C2) == [task]
+    assert graph.parent_of(task) == C2
+
+
+def test_relink_outside_the_chain_is_refused(graph: FakeSubIssueGraph) -> None:
+    (elsewhere,) = _items(graph, OTHER_HEAD, 1)
+    unparented = _new_task(graph)
+    graph.clear_log()
+    with pytest.raises(
+        ValueError, match=f"names {OTHER_HEAD.slug}, not a container of epic {HEAD.slug}"
+    ):
+        epic_chain.relink(HEAD, elsewhere)
+    with pytest.raises(ValueError, match="is empty"):
+        epic_chain.relink(HEAD, unparented)
+    assert graph.events == []
+
+
+def test_relink_refuses_closed_head(graph: FakeSubIssueGraph) -> None:
+    (task,) = _items(graph, HEAD, 1)
+    graph.unlist(HEAD, task)
+    graph.close(HEAD)
+    graph.clear_log()
+    with pytest.raises(epics.ClosedEpicError, match=f"epic {HEAD.slug} is closed"):
+        epic_chain.relink(HEAD, task)
+    assert graph.events == []
+    assert graph.issues[HEAD].state == "CLOSED"
+
+
+def test_fake_models_a_transfer_s_disagreeing_views(graph: FakeSubIssueGraph) -> None:
+    # A link into a container listing the child under another parent field
+    # is refused as a duplicate (#3839); removing the field's link hands it
+    # to the container still listing it (#4004).
+    (task,) = _items(graph, OTHER_HEAD, 1)
+    graph.list_stale(HEAD, task)
+    with pytest.raises(github.GitHubAPIError, match="Issue may not contain duplicate sub-issues"):
+        epics.reparent_child(HEAD, task)
+    epics.remove_child(OTHER_HEAD, task)
+    assert graph.parent_of(task) == HEAD
+    assert graph.children_of(HEAD) == [task]
+    assert graph.children_of(OTHER_HEAD) == []
+
+
 # -- the write side's other failures -------------------------------------------------
 
 
