@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -38,7 +39,9 @@ from vergil_tooling.bin.vrg_validate import (
     _run_audit_command,
     _run_common_checks,
     _run_docs_build,
+    _run_gate_command,
     _run_semgrep,
+    _run_transcribed,
     _run_trivy,
     _rust_toolchain_fingerprint,
     _semgrep_rulesets,
@@ -60,6 +63,7 @@ from vergil_tooling.lib.languages import (
     RUST_DOCTEST_CMD,
     RUST_TOOLCHAIN_PROBE_CMDS,
     CheckKind,
+    Transcript,
     language_commands,
 )
 from vergil_tooling.lib.repo_init import (
@@ -270,6 +274,194 @@ def test_command_stage_uses_the_given_runner() -> None:
             stage.fn(None)
     assert [c.args[0] for c in runner.call_args_list] == [["a"], ["b"]]
     m_run.assert_not_called()
+
+
+# -- Transcripts (vergil-project/vergil-tooling#4953) ---------------------------
+
+_TY = Transcript("ty", "quality-ty.log", ("ty", "check"), (("ty", "--version"),))
+
+
+def _fake_progress_run(lines: Sequence[str], rc: int) -> Callable[..., int]:
+    """A ``progress.run`` stand-in that prints *lines* to its transcript and exits *rc*."""
+
+    def run(_cmd: Sequence[str], *, check: bool, transcript: Any = None) -> int:
+        assert check is False
+        for line in lines:
+            if transcript is not None:
+                transcript.write(line + "\n")
+        return rc
+
+    return run
+
+
+def _version(stdout: str = "ty 0.0.9\n", rc: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(["ty", "--version"], rc, stdout=stdout, stderr="")
+
+
+def test_run_transcribed_records_version_command_output_and_status(tmp_path: Path) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()) as m_version,
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run(["All checks passed!"], 0)),
+    ):
+        assert _run_transcribed(["ty", "check", "src", "tests"], _TY, tmp_path) == 0
+    assert m_version.call_args.args[0] == ("ty", "--version")
+    assert (tmp_path / "quality-ty.log").read_text() == (
+        "# vrg-validate transcript: ty\n"
+        "$ ty --version\n"
+        "ty 0.0.9\n"
+        "$ ty check src tests\n"
+        "All checks passed!\n"
+        "exit status: 0\n"
+    )
+
+
+def test_run_transcribed_records_a_silent_command(tmp_path: Path) -> None:
+    """A tool that prints nothing (``cargo fmt --check`` when clean) still leaves data."""
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run([], 0)),
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 0
+    assert (tmp_path / "quality-ty.log").read_text().endswith("$ ty check\nexit status: 0\n")
+
+
+def test_run_transcribed_keeps_the_command_status(tmp_path: Path) -> None:
+    (tmp_path / "quality-ty.log").write_text("stale\n")
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run(["error[x]: bad"], 3)),
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 3
+    text = (tmp_path / "quality-ty.log").read_text()
+    assert "stale" not in text
+    assert text.endswith("error[x]: bad\nexit status: 3\n")
+
+
+def test_run_transcribed_fails_a_version_command_that_exits_non_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version(stdout="", rc=2)),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run(["ok"], 0)) as m_run,
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 1
+    m_run.assert_called_once()
+    assert "$ ty --version\nerror: exited 2\n" in (tmp_path / "quality-ty.log").read_text()
+    out = capsys.readouterr().out
+    assert "`ty --version` exited 2" in out
+    assert "does not name its version" in out
+
+
+def test_run_transcribed_fails_a_version_command_that_cannot_run(tmp_path: Path) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", side_effect=FileNotFoundError("no ty")),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run([], 0)),
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 1
+    assert "error: could not run: no ty\n" in (tmp_path / "quality-ty.log").read_text()
+
+
+def test_run_transcribed_keeps_a_failed_command_status_over_a_version_failure(
+    tmp_path: Path,
+) -> None:
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version(rc=1)),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run([], 4)),
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 4
+
+
+def test_run_transcribed_fails_when_the_transcript_cannot_be_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "quality-ty.log").mkdir()
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()),
+        patch(_MOD + ".progress.run") as m_run,
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, tmp_path) == 1
+    m_run.assert_not_called()
+    report = tmp_path / "quality-ty.log"
+    assert f"could not write the ty transcript {report}" in capsys.readouterr().out
+
+
+class _FailingWrites(io.StringIO):
+    """A transcript file whose writes fail from the *fail_from*-th call on."""
+
+    def __init__(self, fail_from: int) -> None:
+        super().__init__()
+        self.calls = 0
+        self.fail_from = fail_from
+
+    def _count(self) -> None:
+        self.calls += 1
+        if self.calls >= self.fail_from:
+            msg = "disk full"
+            raise OSError(msg)
+
+    def writelines(self, lines: Any) -> None:
+        self._count()
+        for line in lines:
+            super().write(line)
+
+    def write(self, s: str) -> int:
+        self._count()
+        return super().write(s)
+
+
+@pytest.mark.parametrize(("fail_from", "ran"), [(1, False), (2, True)])
+def test_run_transcribed_fails_when_a_transcript_write_fails(
+    fail_from: int, ran: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The header failing stops before the command; the closing status failing, after it."""
+    root = MagicMock()
+    root.__truediv__.return_value.open.return_value = _FailingWrites(fail_from)
+    with (
+        patch(_MOD + ".subprocess.run", return_value=_version()),
+        patch(_MOD + ".progress.run", return_value=0) as m_run,
+    ):
+        assert _run_transcribed(["ty", "check"], _TY, root) == 1
+    assert m_run.called is ran
+    assert "could not write the ty transcript" in capsys.readouterr().out
+
+
+def test_run_gate_command_transcribes_only_a_command_with_a_transcript(tmp_path: Path) -> None:
+    with (
+        patch(_MOD + "._run_transcribed", return_value=0) as m_transcribed,
+        patch(_MOD + ".progress.run", return_value=5) as m_run,
+    ):
+        assert _run_gate_command("python", CheckKind.TYPECHECK, tmp_path, ["ty", "check"]) == 0
+        assert _run_gate_command("python", CheckKind.TYPECHECK, tmp_path, ["mypy", "src/"]) == 5
+    (call,) = m_transcribed.call_args_list
+    assert call.args[0] == ["ty", "check"]
+    assert call.args[1].report == "quality-ty.log"
+    assert call.args[2] == tmp_path
+    m_run.assert_called_once_with(["mypy", "src/"], check=False)
+
+
+@pytest.mark.parametrize(
+    ("language", "kind"),
+    [(language, kind) for language, gates in languages._TRANSCRIPTS.items() for kind in gates],
+)
+def test_gate_stage_writes_every_declared_transcript(
+    language: str, kind: CheckKind, tmp_path: Path
+) -> None:
+    """``vrg-validate --check <gate>`` writes each transcript its gate declares."""
+    with (
+        patch(_MOD + "._bootstrap_state", return_value=([], [])),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".typescript_tools.run_pre_gate_checks", return_value=[]),
+        patch(_MOD + ".subprocess.run", return_value=_version(stdout="tool 1.0\n")),
+        patch(_MOD + ".progress.run", side_effect=_fake_progress_run(["ran"], 0)),
+    ):
+        stages = _build_stages(kind.value, language, tmp_path)
+        (stage,) = [s for s in stages if s.name == kind.value]
+        stage.fn(None)
+    for transcript in languages.language_transcripts(language, kind):
+        text = (tmp_path / transcript.report).read_text()
+        assert text.startswith(f"# vrg-validate transcript: {transcript.tool}\n")
+        assert "tool 1.0\n" in text
+        assert text.endswith("ran\nexit status: 0\n")
 
 
 # -- _run_audit_command (issue #4423) -------------------------------------------
@@ -2357,7 +2549,7 @@ def _run_rust_build(tmp_path: Path, build_rc: int) -> tuple[int, list[str]]:
     (tmp_path / "Cargo.lock").write_text("version = 4\n")
     ran: list[str] = []
 
-    def mock_run(cmd: Sequence[str], *, check: bool = True) -> int:
+    def mock_run(cmd: Sequence[str], *, check: bool = True, **_kw: object) -> int:
         ran.append(" ".join(cmd))
         return build_rc if " ".join(cmd) == _RUST_BUILD else 0
 
@@ -2365,6 +2557,7 @@ def _run_rust_build(tmp_path: Path, build_rc: int) -> tuple[int, list[str]]:
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + "._versions_resolve", return_value=("1.90",)),
         patch(_MOD + ".progress.run", side_effect=mock_run),
+        patch(_MOD + "._probe_version", return_value=("cargo 1.90.0\n", True)),
     ):
         rc = main(["--check", "build"])
     return rc, ran
@@ -2376,6 +2569,10 @@ def test_rust_build_runs_the_release_build(tmp_path: Path) -> None:
     assert rc == 0
     assert ran == ["cargo fetch --locked", _RUST_BUILD]
     assert read_record(tmp_path).passed == ("install", "build")
+    # The build's transcript is the BUILD gate's evidence (#4953).
+    transcript = (tmp_path / "quality-build.log").read_text()
+    assert f"$ {_RUST_BUILD}\n" in transcript
+    assert transcript.endswith("exit status: 0\n")
 
 
 @pytest.mark.usefixtures("real_bootstrap_check")
@@ -2389,6 +2586,7 @@ def test_rust_build_failure_fails_validate(
     assert record.passed == ("install",)
     assert record.not_passed == ("build",)
     assert "1 of 1 build command(s) failed" in capsys.readouterr().out
+    assert (tmp_path / "quality-build.log").read_text().endswith("exit status: 101\n")
 
 
 # -- Cargo.lock is enforced (epic vergil-project/.github#1165, spec §6.1) -------
@@ -3351,7 +3549,7 @@ def _run_typescript_validate(tmp_path: Path, argv: list[str]) -> tuple[int, list
     _write_config(tmp_path, "typescript")
     ran: list[str] = []
 
-    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True) -> int:
+    def mock_run(cmd: tuple[str, ...] | list[str], *, check: bool = True, **_kw: object) -> int:
         ran.append(" ".join(cmd))
         return 0
 
@@ -3360,6 +3558,7 @@ def _run_typescript_validate(tmp_path: Path, argv: list[str]) -> tuple[int, list
         patch(_MOD + "._versions_resolve", return_value=("node-24",)),
         patch(_MOD + "._find_custom_validator", return_value=None),
         patch(_MOD + ".progress.run", side_effect=mock_run),
+        patch(_MOD + "._probe_version", return_value=("v24.0.0\n", True)),
     ):
         rc = main(argv)
     return rc, ran

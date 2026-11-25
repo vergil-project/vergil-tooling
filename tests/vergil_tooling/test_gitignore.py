@@ -294,7 +294,8 @@ def test_typescript_fragment_ignores_reports() -> None:
     ]
     composed = gitignore.compose("typescript")
     for report in TYPESCRIPT_REPORT_FILES:
-        assert report in composed, report
+        # vrg-validate's transcripts are ``*.log``, which ``base`` ignores.
+        assert report in composed or (report.endswith(".log") and "*.log" in composed), report
     assert COVERAGE_REPORT in gitignore.load_base()
     assert JUNIT_REPORT in gitignore.load_base()
 

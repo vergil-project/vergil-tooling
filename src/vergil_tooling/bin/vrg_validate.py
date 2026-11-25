@@ -103,7 +103,9 @@ from vergil_tooling.lib.languages import (
     RUST_DOCTEST_CMD,
     RUST_TOOLCHAIN_PROBE_CMDS,
     CheckKind,
+    Transcript,
     build_python_test_argv,
+    command_transcript,
     language_commands,
     rust_coverage_export_cmd,
 )
@@ -669,6 +671,85 @@ def _command_stage(
             raise ValidationError(msg)
 
     return Stage(label, fn, mode=mode)
+
+
+def _probe_version(cmd: Sequence[str]) -> tuple[str, bool]:
+    """Run the version command *cmd*; return the text a transcript records and whether it ran.
+
+    The text is the command's output, or the error that stopped it, which
+    is also printed.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"error: `{' '.join(cmd)}` could not run: {exc}")
+        return f"error: could not run: {exc}\n", False
+    text = result.stdout + result.stderr
+    if result.returncode != 0:
+        print(f"error: `{' '.join(cmd)}` exited {result.returncode}")
+        return f"{text}error: exited {result.returncode}\n", False
+    return text, True
+
+
+def _run_transcribed(cmd: list[str], transcript: Transcript, repo_root: Path) -> int:
+    """Run *cmd* as :func:`progress.run` does, recording *transcript* as it runs.
+
+    The transcript, ``transcript.report`` at *repo_root*, is the gate's
+    evidence for a tool that writes no report of its own
+    (vergil-project/vergil-tooling#4953): each version command and its
+    output, the command, every line it printed and its exit status, so a
+    tool that prints nothing on success still leaves real data. A version
+    command that cannot run or exits non-zero fails the command, after the
+    command itself has run, since the evidence would not name the tool's
+    version. A transcript that cannot be written fails it too. The command
+    runs through :func:`progress.run`, so what that raises (a command not
+    found) propagates as it does for any other gate command.
+    """
+    report = repo_root / transcript.report
+    lines = [f"# vrg-validate transcript: {transcript.tool}\n"]
+    version_failed = False
+    for version_cmd in transcript.version_cmds:
+        text, ok = _probe_version(version_cmd)
+        lines.extend([f"$ {' '.join(version_cmd)}\n", text])
+        version_failed = version_failed or not ok
+    lines.append(f"$ {' '.join(cmd)}\n")
+    write_failed = f"error: could not write the {transcript.tool} transcript {report}"
+    try:
+        out = report.open("w", encoding="utf-8")
+    except OSError as exc:
+        print(f"{write_failed}: {exc}")
+        return 1
+    with out:
+        try:
+            out.writelines(lines)
+            out.flush()
+        except OSError as exc:
+            print(f"{write_failed}: {exc}")
+            return 1
+        rc = progress.run(cmd, check=False, transcript=out)
+        try:
+            out.write(f"exit status: {rc}\n")
+        except OSError as exc:
+            print(f"{write_failed}: {exc}")
+            return 1
+    if rc == 0 and version_failed:
+        print(f"error: the {transcript.tool} transcript {report} does not name its version")
+        return 1
+    return rc
+
+
+def _run_gate_command(language: str, kind: CheckKind, repo_root: Path, cmd: list[str]) -> int:
+    """Run one command of *language*'s *kind* gate, with its transcript if it has one."""
+    transcript = command_transcript(language, kind, cmd)
+    if transcript is not None:
+        return _run_transcribed(cmd, transcript, repo_root)
+    return progress.run(cmd, check=False)
 
 
 def _run_audit_command(cmd: list[str]) -> int:
@@ -1412,7 +1493,14 @@ def _build_stages(
                     )
                     continue
                 if language != "python" or kind is not CheckKind.TEST:
-                    stages.append(_command_stage(kind.value, cmds, mode="fail_defer"))
+                    stages.append(
+                        _command_stage(
+                            kind.value,
+                            cmds,
+                            mode="fail_defer",
+                            run_cmd=partial(_run_gate_command, language, kind, repo_root),
+                        )
+                    )
                     continue
                 stages.append(
                     _python_test_stage(

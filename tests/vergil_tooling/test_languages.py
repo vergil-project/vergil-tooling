@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import languages
+from vergil_tooling.lib import gitignore, languages
 from vergil_tooling.lib.languages import (
     _RUST_LICENSES_ALLOWLIST,
     _TYPESCRIPT_LICENSES_ALLOWLIST,
@@ -28,6 +28,7 @@ from vergil_tooling.lib.languages import (
     PYTHON_REPORT_FILES,
     RUFF_REPORT,
     RUST_REPORT_FILES,
+    TOOL_EVIDENCE,
     TSC_REPORT,
     TYPESCRIPT_REPORT_FILES,
     Cardinality,
@@ -36,8 +37,10 @@ from vergil_tooling.lib.languages import (
     Language,
     build_python_test_argv,
     check_cardinality,
+    command_transcript,
     ecosystem_metadata,
     language_commands,
+    language_transcripts,
     rust_coverage_export_cmd,
     supported_languages,
 )
@@ -323,6 +326,7 @@ def test_python_report_files_contract() -> None:
     assert PYTHON_REPORT_FILES == (
         "quality-ruff.json",
         "quality-mypy.xml",
+        "quality-ty.log",
         "coverage.xml",
         "junit.xml",
         "pip-audit.json",
@@ -649,8 +653,10 @@ def test_rust_build_check_enabled() -> None:
 def test_rust_report_files_contract() -> None:
     """The rust report names match vergil-actions' staging (issues #4394, #4395, #4473)."""
     assert RUST_REPORT_FILES == (
+        "quality-rustfmt.log",
         "quality-clippy.json",
         "quality-cargo-check.json",
+        "quality-build.log",
         "coverage.xml",
         "junit.xml",
         "cargo-deny.json",
@@ -1193,19 +1199,116 @@ def test_typescript_report_files() -> None:
         "coverage.xml",
         "junit.xml",
         "npm-audit.json",
+        "quality-prettier.log",
         "quality-eslint.json",
         "quality-tsc.txt",
+        "quality-build.log",
         "licenses.json",
     )
-    # Every report name is written by a gate command: in an ``sh -c`` script,
-    # or as an argument of a plain argv (the license gate's ``--output``).
-    every_command = " ".join(
-        " ".join(cmd)
-        for kind in (CheckKind.LINT, CheckKind.TYPECHECK, CheckKind.TEST, CheckKind.AUDIT)
-        for cmd in language_commands("typescript", kind)
-    )
-    for report in TYPESCRIPT_REPORT_FILES:
-        assert report in every_command, report
+
+
+# -- Evidence for every tool (vergil-project/vergil-tooling#4953) --------------
+
+_REPORT_FILES = {
+    "python": PYTHON_REPORT_FILES,
+    "rust": RUST_REPORT_FILES,
+    "typescript": TYPESCRIPT_REPORT_FILES,
+}
+
+_EVIDENCE_GATES = [(language, kind) for language, gates in TOOL_EVIDENCE.items() for kind in gates]
+
+
+def test_tool_evidence_covers_every_language_with_a_report_contract() -> None:
+    assert set(TOOL_EVIDENCE) == set(_REPORT_FILES)
+
+
+@pytest.mark.parametrize(("language", "kind"), _EVIDENCE_GATES)
+def test_every_tool_has_an_evidence_file(language: str, kind: CheckKind) -> None:
+    """Each tool a gate lists has at least one evidence file of its language."""
+    tools = TOOL_EVIDENCE[language][kind]
+    assert tools
+    for tool, evidence in tools.items():
+        assert evidence, f"{language} {kind.value}: {tool} has no evidence file"
+        for name in evidence:
+            assert name in _REPORT_FILES[language], (language, tool, name)
+
+
+@pytest.mark.parametrize(("language", "kind"), _EVIDENCE_GATES)
+def test_every_evidence_file_is_written_by_its_gate(language: str, kind: CheckKind) -> None:
+    """Each evidence file is a transcript of the gate's or named by one of its commands.
+
+    A report a tool writes itself is named in the gate's command (an ``sh
+    -c`` script or an argument such as ``--output-file``); one vrg-validate
+    records is a transcript of one of the gate's commands, for the tool it
+    names.
+    """
+    cmds = language_commands(language, kind)
+    assert cmds
+    every_command = " ".join(" ".join(cmd) for cmd in cmds)
+    transcribed = {
+        (t.tool, t.report)
+        for cmd in cmds
+        if (t := command_transcript(language, kind, cmd)) is not None
+    }
+    for tool, evidence in TOOL_EVIDENCE[language][kind].items():
+        for name in evidence:
+            assert (tool, name) in transcribed or name in every_command, (language, tool, name)
+
+
+@pytest.mark.parametrize("language", sorted(_REPORT_FILES))
+def test_report_files_are_the_tools_evidence(language: str) -> None:
+    """A language's report files are exactly its tools' evidence, so none is unattributed."""
+    evidence = {
+        name
+        for tools in TOOL_EVIDENCE[language].values()
+        for files in tools.values()
+        for name in files
+    }
+    assert evidence == set(_REPORT_FILES[language])
+
+
+@pytest.mark.parametrize(
+    ("language", "kind"),
+    [(language, kind) for language, gates in languages._TRANSCRIPTS.items() for kind in gates],
+)
+def test_every_transcript_records_exactly_one_gate_command(language: str, kind: CheckKind) -> None:
+    """Each declared transcript matches one command of its gate, and its tool lists it."""
+    cmds = language_commands(language, kind)
+    for transcript in language_transcripts(language, kind):
+        matched = [cmd for cmd in cmds if command_transcript(language, kind, cmd) == transcript]
+        assert len(matched) == 1, (language, kind, transcript)
+        assert transcript.version_cmds
+        assert transcript.report in TOOL_EVIDENCE[language][kind][transcript.tool]
+
+
+def test_transcript_reports_are_ignored_by_the_base_gitignore() -> None:
+    """Every transcript is a ``*.log``, which every managed ``.gitignore`` ignores."""
+    for gates in languages._TRANSCRIPTS.values():
+        for transcripts in gates.values():
+            for transcript in transcripts:
+                assert transcript.report.endswith(".log"), transcript
+    assert "*.log" in gitignore.load_base()
+
+
+def test_command_transcript_matches_by_prefix() -> None:
+    ty = command_transcript("python", CheckKind.TYPECHECK, ["ty", "check", "src", "tests"])
+    assert ty is not None
+    assert ty.tool == "ty"
+    assert ty.report == "quality-ty.log"
+    assert command_transcript("python", CheckKind.TYPECHECK, ["mypy", "src/"]) is None
+    assert command_transcript("python", CheckKind.LINT, ["ty", "check"]) is None
+    assert command_transcript(None, CheckKind.TYPECHECK, ["ty", "check"]) is None
+    assert command_transcript("go", CheckKind.LINT, ["golangci-lint", "run"]) is None
+
+
+def test_build_transcript_records_the_release_build_unchanged() -> None:
+    """BUILD's transcript records the ecosystem's build command, as the release job runs it."""
+    for language in ("rust", "typescript"):
+        (cmd,) = language_commands(language, CheckKind.BUILD)
+        assert cmd == ecosystem_metadata(language).build_cmd
+        transcript = command_transcript(language, CheckKind.BUILD, cmd)
+        assert transcript is not None
+        assert transcript.report == "quality-build.log"
 
 
 def test_typescript_audit_commands() -> None:
