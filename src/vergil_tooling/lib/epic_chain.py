@@ -1,4 +1,4 @@
-"""An epic's chain of containers past GitHub's 100-sub-issue limit: the read side.
+"""An epic's chain of containers past GitHub's 100-sub-issue limit.
 
 GitHub allows at most 100 sub-issues under one parent, so an epic grows as a
 **chain** (epic vergil-project/.github#1609, spec §4.1): its **head**, the
@@ -22,6 +22,19 @@ Every walk here uses only the raw per-container reads of
 :mod:`~vergil_tooling.lib.epics` (``_container_listing``,
 ``_container_parent``), never its public readers, so making those readers
 chain-aware changes nothing in this module.
+
+**The write side** (spec §4.2, §4.3, §4.5, §4.7). :func:`link_into` and
+:func:`move_into` put an item into the first container, in chain order, that
+is open and holds fewer than :data:`ITEM_CAP` items (**first fit**), and roll
+over only when every container is full: find-or-create the next
+continuation, link it into the tail's last slot, then link the item. Before
+any write they refuse a closed head (closed is closed) and a chain that
+cannot grow past GitHub's nesting limit (:class:`ChainDepthError`), and
+:func:`check_capacity` makes the same checks, reading only, for a command
+that creates an issue before linking it. While :data:`ROLLOVER_ENABLED` is
+off, no writer creates, adopts or links a continuation: the head is the only
+container and takes up to GitHub's 100 items, and a full one is refused by
+name (:class:`RolloverDisabledError`).
 """
 
 from __future__ import annotations
@@ -29,17 +42,42 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import epics
-from vergil_tooling.lib.epics import EpicRefusalError, IssueRef
+from vergil_tooling.lib import epics, github
+from vergil_tooling.lib.epics import ClosedEpicError, EpicRefusalError, IssueRef
+from vergil_tooling.lib.labels import ensure_labels
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
 #: The most items one container holds; the 100th slot of a non-tail container
 #: is its continuation (spec §4.1).
 ITEM_CAP = 99
+
+#: GitHub's limit of sub-issues under one parent.
+SUBISSUE_LIMIT = 100
+
+#: GitHub's nesting limit in levels, the top issue included: the ``Max depth``
+#: the live probe recorded (Task 4 of epic vergil-project/.github#1609,
+#: vergil-project/.github#1632). The items of container ``k`` sit at the
+#: head's level plus ``k``, so a chain grows only while that stays within it.
+MAX_DEPTH = 8
+
+#: Whether a writer may roll an epic over into a continuation. Off until every
+#: reader of an epic's children reads through the chain (Task 11b of epic
+#: vergil-project/.github#1609 removes it): while it is off, the head is the
+#: only container and takes up to :data:`SUBISSUE_LIMIT` items, and a link into
+#: a full head raises :class:`RolloverDisabledError` before any write.
+ROLLOVER_ENABLED: bool = False
+
+# GitHub's depth refusal, as the live probe recorded it: "... You can’t add
+# more than 7 layers of sub-issues. ..."
+_DEPTH_ERROR_RE = re.compile(r"more than \d+ layers of sub-issues")
+
+# A continuation's Container: line, rewritten when an orphan is adopted.
+_CONTAINER_LINE_RE = re.compile(r"^Container:[ \t]*[0-9]+[ \t]*$", re.MULTILINE)
 
 #: The rules a continuation can break (spec §4.1), each a :class:`ChainDriftError` rule.
 DRIFT_RULES = (
@@ -260,3 +298,397 @@ def head_of(container: IssueRef) -> IssueRef:
                 f"its Continues: line names {named.slug}, not {head.slug}",
             )
         current = parent
+
+
+# -- the write side -----------------------------------------------------------------
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+class RolloverDisabledError(EpicRefusalError, RuntimeError):
+    """*head* holds GitHub's 100 sub-issues, and rollover is not enabled yet."""
+
+    def __init__(self, head: IssueRef) -> None:
+        super().__init__(
+            f"epic {head.slug} is at GitHub's limit of {SUBISSUE_LIMIT} sub-issues, and "
+            "rollover into a continuation is not enabled yet"
+        )
+        self.head = head
+
+
+class ChainDepthError(EpicRefusalError, RuntimeError):
+    """*head*'s chain cannot grow past GitHub's nesting limit (spec §4.5).
+
+    Raised before any write when the next item would sit deeper than
+    :data:`MAX_DEPTH`, and in place of GitHub's own depth error if it comes
+    first. *task*, when given, is the item whose link GitHub refused: the
+    depth check does not count the item's own sub-issues, so the message
+    names them as a possible cause.
+    """
+
+    def __init__(
+        self, head: IssueRef, *, items: int, containers: int, task: IssueRef | None = None
+    ) -> None:
+        message = (
+            f"epic {head.slug} cannot grow: {_count(items, 'item')} in "
+            f"{_count(containers, 'container')}, at GitHub's nesting limit of {MAX_DEPTH}; "
+            "split the epic"
+        )
+        if task is not None:
+            message += f", or {task.slug}'s own sub-issues are too deep to fit under it"
+        super().__init__(message)
+        self.head = head
+        self.task = task
+
+
+def _level(ref: IssueRef) -> int:
+    """*ref*'s level in GitHub's sub-issue tree: 1 for a top issue, one more per ancestor."""
+    level = 1
+    parent = epics._container_parent(ref)
+    while parent is not None:
+        level += 1
+        if level > MAX_DEPTH + 1:
+            raise RuntimeError(
+                f"the native parents of {ref.slug} run deeper than GitHub's nesting limit "
+                f"of {MAX_DEPTH}"
+            )
+        parent = epics._container_parent(parent)
+    return level
+
+
+@dataclass(frozen=True)
+class _Fit:
+    """Where the next item of a chain goes, as one read of the chain saw it.
+
+    *target* is the first open container with a free item slot, or ``None``
+    when every container is full and the chain must roll over; *chain* is
+    every container, head first.
+    """
+
+    target: IssueRef | None
+    chain: tuple[Container, ...]
+
+    @property
+    def tail(self) -> Container:
+        return self.chain[-1]
+
+    @property
+    def items(self) -> int:
+        return sum(container.item_count for container in self.chain)
+
+
+def _fit(head: IssueRef) -> _Fit:
+    """Find the next item's container in *head*'s chain, refusing before any write.
+
+    Raises :class:`ClosedEpicError` for a closed head,
+    :class:`RolloverDisabledError` for a full head while rollover is off, and
+    :class:`ChainDepthError` when the item, or the continuation a rollover
+    would add, would sit past :data:`MAX_DEPTH`. Reads only.
+    """
+    if not ROLLOVER_ENABLED:
+        listing = epics._container_listing(head)
+        if listing.state == "CLOSED":
+            raise ClosedEpicError(head)
+        if listing.total >= SUBISSUE_LIMIT:
+            raise RolloverDisabledError(head)
+        chain: tuple[Container, ...] = (
+            Container(ref=head, state=listing.state, item_count=listing.total, continuation=None),
+        )
+        target: IssueRef | None = head
+        position = 1
+    else:
+        chain = tuple(containers(head))
+        if chain[0].state == "CLOSED":
+            raise ClosedEpicError(head)
+        free = [
+            k
+            for k, container in enumerate(chain, start=1)
+            if container.state == "OPEN" and container.item_count < ITEM_CAP
+        ]
+        position = free[0] if free else len(chain) + 1
+        target = chain[position - 1].ref if free else None
+    fit = _Fit(target=target, chain=chain)
+    # The items of container k sit at the head's level plus k.
+    if _level(head) + position > MAX_DEPTH:
+        raise ChainDepthError(head, items=fit.items, containers=len(chain))
+    return fit
+
+
+def check_capacity(head: IssueRef) -> None:
+    """Refuse, reading only, when a link into *head*'s chain would fail.
+
+    For a command that creates an issue and then links it: it runs this
+    before creating, so a refusal leaves nothing orphaned (spec §4.5).
+    Raises :class:`ClosedEpicError`, :class:`RolloverDisabledError` or
+    :class:`ChainDepthError`, as :func:`link_into` would.
+    """
+    _fit(head)
+
+
+def _link_rewording_depth(
+    write: Callable[[IssueRef, IssueRef], None],
+    parent: IssueRef,
+    child: IssueRef,
+    *,
+    head: IssueRef,
+    fit: _Fit,
+    task: IssueRef | None,
+) -> None:
+    """``write(parent, child)``, with GitHub's depth error reworded as :class:`ChainDepthError`."""
+    try:
+        write(parent, child)
+    except github.GitHubAPIError as exc:
+        if _DEPTH_ERROR_RE.search(error_text(exc)):
+            raise ChainDepthError(
+                head, items=fit.items, containers=len(fit.chain), task=task
+            ) from exc
+        raise
+
+
+def _place(head: IssueRef, task: IssueRef, write: Callable[[IssueRef, IssueRef], None]) -> IssueRef:
+    """Put *task* into the first container of *head*'s chain with a free slot, rolling over."""
+    for _ in range(MAX_DEPTH + 1):
+        fit = _fit(head)
+        if fit.target is not None:
+            _link_rewording_depth(write, fit.target, task, head=head, fit=fit, task=task)
+            return fit.target
+        if fit.tail.item_count >= SUBISSUE_LIMIT:
+            raise RuntimeError(
+                f"the tail {fit.tail.ref.slug} of epic {head.slug} holds {SUBISSUE_LIMIT} items "
+                "and no continuation, so it has no slot for one; it needs the full-tail heal"
+            )
+        find_or_create_continuation(head, fit.tail.ref)
+    raise RuntimeError(
+        f"no container of epic {head.slug} had a free slot for {task.slug} after "
+        f"{MAX_DEPTH + 1} rollovers"
+    )
+
+
+def link_into(head: IssueRef, task: IssueRef) -> IssueRef:
+    """Link *task* into *head*'s chain by first fit, rolling over when every container is full.
+
+    Returns the container *task* was linked into. A closed head raises
+    :class:`ClosedEpicError` and is never reopened; the depth limit raises
+    :class:`ChainDepthError` before any write; a full head while rollover is
+    off raises :class:`RolloverDisabledError`. A closed continuation is
+    skipped, never linked into.
+    """
+    return _place(head, task, epics.add_child)
+
+
+def move_into(head: IssueRef, task: IssueRef) -> IssueRef:
+    """Move *task* from wherever it is into *head*'s chain, in one atomic re-parent.
+
+    Returns the container *task* is in. The container is chosen as
+    :func:`link_into` chooses it, with the same refusals and rollover, and
+    the move is one ``replaceParent``, so a refused move leaves *task* where
+    it was. A *task* already linked anywhere in the chain stays where it is.
+    """
+    epics.require_open_epic(head)
+    current = epics._container_parent(task)
+    if current is not None and current in chain_of(head):
+        return current
+    return _place(head, task, epics.reparent_child)
+
+
+def unlink_from(head: IssueRef, task: IssueRef) -> None:
+    """Unlink *task* from whichever container of *head*'s chain it is linked in.
+
+    Raises :class:`ValueError`, naming both, when *task* is not an item of
+    the chain.
+    """
+    for step in _walk(head):
+        if any(item.ref == task for item in step.items):
+            epics.remove_child(step.container.ref, task)
+            return
+    raise ValueError(f"{task.slug} is not linked in the chain of epic {head.slug}")
+
+
+def _continuation_title(head: IssueRef, k: int) -> str:
+    return f"{epics._issue_title(head)} (continuation {k})"
+
+
+def _continuation_body(head: IssueRef, k: int) -> str:
+    return (
+        f"This issue holds the overflow of epic {head.slug} past GitHub's limit of "
+        f"{SUBISSUE_LIMIT} sub-issues. It is managed by the tooling.\n\n"
+        f"Continues: {head.slug}\n"
+        f"Container: {k}\n"
+    )
+
+
+def find_orphans(head: IssueRef) -> list[IssueRef]:
+    """The open continuations of *head* that its chain does not reach, lowest number first.
+
+    Lists the open ``continuation``-labelled issues in *head*'s repo. One
+    whose trusted ``Continues:`` line names *head*, with no native parent and
+    not reached by :func:`chain_of`, is an orphan (spec §4.3). One that
+    names *head* but breaks another rule (the ``epic`` label missing, or
+    linked outside the chain) raises :class:`ChainDriftError`. So does an
+    unparented one whose body is untrusted or has no single ``Continues:``
+    line: it could be this head's orphan, and is never guessed past. One
+    that is linked elsewhere, or names another head, is not this head's.
+    """
+    repo = f"{head.owner}/{head.repo}"
+    rows: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--label",
+        epics.CONTINUATION_LABEL,
+        "--state",
+        "open",
+        "--limit",
+        str(epics.LISTING_LIMIT),
+        "--json",
+        "number,labels",
+    )
+    epics.refuse_truncated(rows, epics.LISTING_LIMIT, f"the open continuations of {repo}")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"listing the open continuations of {repo} returned no list")
+    reached = set(chain_of(head))
+    orphans: list[IssueRef] = []
+    for row in sorted(rows, key=lambda r: int(r["number"])):
+        ref = IssueRef(owner=head.owner, repo=head.repo, number=int(row["number"]))
+        if ref in reached:
+            continue
+        labels = {str(label.get("name", "")) for label in row.get("labels") or []}
+        parent = epics._container_parent(ref)
+        body = epics._trusted_body(ref)
+        named = parse_continues(body) if body is not None else None
+        if named is None:
+            if parent is not None:
+                continue  # linked in another container, whose chain's readers judge it
+            if body is None:
+                raise ChainDriftError(
+                    ref, "untrusted-body", "an unlinked continuation whose body is not trusted"
+                )
+            raise ChainDriftError(
+                ref, "continues-mismatch", "an unlinked continuation with no single Continues: line"
+            )
+        if named != head:
+            continue
+        if not epics.is_continuation(labels):
+            raise ChainDriftError(ref, "label", "it names this head but lacks 'epic'")
+        if parent is not None:
+            raise ChainDriftError(
+                ref,
+                "not-native-child",
+                f"its Continues: line names {head.slug}, but it is linked under {parent.slug}, "
+                "outside that chain",
+            )
+        orphans.append(ref)
+    return orphans
+
+
+def _announce(head: IssueRef, continuation: IssueRef) -> None:
+    """Report a rollover of *head* into *continuation*, as its kind calls for (spec §4.7).
+
+    A queue's is the review nudge; any other standing epic's is a plain
+    line; a development or proxy epic's is loud, advises a split and is
+    commented on the head too.
+    """
+    kind = epics.standing_kind_of(epics._labels(head))
+    if kind is not None and kind in epics.QUEUE_KINDS:
+        print(
+            f"queue {head.slug} rolled over into continuation {continuation.slug}; "
+            f"run epic-review {kind.key}"
+        )
+        return
+    if kind is not None:
+        print(f"epic {head.slug} rolled over into continuation {continuation.slug}")
+        return
+    line = (
+        f"epic {head.slug} rolled over into continuation {continuation.slug} at "
+        f"{ITEM_CAP} children; consider splitting it"
+    )
+    print(line)
+    github.run(
+        "issue", "comment", str(head.number), "--repo", epics._repo_slug(head), "--body", line
+    )
+
+
+def _renumber(head: IssueRef, continuation: IssueRef, k: int) -> None:
+    """Rewrite an adopted *continuation*'s title and ``Container:`` line to its place *k*."""
+    body = epics._trusted_body(continuation)
+    if body is None:
+        raise ChainDriftError(
+            continuation, "untrusted-body", "the trust layer does not trust its body"
+        )
+    line = f"Container: {k}"
+    if _CONTAINER_LINE_RE.search(body):
+        new_body = _CONTAINER_LINE_RE.sub(line, body)
+    else:
+        new_body = f"{body.rstrip()}\n{line}\n"
+    title = _continuation_title(head, k)
+    if new_body == body and title == epics._issue_title(continuation):
+        return
+    github.run(
+        "issue",
+        "edit",
+        str(continuation.number),
+        "--repo",
+        epics._repo_slug(continuation),
+        "--title",
+        title,
+        "--body",
+        new_body,
+    )
+
+
+def find_or_create_continuation(head: IssueRef, tail: IssueRef) -> IssueRef:
+    """The next continuation of *head*'s chain after *tail*, linked into *tail*'s last slot.
+
+    An existing continuation under *tail* (a concurrent writer's) is
+    returned as it is. Otherwise an orphan of *head* (:func:`find_orphans`)
+    is adopted: linked under *tail*, then its title and ``Container:`` line
+    renumbered. Only when there is neither is a continuation created, then
+    linked. A closed *head* raises :class:`ClosedEpicError` before any read
+    of orphans and any write: an orphan of a closed head is never adopted. A
+    closed *tail* under an open head takes the link, the one link a closed
+    container takes (spec §4.2), and stays closed. Every growth of the chain
+    is reported (:func:`_announce`). While rollover is off this raises
+    :class:`RolloverDisabledError` and writes nothing.
+    """
+    if not ROLLOVER_ENABLED:
+        raise RolloverDisabledError(head)
+    if epics._issue_state(head) == "CLOSED":
+        raise ClosedEpicError(head)
+    chain = containers(head)
+    refs = [container.ref for container in chain]
+    if tail not in refs:
+        raise ValueError(f"{tail.slug} is not a container of the chain of epic {head.slug}")
+    position = refs.index(tail)
+    if position + 1 < len(refs):
+        return refs[position + 1]
+    fit = _Fit(target=None, chain=tuple(chain))
+    k = len(refs) + 1
+    orphans = find_orphans(head)
+    if orphans:
+        continuation = orphans[0]
+    else:
+        repo = epics._repo_slug(head)
+        labels = ["epic", epics.CONTINUATION_LABEL]
+        ensure_labels(repo, labels)
+        url = github.create_issue(
+            repo=repo,
+            title=_continuation_title(head, k),
+            body=_continuation_body(head, k),
+            labels=labels,
+        )
+        continuation = IssueRef(
+            owner=head.owner, repo=head.repo, number=int(url.rstrip("/").rsplit("/", 1)[-1])
+        )
+    if chain[-1].state == "CLOSED":
+        _link_rewording_depth(
+            epics._add_child_unchecked, tail, continuation, head=head, fit=fit, task=None
+        )
+    else:
+        _link_rewording_depth(epics.add_child, tail, continuation, head=head, fit=fit, task=None)
+    if orphans:
+        _renumber(head, continuation, k)
+    _announce(head, continuation)
+    return continuation

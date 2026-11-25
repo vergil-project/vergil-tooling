@@ -7,7 +7,12 @@ container, parent and mutation queries, and passes the trust layer's queries
 to a :class:`~tests.vergil_tooling.trust_stubs.FakeItems` that serves each
 issue's body (trusted unless added with an untrusted *author*);
 ``github.read_output`` and ``github.read_json`` answer the REST reads of a node
-id, state, title, close time and labels.
+id, state, title, close time and labels, and the listing of a repo's open
+issues by label. The writes the chain layer makes besides links are faked
+too: ``github.create_issue`` adds an issue, and ``github.run`` answers
+``issue edit`` (title and body), ``issue comment`` and ``label create``.
+Every write, links included, is recorded in order in
+:attr:`FakeSubIssueGraph.events`.
 
 ``addSubIssue`` behaves as GitHub's does at its limits (epic
 vergil-project/.github#1609, Task 4's probe, vergil-project/.github#1632): a
@@ -76,13 +81,18 @@ class FakeSubIssueGraph:
 
     ``mutations`` records each ``addSubIssue``/``removeSubIssue`` call that
     succeeded, in order, as ``(op, parent, child)`` with *op* ``"add"``,
-    ``"reparent"`` or ``"remove"``.
+    ``"reparent"`` or ``"remove"``. ``events`` records every write in order:
+    each mutation as in ``mutations``, ``("create", ref)``, ``("edit", ref)``,
+    ``("comment", ref, body)`` and ``("label", repo, name)``. ``comments``
+    holds each issue's comment bodies.
     """
 
     def __init__(self) -> None:
         self.issues: dict[IssueRef, _Issue] = {}
         self.layer = trust_stubs.FakeItems()
         self.mutations: list[tuple[str, IssueRef, IssueRef]] = []
+        self.events: list[tuple[Any, ...]] = []
+        self.comments: dict[IssueRef, list[str]] = {}
 
     # -- building the graph ----------------------------------------------------
 
@@ -126,7 +136,17 @@ class FakeSubIssueGraph:
         monkeypatch.setattr(github, "graphql", self.graphql)
         monkeypatch.setattr(github, "read_output", self.read_output)
         monkeypatch.setattr(github, "read_json", self.read_json)
+        monkeypatch.setattr(github, "create_issue", self.create_issue)
+        monkeypatch.setattr(github, "run", self.run)
         return self
+
+    def _set_body(self, ref: IssueRef, body: str) -> None:
+        """Serve *ref*'s new *body*, keeping its author: an edit by a trusted writer."""
+        issue = self.issues[ref]
+        issue.body = body
+        key = (f"{ref.owner}/{ref.repo}", ref.number)
+        node = self.layer.items[key]["repository"]["issueOrPullRequest"]
+        node["body"] = body
 
     # -- GitHub's rules ----------------------------------------------------------
 
@@ -156,7 +176,18 @@ class FakeSubIssueGraph:
             self.issues[sub.parent].children.remove(child)
         node.children.append(child)
         sub.parent = parent
-        self.mutations.append(("reparent" if replace else "add", parent, child))
+        self._record(("reparent" if replace else "add", parent, child))
+
+    def clear_log(self) -> None:
+        """Forget the writes so far, so a test sees only those of the call under test."""
+        self.mutations.clear()
+        self.events.clear()
+        self.comments.clear()
+
+    def _record(self, event: tuple[Any, ...]) -> None:
+        if event[0] in ("add", "reparent", "remove"):
+            self.mutations.append((event[0], event[1], event[2]))
+        self.events.append(event)
 
     def _remove(self, parent: IssueRef, child: IssueRef) -> None:
         node, sub = self.issues[parent], self.issues[child]
@@ -164,7 +195,7 @@ class FakeSubIssueGraph:
             raise _graphql_error(f"#{child.number} is not a sub-issue of #{parent.number}")
         node.children.remove(child)
         sub.parent = None
-        self.mutations.append(("remove", parent, child))
+        self._record(("remove", parent, child))
 
     # -- the github boundary ----------------------------------------------------
 
@@ -253,8 +284,15 @@ class FakeSubIssueGraph:
             return "2026-11-02T10:00:00Z" if issue.state == "CLOSED" else ""
         raise AssertionError(f"unfaked jq read: {jq!r}")
 
-    def read_json(self, *args: str) -> dict[str, object]:
-        """``github.read_json``: ``issue view <N> --repo <o/r> --json labels[,title]``."""
+    def read_json(self, *args: str) -> dict[str, object] | list[object]:
+        """``github.read_json``: one issue's labels and title, or a repo's open issues by label.
+
+        ``issue view <N> --repo <o/r> --json labels[,title]``, and
+        ``issue list --repo <o/r> --label <name> --state open --limit <n>
+        --json number,labels``.
+        """
+        if args[:2] == ("issue", "list"):
+            return self._list(args)
         assert args[:2] == ("issue", "view") and args[3] == "--repo" and args[5] == "--json", args
         owner, repo = args[4].split("/", 1)
         issue = self.issues[IssueRef(owner=owner, repo=repo, number=int(args[2]))]
@@ -267,3 +305,56 @@ class FakeSubIssueGraph:
             else:
                 raise AssertionError(f"unfaked issue view field: {name!r}")
         return answer
+
+    def _list(self, args: tuple[str, ...]) -> list[object]:
+        flags = dict(zip(args[2::2], args[3::2], strict=True))
+        assert set(flags) == {"--repo", "--label", "--state", "--limit", "--json"}, args
+        assert flags["--state"] == "open" and flags["--json"] == "number,labels", args
+        owner, repo = flags["--repo"].split("/", 1)
+        rows: list[object] = [
+            {"number": ref.number, "labels": [{"name": label} for label in issue.labels]}
+            for ref, issue in self.issues.items()
+            if (ref.owner, ref.repo) == (owner, repo)
+            and issue.state == "OPEN"
+            and flags["--label"] in issue.labels
+        ]
+        return rows[: int(flags["--limit"])]
+
+    def create_issue(
+        self, *, repo: str, title: str, body: str = "", labels: list[str] | None = None
+    ) -> str:
+        """``github.create_issue``: a new open issue, numbered past every issue in *repo*."""
+        owner, name = repo.split("/", 1)
+        number = 1 + max(
+            (r.number for r in self.issues if (r.owner, r.repo) == (owner, name)), default=0
+        )
+        ref = self.add_issue(
+            IssueRef(owner=owner, repo=name, number=number),
+            title=title,
+            labels=labels or (),
+            body=body,
+            author=trust_stubs.AGENT,
+        )
+        self._record(("create", ref))
+        return f"https://github.com/{repo}/issues/{number}"
+
+    def run(self, *args: str) -> None:
+        """``github.run``: ``issue edit`` (title, body), ``issue comment`` and ``label create``."""
+        if args[:2] == ("label", "create"):
+            self._record(("label", args[args.index("--repo") + 1], args[2]))
+            return
+        assert args[0] == "issue" and args[3] == "--repo", args
+        owner, repo = args[4].split("/", 1)
+        ref = IssueRef(owner=owner, repo=repo, number=int(args[2]))
+        flags = dict(zip(args[5::2], args[6::2], strict=True))
+        if args[1] == "comment":
+            assert set(flags) == {"--body"}, args
+            self.comments.setdefault(ref, []).append(flags["--body"])
+            self._record(("comment", ref, flags["--body"]))
+            return
+        assert args[1] == "edit" and set(flags) <= {"--title", "--body"}, args
+        if "--title" in flags:
+            self.issues[ref].title = flags["--title"]
+        if "--body" in flags:
+            self._set_body(ref, flags["--body"])
+        self._record(("edit", ref))

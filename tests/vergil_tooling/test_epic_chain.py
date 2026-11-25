@@ -1,10 +1,13 @@
-"""Tests for vergil_tooling.lib.epic_chain: an epic's chain of containers (read side)."""
+"""Tests for vergil_tooling.lib.epic_chain: an epic's chain of containers."""
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
-from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling import subissue_fake, trust_stubs
 from tests.vergil_tooling.subissue_fake import DEPTH_ERROR, LIMIT_ERROR, FakeSubIssueGraph
 from vergil_tooling.lib import epic_chain, epics, github
 from vergil_tooling.lib.epic_chain import ChainDriftError, Container
@@ -385,3 +388,684 @@ def test_is_continuation_needs_both_labels() -> None:
 def test_continuation_label_registered() -> None:
     by_name = {label["name"]: label for label in load_labels()["labels"]}
     assert "100-sub-issue limit" in by_name[epics.CONTINUATION_LABEL]["description"]
+
+
+# -- the write side ------------------------------------------------------------------
+
+
+@pytest.fixture
+def rollover(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+
+
+def _task(number: int | None = None) -> IssueRef:
+    return IssueRef("org", "repo-a", number if number is not None else next(_next_item))
+
+
+def _new_task(graph: FakeSubIssueGraph) -> IssueRef:
+    return graph.add_issue(_task(), title="a new task")
+
+
+def _created(graph: FakeSubIssueGraph) -> list[IssueRef]:
+    return [event[1] for event in graph.events if event[0] == "create"]
+
+
+def _full_chain(graph: FakeSubIssueGraph, head: IssueRef, count: int) -> list[IssueRef]:
+    """*head* and count-1 continuations under it, every container holding 99 items."""
+    chain = [head]
+    _items(graph, head, epic_chain.ITEM_CAP)
+    for k in range(2, count + 1):
+        ref = _continuation(
+            graph,
+            IssueRef(head.owner, head.repo, head.number * 100 + k),
+            chain[-1],
+            k=k,
+            names=head,
+        )
+        _items(graph, ref, epic_chain.ITEM_CAP)
+        chain.append(ref)
+    return chain
+
+
+def _deep_task(graph: FakeSubIssueGraph, height: int) -> IssueRef:
+    """An unparented task whose own sub-issues make a tree *height* levels tall."""
+    top = _new_task(graph)
+    parent = top
+    for _ in range(height - 1):
+        child = _new_task(graph)
+        graph.link(parent, child)
+        parent = child
+    return top
+
+
+def _rollover_line(head: IssueRef, continuation: IssueRef) -> str:
+    return (
+        f"epic {head.slug} rolled over into continuation {continuation.slug} at 99 children; "
+        "consider splitting it"
+    )
+
+
+def test_write_side_errors_are_refusals() -> None:
+    disabled = epic_chain.RolloverDisabledError(HEAD)
+    assert isinstance(disabled, EpicRefusalError) and isinstance(disabled, RuntimeError)
+    assert str(disabled) == (
+        f"epic {HEAD.slug} is at GitHub's limit of 100 sub-issues, and rollover into a "
+        "continuation is not enabled yet"
+    )
+    depth = epic_chain.ChainDepthError(HEAD, items=1, containers=1)
+    assert isinstance(depth, EpicRefusalError) and isinstance(depth, RuntimeError)
+    assert str(depth) == (
+        f"epic {HEAD.slug} cannot grow: 1 item in 1 container, at GitHub's nesting limit of 8; "
+        "split the epic"
+    )
+    assert epic_chain.MAX_DEPTH == 8
+    assert epic_chain.ROLLOVER_ENABLED is False
+
+
+@pytest.mark.parametrize(("head_items", "into"), [(99, C2), (98, HEAD)])
+@pytest.mark.usefixtures("rollover")
+def test_link_into_first_fit(graph: FakeSubIssueGraph, head_items: int, into: IssueRef) -> None:
+    _items(graph, HEAD, head_items)
+    _continuation(graph, C2, HEAD)
+    _items(graph, C2, 40)
+    task = _new_task(graph)
+    graph.clear_log()
+    assert epic_chain.link_into(HEAD, task) == into
+    assert graph.events == [("add", into, task)]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_reuses_freed_slot_before_growing(graph: FakeSubIssueGraph) -> None:
+    head_items = _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    _items(graph, C2, 99)
+    epics.remove_child(HEAD, head_items[0])
+    task = _new_task(graph)
+    graph.clear_log()
+    assert epic_chain.link_into(HEAD, task) == HEAD
+    assert graph.events == [("add", HEAD, task)]
+    assert epic_chain.chain_of(HEAD) == [HEAD, C2]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_rolls_over_at_99(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _items(graph, HEAD, 99)
+    task = _new_task(graph)
+    graph.clear_log()
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c2,) = _created(graph)
+    assert into == c2
+    line = _rollover_line(HEAD, c2)
+    assert graph.events == [
+        ("label", "org/.github", "epic"),
+        ("label", "org/.github", "continuation"),
+        ("create", c2),
+        ("add", HEAD, c2),
+        ("comment", HEAD, line),
+        ("add", c2, task),
+    ]
+    issue = graph.issues[c2]
+    assert issue.title == "Epic: big (continuation 2)"
+    assert issue.labels == ["epic", "continuation"]
+    lines = issue.body.splitlines()
+    assert f"Continues: {HEAD.slug}" in lines and "Container: 2" in lines
+    assert graph.children_of(HEAD)[-1] == c2 and len(graph.children_of(HEAD)) == 100
+    assert epic_chain.chain_of(HEAD) == [HEAD, c2]
+    assert capsys.readouterr().out == line + "\n"
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_skips_closed_continuation(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD, state="CLOSED")
+    _items(graph, C2, 5)
+    _continuation(graph, C3, C2, k=3)
+    _items(graph, C3, 10)
+    task = _new_task(graph)
+    graph.clear_log()
+    assert epic_chain.link_into(HEAD, task) == C3
+    assert graph.events == [("add", C3, task)]
+    assert graph.issues[C2].state == "CLOSED"
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_closed_continuation_without_successor(graph: FakeSubIssueGraph) -> None:
+    # Task 4 recorded "Link under closed parent: accepted", so the next
+    # continuation is linked into the closed one.
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD, state="CLOSED")
+    _items(graph, C2, 99)
+    epic_chain.check_capacity(HEAD)
+    task = _new_task(graph)
+    graph.clear_log()
+
+    into = epic_chain.link_into(HEAD, task)
+
+    (c3,) = _created(graph)
+    assert into == c3
+    assert graph.mutations == [("add", C2, c3), ("add", c3, task)]
+    assert graph.issues[C2].state == "CLOSED"
+    assert graph.issues[c3].title == "Epic: big (continuation 3)"
+    assert "Container: 3" in graph.issues[c3].body.splitlines()
+    assert epic_chain.chain_of(HEAD) == [HEAD, C2, c3]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_closed_continuation_link_uses_unchecked_add(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD, state="CLOSED")
+    _items(graph, C2, 99)
+    unchecked: list[tuple[IssueRef, IssueRef]] = []
+    real = epics._add_child_unchecked
+
+    def spy(parent: IssueRef, child: IssueRef) -> None:
+        unchecked.append((parent, child))
+        real(parent, child)
+
+    monkeypatch.setattr(epics, "_add_child_unchecked", spy)
+    epic_chain.link_into(HEAD, _new_task(graph))
+    (c3,) = _created(graph)
+    assert unchecked == [(C2, c3)]
+    with pytest.raises(epics.ClosedEpicError):
+        epics.add_child(C2, _new_task(graph))
+
+
+def _references(tree: ast.AST, name: str) -> list[str | None]:
+    """The innermost function of every reference to *name* in *tree* (None at module level)."""
+    found: list[str | None] = []
+
+    def walk(node: ast.AST, function: str | None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if (isinstance(node, ast.Attribute) and node.attr == name) or (
+            isinstance(node, ast.Name) and node.id == name
+        ):
+            found.append(function)
+        for child in ast.iter_child_nodes(node):
+            walk(child, function)
+
+    walk(tree, None)
+    return found
+
+
+def test_add_child_unchecked_has_one_caller() -> None:
+    src = Path(epics.__file__).resolve().parents[1]
+    where: set[tuple[str, str | None]] = set()
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        where |= {(path.name, function) for function in _references(tree, "_add_child_unchecked")}
+    assert where == {("epic_chain.py", "find_or_create_continuation")}
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_link_into_refuses_closed_head(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", enabled)
+    _items(graph, HEAD, 99)
+    graph.close(HEAD)
+    task = _new_task(graph)
+    graph.clear_log()
+    with pytest.raises(epics.ClosedEpicError, match=f"epic {HEAD.slug} is closed"):
+        epic_chain.link_into(HEAD, task)
+    with pytest.raises(epics.ClosedEpicError):
+        epic_chain.check_capacity(HEAD)
+    assert graph.events == []
+    assert graph.issues[HEAD].state == "CLOSED"
+
+
+@pytest.mark.usefixtures("rollover")
+def test_find_or_create_refuses_closed_head(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 99)
+    graph.close(HEAD)
+    _continuation(graph, C2, None, k=7)
+    body = graph.issues[C2].body
+
+    def no_orphan_read(head: IssueRef) -> list[IssueRef]:
+        raise AssertionError("orphans were read for a closed head")
+
+    monkeypatch.setattr(epic_chain, "find_orphans", no_orphan_read)
+    graph.clear_log()
+    with pytest.raises(epics.ClosedEpicError):
+        epic_chain.find_or_create_continuation(HEAD, HEAD)
+    assert graph.events == []
+    assert graph.parent_of(C2) is None
+    assert graph.issues[C2].body == body
+
+
+@pytest.mark.usefixtures("rollover")
+def test_find_or_create_reuses_existing_child_continuation(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    graph.clear_log()
+    assert epic_chain.find_or_create_continuation(HEAD, HEAD) == C2
+    assert graph.events == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_find_or_create_adopts_orphan(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C3, None, k=5)
+    orphan_items = _items(graph, C3, 2)
+    graph.clear_log()
+
+    assert epic_chain.find_or_create_continuation(HEAD, HEAD) == C3
+
+    assert _created(graph) == []
+    line = _rollover_line(HEAD, C3)
+    assert graph.events == [("add", HEAD, C3), ("edit", C3), ("comment", HEAD, line)]
+    assert graph.issues[C3].title == "Epic: big (continuation 2)"
+    lines = graph.issues[C3].body.splitlines()
+    assert "Container: 2" in lines and "Container: 5" not in lines
+    assert f"Continues: {HEAD.slug}" in lines
+    assert epic_chain.chain_of(HEAD) == [HEAD, C3]
+    assert [s.ref for s in epic_chain.chain_child_states(HEAD)][-2:] == orphan_items
+    assert capsys.readouterr().out == line + "\n"
+
+    # The next link fills the adopted continuation by first fit.
+    task = _new_task(graph)
+    assert epic_chain.link_into(HEAD, task) == C3
+
+
+@pytest.mark.usefixtures("rollover")
+def test_link_into_adopts_orphan_before_creating(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, None)
+    task = _new_task(graph)
+    graph.clear_log()
+    assert epic_chain.link_into(HEAD, task) == C2
+    assert _created(graph) == []
+    assert graph.mutations == [("add", HEAD, C2), ("add", C2, task)]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_orphan_failing_trust_is_not_adopted(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C3, None, author=trust_stubs.OUTSIDER)
+    task = _new_task(graph)
+    graph.clear_log()
+    with pytest.raises(ChainDriftError) as exc:
+        epic_chain.link_into(HEAD, task)
+    assert (exc.value.rule, exc.value.container) == ("untrusted-body", C3)
+    assert graph.events == []
+    assert graph.parent_of(C3) is None and graph.parent_of(task) is None
+
+
+def test_find_orphans_skips_other_chains(graph: FakeSubIssueGraph) -> None:
+    # Continuations of another head, linked or not, and an untrusted one
+    # linked in another chain, are not this head's orphans.
+    _continuation(graph, C2B, OTHER_HEAD, names=OTHER_HEAD)
+    _continuation(graph, IssueRef("org", ".github", 26), None, names=OTHER_HEAD)
+    _continuation(graph, IssueRef("org", ".github", 27), OTHER_HEAD, author=trust_stubs.OUTSIDER)
+    _continuation(graph, C2, HEAD)
+    graph.add_issue(IssueRef("org", ".github", 28), title="closed", state="CLOSED")
+    assert epic_chain.find_orphans(HEAD) == []
+    orphan = _continuation(graph, C3, None)
+    assert epic_chain.find_orphans(HEAD) == [orphan]
+
+
+@pytest.mark.parametrize(
+    ("labels", "under", "rule"),
+    [
+        (("continuation",), None, "label"),
+        (("epic", "continuation"), OTHER_HEAD, "not-native-child"),
+    ],
+)
+def test_find_orphans_raises_on_a_broken_continuation_of_this_head(
+    graph: FakeSubIssueGraph, labels: tuple[str, ...], under: IssueRef | None, rule: str
+) -> None:
+    _continuation(graph, C3, under, labels=labels)
+    with pytest.raises(ChainDriftError) as exc:
+        epic_chain.find_orphans(HEAD)
+    assert (exc.value.rule, exc.value.container) == (rule, C3)
+
+
+def test_find_orphans_raises_on_unlinked_continuation_without_continues(
+    graph: FakeSubIssueGraph,
+) -> None:
+    graph.add_issue(C3, title="x", labels=["epic", "continuation"], body="no line")
+    with pytest.raises(ChainDriftError) as exc:
+        epic_chain.find_orphans(HEAD)
+    assert (exc.value.rule, exc.value.container) == ("continues-mismatch", C3)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_depth_refusal_before_any_write(graph: FakeSubIssueGraph) -> None:
+    _full_chain(graph, HEAD, 7)
+    task = _new_task(graph)
+    graph.clear_log()
+    message = (
+        f"epic {HEAD.slug} cannot grow: 693 items in 7 containers, at GitHub's nesting limit "
+        "of 8; split the epic"
+    )
+    with pytest.raises(epic_chain.ChainDepthError) as exc:
+        epic_chain.link_into(HEAD, task)
+    assert str(exc.value) == message
+    with pytest.raises(epic_chain.ChainDepthError) as exc:
+        epic_chain.check_capacity(HEAD)
+    assert str(exc.value) == message
+    assert graph.events == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_rollover_into_the_last_level_fits(graph: FakeSubIssueGraph) -> None:
+    # Six full containers: a seventh puts its items at level 8, the limit.
+    chain = _full_chain(graph, HEAD, 6)
+    task = _new_task(graph)
+    into = epic_chain.link_into(HEAD, task)
+    assert epic_chain.chain_of(HEAD) == [*chain, into]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_github_depth_error_is_reworded(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GitHub refuses at a shallower depth than the constant says, so its own
+    # error comes first, on the continuation's link.
+    _full_chain(graph, HEAD, 6)
+    monkeypatch.setattr(subissue_fake, "MAX_DEPTH", 6)
+    task = _new_task(graph)
+    with pytest.raises(epic_chain.ChainDepthError) as exc:
+        epic_chain.link_into(HEAD, task)
+    assert str(exc.value) == (
+        f"epic {HEAD.slug} cannot grow: 594 items in 6 containers, at GitHub's nesting limit "
+        "of 8; split the epic"
+    )
+    assert isinstance(exc.value.__cause__, github.GitHubAPIError)
+    assert graph.parent_of(task) is None
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_move_into_depth_error_names_item(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", enabled)
+    _items(graph, HEAD, 3)
+    task = _deep_task(graph, 8)
+    graph.clear_log()
+    with pytest.raises(epic_chain.ChainDepthError) as exc:
+        epic_chain.move_into(HEAD, task)
+    assert str(exc.value) == (
+        f"epic {HEAD.slug} cannot grow: 3 items in 1 container, at GitHub's nesting limit of 8; "
+        f"split the epic, or {task.slug}'s own sub-issues are too deep to fit under it"
+    )
+    assert graph.events == []
+    assert graph.parent_of(task) is None
+
+
+def test_link_into_rollover_disabled_full_head_refused(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    hundredth = _new_task(graph)
+    assert epic_chain.link_into(HEAD, hundredth) == HEAD
+    assert len(graph.children_of(HEAD)) == 100
+    assert _created(graph) == []
+
+    task = _new_task(graph)
+    graph.clear_log()
+    message = (
+        f"epic {HEAD.slug} is at GitHub's limit of 100 sub-issues, and rollover into a "
+        "continuation is not enabled yet"
+    )
+    with pytest.raises(epic_chain.RolloverDisabledError) as exc:
+        epic_chain.link_into(HEAD, task)
+    assert str(exc.value) == message
+    with pytest.raises(epic_chain.RolloverDisabledError) as exc:
+        epic_chain.check_capacity(HEAD)
+    assert str(exc.value) == message
+    with pytest.raises(epic_chain.RolloverDisabledError):
+        epic_chain.move_into(HEAD, task)
+    with pytest.raises(epic_chain.RolloverDisabledError):
+        epic_chain.find_or_create_continuation(HEAD, HEAD)
+    assert graph.events == []
+    assert graph.parent_of(task) is None
+
+
+def test_rollover_disabled_never_adopts_or_sees_past_the_head(graph: FakeSubIssueGraph) -> None:
+    # With rollover off, first fit sees only the head: an orphan is not
+    # adopted, and the head takes its 100th item itself.
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, None)
+    task = _new_task(graph)
+    graph.clear_log()
+    assert epic_chain.link_into(HEAD, task) == HEAD
+    assert graph.events == [("add", HEAD, task)]
+    assert graph.parent_of(C2) is None
+
+
+@pytest.mark.usefixtures("rollover")
+def test_depth_counts_head_nested_under_chained_parent(graph: FakeSubIssueGraph) -> None:
+    # HEAD is an item in OTHER_HEAD's second container, so it sits at level 3:
+    # five full containers already reach level 8 with their items, though a
+    # top-level head could roll over twice more.
+    _items(graph, OTHER_HEAD, 99)
+    _continuation(graph, C2B, OTHER_HEAD, names=OTHER_HEAD)
+    graph.link(C2B, HEAD)
+    _full_chain(graph, HEAD, 5)
+    task = _new_task(graph)
+    graph.clear_log()
+    with pytest.raises(epic_chain.ChainDepthError) as exc:
+        epic_chain.link_into(HEAD, task)
+    assert str(exc.value) == (
+        f"epic {HEAD.slug} cannot grow: 495 items in 5 containers, at GitHub's nesting limit "
+        "of 8; split the epic"
+    )
+    with pytest.raises(epic_chain.ChainDepthError):
+        epic_chain.check_capacity(HEAD)
+    assert graph.events == []
+
+
+def _head_of_kind(graph: FakeSubIssueGraph, labels: list[str], title: str) -> IssueRef:
+    head = graph.add_issue(IssueRef("org", ".github", 12), title=title, labels=labels)
+    _items(graph, head, 99)
+    graph.clear_log()
+    return head
+
+
+@pytest.mark.parametrize(
+    "labels", [["epic", "epic-development"], ["epic", "proxy"]], ids=["development", "proxy"]
+)
+@pytest.mark.usefixtures("rollover")
+def test_development_rollover_is_loud(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str], labels: list[str]
+) -> None:
+    head = _head_of_kind(graph, labels, "Epic: something")
+    epic_chain.link_into(head, _new_task(graph))
+    (c2,) = _created(graph)
+    line = _rollover_line(head, c2)
+    assert capsys.readouterr().out == line + "\n"
+    assert graph.comments == {head: [line]}
+
+
+@pytest.mark.usefixtures("rollover")
+def test_queue_rollover_prints_review_nudge(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    head = _head_of_kind(graph, ["epic", "intake", "epic-management"], "Epic (intake): org")
+    epic_chain.link_into(head, _new_task(graph))
+    (c2,) = _created(graph)
+    assert capsys.readouterr().out == (
+        f"queue {head.slug} rolled over into continuation {c2.slug}; run epic-review intake\n"
+    )
+    assert graph.comments == {}
+    assert graph.issues[c2].title == "Epic (intake): org (continuation 2)"
+    assert graph.issues[c2].labels == ["epic", "continuation"]
+
+
+@pytest.mark.parametrize(
+    ("labels", "title"),
+    [
+        (["epic", "ad-hoc"], "Epic (ad hoc): repo-a"),
+        (["epic", "hoshin", "epic-management"], "Epic (hoshin): org"),
+        (["epic", "operations", "epic-management"], "Epic (operations): org"),
+    ],
+    ids=["ad-hoc", "hoshin", "operations"],
+)
+@pytest.mark.usefixtures("rollover")
+def test_other_standing_rollover_is_plain(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str], labels: list[str], title: str
+) -> None:
+    head = _head_of_kind(graph, labels, title)
+    epic_chain.link_into(head, _new_task(graph))
+    (c2,) = _created(graph)
+    assert capsys.readouterr().out == (
+        f"epic {head.slug} rolled over into continuation {c2.slug}\n"
+    )
+    assert graph.comments == {}
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_move_into_is_one_reparent(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", enabled)
+    _items(graph, HEAD, 3)
+    (task,) = _items(graph, OTHER_HEAD, 1)
+    graph.clear_log()
+    assert epic_chain.move_into(HEAD, task) == HEAD
+    assert graph.events == [("reparent", HEAD, task)]
+    assert graph.parent_of(task) == HEAD
+
+
+@pytest.mark.usefixtures("rollover")
+def test_move_into_rolls_over_with_one_reparent(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    (task,) = _items(graph, OTHER_HEAD, 1)
+    graph.clear_log()
+    into = epic_chain.move_into(HEAD, task)
+    (c2,) = _created(graph)
+    assert into == c2
+    assert graph.mutations == [("add", HEAD, c2), ("reparent", c2, task)]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_move_into_leaves_an_item_already_in_the_chain(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    (task,) = _items(graph, C2, 1)
+    graph.clear_log()
+    assert epic_chain.move_into(HEAD, task) == C2
+    assert graph.events == []
+
+
+def test_move_into_refuses_closed_head(graph: FakeSubIssueGraph) -> None:
+    (task,) = _items(graph, OTHER_HEAD, 1)
+    graph.close(HEAD)
+    graph.clear_log()
+    with pytest.raises(epics.ClosedEpicError, match=f"epic {HEAD.slug} is closed"):
+        epic_chain.move_into(HEAD, task)
+    assert graph.events == []
+    assert graph.parent_of(task) == OTHER_HEAD
+
+
+def test_unlink_from_finds_container(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C2, HEAD)
+    (task,) = _items(graph, C2, 1)
+    graph.clear_log()
+    epic_chain.unlink_from(HEAD, task)
+    assert graph.events == [("remove", C2, task)]
+    with pytest.raises(ValueError, match=f"{task.slug} is not linked in the chain of epic"):
+        epic_chain.unlink_from(HEAD, task)
+    with pytest.raises(ValueError, match=HEAD.slug):
+        epic_chain.unlink_from(HEAD, C2)
+
+
+# -- the write side's other failures -------------------------------------------------
+
+
+def test_link_error_other_than_depth_surfaces(graph: FakeSubIssueGraph) -> None:
+    (task,) = _items(graph, OTHER_HEAD, 1)
+    with pytest.raises(github.GitHubAPIError, match="may only have one parent"):
+        epic_chain.link_into(HEAD, task)
+
+
+def test_level_refuses_a_parent_cycle(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(epics, "_container_parent", lambda ref: OTHER_HEAD)
+    with pytest.raises(RuntimeError, match="deeper than GitHub's nesting limit of 8"):
+        epic_chain.check_capacity(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_without_continuation_is_not_linked_past(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 100)
+    task = _new_task(graph)
+    graph.clear_log()
+    with pytest.raises(RuntimeError, match="holds 100 items and no continuation"):
+        epic_chain.link_into(HEAD, task)
+    assert graph.events == []
+
+
+@pytest.mark.usefixtures("rollover")
+def test_rollover_that_never_settles_raises(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 99)
+    monkeypatch.setattr(epic_chain, "find_or_create_continuation", lambda head, tail: tail)
+    with pytest.raises(RuntimeError, match="had a free slot .* after 9 rollovers"):
+        epic_chain.link_into(HEAD, _new_task(graph))
+
+
+def test_find_orphans_refuses_an_unreadable_listing(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *args: {})
+    with pytest.raises(RuntimeError, match="returned no list"):
+        epic_chain.find_orphans(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_find_or_create_refuses_a_tail_outside_the_chain(graph: FakeSubIssueGraph) -> None:
+    with pytest.raises(ValueError, match=f"{OTHER_HEAD.slug} is not a container"):
+        epic_chain.find_or_create_continuation(HEAD, OTHER_HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_adopted_orphan_without_container_line_gains_one(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    graph.add_issue(
+        C3, title="old", labels=["epic", "continuation"], body=f"Continues: {HEAD.slug}"
+    )
+    assert epic_chain.find_or_create_continuation(HEAD, HEAD) == C3
+    assert graph.issues[C3].body.splitlines() == [f"Continues: {HEAD.slug}", "Container: 2"]
+    assert graph.issues[C3].title == "Epic: big (continuation 2)"
+
+
+@pytest.mark.usefixtures("rollover")
+def test_adopted_orphan_already_numbered_is_not_edited(graph: FakeSubIssueGraph) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C3, None, k=2)
+    graph.clear_log()
+    assert epic_chain.find_or_create_continuation(HEAD, HEAD) == C3
+    assert [event[0] for event in graph.events] == ["add", "comment"]
+
+
+@pytest.mark.usefixtures("rollover")
+def test_adopted_orphan_whose_body_turns_untrusted_is_not_renumbered(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _items(graph, HEAD, 99)
+    _continuation(graph, C3, None, k=5)
+    real = epic_chain.find_orphans
+
+    def then_untrusted(head: IssueRef) -> list[IssueRef]:
+        found = real(head)
+        monkeypatch.setattr(epics, "_trusted_body", lambda ref: None)
+        return found
+
+    monkeypatch.setattr(epic_chain, "find_orphans", then_untrusted)
+    with pytest.raises(ChainDriftError) as exc:
+        epic_chain.find_or_create_continuation(HEAD, HEAD)
+    assert (exc.value.rule, exc.value.container) == ("untrusted-body", C3)
+    assert graph.issues[C3].title == "Epic: big (continuation 5)"
