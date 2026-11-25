@@ -201,22 +201,26 @@ dev images come from
    file elsewhere in the repository.
 5. yamllint on YAML under `.github/` and `docs/`, with the bundled
    config.
-6. hadolint on `Dockerfile*` at the repository root.
-7. actionlint on `.github/workflows/`.
-8. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
+6. dependabot-limit: when `.github/dependabot.yml` exists, every
+   `updates` entry must carry `open-pull-requests-limit: 0` (a missing
+   key means Dependabot's default of 5), so Dependabot never opens a PR
+   (epic vergil-project/.github#420).
+7. hadolint on `Dockerfile*` at the repository root.
+8. actionlint on `.github/workflows/`.
+9. runner-labels: no value in a `.github/workflows/*.yml` or `*.yaml`
    file (a `runs-on`, a matrix value, a `with:` input) may be
    `ubuntu-latest`. Pin GitHub-hosted runners to `ubuntu-24.04`; the
    check names each hit by path and line.
-9. secrets-inherit: a job in a `.github/workflows/*.yml` or `*.yaml`
-   file may pass `secrets: inherit` only to a vergil-actions workflow that
-   reads the `automation` environment's secrets (`cd-release.yml`,
-   `cd-docs.yml`, `cd-docs-refresh.yml`, `publish-index.yml`,
-   `ops-github-config.yml`, `ops-upstream-refresh.yml`,
-   `ops-epic-rollup.yml`, `ops-epic-sweep.yml`, `ops-agent-audit.yml`).
-   Every other caller passes an explicit secrets map; the check names each
-   refused `inherit` by path and line. See
-   [CD and ops: reusable-workflow secrets](ci-architecture.md#cd-and-ops-reusable-workflow-secrets).
-10. ansible-lint, when the repository has Ansible content.
+10. secrets-inherit: a job in a `.github/workflows/*.yml` or `*.yaml`
+    file may pass `secrets: inherit` only to a vergil-actions workflow that
+    reads the `automation` environment's secrets (`cd-release.yml`,
+    `cd-docs.yml`, `cd-docs-refresh.yml`, `publish-index.yml`,
+    `ops-github-config.yml`, `ops-upstream-refresh.yml`,
+    `ops-epic-rollup.yml`, `ops-epic-sweep.yml`, `ops-agent-audit.yml`).
+    Every other caller passes an explicit secrets map; the check names each
+    refused `inherit` by path and line. See
+    [CD and ops: reusable-workflow secrets](ci-architecture.md#cd-and-ops-reusable-workflow-secrets).
+11. ansible-lint, when the repository has Ansible content.
 
 The first failing check stops the run. In CI the common checks run once,
 as `quality / common`.

@@ -24,16 +24,17 @@ PRs comes from the App itself.
 
 | App | Role | Shape |
 |---|---|---|
-| `<username>-vergil-user` | Daily development (Driver) | write code, read PRs |
+| `<username>-vergil-user` | Daily development (Driver) | write code, write PRs |
 | `<username>-vergil-audit` | PR review (Officials) | read code, write PRs (inverted) |
 
 A third role — `<username>-vergil-admin` — is a reserved slot and is
 **not** provisioned. Do not create it.
 
-The two Apps have deliberately **inverted** permission shapes. The
-user App can write code but only read PRs; the audit App can only read
-code but can write (review/comment on) PRs. This split is the core of
-the permission model — set the permissions exactly as documented.
+The two Apps have deliberately **inverted** permission shapes on code.
+The user App writes code, workflow files included, and opens its own
+PRs; the audit App can only read code but can write (review/comment
+on) PRs. This split is the core of the permission model — set the
+permissions exactly as documented.
 
 ## Why GitHub Apps
 
@@ -79,13 +80,13 @@ the permission model — set the permissions exactly as documented.
    |---|---|
    | **Contents** | Read and write |
    | **Issues** | Read and write |
-   | **Pull requests** | **Read-only** |
+   | **Pull requests** | **Read and write** |
    | **Actions** | Read-only |
    | **Checks** | Read-only |
    | **Commit statuses** | Read-only |
    | **Repository security advisories** | Read and write |
    | **Metadata** | Read-only (mandatory; usually auto-selected) |
-   | **Workflows** | **No access** — leave untouched |
+   | **Workflows** | **Read and write** |
 
    !!! note "Repository security advisories is for security records"
        `vrg-security-record` creates, reads and updates the private
@@ -114,18 +115,20 @@ the permission model — set the permissions exactly as documented.
        hides a missing grant. All three are read-only and grant no
        ability to trigger, re-run or change CI.
 
-   !!! warning "Pull requests is Read-only on purpose"
-       The user agent does not open or comment on PRs. Its workflow
-       ends at "ready for PR"; the human submits the PR from the host.
-       `pull_requests: read` is the server-side hard gate that makes
-       `gh pr create` fail for this identity even if the soft gate is
-       bypassed. The agent still needs `read` to see PR and CI status.
-
-   !!! warning "Never grant Workflows"
-       No agent identity may push changes under `.github/workflows/`.
-       Leaving Workflows at **No access** is what makes GitHub reject
-       such a push server-side. This is deliberate containment, not an
-       oversight.
+   !!! note "Pull requests and Workflows are Read and write"
+       The user agent submits and finalizes its own PRs into `develop`
+       and pushes workflow-file changes like any other change (epic
+       [vergil-project/.github#1384](https://github.com/vergil-project/.github/issues/1384)).
+       It opens a PR and turns its auto-merge on only through
+       `vrg-submit-pr`, after `vrg-pr-workflow report-ready`, and the
+       submit's gate requires a merge-review record or a merge-review
+       exemption the human approved. What keeps releases human is the
+       "Main updates" ruleset, which lets only the human admin update
+       `main`, and the secrets that can write or act live only in each
+       repo's `automation` environment, limited to `develop` and
+       `main`. Raising either permission on an existing App changes its
+       permission set, so **each installation must accept the change**
+       before the new grant takes effect.
 
 4. Under **Where can this GitHub App be installed?**, select
    **Any account** — this lets you install it on your organizations,
@@ -214,7 +217,7 @@ The user App is now fully provisioned. Configuring
 
 The audit App follows the **same flow** as the user App, with two
 differences: the name, and an **inverted permission shape** (it reads
-code and writes PRs, the mirror of the user App).
+code and writes PRs, and holds no Workflows access).
 
 ### Step 2.1 — Register the App
 
@@ -224,8 +227,8 @@ Follow Step 1.1, changing:
 - **Description**: AI agent identity (audit / Officials role) owned by
   `<username>`. PR-review agent running in an isolated VM; reads code
   and writes PR reviews/comments via installation tokens.
-- **Repository permissions** — note these are **inverted** from the
-  user App:
+- **Repository permissions** — note these differ from the user App
+  (Contents and Issues read-only, no Workflows):
 
   | Permission | Access |
   |---|---|
@@ -415,10 +418,10 @@ After both Apps are registered, installed, and configured:
       App), with their generation dates in the filenames
 - [ ] `identities.toml` has a `vergil-user` and a `vergil-audit` stanza, each with
       the correct App ID and key path
-- [ ] Each App shows the correct **inverted** repository permissions
-      (user: contents/issues write, PRs read; audit: contents/issues
-      read, PRs write; both hold Actions, Checks and Commit statuses
-      read-only; neither holds Workflows)
+- [ ] Each App shows the correct repository permissions
+      (user: contents/issues/PRs/workflows write; audit: contents/issues
+      read, PRs write, no workflows; both hold Actions, Checks and
+      Commit statuses read-only)
 - [ ] The user App holds **Repository security advisories: Read and
       write**, the audit App does not, and every installation has
       accepted the change

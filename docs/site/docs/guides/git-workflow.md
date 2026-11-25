@@ -23,15 +23,20 @@ new issue  →  branch  →  commit  →  PR (auto-merge on)  →  merge on gree
   `git commit` is blocked.**
 - `vrg-submit-pr` creates the PR with issue linkage. **Raw
   `gh pr create` is blocked.**
-- Submitting is the human's decision to merge. `vrg-submit-pr` opens
+- Submitting is the decision to merge. `vrg-submit-pr` opens
   each PR against `develop` with GitHub auto-merge on, and GitHub
   merges it once its required checks pass (epic
   vergil-project/.github#1218). `develop` does not require a branch to
   be up to date, so ready PRs merge in parallel; `main` still does.
   Every repo allows auto-merge (`allow_auto_merge`), which the
   mechanized PRs on `automation/` branches use too (epics
-  vergil-project/.github#1064 and #1168). Agents cannot turn auto-merge
-  on for a PR, and never submit one.
+  vergil-project/.github#1064 and #1168).
+- The user agent submits and finalizes its own PRs into `develop`
+  (epic vergil-project/.github#1384): after its merge review and
+  `vrg-pr-workflow report-ready`, it runs `vrg-submit-pr` itself. That
+  is its only way to open a PR or turn auto-merge on: raw
+  `gh pr create` and `gh pr merge` stay denied. Releases and promotion
+  stay with the human: `--release` is refused to every agent.
 - `vrg-submit-pr` then always runs `vrg-finalize-pr`, which watches
   the PRs merge, then syncs `develop`, deletes the merged branches and
   their worktrees, prunes remote refs and validates `develop` once.
@@ -172,15 +177,23 @@ full flag list.
 ### 3. Submit the PR with `vrg-submit-pr`
 
 ```bash
-vrg-submit-pr \
-  --issue 42 \
-  --summary "Add LRU cache to pipeline" \
+vrg-pr-workflow report-ready --issue 42 \
+  --title "feat(cache): add LRU cache to pipeline" \
+  --summary "Add an LRU cache to the pipeline" \
   --notes "$(cat /tmp/pr-notes.txt)"
+vrg-submit-pr
 ```
+
+`report-ready` records the PR metadata, and `vrg-submit-pr`, run from
+the worktree with no arguments, submits what it recorded. Its
+`--issue`/`--summary`/`--title` mode is the human's emergency path,
+refused to agents.
 
 `vrg-submit-pr`:
 
-- Pushes the current branch to `origin`.
+- Runs the merge-review gate (see the
+  [reference](../reference/dev/submit-pr.md#the-one-submit-path)), then
+  pushes the current branch to `origin`.
 - Constructs a standards-compliant PR body with issue linkage,
   auto-selecting `Closes #42` for a managed task (so it closes on
   merge) or `Ref #42` for a legacy issue. `Fixes`/`Resolves` are
@@ -197,13 +210,13 @@ vrg-submit-pr \
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 
 !!! note "Agent handoff and the post-report-ready freeze"
-    In an agent session, submission is a **human** action. Once the
+    In an agent session, the agent submits its own PR. Once the
     committed branch is green, the agent first runs the
     [merge review](merge-review.md), the pre-PR judgement check, and
     carries its eligibility line into the PR notes. The agent then
     runs `vrg-pr-workflow report-ready`, which pushes the branch to origin
     (setting upstream) and then records the PR metadata in
-    `.vergil/pr-workflow.json`, and stops; the human runs `vrg-submit-pr`.
+    `.vergil/pr-workflow.json`, and then runs `vrg-submit-pr` itself.
     No separate push is needed. Any push failure fails `report-ready`
     with nothing recorded, as does a branch with no commits ahead of its
     base. That includes GitHub refusing the push for `.github/workflows/**`
@@ -220,8 +233,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     commit; deliberately reopening the branch needs
     `vrg-pr-workflow unfreeze`. `vrg-git`'s local rewrites (`reset`,
     `clean`, a pathspec `checkout`, `rebase -i --autosquash`) are refused
-    on a frozen branch too. The freeze lifts when the human's
-    `vrg-submit-pr` opens the PR, so the agent's `pr-watch` can then push
+    on a frozen branch too. The freeze lifts when the agent's own
+    `vrg-submit-pr` opens the PR, so its `pr-watch` can then push
     fixes and rebase the open PR. See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
@@ -247,17 +260,19 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     **always** also mirrors the ready-state onto the reserved relay ref
     `refs/vergil/pr-workflow/<branch>`. A cloud agent therefore does
     PR-development end-to-end — implement, push the branch, `report-ready`
-    — exactly like a Lima agent, and the human submits from the Mac
-    worktree-free with `vrg-submit-pr <branch> [<branch> …]` (see the
+    — exactly like a Lima agent, but stops there: a cloud session does
+    not submit (the relay path refuses agents), and the human submits
+    from the Mac worktree-free with `vrg-submit-pr <branch> [<branch> …]` (see the
     [reference](../reference/dev/submit-pr.md#relay-branch-mode-cloud-to-mac-handoff)).
     The relay ref is world-readable on a public repo, so keep secrets out
     of the `report-ready` title/summary/notes.
 
 ### 4. The PR merges on green
 
-Review happens before submit: the agent's [merge review](merge-review.md)
-and the human's own reading of the change. Once the PR's required checks
-pass, GitHub merges it, with no further human step. A review comment
+Review happens before submit, in the agent's [merge review](merge-review.md),
+and `vrg-submit-pr`'s gate refuses a change no merge-review record (or
+merge-review exemption the human approved) covers. Once the PR's required
+checks pass, GitHub merges it, with no human step. A review comment
 after submit does not hold the merge; the agent's `pr-watch` handles it,
 and fixes a failing check or a conflict while the PR is open. To stop a
 merge, turn the PR's auto-merge off.

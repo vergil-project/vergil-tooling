@@ -51,6 +51,18 @@ attribution is turned off in `.claude/settings.json` (#3200).
 
 ### Submitting PRs
 
+An agent records the PR metadata, then submits what it recorded in
+template mode:
+
+```bash
+vrg-pr-workflow report-ready --issue NUMBER \
+  --title TEXT --summary TEXT --notes TEXT
+vrg-submit-pr
+```
+
+The CLI mode below is the human's emergency path; it is refused to
+every agent, as are the relay branch mode and `--release`:
+
 ```bash
 vrg-submit-pr \
   --issue NUMBER --summary TEXT \

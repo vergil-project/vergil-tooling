@@ -124,6 +124,24 @@ branch's change since its merge base with `origin/develop`. The record is
 machine-readable: it counts only when the agent login posted it, unedited,
 and a run that stopped, is waiting, or ended fatal or in error has none.
 
+## The merge-review exemption
+
+Merge review runs on every PR. The one way past it is a **merge-review
+exemption** the human approves, and the skill asks for one only on the
+human's instruction. It posts the request with
+[`vrg-ruling request --kind merge-review-exemption`](../reference/dev/ruling.md#exemption-requests),
+which names a one-line reason and computes the change fingerprint itself,
+from `HEAD`'s merge base with `origin/develop` to `HEAD`. The human replies
+with `Decision: approve` or `Decision: refuse` through `vrg-ruling-reply`.
+On an approval the skill's outcome is `exempt: request <id>`, and the PR
+notes carry the line `Merge review: exempt: request <id>` in place of the
+eligibility line.
+
+`vrg-submit-pr`'s merge-review gate counts a verified, approving exemption
+whose fingerprint equals the change's as coverage, just as it counts a
+record. Like a record, it covers only the change it names: any later change
+to the branch's own lines needs a new review or a new exemption.
+
 ## The protocol
 
 The request and the result follow the
