@@ -1492,6 +1492,8 @@
       
         
       
+        
+      
     
     
     
@@ -1544,6 +1546,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.348/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.348
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19774,26 +19804,29 @@ fatal before tagging. The caller has two requirements:</p>
 <li><strong>A <code>package-signing</code> environment</strong>, restricted to <code>main</code>, holding
   <code>PACKAGE_SIGNING_KEY</code> and <code>PACKAGE_SIGNING_PASSPHRASE</code>. Only <code>package-sign</code>
   uses it, so repos without <code>[package]</code> never reference it.</li>
-<li><strong><code>secrets: inherit</code></strong> on the <code>cd-release</code> caller. Environment secrets reach
-  a job in a cross-repo reusable workflow only with <code>inherit</code>; an explicit
-  secrets map leaves <code>package-sign</code> with an empty key (proven by
-  vergil-project/packages#6). <code>vrg-github-repo-init</code> generates it for a
-  <code>vergil-project</code> repo, since the App keys reach <code>cd-release</code> the same way,
-  and <code>vrg-validate</code>'s <code>secrets-inherit</code> check allows it for
+<li><strong><code>secrets: inherit</code></strong> on the <code>cd-release</code> caller, in a <code>vergil-project</code>
+  repo. It carries the App keys from the <code>automation</code> environment and the
+  <code>package-signing</code> secrets <code>package-sign</code> declares. <code>vrg-github-repo-init</code>
+  generates it, and <code>vrg-validate</code>'s <code>secrets-inherit</code> check allows it for
   <code>cd-release.yml</code>. GitHub passes <code>inherit</code> only within the caller's own
   organization, so in a repo of any other organization repo-init passes the
   App keys by name instead, and that <code>release</code> job does not carry the
-  package-signing secrets (see
-  <a href="../../guides/ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>):</li>
+  package-signing secrets:
+  <a href="https://github.com/vergil-project/.github/issues/1592">vergil-project/.github#1592</a>
+  tracks passing them by name (see
+  <a href="../../guides/ci-architecture/#cd-and-ops-reusable-workflow-secrets">CD and ops: reusable-workflow secrets</a>).
+  The <code>vergil-project</code> caller:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="w">  </span><span class="nt">release</span><span class="p">:</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.ref == 'refs/heads/main' &amp;&amp; !github.event.created</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">with</span><span class="p">:</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c1"># `inherit` is required: environment secrets reach a job in a cross-repo</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="c1"># reusable workflow only with `secrets: inherit`. The callee is first-party.</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c1"># `inherit` within vergil-project: it carries the App keys from the</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="c1"># `automation` environment and any signing or registry secrets the</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="c1"># callee declares. Allowed only for the App-key workflows (vrg-validate's</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="c1"># secrets-inherit check).</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">secrets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inherit</span>
 </code></pre></div>
 <p>After the release is tagged, <code>cd-release</code> dispatches to the org's <code>packages</code>
 repository with the org's GitHub App token (<code>APP_CLIENT_ID</code> /

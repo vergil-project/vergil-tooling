@@ -1492,6 +1492,8 @@
       
         
       
+        
+      
     
     
     
@@ -1544,6 +1546,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.348/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.348
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19071,9 +19101,9 @@ tooling derives everything else at runtime:</p>
   rely on a logged-in account or a <code>-vergil</code> suffix. The App ID and
   private key are injected into the agent VM by provisioning.</li>
 <li><strong>Permission shape is the boundary.</strong> The token a given App mints
-  can only do what that App's declared permissions allow. The user
-  App's token cannot write PRs; the audit App's token cannot write
-  code. See <a href="../identity-architecture/">Identity Architecture</a> for
+  can only do what that App's declared permissions allow. The audit
+  App's token cannot write code, and neither agent App is a bypass
+  actor of the "Main updates" ruleset, so neither can update <code>main</code>. See <a href="../identity-architecture/">Identity Architecture</a> for
   the inverted shapes.</li>
 </ul>
 <h2 id="how-a-token-is-minted">How a token is minted<a class="headerlink" href="#how-a-token-is-minted" title="Permanent link">&para;</a></h2>
@@ -19131,9 +19161,11 @@ VM). The user VM is the user App; the audit VM is the audit App.</p>
 <p>Because each App's token is bounded by its declared permissions, the
 identity boundary is enforced server-side, not by the wrapper:</p>
 <ul>
-<li>The <strong>user</strong> App can push code and read PRs, but cannot open,
-  comment on, approve, or merge PRs — its token holds
-  <code>pull_requests: read</code>.</li>
+<li>The <strong>user</strong> App can push code, workflow files included, and open
+  and merge its own PRs into <code>develop</code> — its token holds
+  <code>pull_requests: write</code> and <code>workflows: write</code> (epic
+  vergil-project/.github#1384). It cannot update <code>main</code>: the
+  "Main updates" ruleset lets only the human admin do that.</li>
 <li>The <strong>audit</strong> App can write PR reviews, but cannot write code or
   merge — its token holds <code>contents: read</code>, and merging through the
   API requires <code>contents: write</code>.</li>
@@ -19196,12 +19228,14 @@ in priority order:</p>
 <ol>
 <li><strong>App permission shape</strong> — the installation token can only
    perform what the App declares. This is the primary, server-side
-   boundary. A user-App token physically cannot merge a PR.</li>
+   boundary. An audit-App token cannot merge a PR.</li>
 <li><strong>Branch protection</strong> — rulesets require a pull request (no direct
    pushes to protected branches) and require CI to pass. They
    require no approving review: the mechanized <code>automation/</code> PRs
-   merge on CI alone, and a development PR merges through the
-   auto-merge the human's <code>vrg-submit-pr</code> turns on.</li>
+   merge on CI alone, and a development PR merges into <code>develop</code>
+   through the auto-merge <code>vrg-submit-pr</code> turns on, run by the user
+   agent or the human. The "Main updates" ruleset lets only the human
+   admin update <code>main</code>.</li>
 <li><strong><code>vrg-gh</code> / <code>vrg-git</code> wrappers</strong> — gate which operations an agent
    may attempt and surface clear errors. A soft ergonomic layer,
    bypassable by root, not the security boundary.</li>
@@ -19365,7 +19399,7 @@ permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
 </tr>
 <tr>
 <td>Pull requests</td>
-<td>Read-only</td>
+<td><strong>Read and write.</strong> Can open PRs, comment on them and turn their auto-merge on.</td>
 <td><strong>Read and write.</strong> Can write PR reviews and comments.</td>
 </tr>
 <tr>
@@ -19375,20 +19409,21 @@ permissions, as listed in <a href="../account-setup/">Account Setup</a>:</p>
 </tr>
 <tr>
 <td>Workflows</td>
-<td>No access. Cannot push under <code>.github/workflows/</code>.</td>
+<td><strong>Read and write.</strong> Can push under <code>.github/workflows/</code>. A workflow pushed on a feature branch runs without the <code>automation</code> environment's secrets, which only <code>develop</code> and <code>main</code> reach.</td>
 <td>No access. Cannot push under <code>.github/workflows/</code>.</td>
 </tr>
 <tr>
 <td>Merge</td>
-<td>Cannot open, approve, or merge PRs.</td>
+<td>Can merge a PR into <code>develop</code> once its required checks pass. Cannot update <code>main</code>, which the "Main updates" ruleset keeps to the human admin.</td>
 <td>Cannot merge, because merging needs <code>contents: write</code>.</td>
 </tr>
 </tbody>
 </table>
 <p>Branch protection still limits a leaked user-App key. It cannot push
-directly to a protected branch or merge without review. It can still
-push malicious content to feature branches, and it can read and edit
-the draft security advisories in each covered org's <code>.github</code>.</p>
+directly to a protected branch or update <code>main</code>. It can still push
+malicious content to feature branches, open a PR and merge it into
+<code>develop</code> once its required checks pass, and it can read and edit the
+draft security advisories in each covered org's <code>.github</code>.</p>
 <p><strong>Contain.</strong></p>
 <ul>
 <li><strong>Delete the compromised key.</strong> Open the App's settings page and go
@@ -19429,7 +19464,14 @@ administrative activity in addition to the agent activity.</p>
 <code>mnemosys-project-automation</code> and <code>mq-rest-admin-project-automation</code> (see
 <a href="../identity-architecture/#the-org-automation-apps">Identity Architecture</a>).
 CI reaches an org's App through the <code>APP_CLIENT_ID</code> and
-<code>APP_PRIVATE_KEY</code> Actions secrets. The nightly <code>ops</code> workflow uses them
+<code>APP_PRIVATE_KEY</code> secrets, which live only in each repo's <code>automation</code>
+environment, limited to <code>develop</code> and <code>main</code> (epic
+vergil-project/.github#1384). A caller in <code>vergil-project</code> passes them
+to the vergil-actions workflows with <code>secrets: inherit</code>; a caller in
+any other organization passes them by name, as does a call job to its
+repo's own local reusable workflow (see
+<a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CI Architecture</a>).
+The nightly <code>ops</code> workflow uses them
 for the <code>github-config</code> job (<code>vrg-github-repo-config update</code>, the
 automatic fleet sync), the branch sweep and the <code>dependabot-audit</code> job.
 The <code>publish</code> job of <code>ops-upstream-refresh.yml</code> passes them to
@@ -19451,21 +19493,29 @@ App holds, whatever the workflows' scoped tokens request. With
 Administration: Read and write, it can change repo settings and
 rulesets, including the bypass lists. With Contents, Pull requests and
 Workflows: Read and write, it can push branches (workflow files
-included), open PRs and merge any whose required checks pass, and it is a bypass actor of every
-repo's <code>Automation branches</code> ruleset. With Dependabot alerts: Read, it
-can read every covered repo's open alerts. The App
+included), open PRs and merge any whose required checks pass into a branch
+other than <code>main</code>, and it is a bypass actor of every repo's
+<code>Automation branches</code> ruleset, though not of <code>Main updates</code>. With
+Dependabot alerts: Read, it can read every covered repo's open alerts.
+With Actions: Read, it can read the <code>automation</code> environment and its
+deployment branch policies, which <code>vrg-github-repo-config</code> checks. The
+App
 holds no Repository security advisories permission, so it cannot read
 the draft advisories in the org's <code>.github</code> (see
 <a href="../security-records/">Security Records</a>).</p>
 <p><strong>Contain and restore.</strong> Follow the same steps as for an agent App key:
 delete the key, suspend the installation if access must stop at once,
-and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret
-wherever it is stored. Until you do, the workflows that depend on it
+and generate a new key. Then update the <code>APP_PRIVATE_KEY</code> secret in
+each repo's <code>automation</code> environment. Until you do, the workflows that depend on it
 (ops, upstream refresh, epic roll-up and sweep, release tagging,
 package-index dispatch) will fail.</p>
 <h3 id="ci-publishing-secrets">CI publishing secrets<a class="headerlink" href="#ci-publishing-secrets" title="Permanent link">&para;</a></h3>
-<p>The release workflow passes the publishing secrets to <code>cd-release</code>
-through <code>secrets: inherit</code>
+<p>In a <code>vergil-project</code> repo the release workflow passes the publishing
+secrets to <code>cd-release</code> through <code>secrets: inherit</code>. In a repo of any
+other organization the <code>release</code> job passes <code>CARGO_REGISTRY_TOKEN</code> by
+name and does not carry the package-signing secrets;
+<a href="https://github.com/vergil-project/.github/issues/1592">vergil-project/.github#1592</a>
+tracks passing them by name
 (see <a href="../ci-architecture/#cd-and-ops-reusable-workflow-secrets">CI Architecture</a>):</p>
 <table>
 <thead>

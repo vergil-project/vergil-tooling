@@ -1492,6 +1492,8 @@
       
         
       
+        
+      
     
     
     
@@ -1544,6 +1546,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.348/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.348
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18434,6 +18464,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-merge-review-exemption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The merge-review exemption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-protocol" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18749,6 +18790,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-merge-review-exemption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The merge-review exemption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-protocol" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -18976,6 +19028,21 @@ that issue's own, from the previous issue's commit; otherwise it is the
 branch's change since its merge base with <code>origin/develop</code>. The record is
 machine-readable: it counts only when the agent login posted it, unedited,
 and a run that stopped, is waiting, or ended fatal or in error has none.</p>
+<h2 id="the-merge-review-exemption">The merge-review exemption<a class="headerlink" href="#the-merge-review-exemption" title="Permanent link">&para;</a></h2>
+<p>Merge review runs on every PR. The one way past it is a <strong>merge-review
+exemption</strong> the human approves, and the skill asks for one only on the
+human's instruction. It posts the request with
+<a href="../../reference/dev/ruling/#exemption-requests"><code>vrg-ruling request --kind merge-review-exemption</code></a>,
+which names a one-line reason and computes the change fingerprint itself,
+from <code>HEAD</code>'s merge base with <code>origin/develop</code> to <code>HEAD</code>. The human replies
+with <code>Decision: approve</code> or <code>Decision: refuse</code> through <code>vrg-ruling-reply</code>.
+On an approval the skill's outcome is <code>exempt: request &lt;id&gt;</code>, and the PR
+notes carry the line <code>Merge review: exempt: request &lt;id&gt;</code> in place of the
+eligibility line.</p>
+<p><code>vrg-submit-pr</code>'s merge-review gate counts a verified, approving exemption
+whose fingerprint equals the change's as coverage, just as it counts a
+record. Like a record, it covers only the change it names: any later change
+to the branch's own lines needs a new review or a new exemption.</p>
 <h2 id="the-protocol">The protocol<a class="headerlink" href="#the-protocol" title="Permanent link">&para;</a></h2>
 <p>The request and the result follow the
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md">agent-to-agent review protocol</a>
