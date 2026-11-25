@@ -254,9 +254,7 @@ def test_guard_missing_typename_raises() -> None:
 # and 43: after a cursor, filteredCount counts from the cursor onward, so a sum
 # of the pages' counts is not the number of events. The guard follows
 # hasNextPage and asks for no count (test_events_query_asks_for_no_count).
-_RECORDED = (
-    Path(__file__).parent / "fixtures" / "tracking_guard" / "epic_close_by_automation.json"
-)
+_RECORDED = Path(__file__).parent / "fixtures" / "tracking_guard" / "epic_close_by_automation.json"
 _RECORDED_REPO = "vergil-project/.github"
 _RECORDED_NUMBER = 1384
 _RECORDED_HUMAN = {"__typename": "User", "login": "wphillipmoore"}
@@ -303,9 +301,7 @@ class _RecordedGitHub:
 def _check_recorded(pages: list[dict[str, Any]]) -> tuple[_RecordedGitHub, list[str]]:
     fake = _RecordedGitHub(pages)
     with patch("vergil_tooling.lib.github.graphql", side_effect=fake):
-        warnings = check_tracking_issue(
-            _RECORDED_REPO, _RECORDED_NUMBER, authors=_RECORDED_AUTHORS
-        )
+        warnings = check_tracking_issue(_RECORDED_REPO, _RECORDED_NUMBER, authors=_RECORDED_AUTHORS)
     return fake, warnings
 
 
