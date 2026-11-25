@@ -2043,9 +2043,18 @@ Every read and write runs under the audited org's token, wherever the
 command is run from.
 
 `--epic REF` is a separate read-only mode: it prints one epic's children as
-JSON (`{"epic": <slug>, "children": [{repo, number, title, state}, …]}`) and
-skips the drift audit. A bare `#N` resolves against the current repo's epic
-home. The children include the tasks of every
+JSON (`{"epic": <slug>, "children": [{repo, number, title, state,
+open_blockers, blocked}, …]}`) and skips the drift audit. A bare `#N`
+resolves against the current repo's epic home. `open_blockers` lists, as
+`owner/repo#N` refs sorted, every issue not closed that an open child is
+blocked by: its native GitHub blocked-by relationships, a blocker in another
+repo or org included, and the `Blocked-by:` lines of its body, which count
+only from a body the trust layer trusts. `blocked` is true iff that list is
+not empty. A closed child's blockers are not read: its list is always `[]`
+and `blocked` is false. A native list that cannot be read in full, or an open
+child's body that the trust layer does not trust or cannot read in full,
+exits 1 with the reason on stderr (metadata only) and no JSON, never reads as
+unblocked. The children include the tasks of every
 [proxy epic](../standards/github-issues.md#proxy-epics) the epic's trusted
 `Proxy:` comments name, each with its repo, beside the epic's own. On a proxy
 the JSON gains a `"primary": <slug>` key naming its primary; on any other epic
@@ -2114,7 +2123,7 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`; outsider report: `lib/outsider_report.py`) |
 | Args | `--window-days N` (positive; default 30), `--epic REF`, `--close`, `--untrusted --since ISO [--org ORG]` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org; the Vergil configuration (under GitHub Actions, the delivered copy), with or without `--close`. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access. `--untrusted` runs anywhere: it needs the Vergil configuration and App credentials for each listed org it reads |
-| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, or proxy link drift, exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, proxy link drift, a native blocked-by list that cannot be read in full, or an open child's body that is untrusted or unreadable exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, an untrusted `security` issue body found by the security-records preview, or error, 2 bad arguments |
 | Status | Active |
 

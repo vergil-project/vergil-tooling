@@ -2726,6 +2726,180 @@ def test_epic_children_proxy_naming_another_primary_fails() -> None:
         epic_audit.epic_children(_PRIMARY)
 
 
+# --- each child's open blockers (#5124) ----------------------------------------
+
+_EPICS = "vergil_tooling.lib.epics"
+
+
+def _blocker(owner: str, repo: str, number: int, state: str) -> epics.BlockerState:
+    return epics.BlockerState(epics.IssueRef(owner, repo, number), state)
+
+
+def test_epic_children_with_blockers_reports_open_native_and_body_blockers() -> None:
+    # An open child's open blockers are its native links not closed (a blocker
+    # in another org included) and its Blocked-by: lines not closed, each once.
+    native = (
+        _blocker("other-org", "lib", 131, "OPEN"),
+        _blocker("vergil-project", "vergil-tooling", 7, "CLOSED"),
+        _blocker("vergil-project", "vergil-tooling", 8, "OPEN"),
+    )
+    open_child = replace(_child("vergil-project", "vergil-tooling", 1), native_blockers=native)
+    closed_child = _child("vergil-project", "vergil-tooling", 2, "CLOSED")
+    body = [
+        epics.IssueRef("vergil-project", "vergil-tooling", 8),  # also native
+        epics.IssueRef("vergil-project", "vergil-tooling", 9),
+        epics.IssueRef("vergil-project", "vergil-tooling", 10),
+    ]
+    states = {9: "OPEN", 10: "CLOSED"}
+    with (
+        patch(f"{_EPICS}.child_states_with_blockers", return_value=[open_child, closed_child]) as cs,
+        patch(f"{_EPICS}.blockers_of", return_value=body) as bo,
+        patch(f"{_EPICS}.issue_state", side_effect=lambda ref: states[ref.number]) as st,
+        patch(f"{_EPICS}.native_blockers_of") as nb,
+        patch(f"{_PX}.proxies_of", return_value=()),
+    ):
+        listed = epic_audit.epic_children_with_blockers(_PRIMARY)
+    assert listed == [
+        epic_audit.ListedChild(
+            open_child,
+            (
+                epics.IssueRef("other-org", "lib", 131),
+                epics.IssueRef("vergil-project", "vergil-tooling", 8),
+                epics.IssueRef("vergil-project", "vergil-tooling", 9),
+            ),
+        ),
+        epic_audit.ListedChild(closed_child, ()),
+    ]
+    # Only the open children's lists are checked; a closed child's body is not read.
+    checked = cs.call_args.kwargs["checked"]
+    assert checked(open_child) and not checked(closed_child)
+    bo.assert_called_once_with(open_child.ref)
+    assert sorted(c.args[0].number for c in st.call_args_list) == [9, 10]
+    nb.assert_not_called()
+
+
+def test_epic_children_with_blockers_reads_a_reflink_childs_native_list() -> None:
+    # A reflink-fallback child carries no native list, so it is read on its own.
+    child = _child("vergil-project", "vergil-tooling", 1)
+    with (
+        patch(f"{_EPICS}.child_states_with_blockers", return_value=[child]),
+        patch(f"{_EPICS}.blockers_of", return_value=[]),
+        patch(
+            f"{_EPICS}.native_blockers_of",
+            return_value=(_blocker("vergil-project", "vergil-tooling", 5, "OPEN"),),
+        ) as nb,
+        patch(f"{_PX}.proxies_of", return_value=()),
+    ):
+        listed = epic_audit.epic_children_with_blockers(_PRIMARY)
+    nb.assert_called_once_with(child.ref)
+    assert listed[0].open_blockers == (epics.IssueRef("vergil-project", "vergil-tooling", 5),)
+
+
+def test_epic_children_with_blockers_includes_proxy_tasks_under_their_token() -> None:
+    own = replace(_child("vergil-project", "vergil-tooling", 1), native_blockers=())
+    proxied = replace(_child("logical-minds-foundry", "mq-rest-admin", 7), native_blockers=())
+    seen: list[tuple[epics.IssueRef, str | None]] = []
+
+    def listing(epic: epics.IssueRef, **_: object) -> list[epics.ChildState]:
+        seen.append((epic, github._target_org.get()))
+        return [own] if epic == _PRIMARY else [proxied]
+
+    def body(ref: epics.IssueRef) -> list[epics.IssueRef]:
+        seen.append((ref, github._target_org.get()))
+        return []
+
+    with (
+        patch(f"{_EPICS}.child_states_with_blockers", side_effect=listing),
+        patch(f"{_EPICS}.blockers_of", side_effect=body),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=_PRIMARY),
+    ):
+        listed = epic_audit.epic_children_with_blockers(_PRIMARY)
+    assert [c.child for c in listed] == [own, proxied]
+    assert seen == [
+        (_PRIMARY, "vergil-project"),
+        (own.ref, "vergil-project"),
+        (_PROXY, "logical-minds-foundry"),
+        (proxied.ref, "logical-minds-foundry"),
+    ]
+
+
+def test_epic_children_with_blockers_proxy_naming_another_primary_fails() -> None:
+    with (
+        patch(f"{_EPICS}.child_states_with_blockers", return_value=[]),
+        patch(f"{_PX}.proxies_of", return_value=(_PROXY,)),
+        patch(f"{_PX}.primary_of", return_value=epics.IssueRef("vergil-project", ".github", 9)),
+        pytest.raises(proxies.ProxyLinkError, match="'Primary:' line names"),
+    ):
+        epic_audit.epic_children_with_blockers(_PRIMARY)
+
+
+@pytest.mark.parametrize(
+    ("failing", "error"),
+    [
+        (
+            "native_blockers_of",
+            epics.NativeBlockersReadError("x has 2 native blockers but only 1 could be read"),
+        ),
+        ("blockers_of", trust.TrustReadError("read_issue x", "truncated")),
+    ],
+    ids=["native", "body"],
+)
+def test_epic_children_with_blockers_incomplete_read_raises(
+    failing: str, error: Exception
+) -> None:
+    # A read that cannot complete fails the listing, never "no blockers".
+    child = _child("vergil-project", "vergil-tooling", 1)
+    with (
+        patch(f"{_EPICS}.child_states_with_blockers", return_value=[child]),
+        patch(f"{_EPICS}.native_blockers_of", return_value=()),
+        patch(f"{_EPICS}.blockers_of", return_value=[]),
+        # Applied last, so it overrides the matching patch above.
+        patch(f"{_EPICS}.{failing}", side_effect=error),
+        patch(f"{_PX}.proxies_of", return_value=()),
+        pytest.raises(type(error)),
+    ):
+        epic_audit.epic_children_with_blockers(_PRIMARY)
+
+
+def test_render_epic_children_with_blockers_adds_the_new_fields() -> None:
+    open_child = _child("vergil-project", "vergil-tooling", 1)
+    free_child = _child("vergil-project", "vergil-tooling", 2)
+    closed_child = _child("vergil-project", "vergil-tooling", 3, "CLOSED")
+    listed = [
+        epic_audit.ListedChild(closed_child),
+        epic_audit.ListedChild(free_child),
+        epic_audit.ListedChild(open_child, (epics.IssueRef("other-org", "lib", 131),)),
+    ]
+    out = json.loads(epic_audit.render_epic_children(_PRIMARY, listed))
+    assert out["children"] == [
+        {
+            "repo": "vergil-project/vergil-tooling",
+            "number": 1,
+            "title": "task 1",
+            "state": "OPEN",
+            "open_blockers": ["other-org/lib#131"],
+            "blocked": True,
+        },
+        {
+            "repo": "vergil-project/vergil-tooling",
+            "number": 2,
+            "title": "task 2",
+            "state": "OPEN",
+            "open_blockers": [],
+            "blocked": False,
+        },
+        {
+            "repo": "vergil-project/vergil-tooling",
+            "number": 3,
+            "title": "task 3",
+            "state": "CLOSED",
+            "open_blockers": [],
+            "blocked": False,
+        },
+    ]
+
+
 def _link_problems(
     epic: epics.IssueRef,
     *,

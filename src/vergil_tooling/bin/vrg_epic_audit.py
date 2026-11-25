@@ -148,6 +148,11 @@ def _epic_listing(epic: epics.IssueRef) -> int:
     its primary. A proxy body the trust layer does not trust, or cannot read in
     full, gives no link (spec §5.2 of epic vergil-project/.github#1467): the
     stop goes to stderr, metadata only, and no JSON is printed.
+
+    Each open child carries its open blockers and a ``blocked`` flag (#5124).
+    An open child's body that is not trusted or cannot be read in full, or a
+    native blocked-by list that cannot be read in full, fails the listing the
+    same way: never "no blockers".
     """
     try:
         problems = epic_audit.proxy_link_problems(epic)
@@ -155,13 +160,17 @@ def _epic_listing(epic: epics.IssueRef) -> int:
             for problem in problems:
                 print(f"vrg-epic-audit: proxy link drift: {problem}", file=sys.stderr)
             return 1
-        children = epic_audit.epic_children(epic)
+        children = epic_audit.epic_children_with_blockers(epic)
         with github.target_org(epic.owner):
             primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
     except proxies.ProxyLinkError as exc:
         print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
         return 1
-    except (trust.UntrustedContentError, trust.TrustReadError) as exc:
+    except (
+        trust.UntrustedContentError,
+        trust.TrustReadError,
+        epics.NativeBlockersReadError,
+    ) as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
         return 1
     print(epic_audit.render_epic_children(epic, children, primary=primary))
@@ -419,10 +428,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "('owner/repo#N', used as written, or a bare '#N' resolved against "
             "the current repo's epic home, '<org>/.github'). "
             'Emits {"epic": <slug>, "children": [{repo, number, title, '
-            "state}, ...]} — a stable array of objects (native sub-issues, with "
-            "the portable Parent: reflink fallback), so "
+            "state, open_blockers, blocked}, ...]} — a stable array of objects "
+            "(native sub-issues, with the portable Parent: reflink fallback), so "
             "'.children[] | select(.state==\"OPEN\")' lists the open children "
-            "without brittle jq against GitHub's raw subIssues shape. The children "
+            "without brittle jq against GitHub's raw subIssues shape. "
+            "open_blockers lists, as owner/repo#N refs, the issues not closed "
+            "that an open child is blocked by (native blocked-by links and "
+            "trusted Blocked-by: body lines; always [] on a closed child), and "
+            "blocked is true iff it is not empty. A blocker list that cannot be "
+            "read in full, or an open child's body that is not trusted, exits 1 "
+            "with no JSON. The children "
             "of every proxy epic the epic's trusted 'Proxy:' comments name are "
             "listed beside its own, and on a proxy the JSON gains a "
             '"primary": <slug> key. A Primary:/Proxy: link that is broken or '
