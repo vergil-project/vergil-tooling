@@ -19254,7 +19254,7 @@ reconciles it. It combines two independent halves:</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td><code>audit</code>: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>). <code>diff</code>: 0 whether or not it finds drift, 2 could not complete (including settings not checked). <code>update</code>: see <a href="#update-exit-codes">its exit codes</a>. <code>apply</code>: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, or managed-file drift), 2 could not complete or refused</td>
+<td><code>audit</code>: 0 compliant, 1 non-compliant (drift), 2 audit could not complete (including settings <a href="#settings-the-identity-cannot-read">not checked</a>). <code>diff</code>: 0 whether or not it finds drift, 2 could not complete (including settings not checked). <code>update</code>: see <a href="#update-exit-codes">its exit codes</a>. <code>apply</code>: 0 converged, 1 left non-compliant (a write failed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or managed-file drift), 2 could not complete or refused</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -19363,7 +19363,7 @@ to date.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, or an undeclared ruleset parameter. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged</td>
+<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, or a branch named like a rolling tag, which must be deleted by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged</td>
 </tr>
 <tr>
 <td>2</td>
@@ -19941,6 +19941,9 @@ order:</p>
   lookup prefers the tag), so for them the tag's protection holds only while
   no such branch can exist. The ruleset also blocks updates and force-pushes
   to such a branch, but not its deletion, so a stray one can be removed.
+  The audit lists the repo's branches named like a rolling tag and reports
+  each as drift, <code>rolling_tag_branches.&lt;name&gt;</code>; <code>apply</code> never deletes a
+  branch, so it exits 1 until a human removes it.
   Names such as <code>vm-…</code> are not covered. GitHub's ruleset ref matching
   uses <code>fnmatch</code> syntax and supports character sets in square brackets
   (<a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax">Using <code>fnmatch</code> syntax</a>).
