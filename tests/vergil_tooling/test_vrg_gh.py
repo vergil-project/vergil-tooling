@@ -250,6 +250,66 @@ def test_pr_close_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert "denied" in capsys.readouterr().err.lower()
 
 
+# -- issue edit's raw sub-issue flags (epic chain, .github#1609) -------------
+
+
+# The audit identity has no issue edit at all; every identity that has one is refused.
+@pytest.mark.parametrize("mode", ["human", "user"])
+@pytest.mark.parametrize(
+    ("flag", "argv"),
+    [
+        ("--parent", ["issue", "edit", "42", "--parent", "7"]),
+        ("--parent", ["issue", "edit", "42", "--title", "t", "--parent=7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "--add-sub-issue", "7"]),
+        ("--add-sub-issue", ["issue", "edit", "42", "--add-sub-issue=o/r#7"]),
+        ("--remove-sub-issue", ["issue", "edit", "42", "--remove-sub-issue", "7"]),
+        ("--remove-sub-issue", ["issue", "edit", "--remove-sub-issue=7", "42"]),
+    ],
+)
+def test_issue_edit_refuses_raw_subissue_flags(
+    mode: str,
+    flag: str,
+    argv: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+    with (
+        patch("vergil_tooling.bin.vrg_gh.github.get_installation_token") as mint,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        assert main(argv) != 0
+    mock_run.assert_not_called()
+    mint.assert_not_called()
+    err = capsys.readouterr().err
+    assert f"issue edit {flag} is refused" in err
+    assert "vrg-epic-link" in err
+    assert "vrg-epic-move" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["issue", "edit", "42", "--add-label", "chore", "--title", "t"],
+        # A token after `--` is a positional, never the flag.
+        ["issue", "edit", "--title", "t", "--", "--parent"],
+        # The flag's name inside another flag's value is not the flag.
+        ["issue", "edit", "42", "--body", "use --parent with care"],
+    ],
+)
+def test_issue_edit_without_raw_subissue_flags_runs(argv: list[str]) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        assert main(argv) == 0
+    assert mock_run.call_args[0][0][:3] == ["gh", "issue", "edit"]
+
+
 def test_issue_create_denied_redirects_to_vrg_issue_create(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

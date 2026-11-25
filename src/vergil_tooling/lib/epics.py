@@ -1034,7 +1034,7 @@ def require_open_epic(epic: IssueRef) -> None:
         raise ClosedEpicError(epic)
 
 
-def add_child(epic: IssueRef, task: IssueRef) -> None:
+def _add_child(epic: IssueRef, task: IssueRef) -> None:
     """Link *task* under *epic*; a closed *epic* raises :class:`ClosedEpicError`.
 
     Closed is closed: the epic is never reopened, and nothing is linked.
@@ -1050,17 +1050,17 @@ def _add_child_unchecked(parent: IssueRef, child: IssueRef) -> None:
     calls it, and only to link the next continuation under a closed
     continuation that has no successor (spec §4.2 of epic
     vergil-project/.github#1609): the one link a closed container takes,
-    which leaves it closed. Every other link goes through :func:`add_child`.
+    which leaves it closed. Every other link goes through :func:`_add_child`.
     """
     github.graphql(_ADD_SUBISSUE, parent=_node_id(parent), child=_node_id(child))
 
 
-def remove_child(epic: IssueRef, task: IssueRef) -> None:
+def _remove_child(epic: IssueRef, task: IssueRef) -> None:
     """Unlink *task* from *epic* (remove the native sub-issue relationship)."""
     github.graphql(_REMOVE_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
 
 
-def reparent_child(new_parent: IssueRef, task: IssueRef) -> None:
+def _reparent_child(new_parent: IssueRef, task: IssueRef) -> None:
     """Atomically move *task* from its current parent under *new_parent*.
 
     GitHub's native sub-issues enforce a single parent, so an add-before-remove
@@ -2413,7 +2413,7 @@ def apply_standing_drain(kind: StandingKind, home: str, name: str, plan: DrainPl
     """Execute *plan*: ensure each archive segment, atomically re-parent, close past.
 
     Each closed child is atomically re-parented from the live epic into its
-    quarter's archive via :func:`reparent_child` (``replaceParent: true``) — one
+    quarter's archive via :func:`_reparent_child` (``replaceParent: true``) — one
     call, no orphan window, no separate remove (issue #2691). Past archives are
     then closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in
     the plan is a correct "quarter is past" test.
@@ -2453,7 +2453,7 @@ def apply_standing_drain(kind: StandingKind, home: str, name: str, plan: DrainPl
                 cache[segment] = archive
             if archive == plan.live:
                 continue  # defensive: never re-parent into the live epic
-            reparent_child(archive, child)
+            _reparent_child(archive, child)
     for archive in plan.close:
         github.run(
             "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
@@ -2585,7 +2585,7 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     # they roll, make the matching change there too. See apply_standing_drain().
     archive = ensure_writable_standing_archive(kind, home, name, quarter_of(closed_at))
     if archive != parent:
-        reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
+        _reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
 
 
 @dataclass(frozen=True)

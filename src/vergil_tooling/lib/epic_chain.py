@@ -610,7 +610,7 @@ def link_into(head: IssueRef, task: IssueRef) -> IssueRef:
     :data:`LINK_RETRIES` times raises :class:`ChainLimitError`. A closed
     continuation is skipped, never linked into.
     """
-    return _place(head, task, epics.add_child)
+    return _place(head, task, epics._add_child)
 
 
 def move_into(head: IssueRef, task: IssueRef) -> IssueRef:
@@ -633,7 +633,7 @@ def move_into(head: IssueRef, task: IssueRef) -> IssueRef:
                 if any(item.ref == task for item in step.items):
                     return current
                 break
-    return _place(head, task, epics.reparent_child)
+    return _place(head, task, epics._reparent_child)
 
 
 def unlink_from(head: IssueRef, task: IssueRef) -> None:
@@ -644,7 +644,7 @@ def unlink_from(head: IssueRef, task: IssueRef) -> None:
     """
     for step in _walk(head):
         if any(item.ref == task for item in step.items):
-            epics.remove_child(step.container.ref, task)
+            epics._remove_child(step.container.ref, task)
             return
     raise ValueError(f"{task.slug} is not linked in the chain of epic {head.slug}")
 
@@ -694,7 +694,7 @@ def clear_stale_listing(head: IssueRef, task: IssueRef, keep: IssueRef) -> None:
             "there is no stale listing to clear"
         )
     for container in stale:
-        epics.remove_child(container, task)
+        epics._remove_child(container, task)
 
 
 def relink(head: IssueRef, task: IssueRef) -> IssueRef:
@@ -716,7 +716,7 @@ def relink(head: IssueRef, task: IssueRef) -> IssueRef:
             f"{task.slug}'s parent field {where}, not a container of epic {head.slug}; "
             "it cannot be re-linked there"
         )
-    epics.reparent_child(field, task)
+    epics._reparent_child(field, task)
     return field
 
 
@@ -932,7 +932,7 @@ def find_or_create_continuation(
         items = [item.ref for item in steps[-1].items]
         moved = own_item if own_item in items else items[-1]
         try:
-            epics.reparent_child(continuation, moved)
+            epics._reparent_child(continuation, moved)
         except github.GitHubAPIError as exc:
             # A move into an unlinked continuation never meets the sub-issue
             # limit, so this is never a race: nothing moved, nothing to put back.
@@ -940,7 +940,7 @@ def find_or_create_continuation(
                 f"could not move {moved.slug} from the full tail {tail.slug} of epic "
                 f"{head.slug} into continuation {continuation.slug}: {error_text(exc)}"
             ) from exc
-    write = epics._add_child_unchecked if chain[-1].state == "CLOSED" else epics.add_child
+    write = epics._add_child_unchecked if chain[-1].state == "CLOSED" else epics._add_child
     try:
         _link_rewording_depth(write, tail, continuation, head=head, fit=fit, task=None)
     except (github.GitHubAPIError, ChainDepthError) as exc:
@@ -949,7 +949,7 @@ def find_or_create_continuation(
         if isinstance(exc, github.GitHubAPIError) and _is_full(tail):
             _rehome(head, tail, moved, continuation, exc)
             raise
-        epics.reparent_child(tail, moved)
+        epics._reparent_child(tail, moved)
         print(
             f"epic {head.slug}: moved {moved.slug} back into {tail.slug}, since continuation "
             f"{continuation.slug} could not be linked into the slot it freed"
@@ -994,7 +994,7 @@ def _rehome(
                 "next rollover adopts"
             ),
         ) from exc
-    epics.reparent_child(fit.target, moved)
+    epics._reparent_child(fit.target, moved)
     print(
         f"epic {head.slug}: a racing writer took the slot freed in {tail.slug}; moved "
         f"{moved.slug} into {fit.target.slug} and left continuation {continuation.slug} "
@@ -1084,8 +1084,8 @@ def _merge_duplicate(head: IssueRef, parent: IssueRef, keep: IssueRef, duplicate
             f"GitHub's limit of {SUBISSUE_LIMIT}; a person must move some by hand"
         )
     for item in moving:
-        epics.reparent_child(keep, item)
-    epics.remove_child(parent, duplicate)
+        epics._reparent_child(keep, item)
+    epics._remove_child(parent, duplicate)
     github.run(
         "issue",
         "close",
