@@ -31,6 +31,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
+    ROLLING_TAG_BRANCH_FIELD,
     BypassUnreadable,
     ClassicProtectionReport,
     ConfigDiff,
@@ -383,9 +384,11 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         )
         return 2
 
+    branch_prefix = f"{ROLLING_TAG_BRANCH_FIELD}."
+    shadowing = [i for i in github_diff.items if i.field.startswith(branch_prefix)]
     if github_diff.is_compliant():
         print("GitHub config compliant, nothing to apply.")
-    elif github_diff.items:
+    elif len(github_diff.items) > len(shadowing):
         print(f"  Applying to {repo}...")
         try:
             reports = _apply_repo(repo, config)
@@ -413,6 +416,17 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
             f"  {repo}: apply cannot resolve {len(github_diff.undeclared)} undeclared "
             f"ruleset parameter(s); declare each on or off in the desired spec, or "
             f"add it to _STRIP_RULE_PARAMS, then re-run."
+        )
+        return 1
+
+    if shadowing:
+        # apply never deletes a branch: one named like a rolling tag shadows
+        # the tag for consumers that resolve a branch first, so it stays drift
+        # until a human removes it (the branch-name ruleset allows deletion).
+        names = ", ".join(i.field.removeprefix(branch_prefix) for i in shadowing)
+        print(
+            f"  {repo}: apply does not delete branches; delete the branch(es) named "
+            f"like a rolling tag by hand, then re-run: {names}"
         )
         return 1
 

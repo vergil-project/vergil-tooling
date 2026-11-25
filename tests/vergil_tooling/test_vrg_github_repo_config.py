@@ -387,6 +387,32 @@ def test_diff_not_checked_reports_and_exits_two(capsys: pytest.CaptureFixture[st
     assert "Could not fully audit o/r: 2 setting(s) not checked" in captured.err
 
 
+def _rolling_tag_branch_item() -> DiffItem:
+    return DiffItem(field="rolling_tag_branches.v2.1", expected="absent", actual="present")
+
+
+def test_apply_leaves_rolling_tag_branch_as_drift(capsys: pytest.CaptureFixture[str]) -> None:
+    # apply never deletes a branch, so a shadowing branch keeps it at exit 1.
+    code, mock_apply = _run_main("apply", ConfigDiff(items=[_rolling_tag_branch_item()]))
+    assert code == 1
+    mock_apply.assert_not_called()
+    out = capsys.readouterr().out
+    assert "rolling_tag_branches.v2.1: expected='absent', actual='present'" in out
+    assert "delete the branch(es) named like a rolling tag by hand, then re-run: v2.1" in out
+
+
+def test_apply_converges_other_drift_beside_rolling_tag_branch() -> None:
+    other = DiffItem(field="repo_settings.has_wiki", expected=True, actual=False)
+    code, mock_apply = _run_main("apply", ConfigDiff(items=[other, _rolling_tag_branch_item()]))
+    assert code == 1
+    mock_apply.assert_called_once()
+
+
+def test_audit_rolling_tag_branch_is_noncompliant() -> None:
+    code, _ = _run_main("audit", ConfigDiff(items=[_rolling_tag_branch_item()]))
+    assert code == 1
+
+
 def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[str]) -> None:
     code, mock_apply = _run_main("apply", _mock_github_not_checked(drift=True))
     assert code == 2

@@ -617,6 +617,9 @@ order:
   lookup prefers the tag), so for them the tag's protection holds only while
   no such branch can exist. The ruleset also blocks updates and force-pushes
   to such a branch, but not its deletion, so a stray one can be removed.
+  The audit lists the repo's branches named like a rolling tag and reports
+  each as drift, `rolling_tag_branches.<name>`; `apply` never deletes a
+  branch, so it exits 1 until a human removes it.
   Names such as `vm-…` are not covered. GitHub's ruleset ref matching
   uses `fnmatch` syntax and supports character sets in square brackets
   ([Using `fnmatch` syntax](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax)).

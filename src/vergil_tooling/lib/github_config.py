@@ -111,6 +111,12 @@ class DesiredState:
     # state holds only those it read, so an environment absent from it is
     # missing on GitHub (or not checked: see FetchResult.not_checked).
     environments: list[DesiredEnvironment] = field(default_factory=list)
+    # The branches whose names have the shape of a rolling tag
+    # (:data:`ROLLING_TAG_BRANCH_NAME`), sorted. Always empty in the desired
+    # state: such a branch shadows the rolling tag for a consumer that
+    # resolves a branch before a tag, and the branch-name ruleset stops one
+    # being created, not one that already exists.
+    rolling_tag_branches: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -318,6 +324,16 @@ def desired_rolling_tag_branch_ruleset() -> DesiredRuleset:
         bypass_actors=[],
         rules=[{"type": "creation"}, {"type": "update"}, {"type": "non_fast_forward"}],
     )
+
+
+# A branch name with the shape of a rolling tag: a ``v`` followed by a digit,
+# the names :func:`desired_rolling_tag_branch_ruleset` covers.
+ROLLING_TAG_BRANCH_NAME = re.compile(r"v[0-9]")
+
+# The diff path of the branches named like a rolling tag: each one is the
+# drift item ``rolling_tag_branches.<name>``, and an unreadable listing is
+# this field, not checked.
+ROLLING_TAG_BRANCH_FIELD = "rolling_tag_branches"
 
 
 AUTOMATION_BRANCH_RULESET_NAME = "Automation branches"
@@ -1151,6 +1167,9 @@ def compute_desired_state(
 # ``security_and_analysis`` block. The agent App does not hold it (#3816).
 ADMIN_READ = "administration=read"
 
+# What the rolling-tag branch listing (``git/matching-refs``) needs.
+CONTENTS_READ = "contents=read"
+
 # Phrases GitHub puts on a 403 that means "this identity lacks the permission":
 # an App token gets the first, a user token without admin the second. A 403
 # without one (a rate limit, an SSO block) is not a permission gap and raises.
@@ -1775,6 +1794,41 @@ def _fetch_environment(
     )
 
 
+def _fetch_rolling_tag_branches(repo: str, not_checked: list[NotChecked]) -> list[str]:
+    """The repo's branches whose names have the shape of a rolling tag, sorted.
+
+    ``git/matching-refs/heads/v`` lists every branch whose name starts with
+    ``v``; those matching :data:`ROLLING_TAG_BRANCH_NAME` are kept. The
+    rolling-tag branch-name ruleset blocks creating such a branch, but one
+    that existed before the ruleset, or was made while it was not enforced,
+    stays and shadows the rolling tag for a consumer that resolves a branch
+    first, so the audit reports each one as drift.
+
+    A permission-gap 403 records ``rolling_tag_branches`` as not checked, so
+    the empty placeholder never reads as clean; any other error, and any
+    malformed entry, raises rather than be dropped from the comparison.
+    """
+    endpoint = f"repos/{repo}/git/matching-refs/heads/v"
+    try:
+        raw = github.read_json_paginated(endpoint)
+    except github.GitHubAPIError as exc:
+        if not _is_permission_gap(exc):
+            raise
+        not_checked.append(NotChecked(field=ROLLING_TAG_BRANCH_FIELD, permission=CONTENTS_READ))
+        return []
+    names: list[str] = []
+    for entry_raw in raw:
+        entry = cast("dict[str, object]", entry_raw) if isinstance(entry_raw, dict) else {}
+        ref = entry.get("ref")
+        if not isinstance(ref, str) or not ref.startswith("refs/heads/"):
+            msg = f"{endpoint} returned an unreadable ref: {entry_raw!r}"
+            raise RuntimeError(msg)
+        name = ref.removeprefix("refs/heads/")
+        if ROLLING_TAG_BRANCH_NAME.match(name):
+            names.append(name)
+    return sorted(names)
+
+
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -1915,6 +1969,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
     rulesets.extend(classic.synthetic)
 
     environment = _fetch_environment(repo, AUTOMATION_ENVIRONMENT_NAME, not_checked)
+    rolling_tag_branches = _fetch_rolling_tag_branches(repo, not_checked)
 
     return FetchResult(
         state=DesiredState(
@@ -1925,6 +1980,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
             publish=DesiredPublishConfig(release=False, docs=False),
             classic_develop_strict=classic.develop_strict,
             environments=[environment] if environment is not None else [],
+            rolling_tag_branches=rolling_tag_branches,
         ),
         not_checked=not_checked,
     )
@@ -2245,6 +2301,24 @@ def _diff_environments(
         _diff_dataclass(f"environments.{env.name}", env, live, items, skipped)
 
 
+def _diff_rolling_tag_branches(desired: list[str], actual: list[str], items: list[DiffItem]) -> None:
+    """Report each live branch named like a rolling tag as its own drift item.
+
+    The item is ``rolling_tag_branches.<name>``, expected absent. ``apply``
+    never deletes a branch, so this drift is left for a human to remove.
+    """
+    wanted = set(desired)
+    for name in actual:
+        if name not in wanted:
+            items.append(
+                DiffItem(
+                    field=f"{ROLLING_TAG_BRANCH_FIELD}.{name}",
+                    expected="absent",
+                    actual="present",
+                )
+            )
+
+
 def _diff_producibility(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
@@ -2362,6 +2436,7 @@ def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> Con
     _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped, undeclared)
     _diff_producibility(desired.rulesets, actual.rulesets, items)
     _diff_environments(desired.environments, actual.environments, items, skipped)
+    _diff_rolling_tag_branches(desired.rolling_tag_branches, actual.rolling_tag_branches, items)
     if actual.classic_develop_strict != desired.classic_develop_strict:
         items.append(
             DiffItem(
