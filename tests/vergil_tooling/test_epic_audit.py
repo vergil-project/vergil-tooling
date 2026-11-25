@@ -2752,7 +2752,9 @@ def test_epic_children_with_blockers_reports_open_native_and_body_blockers() -> 
     ]
     states = {9: "OPEN", 10: "CLOSED"}
     with (
-        patch(f"{_EPICS}.child_states_with_blockers", return_value=[open_child, closed_child]) as cs,
+        patch(
+            f"{_EPICS}.child_states_with_blockers", return_value=[open_child, closed_child]
+        ) as cs,
         patch(f"{_EPICS}.blockers_of", return_value=body) as bo,
         patch(f"{_EPICS}.issue_state", side_effect=lambda ref: states[ref.number]) as st,
         patch(f"{_EPICS}.native_blockers_of") as nb,
@@ -2845,9 +2847,7 @@ def test_epic_children_with_blockers_proxy_naming_another_primary_fails() -> Non
     ],
     ids=["native", "body"],
 )
-def test_epic_children_with_blockers_incomplete_read_raises(
-    failing: str, error: Exception
-) -> None:
+def test_epic_children_with_blockers_incomplete_read_raises(failing: str, error: Exception) -> None:
     # A read that cannot complete fails the listing, never "no blockers".
     child = _child("vergil-project", "vergil-tooling", 1)
     with (
