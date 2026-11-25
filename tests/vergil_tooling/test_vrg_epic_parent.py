@@ -156,6 +156,20 @@ def test_chain_drift_exits_1(graph: FakeSubIssueGraph, capsys: pytest.CaptureFix
     assert "vrg-epic-parent: chain drift: org/.github#50 breaks the untrusted-body rule" in err
 
 
+def test_continuation_without_epic_label_is_drift(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A continuation that lost only its epic label is label drift, never not-epic.
+    graph.add_issue(HEAD, title="Epic (intake): org/repo", labels=["epic", "intake"])
+    graph.add_continuation(C2, HEAD, HEAD)
+    graph.issues[C2].labels = [epics.CONTINUATION_LABEL]
+    graph.add_issue(TASK, title="an idea")
+    graph.link(C2, TASK)
+    rc, out, err = _run([TASK.slug], capsys)
+    assert (rc, out) == (1, "")
+    assert "vrg-epic-parent: chain drift: org/.github#50 breaks the label rule" in err
+
+
 def test_ambiguous_head_kind_exits_1(
     graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
 ) -> None:

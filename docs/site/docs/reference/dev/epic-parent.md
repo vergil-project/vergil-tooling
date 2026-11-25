@@ -35,7 +35,7 @@ The plain output is one line, `<ref> <kind>`:
 | `proxy` | A proxy epic (`epic` + `proxy`), or a continuation of one | The head |
 | `ad-hoc`, `intake`, `planning`, `deferred`, `hoshin`, `operations` | That standing epic, or a continuation of it | The head |
 | `archive` | An archive (the `archive` label) | The archive |
-| `not-epic` | An issue without the `epic` label, such as a sub-task's parent | The parent |
+| `not-epic` | An issue without the `epic` label, such as a sub-task's parent (one still labelled `continuation` is chain drift) | The parent |
 
 A task with no native parent prints `none` alone. A body `Parent:` line is
 never read: a task whose only link is that line is not attached on GitHub,

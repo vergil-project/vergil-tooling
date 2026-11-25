@@ -846,7 +846,8 @@ def task_epic(task: IssueRef) -> TaskEpic:
     head's kind. Like :func:`native_parent_of` and the PR refusal
     (:func:`unbuildable_parent_kind`), it never falls back to a body
     ``Parent:`` line: a task whose only link is that line is not attached on
-    GitHub. A parent without ``epic`` is :data:`NOT_EPIC_KIND`, and an
+    GitHub. A parent without ``epic`` (nor ``continuation``, which makes it a
+    broken continuation and raises drift) is :data:`NOT_EPIC_KIND`, and an
     archive (its ``archive`` label) is :data:`ARCHIVE_KIND`; neither is a
     chain, so neither is walked. Chain drift and failed reads raise.
     """
@@ -858,7 +859,9 @@ def task_epic(task: IssueRef) -> TaskEpic:
     labels = _label_names(parent.get("labels"), container.slug)
     if ARCHIVE_KIND in labels:
         return TaskEpic(task=task, epic=container, kind=ARCHIVE_KIND, container=container)
-    if "epic" not in labels:
+    # A parent that lost its ``epic`` label but keeps ``continuation`` is a
+    # broken continuation, never a plain issue: _chain_head raises its drift.
+    if "epic" not in labels and CONTINUATION_LABEL not in labels:
         return TaskEpic(task=task, epic=None, kind=NOT_EPIC_KIND, container=container)
     if "parent" not in parent:
         raise RuntimeError(
