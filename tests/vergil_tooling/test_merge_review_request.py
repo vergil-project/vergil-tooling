@@ -150,6 +150,8 @@ def _move(graph: FakeSubIssueGraph, task: IssueRef, parent: IssueRef | None) -> 
         graph._remove(current, task)
     if parent is not None:
         graph.link(parent, task)
+
+
 TASK_BODY = "Do the thing.\n"
 _CREATED = "2026-11-01T09:30:00Z"
 _EDITED = "2026-11-03T00:00:00Z"
@@ -1198,9 +1200,12 @@ def test_task_outside_an_epic_has_no_epic_tasks(
 PROXY = "acme/.github#9"
 PRIMARY = "other/.github#5"
 
+
 def _under_proxy(graph: FakeSubIssueGraph) -> None:
     """Move the task under ``PROXY``, an ``epic`` + ``proxy`` epic."""
-    proxy = graph.add_issue(parse_issue_ref(PROXY, default_repo=""), title="Epic (proxy): p", labels=["epic", "proxy"])
+    proxy = graph.add_issue(
+        parse_issue_ref(PROXY, default_repo=""), title="Epic (proxy): p", labels=["epic", "proxy"]
+    )
     _move(graph, ISSUE_REF, proxy)
 
 

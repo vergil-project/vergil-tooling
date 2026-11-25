@@ -2042,7 +2042,9 @@ def _queue_chain(
     )
     items = []
     for offset in range(epic_chain.ITEM_CAP):
-        item = graph.add_issue(IssueRef("org", "tool", head_number * 1000 + offset), title="an item")
+        item = graph.add_issue(
+            IssueRef("org", "tool", head_number * 1000 + offset), title="an item"
+        )
         graph.link(head, item)
         items.append(item)
     c2 = graph.add_continuation(IssueRef("org", ".github", head_number + 1), head, head)

@@ -544,7 +544,9 @@ def _chained_graph(monkeypatch: pytest.MonkeyPatch, *, state: str) -> FakeSubIss
     graph = FakeSubIssueGraph().install(monkeypatch)
     graph.add_issue(_HEAD, title="Convention", labels=["epic", "epic-development"], state=state)
     for number in range(1000, 1000 + epic_chain.ITEM_CAP):
-        item = graph.add_issue(epics.IssueRef("vergil-project", "vergil-tooling", number), title="t")
+        item = graph.add_issue(
+            epics.IssueRef("vergil-project", "vergil-tooling", number), title="t"
+        )
         graph.link(_HEAD, item)
     graph.add_continuation(_C2, _HEAD, _HEAD)
     for number in (1, 2):
@@ -555,7 +557,9 @@ def _chained_graph(monkeypatch: pytest.MonkeyPatch, *, state: str) -> FakeSubIss
             graph.close(ref)
     graph.clear_log()
     monkeypatch.setattr(epics, "resolve_epic_home", lambda org, _repo: f"{org}/.github")
-    monkeypatch.setattr("vergil_tooling.lib.release.is_release_tracking_issue", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "vergil_tooling.lib.release.is_release_tracking_issue", lambda *a, **k: False
+    )
     return graph
 
 
