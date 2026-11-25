@@ -1,0 +1,5 @@
+Importing GPG key 0xB8142851:
+ Userid     : "vergil-project packages <packages@vergil-project.invalid>"
+ Fingerprint: DD67 B5BA 8414 42A7 7A6E C2F7 04D6 8CED B814 2851
+ From       : /etc/pki/rpm-gpg/RPM-GPG-KEY-vergil-test
+Error: Failed to download metadata for repo 'vergil': repomd.xml GPG signature verification error: Bad GPG signature

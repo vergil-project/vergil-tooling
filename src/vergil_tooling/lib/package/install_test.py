@@ -8,7 +8,8 @@ locally or faked in tests):
    present; nothing on rpm);
 2. for ``builder = "python"`` only, bootstrap the vergil repository as a
    consumer would, since the runtime resolves from the **live** repository
-   (``staged`` products install standalone);
+   (``staged`` products install standalone); on rpm, then refresh its
+   metadata through :func:`~vergil_tooling.lib.package.repo_setup.dnf_refresh`;
 3. install the local artifact file;
 4. list the installed files;
 5. if systemd units are shipped, install systemd and ``systemd-analyze verify``
@@ -129,6 +130,11 @@ def run_install_test(
     # 2. The runtime a python-builder product depends on comes from the live repository.
     if pkg.builder == "python":
         repo_setup.bootstrap(run, orgs.for_vendor(RUNTIME_VENDOR), cell.fmt, cell.suite, sudo=False)
+        # The install reads every enabled repo, the vergil one included: refresh
+        # it first, through the Pages cache window (#4663), so the install runs
+        # on that cache and is never retried itself.
+        if not deb:
+            repo_setup.dnf_refresh(run, RUNTIME_VENDOR, sudo=False)
     # 3. Install the local artifact.
     run(*installer, "install", "-y", str(artifact))
     # 4. List what it installed.

@@ -307,6 +307,47 @@ def test_bootstrap_uses_the_vergil_org_without_sudo(
     assert seen == [(run, install_test.orgs.for_vendor("vergil"), "rpm", "el9", False)]
 
 
+def test_rpm_python_product_refreshes_vergil_through_the_helper_before_the_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #4663: the artifact install reads the vergil repo too, so its metadata is
+    # refreshed first by the helper that retries through the Pages cache window.
+    repo = _repo_with_python_package(tmp_path)
+    arts = _arts(tmp_path, "vergil-tooling-2.1.240-1.aarch64.rpm")
+    _no_bootstrap(monkeypatch)
+    order: list[str] = []
+
+    def refresh(run: object, repo_id: str, *, sudo: bool) -> None:
+        order.append(f"refresh {repo_id} sudo={sudo}")
+
+    monkeypatch.setattr(install_test.repo_setup, "dnf_refresh", refresh)
+    run = _fake_run(order, listing=_TOOLING_LISTING)
+    install_test.run_install_test(repo, "test-rhel-9-arm64", arts, tmp_path / "r.json", run=run)
+    artifact = (arts / "vergil-tooling-2.1.240-1.aarch64.rpm").resolve()
+    assert order[:2] == ["refresh vergil sudo=False", f"dnf install -y {artifact}"]
+    assert order.count("refresh vergil sudo=False") == 1
+
+
+def test_deb_and_staged_products_do_not_refresh_dnf_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_bootstrap(monkeypatch)
+    refreshed: list[str] = []
+    monkeypatch.setattr(
+        install_test.repo_setup, "dnf_refresh", lambda run, r, *, sudo: refreshed.append(r)
+    )
+    python_repo = _repo_with_python_package(tmp_path)
+    arts = _arts(tmp_path, "vergil-tooling_2.1.240-1_amd64.deb", "vergil-thing-1.0.0-1.x86_64.rpm")
+    run = _fake_run([], listing=_TOOLING_LISTING)
+    install_test.run_install_test(python_repo, "test-ubuntu-24.04-amd64", arts, tmp_path / "a", run=run)
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    staged_repo = _repo_with_staged_package(staged)
+    run = _fake_run([], listing="/usr/bin/thing\n")
+    install_test.run_install_test(staged_repo, "test-rhel-10-amd64", arts, tmp_path / "b", run=run)
+    assert refreshed == []
+
+
 def test_sequence_staged_product_rpm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = _repo_with_staged_package(tmp_path)
     arts = _arts(tmp_path, "vergil-thing-1.0.0-1.x86_64.rpm", "vergil-thing_1.0.0-1_amd64.deb")

@@ -26,12 +26,19 @@ reinstalled through the bootstrap path.
 apt never downloads the full Ubuntu archive indexes unless a prerequisite is
 actually missing: the bootstrap source is refreshed on its own
 (:func:`apt_scoped_update`), and every apt call carries :data:`APT_FAIL_FAST`.
+
+Every dnf metadata refresh of an org repository goes through
+:func:`dnf_refresh`, which retries through the GitHub Pages cache window that
+follows an index publish (#4663).
 """
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
+import sys
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -132,6 +139,94 @@ def apt_scoped_update(source: str) -> tuple[str, ...]:
     kept (``List-Cleanup=0``), so no full Ubuntu archive download happens.
     """
     return apt_get(*_apt_scope(source), "-o", "APT::Get::List-Cleanup=0", "update")
+
+
+DNF_REFRESH_DELAYS: tuple[float, ...] = (15.0, 30.0, 45.0, *(60.0,) * 11)
+"""Seconds :func:`dnf_refresh` waits before each retry: 750 s over 15 attempts.
+
+GitHub Pages serves every file with ``Cache-Control: max-age=600``, and each
+CDN edge caches each file on its own. For up to 600 s after a package index
+publish, an edge can serve ``repodata/repomd.xml`` from one publish and
+``repodata/repomd.xml.asc`` from another. The schedule outlasts that window
+with a 150 s margin.
+"""
+
+_REPOMD_SIGNATURE = re.compile(
+    r"Failed to download metadata for repo '(?P<repo>[^']+)': "
+    r"repomd\.xml GPG signature verification error: Bad (?:GPG|PGP) signature"
+)
+"""dnf's error for a ``repomd.xml`` that does not match its ``repomd.xml.asc``.
+
+Taken from real output, recorded in ``tests/vergil_tooling/fixtures/dnf/``:
+RHEL 9 (dnf 4.14) says ``Bad GPG signature``, RHEL 10 (dnf 4.20) ``Bad PGP
+signature``. A missing ``.asc``, a missing ``repomd.xml``, an unreachable
+server and an unknown repo id all print something else, and are never
+retried.
+"""
+
+
+def _stderr(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+def _dnf_output(exc: subprocess.CalledProcessError) -> str:
+    return "\n".join(s.strip() for s in (exc.stdout, exc.stderr) if s and s.strip())
+
+
+def dnf_refresh(
+    run: Run,
+    repo: str,
+    *,
+    sudo: bool,
+    sleep: Callable[[float], None] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> None:
+    """Refresh dnf's metadata for ``repo`` alone, through the Pages cache window.
+
+    Runs ``dnf -y makecache --refresh --repo <repo>``. It retries only when dnf
+    fails because ``repo``'s ``repomd.xml`` does not match its signature, on
+    the :data:`DNF_REFRESH_DELAYS` schedule, logging one line per retry. Any
+    other failure propagates at once as the ``CalledProcessError``. When every
+    attempt fails the signature check, it raises :class:`PackageError` with
+    dnf's last output.
+
+    ``-y`` is load-bearing: without it, dnf declines to import the repo's
+    ``gpgkey`` into its metadata keyring when no terminal answers, and fails
+    with the same error as the race, which would then be retried in vain.
+    Installs that follow use the refreshed cache and are never retried.
+    """
+    pause = time.sleep if sleep is None else sleep
+    say = _stderr if log is None else log
+    argv = (*(("sudo",) if sudo else ()), "dnf", "-y", "makecache", "--refresh", "--repo", repo)
+    attempts = len(DNF_REFRESH_DELAYS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            run(*argv)
+        except subprocess.CalledProcessError as exc:
+            output = _dnf_output(exc)
+            race = _REPOMD_SIGNATURE.search(output)
+            if race is None or race["repo"] != repo:
+                raise
+            if attempt == attempts:
+                window = sum(DNF_REFRESH_DELAYS)
+                msg = (
+                    f"dnf could not refresh the {repo} repository: repomd.xml failed its "
+                    f"signature check on all {attempts} attempts over {window:.0f}s. Just after "
+                    "a package index publish, GitHub Pages can serve repomd.xml and "
+                    "repomd.xml.asc from different publishes for up to 600s; a mismatch "
+                    "lasting longer is not that publish cache race. "
+                    f"dnf's last output:\n{output}"
+                )
+                raise PackageError(msg) from exc
+            delay = DNF_REFRESH_DELAYS[attempt - 1]
+            say(
+                f"vrg-package: dnf refresh of {repo}, attempt {attempt}/{attempts}: repomd.xml "
+                "does not match its signature (GitHub Pages may still be serving a file from "
+                f"an earlier package index publish); retrying in {delay:.0f}s"
+            )
+            pause(delay)
+        else:
+            return
 
 
 def deb_source_path(org: OrgRepo) -> str:
@@ -303,7 +398,7 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
         if fmt == "deb":
             run(*s, *apt_scoped_update(permanent))
         else:
-            run(*s, "dnf", "makecache", "--refresh", "--repo", org.vendor)
+            dnf_refresh(run, org.vendor, sudo=sudo)
         return
     # Installed but its source or key is gone: only a reinstall re-runs what wrote them.
     reinstall = "installed" in state
@@ -343,6 +438,9 @@ def bootstrap(run: Run, org: OrgRepo, fmt: str, suite: str, *, sudo: bool) -> No
             else:
                 verb = "reinstall" if reinstall else "install"
                 repo = f"{org.vendor}-bootstrap"
+                # The install runs on the cache this refresh fills, so only the
+                # refresh retries through the Pages cache window (#4663).
+                dnf_refresh(run, repo, sudo=sudo)
                 run(*s, "dnf", verb, "-y", "--repo", repo, org.keyring_package)
         finally:
             run(*s, "rm", "-f", src, key)

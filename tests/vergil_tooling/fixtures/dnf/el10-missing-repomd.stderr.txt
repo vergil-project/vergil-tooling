@@ -1,0 +1,3 @@
+Errors during downloading metadata for repository 'vergil':
+  - Status code: 404 for http://127.0.0.1:8080/rpm/el10/aarch64/repodata/repomd.xml (IP: 127.0.0.1)
+Error: Failed to download metadata for repo 'vergil': Cannot download repomd.xml: Cannot download repodata/repomd.xml: All mirrors were tried
