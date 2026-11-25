@@ -324,6 +324,7 @@ def test_main_epic_blocker_read_failure_exits_1(
     # never "no blockers" (#5124).
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch(f"{_MOD}.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
