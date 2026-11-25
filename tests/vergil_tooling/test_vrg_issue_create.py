@@ -274,35 +274,11 @@ def _fill(graph: FakeSubIssueGraph, head: epics.IssueRef, count: int) -> None:
     graph.clear_log()
 
 
-def test_issue_create_rollover_disabled_full_epic_creates_nothing(
-    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Rollover is off by default: a head at GitHub's 100 sub-issues is refused
-    # before the issue is created, never left with an unlinked new issue.
-    assert epic_chain.ROLLOVER_ENABLED is False
-    _fill(graph, EPIC, 100)
-    before = set(graph.issues)
-    with (
-        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
-        patch.object(github, "create_issue", wraps=graph.create_issue) as mock_create,
-    ):
-        rc = main(["--epic", "#710", "--title", "T"])
-    assert rc == 1
-    mock_create.assert_not_called()
-    assert set(graph.issues) == before
-    assert graph.events == []
-    assert len(graph.children_of(EPIC)) == 100
-    message = str(epic_chain.RolloverDisabledError(EPIC))
-    assert capsys.readouterr().err == f"vrg-issue-create: {message}\n"
-
-
 def test_issue_create_lands_in_continuation_names_it(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # With rollover on, a head holding its 99 items rolls the new issue into a
+    # A head holding its 99 items rolls the new issue into a
     # continuation, and the closing line names the epic by its head and the container.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     monkeypatch.setattr(github, "run", graph.run)  # the rollover's label and announce writes
     _fill(graph, EPIC, 99)
     with (

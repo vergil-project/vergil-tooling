@@ -14,7 +14,7 @@ from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
 from vergil_tooling.lib import epic_chain, github, security_records, trust
-from vergil_tooling.lib.epics import IssueRef
+from vergil_tooling.lib.epics import ClosedEpicError, IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
     RetargetError,
@@ -66,13 +66,6 @@ def _add_item(graph: FakeSubIssueGraph, ref: IssueRef, under: IssueRef = INTAKE,
     """Add *ref* to *graph*, linked under *under* (the intake epic by default)."""
     graph.add_issue(ref, title=f"issue {ref.number}", labels=["security"], **kw)
     graph.link(under, ref)
-
-
-def _fill_intake(graph: FakeSubIssueGraph) -> None:
-    """Link GitHub's 100 sub-issues under the intake epic, then forget those writes."""
-    for number in range(1000, 1000 + epic_chain.SUBISSUE_LIMIT):
-        _add_item(graph, IssueRef("org", ".github", number))
-    graph.clear_log()
 
 
 @pytest.fixture
@@ -504,13 +497,13 @@ def _refuse(kind: str, graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 
         monkeypatch.setattr(epic_chain, "check_capacity", refuse)
         return str(error)
-    # Rollover is off by default: a full intake epic is refused.
-    assert not epic_chain.ROLLOVER_ENABLED
-    _fill_intake(graph)
-    return str(epic_chain.RolloverDisabledError(INTAKE))
+    # A closed intake epic is refused (closed is closed).
+    graph.close(INTAKE)
+    graph.clear_log()
+    return str(ClosedEpicError(INTAKE))
 
 
-@pytest.mark.parametrize("kind", ["depth", "full"])
+@pytest.mark.parametrize("kind", ["depth", "closed"])
 def test_security_record_refusal_creates_nothing(
     env: MagicMock,
     graph: FakeSubIssueGraph,
@@ -531,7 +524,7 @@ def test_security_record_refusal_creates_nothing(
     assert graph.events == []
 
 
-@pytest.mark.parametrize("kind", ["depth", "full"])
+@pytest.mark.parametrize("kind", ["depth", "closed"])
 def test_resume_capacity_refusal_names_the_resume_and_creates_no_issue(
     env: MagicMock,
     graph: FakeSubIssueGraph,

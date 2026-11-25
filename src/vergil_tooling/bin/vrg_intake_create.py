@@ -59,9 +59,8 @@ def main(argv: list[str] | None = None) -> int:
             repo = args.repo or epics.queue_home(github.current_repo())[0]
             intake = epics.ensure_intake_epic(repo)
             # The chain layer's capacity check, before the create (epic
-            # vergil-project/.github#1609, spec §4.5): a closed queue, a full
-            # one while rollover is off and the depth limit are refused with
-            # nothing created.
+            # vergil-project/.github#1609, spec §4.5): a closed queue and the
+            # depth limit are refused with nothing created.
             try:
                 epic_chain.check_capacity(intake)
             except epics.EpicRefusalError as exc:

@@ -172,14 +172,14 @@ def test_intake_create_link_failure_is_loud(
 def test_intake_create_link_refusal_names_no_move(
     cwd_public: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A racing writer fills the queue between the capacity check and the link,
-    # with rollover off: the chain layer refuses the link, so the hint says the
+    # A racing hand closes the queue between the capacity check and the link:
+    # the chain layer refuses the link (closed is closed), so the hint says the
     # capture is left unlinked and vrg-epic-move would be refused the same way.
     graph = cwd_public["graph"]
 
     def create_then_race(**kwargs: Any) -> str:
         url = graph.create_issue(**kwargs)
-        _fill(graph, _INTAKE, epic_chain.SUBISSUE_LIMIT)
+        graph.close(_INTAKE)
         graph.clear_log()
         return url
 
@@ -188,7 +188,7 @@ def test_intake_create_link_refusal_names_no_move(
     assert rc == 1
     err = capsys.readouterr().err
     assert f"created {_URL} but it is not linked under intake epic {_INTAKE.slug}" in err
-    assert str(epic_chain.RolloverDisabledError(_INTAKE)) in err
+    assert str(epics.ClosedEpicError(_INTAKE)) in err
     assert err.rstrip().endswith(
         "org/.github#321 is left unlinked, and vrg-epic-move would be refused the same way "
         "until that is resolved"
@@ -201,7 +201,6 @@ def test_intake_create_link_refusal_names_no_move(
 def test_intake_create_rolls_over_full_queue(
     cwd_public: dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     graph = cwd_public["graph"]
     _fill(graph, _INTAKE, epic_chain.ITEM_CAP)
     graph.clear_log()
@@ -226,22 +225,22 @@ def test_intake_create_rolls_over_full_queue(
     )
 
 
-@pytest.mark.parametrize("case", ["depth", "full"])
+@pytest.mark.parametrize("case", ["depth", "closed"])
 def test_intake_create_refusal_creates_nothing(
     cwd_public: dict[str, Any], capsys: pytest.CaptureFixture[str], case: str
 ) -> None:
-    # (depth) the capacity check refuses at the nesting limit; (full) rollover
-    # is off by default, so a queue at GitHub's limit is refused by name. Either
-    # way the refusal comes before the create, so nothing is left behind.
+    # (depth) the capacity check refuses at the nesting limit; (closed) a
+    # closed queue is refused by name. Either way the refusal comes before the
+    # create, so nothing is left behind.
     graph = cwd_public["graph"]
     refusal: epics.EpicRefusalError
     if case == "depth":
         refusal = epic_chain.ChainDepthError(_INTAKE, items=693, containers=7)
         check = patch(f"{_MOD}.epic_chain.check_capacity", side_effect=refusal)
     else:
-        _fill(graph, _INTAKE, epic_chain.SUBISSUE_LIMIT)
+        graph.close(_INTAKE)
         graph.clear_log()
-        refusal = epic_chain.RolloverDisabledError(_INTAKE)
+        refusal = epics.ClosedEpicError(_INTAKE)
         check = patch(f"{_MOD}.epic_chain.check_capacity", wraps=epic_chain.check_capacity)
     with check as mock_check:
         rc = main(["--title", "T"])

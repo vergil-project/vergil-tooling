@@ -31,10 +31,7 @@ continuation, link it into the tail's last slot, then link the item. Before
 any write they refuse a closed head (closed is closed) and a chain that
 cannot grow past GitHub's nesting limit (:class:`ChainDepthError`), and
 :func:`check_capacity` makes the same checks, reading only, for a command
-that creates an issue before linking it. While :data:`ROLLOVER_ENABLED` is
-off, no writer creates, adopts or links a continuation: the head is the only
-container and takes up to GitHub's 100 items, and a full one is refused by
-name (:class:`RolloverDisabledError`).
+that creates an issue before linking it.
 
 **Races** (spec §4.4). GitHub offers no lock, so a chain is kept whole by
 reading back. A link GitHub refuses into a container whose fresh read holds
@@ -77,13 +74,6 @@ SUBISSUE_LIMIT = 100
 #: vergil-project/.github#1632). The items of container ``k`` sit at the
 #: head's level plus ``k``, so a chain grows only while that stays within it.
 MAX_DEPTH = 8
-
-#: Whether a writer may roll an epic over into a continuation. Off until every
-#: reader of an epic's children reads through the chain (Task 11b of epic
-#: vergil-project/.github#1609 removes it): while it is off, the head is the
-#: only container and takes up to :data:`SUBISSUE_LIMIT` items, and a link into
-#: a full head raises :class:`RolloverDisabledError` before any write.
-ROLLOVER_ENABLED: bool = False
 
 #: The most times a writer tries a link that GitHub refuses as full (spec §4.4):
 #: each refusal is re-read, healed or rolled over, and tried again, and the
@@ -338,17 +328,6 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
-class RolloverDisabledError(EpicRefusalError, RuntimeError):
-    """*head* holds GitHub's 100 sub-issues, and rollover is not enabled yet."""
-
-    def __init__(self, head: IssueRef) -> None:
-        super().__init__(
-            f"epic {head.slug} is at GitHub's limit of {SUBISSUE_LIMIT} sub-issues, and "
-            "rollover into a continuation is not enabled yet"
-        )
-        self.head = head
-
-
 class ChainDepthError(EpicRefusalError, RuntimeError):
     """*head*'s chain cannot grow past GitHub's nesting limit (spec §4.5).
 
@@ -445,33 +424,20 @@ class _Fit:
 def _fit(head: IssueRef) -> _Fit:
     """Find the next item's container in *head*'s chain, refusing before any write.
 
-    Raises :class:`ClosedEpicError` for a closed head,
-    :class:`RolloverDisabledError` for a full head while rollover is off, and
+    Raises :class:`ClosedEpicError` for a closed head and
     :class:`ChainDepthError` when the item, or the continuation a rollover
     would add, would sit past :data:`MAX_DEPTH`. Reads only.
     """
-    if not ROLLOVER_ENABLED:
-        listing = epics._container_listing(head)
-        if listing.state == "CLOSED":
-            raise ClosedEpicError(head)
-        if listing.total >= SUBISSUE_LIMIT:
-            raise RolloverDisabledError(head)
-        chain: tuple[Container, ...] = (
-            Container(ref=head, state=listing.state, item_count=listing.total, continuation=None),
-        )
-        target: IssueRef | None = head
-        position = 1
-    else:
-        chain = tuple(containers(head))
-        if chain[0].state == "CLOSED":
-            raise ClosedEpicError(head)
-        free = [
-            k
-            for k, container in enumerate(chain, start=1)
-            if container.state == "OPEN" and container.item_count < ITEM_CAP
-        ]
-        position = free[0] if free else len(chain) + 1
-        target = chain[position - 1].ref if free else None
+    chain = tuple(containers(head))
+    if chain[0].state == "CLOSED":
+        raise ClosedEpicError(head)
+    free = [
+        k
+        for k, container in enumerate(chain, start=1)
+        if container.state == "OPEN" and container.item_count < ITEM_CAP
+    ]
+    position = free[0] if free else len(chain) + 1
+    target = chain[position - 1].ref if free else None
     fit = _Fit(target=target, chain=chain)
     # The items of container k sit at the head's level plus k.
     if _level(head) + position > MAX_DEPTH:
@@ -484,8 +450,7 @@ def check_capacity(head: IssueRef) -> None:
 
     For a command that creates an issue and then links it: it runs this
     before creating, so a refusal leaves nothing orphaned (spec §4.5).
-    Raises :class:`ClosedEpicError`, :class:`RolloverDisabledError` or
-    :class:`ChainDepthError`, as :func:`link_into` would.
+    Raises :class:`ClosedEpicError` or :class:`ChainDepthError`, as :func:`link_into` would.
     """
     _fit(head)
 
@@ -504,7 +469,7 @@ def unlinked_hint(task: IssueRef, head: IssueRef, exc: BaseException) -> str:
 
     For a create-then-link command whose link failed after the create. A
     refusal of the chain layer (an :class:`EpicRefusalError`: a closed epic,
-    the depth limit, a full head while rollover is off, a container GitHub
+    the depth limit, a container GitHub
     kept refusing as full, or chain drift) would refuse ``vrg-epic-move`` the
     same way, so the hint says so instead of suggesting the move; any other
     failure suggests the move.
@@ -587,8 +552,6 @@ def _settle(head: IssueRef, task: IssueRef, linked: IssueRef) -> IssueRef:
     tail at :data:`SUBISSUE_LIMIT` with no continuation (spec §4.4); either
     heal can move *task* itself, so after one the container is read afresh.
     """
-    if not ROLLOVER_ENABLED:
-        return linked
     healed = heal_duplicate_continuations(head)
     healed = heal_full_tail(head, own_item=task) or healed
     if not healed:
@@ -605,8 +568,7 @@ def link_into(head: IssueRef, task: IssueRef) -> IssueRef:
     Returns the container *task* is in once the chain is read back and
     healed (a heal can move it). A closed head raises
     :class:`ClosedEpicError` and is never reopened; the depth limit raises
-    :class:`ChainDepthError` before any write; a full head while rollover is
-    off raises :class:`RolloverDisabledError`; a link refused as full
+    :class:`ChainDepthError` before any write; a link refused as full
     :data:`LINK_RETRIES` times raises :class:`ChainLimitError`. A closed
     continuation is skipped, never linked into.
     """
@@ -881,8 +843,7 @@ def find_or_create_continuation(
     of orphans and any write: an orphan of a closed head is never adopted. A
     closed *tail* under an open head takes the link, the one link a closed
     container takes (spec §4.2), and stays closed. Every growth of the chain
-    is reported (:func:`_announce`). While rollover is off this raises
-    :class:`RolloverDisabledError` and writes nothing.
+    is reported (:func:`_announce`).
 
     A *tail* holding :data:`SUBISSUE_LIMIT` items has no slot for its
     continuation (racing writers filled it, spec §4.4), so one is freed
@@ -897,8 +858,6 @@ def find_or_create_continuation(
     :class:`ChainDepthError` or a :class:`RuntimeError` carrying GitHub's
     text, never as a GitHub error a caller would take for a race.
     """
-    if not ROLLOVER_ENABLED:
-        raise RolloverDisabledError(head)
     if epics._issue_state(head) == "CLOSED":
         raise ClosedEpicError(head)
     steps = _walk(head)
@@ -1017,12 +976,10 @@ def heal_full_tail(head: IssueRef, *, own_item: IssueRef | None = None) -> bool:
     :data:`LINK_RETRIES` times in all.
 
     Returns whether the tail was found full; it is healed on return. It
-    returns ``False`` with no write while rollover is off, for a tail with
-    room, and for a chain at GitHub's nesting limit, which cannot take a
-    continuation and so needs no slot for one.
+    returns ``False`` with no write for a tail with room, and for a chain at
+    GitHub's nesting limit, which cannot take a continuation and so needs no
+    slot for one.
     """
-    if not ROLLOVER_ENABLED:
-        return False
     refused: list[tuple[IssueRef, github.GitHubAPIError]] = []
     while len(refused) < LINK_RETRIES:
         chain = containers(head)
@@ -1054,11 +1011,8 @@ def heal_duplicate_continuations(head: IssueRef) -> bool:
     line. A merge that would put more than :data:`SUBISSUE_LIMIT` sub-issues
     in the kept one is refused by name, before any write to it.
 
-    Returns whether any container was healed; while rollover is off it reads
-    nothing and returns ``False``.
+    Returns whether any container was healed.
     """
-    if not ROLLOVER_ENABLED:
-        return False
     healed = False
     current = head
     while True:

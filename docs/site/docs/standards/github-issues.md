@@ -433,21 +433,11 @@ then names it, as `under epic <head> (in continuation <continuation>)`. `vrg-epi
 task linked anywhere in the target's chain as already there. The commands
 that create an issue and then link it (`vrg-issue-create`,
 `vrg-intake-create`, `vrg-security-record` and the ops reports) check the
-chain's capacity first: a closed epic, the depth limit and a full head while
-rollover is off are refused before anything is created, so no issue is left
-unlinked. If a link still fails after the create, the command names the
-created issue; when the chain refused it, the message says the issue is left
-unlinked and that `vrg-epic-move` would be refused the same way, instead of
-suggesting it.
-
-**Rollover is not enabled yet.** Until every reader of an epic's children,
-the plugin skills included, reads through the chain, no tool creates a
-continuation: a head takes up to GitHub's 100 items, and a link into a full
-head is refused, naming it:
-
-```text
-epic <head> is at GitHub's limit of 100 sub-issues, and rollover into a continuation is not enabled yet
-```
+chain's capacity first: a closed epic and the depth limit are refused before
+anything is created, so no issue is left unlinked. If a link still fails
+after the create, the command names the created issue; when the chain
+refused it, the message says the issue is left unlinked and that
+`vrg-epic-move` would be refused the same way, instead of suggesting it.
 
 ### Ad-hoc epic archiving
 
@@ -836,8 +826,7 @@ is done is a report line, not a failure:
 intake queue <head> holds <n> open items; run epic-review intake
 ```
 
-While rollover is off, a link into a queue epic already at GitHub's 100
-sub-issues is refused like a closed epic's: the item is named on stderr with
+A link into a closed queue epic is refused: the item is named on stderr with
 the refusal, the rest of the pass runs, and the run exits 1. The same pass,
 dispatched once by hand through `ops-epic-sweep`'s `workflow_dispatch`, is the
 one-time migration of an org's existing backlog.
@@ -862,8 +851,7 @@ heals the chain drift of the home's epics:
 Each heal is listed under **Chains healed**. An orphan of a closed epic is
 never adopted, and a broken chain rule is never guessed past: each is listed
 under **Needs a human**, named on stderr, and the run exits 1 once every pass
-has run. So is a heal that fails, and, while rollover is off, a duplicate or
-an orphan, which only a rollover can mend. A closed continuation in an open
+has run. So is a heal that fails. A closed continuation in an open
 chain is listed under **Chain notes**. Each open development or proxy epic with
 a continuation is listed under **Chained epics**, every run, as a prompt to
 consider splitting it; it is not a failure.

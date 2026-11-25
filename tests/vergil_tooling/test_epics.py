@@ -4661,7 +4661,6 @@ def test_rollup_adopts_orphan_before_judging(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
     _add_continuation(graph, C2, None)
     _add_items(graph, C2, 1)  # open, in the orphan
@@ -4679,7 +4678,6 @@ def test_rollup_judges_adopted_orphan_items(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An orphan whose items are all closed is adopted, and the whole chain closes.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
     _add_continuation(graph, C2, None)
     _add_items(graph, C2, 1, state="CLOSED")
@@ -4701,27 +4699,11 @@ def test_rollup_refuses_with_unadoptable_orphan(graph: FakeSubIssueGraph) -> Non
     assert graph.issues[HEAD].state == "OPEN"
 
 
-def test_rollup_rollover_disabled_orphan_refuses(graph: FakeSubIssueGraph) -> None:
-    # While rollover is off nothing may link a continuation: no adoption, no close.
-    (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
-    _add_continuation(graph, C2, None)
-    graph.clear_log()
-    with pytest.raises(epics.OrphanedContinuationError) as excinfo:
-        epics.rollup(task)
-    assert str(excinfo.value) == (
-        "epic org/.github#10 is not rolled up: its orphaned continuations org/.github#20 "
-        "cannot be adopted, since rollover into a continuation is not enabled yet"
-    )
-    assert isinstance(excinfo.value, epics.EpicRefusalError)
-    assert graph.events == []
-
-
 def test_rollup_closed_head_orphan_is_reported_not_adopted(
     graph: FakeSubIssueGraph,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
     _add_continuation(graph, C2, None)
     graph.close(HEAD)
@@ -4812,7 +4794,6 @@ def test_epic_category_of_continuation_needs_its_ref() -> None:
 def test_rollup_adopts_every_orphan_in_turn(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
     _add_continuation(graph, C2, None)
     _add_continuation(graph, C3, None, k=3)
@@ -4825,7 +4806,6 @@ def test_rollup_refuses_when_orphans_stay_outside_the_chain(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An adoption that leaves the orphan outside the chain is never judged past.
-    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
     monkeypatch.setattr(epic_chain, "find_or_create_continuation", lambda head, tail: C2)
     (task,) = _add_items(graph, HEAD, 1, state="CLOSED")
     _add_continuation(graph, C2, None)

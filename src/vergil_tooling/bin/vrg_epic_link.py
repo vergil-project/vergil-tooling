@@ -6,8 +6,7 @@ fallback. This CLI creates the reliable native link through the chain layer
 (:func:`epic_chain.link_into`, epic vergil-project/.github#1609): the task goes
 into the first container of the epic's chain with a free slot, rolling over
 into a continuation when every one is full. A closed epic is refused by name
-and never reopened (closed is closed), as are a full epic while rollover is off
-and one at GitHub's nesting limit. Use it when creating a task under an epic,
+and never reopened (closed is closed), as is one at GitHub's nesting limit. Use it when creating a task under an epic,
 and to backfill reflink-only children.
 
 Refs are ``owner/repo#N`` or bare ``#N``. A bare task ref resolves to the
