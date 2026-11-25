@@ -4798,3 +4798,69 @@ def test_attach_orphans_other_chain_refusal_is_that_orphan_alone(
         " GitHub's nesting limit of 8; split the epic",
     )
     assert graph.mutations == [("add", _ORG_INTAKE, epics.IssueRef("org", "tool", 6))]
+
+
+def test_sweep_orphan_adopted_by_full_tail_heal_is_not_adopted_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A full tail and an orphan of one head: the tail's heal adopts the
+    # orphan first, so the adoption finds none left, creates no continuation
+    # and reports none (R1 of the merge review of #5166).
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    _drift_fixture(graph, "full-tail")
+    graph.add_continuation(_C2, _HEAD, None)
+    drift = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    assert [d.kind for d in drift] == ["full-tail", "orphan"]
+    graph.clear_log()
+    heals = epic_audit.heal_chains(drift)
+    assert heals == epic_audit.ChainHeals(
+        healed=("healed the full tail org/.github#40 of epic org/.github#40",)
+    )
+    assert not [event for event in graph.events if event[0] == "create"]
+    assert graph.parent_of(_C2) == _HEAD
+    assert epic_audit.chain_drift(_HOME, listing=_home_listing(graph)) == []
+
+
+def test_sweep_rollup_failure_keeps_the_adoption(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The adoption has landed when the rollup fails: it is reported as
+    # adopted, and the rollup's failure is its own unhealed line (R2).
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.link(_C2, graph.add_issue(epics.IssueRef("org", "tool", 2), title="t", state="CLOSED"))
+    with patch.object(epics, "rollup", side_effect=RuntimeError("boom")):
+        heals = _heal(graph)
+    assert heals == epic_audit.ChainHeals(
+        healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",),
+        unhealed=("epic org/.github#40: its rollup after the adoption did not run: boom",),
+    )
+    assert graph.parent_of(_C2) == _HEAD
+
+
+def test_sweep_failed_adoption_keeps_earlier_adoptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(_C2, _HEAD, None)
+    graph.add_continuation(_C3, _HEAD, None, k=3)
+    drift = epic_audit.chain_drift(_HOME, listing=_home_listing(graph))
+    real = epic_chain.find_or_create_continuation
+    calls: list[int] = []
+
+    def find_or_create(head: epics.IssueRef, tail: epics.IssueRef) -> epics.IssueRef:
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return real(head, tail)
+
+    with patch.object(epic_chain, "find_or_create_continuation", side_effect=find_or_create):
+        heals = epic_audit.heal_chains(drift)
+    assert heals == epic_audit.ChainHeals(
+        healed=("adopted the orphaned continuation org/.github#50 into epic org/.github#40",),
+        unhealed=(
+            "epic org/.github#40: the orphaned continuation(s) org/.github#50, org/.github#60"
+            " not adopted: boom",
+        ),
+    )

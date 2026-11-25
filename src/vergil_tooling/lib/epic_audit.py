@@ -1979,9 +1979,17 @@ def _heal_one(item: ChainDrift) -> str:
 def _adopt_orphans(head: IssueRef, found: list[IssueRef]) -> tuple[list[str], list[str]]:
     """Adopt *head*'s orphaned continuations *found*, then run its rollup again.
 
-    Returns ``(healed, unhealed)`` lines.
+    Returns ``(healed, unhealed)`` lines. The orphans are read again before
+    each adoption, so one an earlier heal (a full tail's, whose rollover
+    adopts an orphan first) or a concurrent writer already adopted is never
+    adopted twice, and no continuation is created in its place; the run
+    adopts at most as many as *found*, and a later orphan waits for the next
+    sweep. A failed adoption keeps the lines of those already adopted. The
+    rollup runs only once every adoption has landed, and a failed rollup is
+    its own unhealed line: the adoptions stand.
     """
     names = ", ".join(ref.slug for ref in found)
+    healed: list[str] = []
     try:
         if epics.issue_state(head) == "CLOSED":
             return [], [
@@ -1993,17 +2001,23 @@ def _adopt_orphans(head: IssueRef, found: list[IssueRef]) -> tuple[list[str], li
                 f"epic {head.slug}: {names} is an orphaned continuation; not adopted, since"
                 f" {_ROLLOVER_OFF}"
             ]
-        healed: list[str] = []
         for _ in found:
-            # Each call adopts the lowest-numbered orphan into the current tail.
+            if not epic_chain.find_orphans(head):
+                break  # adopted already, by an earlier heal or another writer
+            # Adopts the lowest-numbered orphan into the current tail.
             tail = epic_chain.chain_of(head)[-1]
             adopted = epic_chain.find_or_create_continuation(head, tail)
             healed.append(f"adopted the orphaned continuation {adopted.slug} into epic {head.slug}")
+    except (*_HEAL_ERRORS, trust.UntrustedContentError, trust.TrustReadError) as exc:
+        return healed, [
+            f"epic {head.slug}: the orphaned continuation(s) {names} not adopted: {exc}"
+        ]
+    try:
         closed = [c.ref for c in epics.child_states(head) if c.state == "CLOSED"]
         if closed:
             epics.rollup(closed[-1])
     except (*_HEAL_ERRORS, trust.UntrustedContentError, trust.TrustReadError) as exc:
-        return [], [f"epic {head.slug}: the orphaned continuation(s) {names} not adopted: {exc}"]
+        return healed, [f"epic {head.slug}: its rollup after the adoption did not run: {exc}"]
     return healed, []
 
 
