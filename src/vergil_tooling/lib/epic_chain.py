@@ -60,6 +60,7 @@ from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import ClosedEpicError, EpicRefusalError, IssueRef
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.shell_ref import quoted_slug
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection
@@ -487,6 +488,33 @@ def check_capacity(head: IssueRef) -> None:
     :class:`ChainDepthError`, as :func:`link_into` would.
     """
     _fit(head)
+
+
+def container_note(head: IssueRef, container: IssueRef) -> str:
+    """`` (in continuation <ref>)`` when *container* is not *head*, else an empty string.
+
+    For a writer's closing line, which names the epic by its head: an item
+    linked into a continuation says which one.
+    """
+    return "" if container == head else f" (in continuation {container.slug})"
+
+
+def unlinked_hint(task: IssueRef, head: IssueRef, exc: BaseException) -> str:
+    """How to recover *task*, created but left unlinked from *head*'s chain by *exc*.
+
+    For a create-then-link command whose link failed after the create. A
+    refusal of the chain layer (an :class:`EpicRefusalError`: a closed epic,
+    the depth limit, a full head while rollover is off, a container GitHub
+    kept refusing as full, or chain drift) would refuse ``vrg-epic-move`` the
+    same way, so the hint says so instead of suggesting the move; any other
+    failure suggests the move.
+    """
+    if isinstance(exc, EpicRefusalError):
+        return (
+            f"{task.slug} is left unlinked, and vrg-epic-move would be refused the same way "
+            "until that is resolved"
+        )
+    return f"Link it with: vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(head)}"
 
 
 def _link_rewording_depth(

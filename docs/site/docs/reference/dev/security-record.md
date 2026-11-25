@@ -75,18 +75,24 @@ Creates the pair, or finishes one.
 
 A fresh `create` runs these steps in order:
 
-1. **Duplicate guard.** Look for a draft in `<org>/.github` with the same
+1. **Capacity.** Check the intake epic's
+   [chain](../../standards/github-issues.md#chained-epics) can take the
+   issue: a closed intake epic, one at GitHub's nesting limit and a full one
+   while rollover is off are refused by name (exit 1) before anything is
+   created. The check runs again just before the issue is created (step 4).
+2. **Duplicate guard.** Look for a draft in `<org>/.github` with the same
    summary and the same affected repo. If one exists, refuse, naming its
    GHSA ID and the command that finishes its pair.
-2. **Advisory.** Create the draft. The request is sent **exactly once**,
+3. **Advisory.** Create the draft. The request is sent **exactly once**,
    with no retry: drafts can't be deleted, so a retried create could
    leave a second record. It never publishes, never requests a CVE and
    never creates a private fork.
-3. **Issue.** Ensure the `security` label in the queue home, then create
+4. **Issue.** Ensure the `security` label in the queue home, then create
    the issue there with the label and the body plus
    `Security advisory: <org>/.github <GHSA-id>`.
-4. **Link.** Add the issue as a sub-issue of the queue home's intake epic.
-5. **Tracking line.** Write `Tracking issue: <owner>/<repo>#<N>` into the
+5. **Link.** Link the issue into the intake epic's chain, in the first
+   container with a free slot.
+6. **Tracking line.** Write `Tracking issue: <owner>/<repo>#<N>` into the
    advisory's description.
 
 On success it prints `Recorded <GHSA-id> in <org>/.github, tracked by
@@ -126,12 +132,14 @@ completes whatever steps are missing:
 - with `--issue`, it marks that issue (idempotent), links it under the
   intake epic **only if it has no parent yet**, and writes the tracking
   line;
-- without `--issue`, it looks among the intake epic's sub-issues for one
-  whose body has the advisory's `Security advisory:` line (it never uses
-  search, whose index can lag). A match counts only when the trust layer
-  trusts that body (its author and every editor trusted); any other is
-  skipped and reported on stderr, metadata only. If none is found it
-  creates the issue and links it. Then it writes the tracking line.
+- without `--issue`, it looks among the items of the intake epic's whole
+  chain, continuations included, for one whose body has the advisory's
+  `Security advisory:` line (it never uses search, whose index can lag).
+  Bodies are read through the trust layer, and a match counts only when it
+  trusts that body (its author and every editor trusted). If none is found,
+  each untrusted body is reported on stderr, metadata only, and it checks
+  the chain's capacity, then creates the issue and links it. Then it writes
+  the tracking line.
 
 Every step is idempotent, so running a resume command twice is safe.
 

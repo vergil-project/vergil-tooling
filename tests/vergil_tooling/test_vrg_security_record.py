@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import subprocess
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import DEFAULT, MagicMock, call, patch
 
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin import vrg_security_record
 from vergil_tooling.bin.vrg_security_record import main
-from vergil_tooling.lib import github, security_records, trust
+from vergil_tooling.lib import epic_chain, github, security_records, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.security_records import (
     Advisory,
@@ -54,9 +55,47 @@ def files(tmp_path: Path) -> dict[str, str]:
 
 
 @pytest.fixture
-def env() -> Iterator[MagicMock]:
-    """Stub every boundary the CLI calls, attached to one manager to record order."""
+def graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """The intake epic's sub-issue graph, read and linked through the chain layer."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(INTAKE, title="Intake", labels=["epic"])
+    return graph
+
+
+def _add_item(graph: FakeSubIssueGraph, ref: IssueRef, under: IssueRef = INTAKE, **kw: Any) -> None:
+    """Add *ref* to *graph*, linked under *under* (the intake epic by default)."""
+    graph.add_issue(ref, title=f"issue {ref.number}", labels=["security"], **kw)
+    graph.link(under, ref)
+
+
+def _fill_intake(graph: FakeSubIssueGraph) -> None:
+    """Link GitHub's 100 sub-issues under the intake epic, then forget those writes."""
+    for number in range(1000, 1000 + epic_chain.SUBISSUE_LIMIT):
+        _add_item(graph, IssueRef("org", ".github", number))
+    graph.clear_log()
+
+
+@pytest.fixture
+def env(graph: FakeSubIssueGraph) -> Iterator[MagicMock]:
+    """Stub every boundary the CLI calls, attached to one manager to record order.
+
+    Links and the intake epic's chain are *graph*'s. ``create_issue`` stays a
+    mock, whose calls the tests assert, that adds the issue it creates to
+    *graph* (unlinked) so the chain layer can link it.
+    """
     manager = MagicMock()
+
+    def created(**kwargs: Any) -> object:
+        if ISSUE not in graph.issues:
+            graph.add_issue(
+                ISSUE,
+                title=kwargs["title"],
+                labels=kwargs.get("labels") or (),
+                body=kwargs.get("body", ""),
+                author=trust_stubs.AGENT,
+            )
+        return DEFAULT
+
     with (
         patch(f"{_SR}.advisory_home", return_value=HOME) as home,
         patch(f"{_SR}.find_duplicate", return_value=None) as dup,
@@ -68,10 +107,8 @@ def env() -> Iterator[MagicMock]:
         patch(f"{_SR}.read_text", return_value=(SECRET, f"{SECRET} details")) as read_text,
         patch(f"{_EP}.queue_home", return_value=(HOME, "org")) as queue_home,
         patch(f"{_EP}.ensure_intake_epic", return_value=INTAKE) as ensure_intake,
-        patch(f"{_EP}.add_child") as add_child,
-        patch(f"{_EP}.native_parent_of", return_value=None) as parent,
         patch(f"{_MOD}.ensure_labels_or_report", return_value=True) as ensure_labels,
-        patch(f"{_GH}.create_issue", return_value=URL) as create_issue,
+        patch(f"{_GH}.create_issue", return_value=URL, side_effect=created) as create_issue,
         patch(f"{_GH}.read_json_paginated", return_value=[]) as paginated,
         patch(f"{_GH}.read_json", return_value={"body": ""}) as read_json,
         patch(f"{_GH}.detect_org", return_value="org") as detect,
@@ -91,8 +128,6 @@ def env() -> Iterator[MagicMock]:
             "read_text": read_text,
             "queue_home": queue_home,
             "ensure_intake_epic": ensure_intake,
-            "add_child": add_child,
-            "native_parent_of": parent,
             "ensure_labels": ensure_labels,
             "create_issue": create_issue,
             "read_json_paginated": paginated,
@@ -131,9 +166,20 @@ def _gh_error(stdout: str = "", stderr: str = "HTTP 502") -> github.GitHubAPIErr
 # --- create: the full pair --------------------------------------------------
 
 
+def _parent_at_pair(env: MagicMock, graph: FakeSubIssueGraph, issue: IssueRef) -> list[object]:
+    """Record *issue*'s native parent each time ``pair`` runs: the link comes first."""
+    seen: list[object] = []
+    env.pair.side_effect = lambda *_args: seen.append(graph.parent_of(issue))
+    return seen
+
+
 def test_create_full_pair_order(
-    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    at_pair = _parent_at_pair(env, graph, ISSUE)
     assert main(_create_argv(files)) == 0
     order = [
         n
@@ -144,7 +190,6 @@ def test_create_full_pair_order(
             "create_advisory",
             "ensure_labels",
             "create_issue",
-            "add_child",
             "pair",
         }
     ]
@@ -153,9 +198,12 @@ def test_create_full_pair_order(
         "create_advisory",
         "ensure_labels",
         "create_issue",
-        "add_child",
         "pair",
     ]
+    # Linked into the intake epic's chain after the create, before the pair.
+    assert at_pair == [INTAKE]
+    assert graph.children_of(INTAKE) == [ISSUE]
+    assert graph.mutations == [("add", INTAKE, ISSUE)]
     env.find_duplicate.assert_called_once_with(HOME, summary=SECRET, affected_repo="org/tool")
     adv = env.create_advisory.call_args
     assert adv.kwargs["summary"] == SECRET
@@ -171,7 +219,6 @@ def test_create_full_pair_order(
     )
     assert SECRET not in issue["body"]
     assert SECRET not in issue["title"]
-    env.add_child.assert_called_once_with(INTAKE, ISSUE)
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
     env.ensure_intake_epic.assert_called_once_with("org/tool")
     captured = capsys.readouterr()
@@ -195,10 +242,22 @@ def test_create_empty_body_is_just_the_advisory_line(
     assert env.create_issue.call_args.kwargs["body"] == f"Security advisory: {HOME} {GHSA}"
 
 
-def test_create_add_child_failure_prints_resume_with_issue(
-    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
+def test_create_link_failure_prints_resume_with_issue(
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env.add_child.side_effect = _gh_error(stdout=SECRET)
+    # GitHub fails the sub-issue link, with the advisory text on the call's stdout.
+    answer = graph.graphql
+
+    def failing_link(query: str, **variables: Any) -> dict[str, Any]:
+        if "addSubIssue" in query:
+            raise _gh_error(stdout=SECRET)
+        return answer(query, **variables)
+
+    monkeypatch.setattr(github, "graphql", failing_link)
     assert main(_create_argv(files)) == 1
     err = capsys.readouterr().err
     assert f"advisory {GHSA} exists but linking {ISSUE.slug}" in err
@@ -206,47 +265,59 @@ def test_create_add_child_failure_prints_resume_with_issue(
     assert f"--issue '{ISSUE.slug}'" in err
     assert SECRET not in err
     env.pair.assert_not_called()
+    assert graph.parent_of(ISSUE) is None
+    assert graph.mutations == []
 
 
 def test_resume_with_issue_links_under_intake_idempotently(
-    env: MagicMock, files: dict[str, str]
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str]
 ) -> None:
+    graph.add_issue(ISSUE, title="the neutral issue", labels=["security"])
+    at_pair = _parent_at_pair(env, graph, ISSUE)
     argv = _create_argv(files, "--resume", GHSA, "--issue", ISSUE.slug)
     assert main(argv) == 0
     env.find_duplicate.assert_not_called()
     env.create_advisory.assert_not_called()
     env.create_issue.assert_not_called()
     env.mark_issue.assert_called_once_with(ISSUE, HOME, GHSA)
-    env.add_child.assert_called_once_with(INTAKE, ISSUE)
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
-    names = _names(env)
-    assert names.index("add_child") < names.index("pair")
+    # Linked into the intake epic's chain before the pair, with one parent.
+    assert at_pair == [INTAKE]
+    assert graph.children_of(INTAKE) == [ISSUE]
+    assert graph.mutations == [("add", INTAKE, ISSUE)]
 
     # Already linked: the re-run is a no-op for the link, then the PATCH.
     env.reset_mock()
-    env.native_parent_of.return_value = INTAKE
+    graph.clear_log()
     assert main(argv) == 0
-    env.add_child.assert_not_called()
+    assert graph.mutations == []
+    assert graph.parent_of(ISSUE) == INTAKE
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
 
 
 def test_create_attach_mode_marks_existing_issue(
-    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # EXISTING is not in the graph, so any read of its parent would fail the run.
     assert main(_create_argv(files, "--issue", EXISTING.slug)) == 0
     env.create_advisory.assert_called_once()
     env.create_issue.assert_not_called()
     env.ensure_labels.assert_not_called()
     env.mark_issue.assert_called_once_with(EXISTING, HOME, GHSA)
-    # Attach mode keeps the existing issue's current parent.
-    env.add_child.assert_not_called()
-    env.native_parent_of.assert_not_called()
+    # Attach mode keeps the existing issue's current parent: nothing is linked.
+    assert graph.events == []
     env.pair.assert_called_once_with(HOME, GHSA, EXISTING)
     assert f"tracked by {EXISTING.slug}" in capsys.readouterr().out
 
 
 def test_create_issue_failure_prints_resume_command(
-    env: MagicMock, files: dict[str, str], capsys: pytest.CaptureFixture[str]
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     env.create_issue.side_effect = _gh_error(stdout=SECRET, stderr="HTTP 502: Bad Gateway")
     argv = _create_argv(files, "--summary", SECRET)
@@ -256,7 +327,7 @@ def test_create_issue_failure_prints_resume_command(
     assert "--issue" not in err
     assert "HTTP 502: Bad Gateway" in err
     assert SECRET not in err
-    env.add_child.assert_not_called()
+    assert graph.mutations == []
 
 
 def test_create_tracking_failure_prints_resume_with_issue(
@@ -271,29 +342,75 @@ def test_create_tracking_failure_prints_resume_with_issue(
     assert SECRET not in err
 
 
+C2 = IssueRef("org", ".github", 8)
+
+
+def _advisory_body(text: str = "Neutral.") -> str:
+    return f"{text}\n\nSecurity advisory: {HOME} {GHSA}  \n"
+
+
 def test_create_resume_finds_issue_among_intake_children(
-    env: MagicMock, files: dict[str, str]
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str]
 ) -> None:
-    body = f"Neutral.\n\nSecurity advisory: {HOME} {GHSA}  \n"
-    env.read_json_paginated.return_value = [
-        {"number": 300, "repository_url": "https://api.github.com/repos/org/.github", "body": ""},
-        {"number": 321, "repository_url": "https://api.github.com/repos/org/.github", "body": body},
-    ]
-    layer = trust_stubs.FakeItems({("org/.github", 321): trust_stubs.item(body=body)}, strict=True)
-    with (
-        patch.object(github, "read_json") as search,
-        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-    ):
+    _add_item(graph, IssueRef("org", ".github", 300))
+    _add_item(graph, ISSUE, body=_advisory_body())
+    graph.clear_log()
+    with patch.object(github, "read_json") as search:
         assert main(_create_argv(files, "--resume", GHSA)) == 0
-    # Only the matching child's body is read through the trust layer.
-    assert layer.reads == [("org/.github", 321)]
-    endpoint = env.read_json_paginated.call_args.args[0]
-    assert endpoint == "repos/org/.github/issues/7/sub_issues"
+    # The items' bodies are read through the trust layer, never a REST
+    # sub-issue listing or search.
+    assert sorted(graph.layer.reads) == [("org/.github", 300), ("org/.github", 321)]
+    env.read_json_paginated.assert_not_called()
     search.assert_not_called()
     env.create_issue.assert_not_called()
-    env.add_child.assert_not_called()
+    assert graph.mutations == []
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
+
+
+def test_security_record_resume_finds_item_in_continuation(
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str]
+) -> None:
+    # The resumed issue sits in continuation C2 of the intake epic's chain.
+    _add_item(graph, IssueRef("org", ".github", 300))
+    graph.add_continuation(C2, INTAKE, INTAKE)
+    _add_item(graph, ISSUE, under=C2, body=_advisory_body())
+    graph.clear_log()
+    assert main(_create_argv(files, "--resume", GHSA)) == 0
+    env.create_issue.assert_not_called()
+    assert graph.mutations == []
+    assert graph.parent_of(ISSUE) == C2
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
+
+
+def test_resume_lookup_refuses_a_body_read_with_neither_body_nor_skip(
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The trust layer always gives a body or its skip record; a read with
+    # neither is never taken as "not this issue".
+    _add_item(graph, ISSUE, body=_advisory_body())
+    graph.clear_log()
+    empty = trust.BodyContent(body=None, body_role=None, author_role=None, skipped=None)
+    with patch.object(trust, "read_bodies", return_value={ISSUE.number: empty}):
+        assert main(_create_argv(files, "--resume", GHSA)) == 1
+    err = capsys.readouterr().err
+    assert "exists but finding the issue failed" in err
+    assert f"the trust layer read no body of {ISSUE.slug} and no skip" in err
+    env.create_issue.assert_not_called()
+    assert graph.mutations == []
+
+
+def _untrusted_item(
+    graph: FakeSubIssueGraph, ref: IssueRef, body: str, author: object, editor: object
+) -> None:
+    """Add *ref* under the intake epic, its *body* served by *author* and edited by *editor*."""
+    _add_item(graph, ref, body=body)
+    # The fake takes only an author; an editor is set on its trust-layer item.
+    graph.layer.items[(f"{ref.owner}/{ref.repo}", ref.number)] = trust_stubs.item(
+        body=body, author=author, editor=editor
+    )
 
 
 @pytest.mark.parametrize(
@@ -304,34 +421,26 @@ def test_create_resume_finds_issue_among_intake_children(
         (trust_stubs.IMPOSTOR, None, "issue", "vergil-user"),
     ],
 )
-def test_resume_ignores_untrusted_body_match(
+def test_resume_ignores_untrusted_body_match(  # noqa: PLR0913 - pytest fixtures and params
     env: MagicMock,
+    graph: FakeSubIssueGraph,
     files: dict[str, str],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     author: object,
     editor: object,
     kind: str,
     login: str,
 ) -> None:
-    # A child whose untrusted body carries the line is never the resumed issue:
+    # An item whose untrusted body carries the line is never the resumed issue:
     # the resume creates and links a new one, and reports the skip.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    body = f"{trust_stubs.SPAM_TEXT}\n\nSecurity advisory: {HOME} {GHSA}\n"
-    env.read_json_paginated.return_value = [
-        {"number": 400, "repository_url": "https://api.github.com/repos/org/.github", "body": body},
-    ]
-    layer = trust_stubs.FakeItems(
-        {("org/.github", 400): trust_stubs.item(body=body, author=author, editor=editor)},
-        strict=True,
-    )
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-    ):
-        assert main(_create_argv(files, "--resume", GHSA)) == 0
+    untrusted = IssueRef("org", ".github", 400)
+    _untrusted_item(graph, untrusted, _advisory_body(trust_stubs.SPAM_TEXT), author, editor)
+    graph.clear_log()
+    assert main(_create_argv(files, "--resume", GHSA)) == 0
     env.create_issue.assert_called_once()
-    env.add_child.assert_called_once_with(INTAKE, ISSUE)
+    new = IssueRef("org", ".github", 321)
+    assert graph.children_of(INTAKE) == [untrusted, new]
+    assert graph.mutations == [("add", INTAKE, new)]
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
     err = capsys.readouterr().err
     at = trust_stubs.EDITED if editor is not None else trust_stubs.CREATED
@@ -340,34 +449,111 @@ def test_resume_ignores_untrusted_body_match(
     assert SECRET not in err
 
 
-def test_resume_ignores_a_listed_line_the_trusted_body_lacks(
-    env: MagicMock, files: dict[str, str]
+def test_resume_reports_no_untrusted_body_once_an_item_matches(
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # The listing showed the line, but the body the layer reads (and trusts)
-    # no longer has it: not the resumed issue.
-    listed = f"Neutral.\n\nSecurity advisory: {HOME} {GHSA}\n"
-    env.read_json_paginated.return_value = [
-        {
-            "number": 400,
-            "repository_url": "https://api.github.com/repos/org/.github",
-            "body": listed,
-        },
-    ]
-    layer = trust_stubs.FakeItems({("org/.github", 400): trust_stubs.item(body="Neutral.")})
-    with (
-        patch("vergil_tooling.lib.github.graphql", side_effect=layer),
-        patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-    ):
-        assert main(_create_argv(files, "--resume", GHSA)) == 0
+    # An untrusted body is reported only when no item matches: the issue found
+    # makes the skipped one irrelevant.
+    body = _advisory_body(trust_stubs.SPAM_TEXT)
+    _untrusted_item(graph, IssueRef("org", ".github", 300), body, trust_stubs.OUTSIDER, None)
+    _add_item(graph, ISSUE, body=_advisory_body())
+    graph.clear_log()
+    assert main(_create_argv(files, "--resume", GHSA)) == 0
+    env.create_issue.assert_not_called()
+    assert graph.mutations == []
+    env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
+    assert "skipped untrusted content" not in capsys.readouterr().err
+
+
+def test_resume_ignores_an_item_whose_trusted_body_lacks_the_line(
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str]
+) -> None:
+    # The trusted body mentions the line only mid-line and names another
+    # advisory on a line of its own: not the resumed issue.
+    line = f"Security advisory: {HOME} {GHSA}"
+    other = IssueRef("org", ".github", 400)
+    _add_item(graph, other, body=f"Neutral, see {line}.\n\nSecurity advisory: {HOME} {OTHER}\n")
+    graph.clear_log()
+    assert main(_create_argv(files, "--resume", GHSA)) == 0
     env.create_issue.assert_called_once()
+    assert graph.children_of(INTAKE) == [other, ISSUE]
     env.pair.assert_called_once_with(HOME, GHSA, ISSUE)
 
 
-def test_create_resume_creates_issue_when_none_found(env: MagicMock, files: dict[str, str]) -> None:
+def test_create_resume_creates_issue_when_none_found(
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str]
+) -> None:
     assert main(_create_argv(files, "--resume", GHSA)) == 0
     env.create_advisory.assert_not_called()
     env.create_issue.assert_called_once()
-    env.add_child.assert_called_once_with(INTAKE, ISSUE)
+    assert graph.children_of(INTAKE) == [ISSUE]
+    assert graph.parent_of(ISSUE) == INTAKE
+    assert graph.mutations == [("add", INTAKE, ISSUE)]
+
+
+def _refuse(kind: str, graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Make the intake epic's capacity check refuse; the refusal's message."""
+    if kind == "depth":
+        error = epic_chain.ChainDepthError(INTAKE, items=3, containers=7)
+
+        def refuse(_head: IssueRef) -> None:
+            raise error
+
+        monkeypatch.setattr(epic_chain, "check_capacity", refuse)
+        return str(error)
+    # Rollover is off by default: a full intake epic is refused.
+    assert not epic_chain.ROLLOVER_ENABLED
+    _fill_intake(graph)
+    return str(epic_chain.RolloverDisabledError(INTAKE))
+
+
+@pytest.mark.parametrize("kind", ["depth", "full"])
+def test_security_record_refusal_creates_nothing(
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    message = _refuse(kind, graph, monkeypatch)
+    with pytest.raises(SystemExit) as excinfo:
+        main(_create_argv(files))
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err == f"vrg-security-record: {message}\n"
+    # Refused before the duplicate check: no advisory, no issue, no link.
+    env.find_duplicate.assert_not_called()
+    env.create_advisory.assert_not_called()
+    env.create_issue.assert_not_called()
+    assert graph.events == []
+
+
+@pytest.mark.parametrize("kind", ["depth", "full"])
+def test_resume_capacity_refusal_names_the_resume_and_creates_no_issue(
+    env: MagicMock,
+    graph: FakeSubIssueGraph,
+    files: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    # The advisory exists and no issue does yet: the check runs before the create.
+    message = _refuse(kind, graph, monkeypatch)
+    assert main(_create_argv(files, "--resume", GHSA)) == 1
+    err = capsys.readouterr().err
+    assert (
+        f"advisory {GHSA} exists but checking the capacity of intake epic {INTAKE.slug} "
+        f"failed: {message}. Finish the pair with: vrg-security-record create"
+    ) in err
+    assert f"--resume {GHSA}" in err
+    assert "--issue" not in err
+    env.create_advisory.assert_not_called()
+    env.create_issue.assert_not_called()
+    env.pair.assert_not_called()
+    assert graph.events == []
 
 
 def test_create_resume_ignores_empty_details(
@@ -585,20 +771,23 @@ def test_create_attach_pairs(env: MagicMock, files: dict[str, str], advisory: _A
 
 
 def test_create_resume_finishes_pair(
-    env: MagicMock, files: dict[str, str], advisory: _Advisory
+    env: MagicMock, graph: FakeSubIssueGraph, files: dict[str, str], advisory: _Advisory
 ) -> None:
     # The earlier run wrote the tracking line; the resume finishes the mark only.
+    graph.add_issue(ISSUE, title="the neutral issue", labels=["security"])
     advisory.description = f"{SECRET}\n\n{security_records.tracking_line(ISSUE)}"
     argv = _create_argv(files, "--resume", GHSA, "--issue", ISSUE.slug)
     assert main(argv) == 0
+    assert graph.parent_of(ISSUE) == INTAKE
     assert _tracks(advisory) == (ISSUE,)
     assert call(ISSUE, HOME, GHSA) in env.mark_issue.call_args_list
     env.write_description.assert_not_called()
 
 
 @pytest.mark.parametrize("extra", [(), ("--issue", ISSUE.slug)])
-def test_create_resume_onto_tracked_advisory_writes_nothing(
+def test_create_resume_onto_tracked_advisory_writes_nothing(  # noqa: PLR0913 - pytest fixtures
     env: MagicMock,
+    graph: FakeSubIssueGraph,
     files: dict[str, str],
     advisory: _Advisory,
     capsys: pytest.CaptureFixture[str],
@@ -612,7 +801,7 @@ def test_create_resume_onto_tracked_advisory_writes_nothing(
     assert SECRET not in err
     env.create_issue.assert_not_called()
     env.mark_issue.assert_not_called()
-    env.add_child.assert_not_called()
+    assert graph.mutations == []
     env.write_description.assert_not_called()
     assert _tracks(advisory) == (TRACKED,)
 

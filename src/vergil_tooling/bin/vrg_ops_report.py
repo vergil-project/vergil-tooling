@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         trust.UntrustedContentError,
         TrustedAuthorsNotConfiguredError,
         epics.EpicHomeError,
+        epics.EpicRefusalError,
         epics.StandingEpicNotVisibleError,
         subprocess.CalledProcessError,
         ValueError,

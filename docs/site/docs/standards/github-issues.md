@@ -423,6 +423,21 @@ anything is created or linked:
 epic <head> cannot grow: <n> items in <k> containers, at GitHub's nesting limit of 8; split the epic
 ```
 
+**Every writer goes through the chain.** `vrg-epic-link`, `vrg-epic-move`,
+`vrg-issue-create`, `vrg-intake-create`, `vrg-security-record` and the ops
+reports of unattended jobs link and move only by first fit across the chain,
+so an item may land in a continuation. The closing line of the first four
+then names it, as `under epic <head> (in continuation <continuation>)`. `vrg-epic-move` treats a
+task linked anywhere in the target's chain as already there. The commands
+that create an issue and then link it (`vrg-issue-create`,
+`vrg-intake-create`, `vrg-security-record` and the ops reports) check the
+chain's capacity first: a closed epic, the depth limit and a full head while
+rollover is off are refused before anything is created, so no issue is left
+unlinked. If a link still fails after the create, the command names the
+created issue; when the chain refused it, the message says the issue is left
+unlinked and that `vrg-epic-move` would be refused the same way, instead of
+suggesting it.
+
 **Rollover is not enabled yet.** Until every reader of an epic's children,
 the plugin skills included, reads through the chain, no tool creates a
 continuation: a head takes up to GitHub's 100 items, and a link into a full
