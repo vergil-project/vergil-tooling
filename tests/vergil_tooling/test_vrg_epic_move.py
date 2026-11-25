@@ -420,9 +420,7 @@ def test_epic_operations_sentinel_accepted(
 # -- The chain layer: continuations and its refusals (epic .github#1609) ------
 
 
-def test_epic_move_into_chain(
-    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_epic_move_into_chain(graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]) -> None:
     """A move lands in the target's chain; a task already in a continuation stays put."""
     # NEW is full: 99 items and its continuation, which already holds `linked`.
     _fill(graph, NEW, 99)

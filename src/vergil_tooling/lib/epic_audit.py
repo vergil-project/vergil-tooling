@@ -999,7 +999,6 @@ class _QueueCapacity:
         )
 
 
-
 def attach_orphans(
     orphans: list[Orphan], *, stops: trust.BatchStops, authors: TrustedAuthors
 ) -> LinkPass:

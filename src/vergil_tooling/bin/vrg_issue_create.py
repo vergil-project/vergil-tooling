@@ -163,8 +163,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 1
             # The chain layer's capacity check (.github#1609, spec §4.5): a
-            # closed epic (closed is closed) and the depth limit are both refused before the issue is created,
-            # so a refused link never orphans a new issue.
+            # closed epic (closed is closed) and the depth limit are both
+            # refused before the issue is created, so a refused link never
+            # orphans a new issue.
             try:
                 epic_chain.check_capacity(epic)
             except epics.EpicRefusalError as exc:
