@@ -97,6 +97,7 @@ nav:
           - vrg-ruling: reference/dev/ruling.md
           - vrg-ruling-reply: reference/dev/ruling-reply.md
           - vrg-scope-change: reference/dev/scope-change.md
+          - vrg-epic-parent: reference/dev/epic-parent.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md

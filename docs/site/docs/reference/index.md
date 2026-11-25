@@ -65,6 +65,7 @@ the dev-tree override venv.
 | [vrg-epic-docs](cli-tools-overview.md#vrg-epic-docs) | Write an epic's Documents section |
 | [vrg-checkpoint](cli-tools-overview.md#vrg-checkpoint) | Keep a workflow's stage checklist in a tracking issue's body |
 | [vrg-epic-link](cli-tools-overview.md#vrg-epic-link) | Link a task under an epic as a native sub-issue |
+| [vrg-epic-parent](dev/epic-parent.md) | Print a task's epic (its chain's head) and the epic's kind |
 | [vrg-epic-move](cli-tools-overview.md#vrg-epic-move) | Move a task under a different epic |
 | [vrg-epic-rollup](cli-tools-overview.md#vrg-epic-rollup) | Close a finite epic once all its tasks are closed |
 | [vrg-adhoc-epic](cli-tools-overview.md#vrg-adhoc-epic) | Ensure, archive or normalize a repo's ad-hoc epic |
