@@ -679,6 +679,8 @@ def test_read_attempt_gate_conclusions_reads_the_attempt_not_the_latest(
     check_runs = [
         # Attempt 2's failed version-bump check run is the latest on the commit.
         {**_check("version / version-bump", "failure"), "started_at": "2026-11-24T23:10:00Z"},
+        # The newest in the window wins, in whatever order they are listed.
+        _scanner("CodeQL", "2026-11-24T22:59:15Z", run_id=138840877068),
         _scanner("CodeQL", "2026-11-24T22:59:10Z", run_id=138840877066),
         _scanner("CodeQL", "2026-11-24T22:59:20Z", "neutral", run_id=138840877070),
         # A scanner check run of attempt 2 is out of the window.
