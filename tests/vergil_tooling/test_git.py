@@ -933,3 +933,78 @@ def test_no_source_git_env_built_once_for_all_attempts() -> None:
     m_token.assert_called_once_with()
     envs = [c.kwargs["env"] for c in m_progress.run.call_args_list]
     assert envs == [git._git_auth_env("ghs_t")] * 2
+
+
+def test_remote_branch_tip_reads_the_exact_ref() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="abc123\trefs/heads/b") as mock:
+        assert git.remote_branch_tip("b") == "abc123"
+    mock.assert_called_once_with("ls-remote", "origin", "refs/heads/b")
+
+
+def test_remote_branch_tip_skips_a_tail_matching_ref() -> None:
+    """GHSA-f4j7-x3f8-59gv: ``ls-remote`` lists ``refs/heads/a/refs/heads/b`` first."""
+    listing = "decoy111\trefs/heads/a/refs/heads/b\nreal2222\trefs/heads/b"
+    with patch("vergil_tooling.lib.git.read_output", return_value=listing):
+        assert git.remote_branch_tip("b") == "real2222"
+
+
+def test_remote_branch_tip_none_when_only_a_tail_match_exists() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="decoy111\trefs/heads/x/b"):
+        assert git.remote_branch_tip("b") is None
+
+
+def test_remote_branch_tip_none_when_absent() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.remote_branch_tip("b") is None
+
+
+def _real_git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", *args), cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def tag_shadow_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    """A repo whose branch ``release/2.1`` has a same-named tag on another commit.
+
+    Returns ``(branch_sha, tag_sha)``.
+    """
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _real_git(repo, "init", "-q", "-b", "develop")
+    _real_git(repo, "config", "user.email", "t@example.com")
+    _real_git(repo, "config", "user.name", "Test")
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "tagged")
+    tag_sha = _real_git(repo, "rev-parse", "HEAD")
+    _real_git(repo, "tag", "release/2.1")
+    _real_git(repo, "commit", "-q", "--allow-empty", "-m", "branch tip")
+    branch_sha = _real_git(repo, "rev-parse", "HEAD")
+    _real_git(repo, "branch", "release/2.1")
+    monkeypatch.chdir(repo)
+    return branch_sha, tag_sha
+
+
+def test_branch_commit_is_not_shadowed_by_a_same_named_tag(
+    tag_shadow_repo: tuple[str, str],
+) -> None:
+    """GHSA-j7c6-37h8-hjvg: a tag named like the branch does not win."""
+    branch_sha, tag_sha = tag_shadow_repo
+    assert git.commit_sha("release/2.1") == tag_sha  # the bare name resolves the tag
+    assert git.branch_commit("release/2.1") == branch_sha
+
+
+def test_branch_commit_fails_for_a_missing_branch(tag_shadow_repo: tuple[str, str]) -> None:
+    with pytest.raises(subprocess.CalledProcessError):
+        git.branch_commit("release/9.9")
+
+
+def test_branch_commit_reads_the_full_ref() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
+        assert git.branch_commit("develop") == "abc123"
+    mock.assert_called_once_with(
+        "rev-parse", "--verify", "--end-of-options", "refs/heads/develop^{commit}"
+    )

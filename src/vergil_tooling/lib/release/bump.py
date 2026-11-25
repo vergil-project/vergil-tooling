@@ -254,10 +254,9 @@ def _require_clean(branch: str, action: str) -> None:
 
 def _remote_tip(branch: str) -> str | None:
     """The commit *branch* is at on origin, fetched locally, or None if absent."""
-    listing = git.read_output("ls-remote", "--heads", "origin", f"refs/heads/{branch}")
-    if not listing:
+    tip = git.remote_branch_tip(branch)
+    if tip is None:
         return None
-    tip = listing.split()[0]
     git.run("fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
     return tip
 
@@ -305,7 +304,7 @@ def _create_bump_pr(ctx: ReleaseContext, next_ver: str, branch: str) -> str:
         f"Generated with `vrg-release`\n"
     )
     spec = pr_create.PRSpec(
-        head=branch, base="develop", title=title, head_oid=git.read_output("rev-parse", branch)
+        head=branch, base="develop", title=title, head_oid=git.branch_commit(branch)
     )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)

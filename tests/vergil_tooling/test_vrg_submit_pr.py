@@ -3394,6 +3394,22 @@ def test_verify_origin_tip_errors_on_mismatch() -> None:
         _verify_origin_tip("feature/x", state)
 
 
+def test_verify_origin_tip_ignores_a_tail_matching_ref() -> None:
+    """GHSA-f4j7-x3f8-59gv: a ref ending in the branch's ref, sorted first, is not the branch."""
+    state = _ready_state(head_sha="abc123")
+    listing = "abc123\trefs/heads/a/refs/heads/feature/x\ndeadbeef\trefs/heads/feature/x"
+    with (
+        patch(_MOD + ".git.read_output", return_value=listing),
+        pytest.raises(SystemExit, match=r"tip \(deadbeef\) does not"),
+    ):
+        _verify_origin_tip("feature/x", state)
+
+
+def test_origin_has_branch_ignores_a_tail_matching_ref() -> None:
+    with patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/a/refs/heads/feature/x"):
+        assert _origin_has_branch("feature/x") is False
+
+
 def test_verify_origin_tip_errors_when_branch_absent_on_origin() -> None:
     state = _ready_state(head_sha="abc123")
     with (

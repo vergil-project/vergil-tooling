@@ -21,6 +21,7 @@ from vergil_tooling.lib.vm_guest import (
     _PLUGIN_PATH_EXPORT,
     _PRUNE_PROBE,
     _READ_GUEST_SETTINGS,
+    ProbeError,
     VmUnreachableError,
     _inject_host_git_identity,
     _read_host_git_config,
@@ -1213,14 +1214,16 @@ class TestOccupancy:
         transport = _transport("agents=0 humans=0\n")
         assert vm_occupancy(transport) == (0, 0)
 
-    def test_unparseable_output_is_zeros(self) -> None:
+    def test_unparseable_output_raises(self) -> None:
         transport = _transport("garbage\n")
-        assert vm_occupancy(transport) == (0, 0)
+        with pytest.raises(ProbeError, match="no occupancy line"):
+            vm_occupancy(transport)
 
-    def test_exec_failure_is_zeros(self) -> None:
+    def test_exec_failure_raises(self) -> None:
         transport = _transport()
         transport.run.side_effect = subprocess.CalledProcessError(1, "limactl")
-        assert vm_occupancy(transport) == (0, 0)
+        with pytest.raises(ProbeError, match="exit status 1"):
+            vm_occupancy(transport)
 
 
 class TestVmProbe:
@@ -1246,14 +1249,23 @@ class TestVmProbe:
         transport = _transport("agents=1 humans=0\n")
         assert vm_probe(transport, fingerprint=True) == (1, 0, None)
 
-    def test_unparseable_occupancy_is_zeros(self) -> None:
+    def test_unparseable_occupancy_raises(self) -> None:
         transport = _transport("garbage\nfingerprint=abc123\n")
-        assert vm_probe(transport, fingerprint=True) == (0, 0, "abc123")
+        with pytest.raises(ProbeError, match="no occupancy line: 'garbage"):
+            vm_probe(transport, fingerprint=True)
 
-    def test_exec_failure_is_zeros_and_none(self) -> None:
+    def test_exec_failure_raises_not_unoccupied(self) -> None:
+        """GHSA-ch78-r3p7-2wmx: a probe that fails to run never reads as zero sessions."""
         transport = _transport()
         transport.run.side_effect = subprocess.CalledProcessError(1, "limactl")
-        assert vm_probe(transport, fingerprint=True) == (0, 0, None)
+        with pytest.raises(ProbeError, match=r"failed to run \(exit status 1\)"):
+            vm_probe(transport, fingerprint=True)
+
+    def test_timeout_raises(self) -> None:
+        transport = _transport()
+        transport.run.side_effect = TransportTimeoutError(["bash"], 30)
+        with pytest.raises(ProbeError, match="timed out after 30s"):
+            vm_probe(transport)
 
 
 class TestUpdatePlugins:

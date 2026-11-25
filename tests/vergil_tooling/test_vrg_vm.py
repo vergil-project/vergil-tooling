@@ -57,6 +57,7 @@ from vergil_tooling.lib import identity_mode, vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 from vergil_tooling.lib.vm_backend import select_backend
+from vergil_tooling.lib.vm_guest import ProbeError
 from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
 from vergil_tooling.lib.vm_transport import LimaTransport
 
@@ -4312,6 +4313,20 @@ class TestListRows:
         rows = _list_rows("vergil-user", ident, dedic, {}, {})
         assert self._row(rows, "o/gone")["spec"] == "orphaned"
 
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_a_failed_probe_shows_an_error_marker(self, _fp: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)
+        dedic = self._present(projects)
+        status = {"vergil-user": "Running", "vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user": ProbeError("x"), "vergil-user.lmf.mq": ProbeError("y")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
+        base = self._row(rows, "base")
+        ded = self._row(rows, "lmf/mq")
+        assert (base["agents"], base["humans"]) == ("error", "error")
+        assert (ded["agents"], ded["humans"]) == ("error", "error")
+        assert ded["spec"] == "unknown (probe failed)"
+
     def test_orphaned_running_shows_occupancy(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
         dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
@@ -4510,10 +4525,32 @@ class TestProbeRunning:
         assert _probe_running(identities, discovered, {"vergil-user": "Stopped"}) == {}
         mock_probe.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe")
+    def test_a_failed_probe_is_kept_per_vm(
+        self, mock_probe: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """GHSA-ch78-r3p7-2wmx: one VM's unparseable output does not abort the others."""
+        failure = ProbeError("the occupancy probe returned no occupancy line: 'garbage'")
+
+        def probe(transport: LimaTransport, *, fingerprint: bool = False) -> object:
+            if transport.instance == "vergil-user.o.gone":
+                raise failure
+            return (1, 0, None)
+
+        mock_probe.side_effect = probe
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered = {"vergil-user": [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]}
+        status = {"vergil-user": "Running", "vergil-user.o.gone": "Running"}
+        probes = _probe_running(identities, discovered, status)
+        assert probes == {"vergil-user": (1, 0, None), "vergil-user.o.gone": failure}
+        assert "vergil-user.o.gone: the occupancy probe returned no occupancy line" in (
+            capsys.readouterr().err
+        )
+
     @patch("vergil_tooling.bin.vrg_vm.vm_probe", side_effect=RuntimeError("boom"))
     def test_probe_errors_propagate(self, _probe: MagicMock, tmp_path: Path) -> None:
         # Parallelization must not swallow new error modes: anything beyond
-        # vm_probe's documented (0, 0, None) contract surfaces to the caller.
+        # vm_probe's ProbeError contract surfaces to the caller.
         identities = {"vergil-user": self._identity(tmp_path)}
         discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
         with pytest.raises(RuntimeError, match="boom"):

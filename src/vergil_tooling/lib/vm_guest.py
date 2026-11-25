@@ -844,21 +844,35 @@ _FINGERPRINT_PROBE = f'\necho "fingerprint=$(cat {_FINGERPRINT_PATH} 2>/dev/null
 _FINGERPRINT_RE = re.compile(r"^fingerprint=(.*)$", re.MULTILINE)
 
 
+class ProbeError(RuntimeError):
+    """A running VM's occupancy probe failed to run or returned unparseable output.
+
+    Raised rather than read as zero sessions: an occupied VM whose probe
+    failed must never be shown as unoccupied (GHSA-ch78-r3p7-2wmx). Callers
+    probing many VMs catch it per VM.
+    """
+
+
 def vm_probe(transport: Transport, *, fingerprint: bool = False) -> tuple[int, int, str | None]:
     """Probe a running VM in a single shell round-trip.
 
-    Returns (agents, humans, fingerprint). Occupancy keeps vm_occupancy's
-    contract — (0, 0) only on parse/exec failure. The fingerprint is read in
-    the same invocation when requested and is None when not requested, absent,
-    or unreadable, matching read_fingerprint.
+    Returns (agents, humans, fingerprint). Raises :class:`ProbeError` when
+    the probe fails to run (a non-zero exit or a timeout) or its output has
+    no occupancy line. The fingerprint is read in the same invocation when
+    requested and is None when not requested, absent, or unreadable,
+    matching read_fingerprint.
     """
     script = _OCCUPANCY_SCRIPT + _FINGERPRINT_PROBE if fingerprint else _OCCUPANCY_SCRIPT
     try:
         result = transport.run("bash", "-c", script)
-    except subprocess.CalledProcessError:
-        return (0, 0, None)
+    except (subprocess.CalledProcessError, TransportTimeoutError) as exc:
+        msg = f"the occupancy probe failed to run ({_failure_reason(exc)})"
+        raise ProbeError(msg) from exc
     match = _OCCUPANCY_RE.search(result.stdout)
-    agents, humans = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+    if match is None:
+        msg = f"the occupancy probe returned no occupancy line: {result.stdout.strip()[:200]!r}"
+        raise ProbeError(msg)
+    agents, humans = int(match.group(1)), int(match.group(2))
     stamped: str | None = None
     if fingerprint:
         fp_match = _FINGERPRINT_RE.search(result.stdout)
@@ -871,8 +885,8 @@ def vm_occupancy(transport: Transport) -> tuple[int, int]:
     """Return (agents, humans) for a running VM by process-tree classification.
 
     Agents are login sessions whose subtree roots `claude`; humans are interactive
-    user tty/pty sessions that are not agent-hosting. Returns (0, 0) on any parse/exec
-    failure rather than guessing.
+    user tty/pty sessions that are not agent-hosting. Raises :class:`ProbeError`
+    on a run or parse failure rather than guessing.
     """
     agents, humans, _ = vm_probe(transport)
     return (agents, humans)
