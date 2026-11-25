@@ -46,7 +46,10 @@ DEPTH_ERROR = (
 
 #: GitHub's limit error. The probe never observed it (``Limit error: unobserved``),
 #: so this text is the fake's own; the chain layer treats any such text as a hint only.
-LIMIT_ERROR = "Failed to add sub-issue #{child} to parent #{parent}. Parent cannot have more than 100 sub-issues."
+LIMIT_ERROR = (
+    "Failed to add sub-issue #{child} to parent #{parent}."
+    " Parent cannot have more than 100 sub-issues."
+)
 
 
 @dataclass

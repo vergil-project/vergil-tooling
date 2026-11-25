@@ -118,7 +118,9 @@ def test_parse_continues_reads_the_line_alone_on_its_line() -> None:
     assert epic_chain.parse_continues(_continuation_body(HEAD, 2)) == HEAD
     assert epic_chain.parse_continues("Continues: org/.github#10 and more") is None
     assert epic_chain.parse_continues("no line at all") is None
-    assert epic_chain.parse_continues("Continues: org/.github#10\nContinues: org/.github#10") == HEAD
+    assert (
+        epic_chain.parse_continues("Continues: org/.github#10\nContinues: org/.github#10") == HEAD
+    )
     two = "Continues: org/.github#10\nContinues: org/.github#11\n"
     assert epic_chain.parse_continues(two) is None
 
@@ -227,7 +229,10 @@ def test_epic_child_without_continues_line_is_an_item(graph: FakeSubIssueGraph) 
     child_epic = graph.add_issue(C2, title="Epic: nested", labels=["epic"], body="Plain body.")
     graph.link(HEAD, child_epic)
     untrusted = graph.add_issue(
-        C3, title="Epic: x", labels=["epic"], body="Continues: org/.github#10",
+        C3,
+        title="Epic: x",
+        labels=["epic"],
+        body="Continues: org/.github#10",
         author=trust_stubs.OUTSIDER,
     )
     graph.link(HEAD, untrusted)
