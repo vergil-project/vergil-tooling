@@ -9,7 +9,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
-from vergil_tooling.bin.vrg_epic_parent import main
+from vergil_tooling.bin.vrg_epic_parent import _as_line, main
 from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import IssueRef
 
@@ -170,15 +170,56 @@ def test_ambiguous_head_kind_exits_1(
     assert "proxy" in err
 
 
-def test_read_failure_exits_1(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_read_failure_exits_1(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph.add_issue(TASK, title="a task")
+
     def fail(*_args: object, **_kwargs: object) -> object:
         raise github.GitHubAPIError(1, ["gh", "api", "graphql"], output="", stderr="gh: boom\n")
 
-    monkeypatch.setattr(epics, "task_epic", fail)
+    monkeypatch.setattr(github, "graphql", fail)
     rc, out, err = _run([TASK.slug], capsys)
     assert (rc, out) == (1, "")
     assert err.startswith("vrg-epic-parent: ")
     assert "boom" in err
+
+
+def test_head_without_epic_label_exits_1(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A continuation whose head lost its epic label: the head's kind is never guessed.
+    graph.add_issue(HEAD, title="Epic: big", labels=["epic-development"])
+    graph.add_continuation(C2, HEAD, HEAD)
+    graph.add_issue(TASK, title="a task")
+    graph.link(C2, TASK)
+    rc, out, err = _run([TASK.slug], capsys)
+    assert (rc, out) == (1, "")
+    assert "vrg-epic-parent: the chain head org/.github#40 lacks the 'epic' label" in err
+
+
+def test_head_that_is_a_continuation_raises() -> None:
+    with pytest.raises(RuntimeError, match=r"org/\.github#40 is itself a continuation"):
+        epics._head_kind(HEAD, {"epic", epics.CONTINUATION_LABEL})
+
+
+def test_parent_read_without_parent_field_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A read that does not say whether the parent is itself nested is never guessed past.
+    parent = {
+        "number": 40,
+        "repository": {"name": ".github", "owner": {"login": "org"}},
+        "labels": {"totalCount": 1, "nodes": [{"name": "epic"}]},
+    }
+    monkeypatch.setattr(epics, "_node_id", lambda _ref: "I_1")
+    monkeypatch.setattr(github, "graphql", lambda *_a, **_k: {"node": {"parent": parent}})
+    with pytest.raises(RuntimeError, match="did not say whether org/.github#40 has one"):
+        epics.task_epic(TASK)
+
+
+def test_line_without_a_ref_raises() -> None:
+    found = epics.TaskEpic(task=TASK, epic=None, kind="development", container=None)
+    with pytest.raises(RuntimeError, match="no ref to print"):
+        _as_line(found)
 
 
 def test_bare_ref_uses_current_repo(
