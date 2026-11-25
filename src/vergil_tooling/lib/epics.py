@@ -733,6 +733,18 @@ def add_child(epic: IssueRef, task: IssueRef) -> None:
     github.graphql(_ADD_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
 
 
+def _add_child_unchecked(parent: IssueRef, child: IssueRef) -> None:
+    """Link *child* under *parent* with no state check: closed is closed's one exception.
+
+    Only :func:`vergil_tooling.lib.epic_chain.find_or_create_continuation`
+    calls it, and only to link the next continuation under a closed
+    continuation that has no successor (spec §4.2 of epic
+    vergil-project/.github#1609): the one link a closed container takes,
+    which leaves it closed. Every other link goes through :func:`add_child`.
+    """
+    github.graphql(_ADD_SUBISSUE, parent=_node_id(parent), child=_node_id(child))
+
+
 def remove_child(epic: IssueRef, task: IssueRef) -> None:
     """Unlink *task* from *epic* (remove the native sub-issue relationship)."""
     github.graphql(_REMOVE_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
