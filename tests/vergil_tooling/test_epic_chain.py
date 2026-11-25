@@ -1631,3 +1631,35 @@ def test_close_chain_of_a_lone_head_prints_nothing(
 ) -> None:
     assert epic_chain.close_chain(HEAD) == [HEAD]
     assert capsys.readouterr().out == ""
+
+
+# -- the writers' messages ----------------------------------------------------------
+
+
+def test_container_note_names_a_continuation_only() -> None:
+    assert epic_chain.container_note(HEAD, HEAD) == ""
+    assert epic_chain.container_note(HEAD, C2) == " (in continuation org/.github#20)"
+
+
+def test_unlinked_hint_suggests_the_move_for_an_ordinary_failure() -> None:
+    task = IssueRef("org", "repo", 5)
+    hint = epic_chain.unlinked_hint(task, HEAD, RuntimeError("gh failed"))
+    assert hint == "Link it with: vrg-epic-move --task 'org/repo#5' --epic 'org/.github#10'"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        epics.ClosedEpicError(HEAD),
+        epic_chain.RolloverDisabledError(HEAD),
+        epic_chain.ChainDepthError(HEAD, items=693, containers=7),
+    ],
+    ids=["closed", "rollover-disabled", "depth"],
+)
+def test_unlinked_hint_names_a_chain_refusal_instead_of_the_move(exc: Exception) -> None:
+    # The move would be refused the same way, so it is not suggested.
+    task = IssueRef("org", "repo", 5)
+    assert epic_chain.unlinked_hint(task, HEAD, exc) == (
+        "org/repo#5 is left unlinked, and vrg-epic-move would be refused the same way "
+        "until that is resolved"
+    )

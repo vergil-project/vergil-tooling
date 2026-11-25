@@ -27,6 +27,7 @@ as a failed ``gh api graphql`` does.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tests.vergil_tooling import trust_stubs
@@ -428,9 +429,23 @@ class FakeSubIssueGraph:
         return rows[: int(flags["--limit"])]
 
     def create_issue(
-        self, *, repo: str, title: str, body: str = "", labels: list[str] | None = None
+        self,
+        *,
+        repo: str,
+        title: str,
+        body: str = "",
+        body_file: str | None = None,
+        labels: list[str] | None = None,
+        assignees: list[str] | None = None,
     ) -> str:
-        """``github.create_issue``: a new open issue, numbered past every issue in *repo*."""
+        """``github.create_issue``: a new open issue, numbered past every issue in *repo*.
+
+        A *body_file* is read for the body, as ``gh`` prefers it over *body*;
+        *assignees* are accepted and not modelled.
+        """
+        del assignees
+        if body_file is not None:
+            body = Path(body_file).read_text(encoding="utf-8")
         owner, name = repo.split("/", 1)
         number = 1 + max(
             (r.number for r in self.issues if (r.owner, r.repo) == (owner, name)), default=0

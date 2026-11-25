@@ -15,7 +15,11 @@ target repo's epic home, ``<org>/.github``. A fully qualified ``owner/repo#N`` i
 written (#3409, #3411).
 
 If the issue is created but the link fails, the created issue's URL is reported
-so it is never a silent orphan; recover with ``vrg-epic-move``.
+so it is never a silent orphan; recover with ``vrg-epic-move``. The link goes
+through the chain layer (:mod:`~vergil_tooling.lib.epic_chain`), and its
+capacity check runs before the issue is created: a closed epic, a full epic
+while rollover is off and an epic at GitHub's nesting limit are refused with
+nothing created (epic vergil-project/.github#1609).
 """
 
 from __future__ import annotations
@@ -26,11 +30,10 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_chain, epics, github
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.labels import ensure_labels_or_report
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.shell_ref import quoted_slug
 
 
 @cli_main
@@ -159,11 +162,13 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            # Closed is closed (.github#1609): a closed epic is refused before the
-            # issue is created, so the refused link never orphans a new issue.
+            # The chain layer's capacity check (.github#1609, spec §4.5): a
+            # closed epic (closed is closed), a full head while rollover is off
+            # and the depth limit are all refused before the issue is created,
+            # so a refused link never orphans a new issue.
             try:
-                epics.require_open_epic(epic)
-            except epics.ClosedEpicError as exc:
+                epic_chain.check_capacity(epic)
+            except epics.EpicRefusalError as exc:
                 print(f"vrg-issue-create: {exc}", file=sys.stderr)
                 return 1
 
@@ -193,12 +198,12 @@ def main(argv: list[str] | None = None) -> int:
             task = epics.IssueRef(owner=owner, repo=name, number=_issue_number_from_url(url))
 
             try:
-                epics.add_child(epic, task)
+                container = epic_chain.link_into(epic, task)
             except Exception as exc:  # noqa: BLE001 - orphan-safe: never lose the created issue
                 print(
                     f"vrg-issue-create: created {url} but failed to link it under epic "
-                    f"{epic.slug}: {error_text(exc)}. Link it with: "
-                    f"vrg-epic-move --task {quoted_slug(task)} --epic {quoted_slug(epic)}",
+                    f"{epic.slug}: {error_text(exc)}. "
+                    f"{epic_chain.unlinked_hint(task, epic, exc)}",
                     file=sys.stderr,
                 )
                 return 1
@@ -206,7 +211,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vrg-issue-create: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
 
-    print(f"Created {url}, linked under epic {epic.slug}.")
+    print(
+        f"Created {url}, linked under epic {epic.slug}{epic_chain.container_note(epic, container)}."
+    )
     return 0
 
 

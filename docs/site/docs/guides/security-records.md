@@ -170,8 +170,9 @@ vrg-security-record create --repo vergil-project/vergil-tooling \
   --severity low
 ```
 
-`create` runs the steps in a fixed order: a duplicate check, the advisory,
-the issue, the link under the intake epic, then the advisory's
+`create` runs the steps in a fixed order: a capacity check of the intake
+epic, a duplicate check, the advisory,
+the issue, the link into the intake epic's chain, then the advisory's
 `Tracking issue:` line. If a step fails after the advisory exists, it
 prints the exact command that finishes the pair and exits 1. Drafts can't
 be deleted, so never re-run the original command; run the printed one.

@@ -2,8 +2,11 @@
 
 The trust layer runs for real: ``github.graphql`` is faked by :class:`FakeGitHub`,
 which answers the layer's search and item queries from an in-memory repo, and
-records every write. The epic links and label ensure are faked at the
-``ops_report`` boundary.
+records every write. The sub-issue links go through the chain layer
+(:mod:`vergil_tooling.lib.epic_chain`) for real, against the
+:class:`FakeSubIssueGraph` :class:`FakeGitHub` routes every other query to; the
+tests assert the graph's end state. The operations epic's lookup and the label
+ensure are faked at the ``ops_report`` boundary.
 """
 
 from __future__ import annotations
@@ -14,8 +17,11 @@ from typing import Any
 
 import pytest
 
-from vergil_tooling.lib import github, ops_report, trust
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
+from vergil_tooling.bin import vrg_ops_report
+from vergil_tooling.lib import epic_chain, epics, github, identity_mode, ops_report, trust
 from vergil_tooling.lib.epics import IssueRef
+from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.trusted_authors import OrgConfig, TrustedAuthors
 
 ORG = "acme"
@@ -40,6 +46,12 @@ IMPOSTOR: dict[str, str] = {"__typename": "User", "login": "acme-automation"}
 OPS_EPIC = IssueRef(ORG, ".github", 900)
 OTHER_EPIC = IssueRef(ORG, ".github", 12)
 
+_LINK_MUTATIONS = (epics._ADD_SUBISSUE, epics._REPARENT_SUBISSUE)
+
+
+def _ref(number: int) -> IssueRef:
+    return IssueRef(ORG, NAME, number)
+
 
 def _page(nodes: list[Any]) -> dict[str, Any]:
     return {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
@@ -60,7 +72,9 @@ class FakeGitHub:
     """An in-memory repo behind ``github.graphql``, ``create_issue`` and ``run``.
 
     *lag* is how many searches a newly created issue stays out of, as the
-    eventually consistent search index does.
+    eventually consistent search index does. Every issue added is also added
+    to :attr:`graph`, which answers the sub-issue queries and the REST reads
+    behind them; with :attr:`fail_link` set, every link mutation fails.
     """
 
     def __init__(self, *, lag: int = 0) -> None:
@@ -73,6 +87,8 @@ class FakeGitHub:
         self.created: list[dict[str, Any]] = []
         self.comments: list[tuple[int, str]] = []
         self.runs: list[tuple[str, ...]] = []
+        self.graph = FakeSubIssueGraph()
+        self.fail_link = False
 
     def add(
         self,
@@ -97,15 +113,19 @@ class FakeGitHub:
             "body": body,
             "comments": list(comments or []),
         }
+        self.graph.add_issue(_ref(number), title=title, labels=labels, body=body, state=state)
 
     # --- github.graphql ---------------------------------------------------------
 
     def graphql(self, query: str, **variables: Any) -> dict[str, Any]:
         if query == trust._SEARCH_QUERIES["issue"]:
             return self._search(str(variables["q"]))
-        if query == trust._ITEM_QUERY:
+        if query == trust._ITEM_QUERY and (variables["owner"], variables["name"]) == (ORG, NAME):
             return self._item(int(variables["number"]))
-        raise AssertionError(f"unexpected GraphQL query: {query[:80]!r}")
+        if self.fail_link and query in _LINK_MUTATIONS:
+            raise github.GitHubAPIError(1, ["gh"], stderr="HTTP 502")
+        # The sub-issue reads and writes, and the trust reads of the epics.
+        return self.graph.graphql(query, **variables)
 
     def _search(self, q: str) -> dict[str, Any]:
         self.searches.append(q)
@@ -188,30 +208,18 @@ class FakeGitHub:
 
 
 class Links:
-    """The operations epic and the native parent links, at the ``ops_report`` boundary."""
+    """The operations epic's lookup and the label ensure, at the ``ops_report`` boundary.
 
-    def __init__(self) -> None:
-        self.parents: dict[int, IssueRef] = {}
-        self.added: list[tuple[IssueRef, IssueRef]] = []
-        self.reparented: list[tuple[IssueRef, IssueRef]] = []
+    The links themselves are :attr:`graph`'s, which holds the operations epic
+    and another epic.
+    """
+
+    def __init__(self, graph: FakeSubIssueGraph) -> None:
+        self.graph = graph
         self.ensured_epics: list[str] = []
         self.ensured_labels: list[tuple[str, list[str]]] = []
-        self.fail_link = False
-
-    def native_parent_of(self, task: IssueRef) -> IssueRef | None:
-        return self.parents.get(task.number)
-
-    def add_child(self, epic: IssueRef, task: IssueRef) -> None:
-        if self.fail_link:
-            raise github.GitHubAPIError(1, ["gh"], stderr="HTTP 502")
-        self.added.append((epic, task))
-        self.parents[task.number] = epic
-
-    def reparent_child(self, epic: IssueRef, task: IssueRef) -> None:
-        if self.fail_link:
-            raise github.GitHubAPIError(1, ["gh"], stderr="HTTP 502")
-        self.reparented.append((epic, task))
-        self.parents[task.number] = epic
+        graph.add_issue(OPS_EPIC, title="Operations", labels=["epic"])
+        graph.add_issue(OTHER_EPIC, title="Epic: other", labels=["epic"])
 
     def ensure_operations_epic(self, repo: str) -> IssueRef:
         self.ensured_epics.append(repo)
@@ -227,17 +235,16 @@ def gh(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr(github, "create_issue", fake.create_issue)
     monkeypatch.setattr(github, "run", fake.run)
+    monkeypatch.setattr(github, "read_output", fake.graph.read_output)
+    monkeypatch.setattr(github, "read_json", fake.graph.read_json)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(ops_report, "load_trusted_authors", lambda: AUTHORS)
     return fake
 
 
 @pytest.fixture
-def links(monkeypatch: pytest.MonkeyPatch) -> Links:
-    fake = Links()
-    monkeypatch.setattr(ops_report.epics, "native_parent_of", fake.native_parent_of)
-    monkeypatch.setattr(ops_report.epics, "add_child", fake.add_child)
-    monkeypatch.setattr(ops_report.epics, "reparent_child", fake.reparent_child)
+def links(gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> Links:
+    fake = Links(gh.graph)
     monkeypatch.setattr(ops_report.epics, "ensure_operations_epic", fake.ensure_operations_epic)
     monkeypatch.setattr(ops_report, "ensure_labels", fake.ensure_labels)
     return fake
@@ -251,6 +258,21 @@ def _report(result: ops_report.Result | None, *, step: str | None = "Build site"
 
 def _no_close(gh: FakeGitHub) -> None:
     assert not [args for args in gh.runs if "close" in args]
+
+
+def _start_under(gh: FakeGitHub, epic: IssueRef, *numbers: int) -> None:
+    """Link each ops issue *numbers* under *epic* as the starting state, logging nothing."""
+    for number in numbers:
+        gh.graph.link(epic, _ref(number))
+    gh.graph.clear_log()
+
+
+def _assert_linked(gh: FakeGitHub, container: IssueRef, number: int, *, op: str) -> None:
+    """Ops issue *number* has one parent, *container*, written by the one *op* mutation."""
+    issue = _ref(number)
+    assert gh.graph.mutations == [(op, container, issue)]
+    assert gh.graph.parent_of(issue) == container
+    assert [ref for ref in gh.graph.issues if issue in gh.graph.children_of(ref)] == [container]
 
 
 # --- combine_results ------------------------------------------------------------
@@ -419,7 +441,7 @@ def test_report_failure_no_open_creates(gh: FakeGitHub, links: Links) -> None:
     assert "2026-11-23" in body
     assert "previous occurrence" not in body
     assert links.ensured_labels == [(REPO, ["ops-report"])]
-    assert links.added == [(OPS_EPIC, IssueRef(ORG, NAME, 100))]
+    _assert_linked(gh, OPS_EPIC, 100, op="add")
     _no_close(gh)
 
 
@@ -481,7 +503,7 @@ def test_report_create_never_names_outsider_issue(gh: FakeGitHub, links: Links) 
 def test_report_comment_does_not_name_skipped_issue(gh: FakeGitHub, links: Links) -> None:
     gh.add(6, editor=OUTSIDER)
     gh.add(9)
-    links.parents[9] = OPS_EPIC
+    _start_under(gh, OPS_EPIC, 9)
     assert _report("failure") == "commented"
     [(number, body)] = gh.comments
     assert number == 9
@@ -490,20 +512,21 @@ def test_report_comment_does_not_name_skipped_issue(gh: FakeGitHub, links: Links
 
 def test_report_failure_open_comments(gh: FakeGitHub, links: Links) -> None:
     gh.add(6)
-    links.parents[6] = OPS_EPIC
+    _start_under(gh, OPS_EPIC, 6)
     assert _report("failure") == "commented"
     [(number, body)] = gh.comments
     assert number == 6
     assert body.splitlines()[0] == ops_report.MARKER_FAILURE
     assert RUN in body
     assert gh.created == []
-    assert links.added == links.reparented == []
+    assert gh.graph.mutations == []
+    assert gh.graph.parent_of(_ref(6)) == OPS_EPIC
     _no_close(gh)
 
 
 def test_report_success_after_failure_records_recovery(gh: FakeGitHub, links: Links) -> None:
     gh.add(6, comments=[(APP, ops_report.MARKER_FAILURE)])
-    links.parents[6] = OPS_EPIC
+    _start_under(gh, OPS_EPIC, 6)
     assert _report("success") == "recovered"
     [(number, body)] = gh.comments
     assert number == 6
@@ -514,13 +537,13 @@ def test_report_success_after_failure_records_recovery(gh: FakeGitHub, links: Li
 
 def test_report_success_after_outsider_recovery_still_records(gh: FakeGitHub, links: Links) -> None:
     gh.add(6, comments=[(OUTSIDER, ops_report.MARKER_RECOVERED)])
-    links.parents[6] = OPS_EPIC
+    _start_under(gh, OPS_EPIC, 6)
     assert _report("success") == "recovered"
 
 
 def test_report_success_after_recovery_does_nothing(gh: FakeGitHub, links: Links) -> None:
     gh.add(6, comments=[(APP, ops_report.MARKER_RECOVERED)])
-    links.parents[6] = OPS_EPIC
+    _start_under(gh, OPS_EPIC, 6)
     assert _report("success") == "nothing"
     assert gh.comments == []
     _no_close(gh)
@@ -538,12 +561,13 @@ def test_report_none_does_nothing(gh: FakeGitHub, links: Links) -> None:
     assert gh.searches == gh.item_reads == gh.runs == []
     assert gh.created == []
     assert links.ensured_epics == links.ensured_labels == []
+    assert gh.graph.mutations == []
 
 
 def test_report_two_open_comments_oldest(gh: FakeGitHub, links: Links) -> None:
     gh.add(9)
     gh.add(6)
-    links.parents.update({6: OPS_EPIC, 9: OPS_EPIC})
+    _start_under(gh, OPS_EPIC, 6, 9)
     assert _report("failure") == "commented"
     [(number, body)] = gh.comments
     assert number == 6
@@ -554,7 +578,7 @@ def test_report_two_open_comments_oldest(gh: FakeGitHub, links: Links) -> None:
 def test_report_two_open_recovery_on_oldest(gh: FakeGitHub, links: Links) -> None:
     gh.add(9)
     gh.add(6)
-    links.parents.update({6: OPS_EPIC, 9: OPS_EPIC})
+    _start_under(gh, OPS_EPIC, 6, 9)
     assert _report("success") == "recovered"
     assert [n for n, _ in gh.comments] == [6]
     assert "#9" in gh.comments[0][1]
@@ -564,28 +588,31 @@ def test_report_two_open_recovery_on_oldest(gh: FakeGitHub, links: Links) -> Non
 def test_report_relinks_orphan(gh: FakeGitHub, links: Links, result: ops_report.Result) -> None:
     gh.add(6)
     _report(result)
-    assert links.added == [(OPS_EPIC, IssueRef(ORG, NAME, 6))]
+    _assert_linked(gh, OPS_EPIC, 6, op="add")
 
 
 def test_report_relinks_wrong_parent(gh: FakeGitHub, links: Links) -> None:
     gh.add(6, comments=[(APP, ops_report.MARKER_RECOVERED)])
-    links.parents[6] = OTHER_EPIC
+    _start_under(gh, OTHER_EPIC, 6)
     assert _report("success") == "nothing"
-    assert links.reparented == [(OPS_EPIC, IssueRef(ORG, NAME, 6))]
+    _assert_linked(gh, OPS_EPIC, 6, op="reparent")
 
 
 def test_report_failed_link_raises(gh: FakeGitHub, links: Links) -> None:
     gh.add(6)
-    links.fail_link = True
+    gh.fail_link = True
     with pytest.raises(ops_report.OpsReportError, match="vrg-epic-move"):
         _report("failure")
     assert gh.comments == []
+    assert gh.graph.mutations == []
+    assert gh.graph.parent_of(_ref(6)) is None
 
 
 def test_report_failed_link_after_create_names_issue(gh: FakeGitHub, links: Links) -> None:
-    links.fail_link = True
+    gh.fail_link = True
     with pytest.raises(ops_report.OpsReportError, match=f"{REPO}#100"):
         _report("failure")
+    assert gh.graph.parent_of(_ref(100)) is None
 
 
 def test_report_waits_until_created_issue_listed(
@@ -703,3 +730,91 @@ def test_report_failed_listing_check_names_created_issue(
     monkeypatch.setattr(github, "graphql", fail_after_create)
     with pytest.raises(ops_report.OpsReportError, match=f"created {REPO}#100 but checking"):
         _report("failure")
+
+
+# --- the chain layer (epic vergil-project/.github#1609) ---------------------------
+
+OPS_CONTINUATION = IssueRef(ORG, ".github", 950)
+
+
+def _fill(gh: FakeGitHub, epic: IssueRef, count: int) -> None:
+    """Link *count* plain items under *epic*, in the epic's repo, numbered from 1000."""
+    for number in range(1000, 1000 + count):
+        item = gh.graph.add_issue(IssueRef(epic.owner, epic.repo, number), title="item")
+        gh.graph.link(epic, item)
+
+
+@pytest.mark.parametrize("case", ["create", "move", "already"])
+def test_ops_report_links_through_chain(
+    gh: FakeGitHub, links: Links, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """An ops issue goes into the operations epic's chain; one already in it stays put."""
+    monkeypatch.setattr(epic_chain, "ROLLOVER_ENABLED", True)
+    # The operations epic is full: 99 items and its continuation, which has room.
+    _fill(gh, OPS_EPIC, 99)
+    gh.graph.add_continuation(OPS_CONTINUATION, OPS_EPIC, OPS_EPIC)
+    if case == "create":
+        gh.graph.clear_log()
+        assert _report("failure") == "created"
+        _assert_linked(gh, OPS_CONTINUATION, 100, op="add")
+        assert epics.native_parent_of(_ref(100)) == OPS_EPIC
+    elif case == "move":
+        # An ops issue under another epic moves into the chain in one re-parent.
+        gh.add(6)
+        _start_under(gh, OTHER_EPIC, 6)
+        assert _report("failure") == "commented"
+        _assert_linked(gh, OPS_CONTINUATION, 6, op="reparent")
+        assert gh.graph.children_of(OTHER_EPIC) == []
+    else:
+        # One already linked in the continuation is under the operations epic.
+        gh.add(6)
+        _start_under(gh, OPS_CONTINUATION, 6)
+        assert _report("failure") == "commented"
+        assert gh.graph.mutations == []
+        assert gh.graph.parent_of(_ref(6)) == OPS_CONTINUATION
+    assert epic_chain.chain_of(OPS_EPIC) == [OPS_EPIC, OPS_CONTINUATION]
+    _no_close(gh)
+
+
+def _cli_report(monkeypatch: pytest.MonkeyPatch) -> int:
+    """``vrg-ops-report`` for a failure of JOB in REPO, as the automation App."""
+    monkeypatch.setattr(identity_mode, "current_mode", lambda: IdentityMode.AUTOMATION)
+    return vrg_ops_report.main(
+        ["--repo", REPO, "--job", JOB, "--run-url", RUN, "--results", "failure"]
+    )
+
+
+@pytest.mark.parametrize("refusal", ["depth", "rollover-off"])
+def test_ops_report_refusal_creates_nothing(
+    gh: FakeGitHub,
+    links: Links,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    refusal: str,
+) -> None:
+    """A refusal of the chain layer's capacity check is raised before any issue is created."""
+    error: epics.EpicRefusalError
+    if refusal == "depth":
+        error = epic_chain.ChainDepthError(OPS_EPIC, items=700, containers=7)
+
+        def refuse(head: IssueRef) -> None:
+            assert head == OPS_EPIC
+            raise error
+
+        monkeypatch.setattr(epic_chain, "check_capacity", refuse)
+    else:
+        assert epic_chain.ROLLOVER_ENABLED is False
+        _fill(gh, OPS_EPIC, 100)
+        error = epic_chain.RolloverDisabledError(OPS_EPIC)
+    gh.graph.clear_log()
+
+    with pytest.raises(type(error)) as excinfo:
+        _report("failure")
+    assert str(excinfo.value) == str(error)
+    assert gh.created == []
+
+    assert _cli_report(monkeypatch) == 1
+    assert capsys.readouterr().err == f"vrg-ops-report: {REPO} / {JOB}: {error}\n"
+    assert gh.created == []
+    assert gh.comments == []
+    assert gh.graph.mutations == []

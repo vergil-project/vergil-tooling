@@ -2,9 +2,12 @@
 
 The rollup (``vrg-finalize-pr``) decides whether to close an epic by querying its
 native sub-issues; a ``Parent:`` reflink alone is only a flaky ``gh search``
-fallback. This CLI creates the reliable native link via ``epics.add_child``,
-which refuses a closed epic by name and never reopens it (closed is closed,
-epic vergil-project/.github#1609). Use it when creating a task under an epic,
+fallback. This CLI creates the reliable native link through the chain layer
+(:func:`epic_chain.link_into`, epic vergil-project/.github#1609): the task goes
+into the first container of the epic's chain with a free slot, rolling over
+into a continuation when every one is full. A closed epic is refused by name
+and never reopened (closed is closed), as are a full epic while rollover is off
+and one at GitHub's nesting limit. Use it when creating a task under an epic,
 and to backfill reflink-only children.
 
 Refs are ``owner/repo#N`` or bare ``#N``. A bare task ref resolves to the
@@ -19,7 +22,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epic_chain, epics, github
 from vergil_tooling.lib.cli import cli_main
 
 
@@ -68,8 +71,8 @@ def _link(epic_ref: str, task: epics.IssueRef, task_repo: str) -> int:
         message = epics.non_task_refusal_message("--task", task.slug, kind)
         print(f"vrg-epic-link: {message}", file=sys.stderr)
         return 1
-    epics.add_child(epic, task)
-    print(f"Linked {task.slug} under epic {epic.slug}.")
+    container = epic_chain.link_into(epic, task)
+    print(f"Linked {task.slug} under epic {epic.slug}{epic_chain.container_note(epic, container)}.")
     return 0
 
 
