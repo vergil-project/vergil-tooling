@@ -624,7 +624,7 @@ def test_parent_of_ignores_untrusted_body_line(
     assert "SPAM-MARKER-TEXT" not in err
 
 
-# -- add_child (closed is closed, .github#1609) -------------------------------
+# -- _add_child (closed is closed, .github#1609) -------------------------------
 
 
 def test_add_child_refuses_closed_epic() -> None:
@@ -636,7 +636,7 @@ def test_add_child_refuses_closed_epic() -> None:
         patch("vergil_tooling.lib.github.graphql") as mock_graphql,
         pytest.raises(epics.ClosedEpicError) as excinfo,
     ):
-        epics.add_child(EPIC, TASK)
+        epics._add_child(EPIC, TASK)
     assert excinfo.value.epic == EPIC
     assert str(excinfo.value) == (
         "epic org/.github#40 is closed; closed epics are not reopened by the tooling"
@@ -654,7 +654,7 @@ def test_add_child_open_epic_is_not_reopened() -> None:
         patch("vergil_tooling.lib.github.run") as mock_run,
         patch("vergil_tooling.lib.github.graphql") as mock_graphql,
     ):
-        epics.add_child(EPIC, TASK)
+        epics._add_child(EPIC, TASK)
     mock_run.assert_not_called()
     mock_graphql.assert_called_once()
 
@@ -1140,7 +1140,7 @@ def test_rollup_repo_epic_archives_into_own_bucket() -> None:
         patch(
             "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
     mock_exists.assert_called_once_with("org", "some-repo")
@@ -1166,9 +1166,9 @@ def test_rollup_dotgithub_own_epic_unchanged() -> None:
         patch(
             "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
-        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._add_child") as mock_add,
+        patch("vergil_tooling.lib.epics._remove_child") as mock_rm,
     ):
         epics.rollup(task)
     mock_exists.assert_called_once_with("org", ".github")
@@ -1193,7 +1193,7 @@ def test_rollup_skips_non_repo_adhoc_epic() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value=title),
         patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
     mock_exists.assert_not_called()  # fast-rejected on the space, no API probe
@@ -1213,7 +1213,7 @@ def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
             "vergil_tooling.lib.epics._issue_title",
             return_value="Archive (ad hoc): .github — 2026-Q2",
         ),
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
     mock_reparent.assert_not_called()
@@ -1230,7 +1230,7 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
     mock_ens.assert_not_called()
@@ -1239,7 +1239,7 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
 
 def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
     # Defensive guard: if the resolved archive is the live epic itself, never
-    # re-parent the child into its own parent (reparent_child skipped).
+    # re-parent the child into its own parent (_reparent_child skipped).
     live = IssueRef("org", ".github", 40)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
@@ -1250,7 +1250,7 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=live),
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
     mock_reparent.assert_not_called()
@@ -1304,7 +1304,7 @@ def test_parse_issue_ref_no_repo_raises() -> None:
         epics.parse_issue_ref("#42", default_repo="")
 
 
-# -- remove_child ------------------------------------------------------------
+# -- _remove_child ------------------------------------------------------------
 
 
 def test_remove_child_issues_removesubissue_mutation() -> None:
@@ -1312,13 +1312,13 @@ def test_remove_child_issues_removesubissue_mutation() -> None:
         patch("vergil_tooling.lib.epics._node_id", side_effect=["EPIC_ID", "TASK_ID"]),
         patch("vergil_tooling.lib.github.graphql") as mock_graphql,
     ):
-        epics.remove_child(EPIC, TASK)
+        epics._remove_child(EPIC, TASK)
     mock_graphql.assert_called_once()
     assert "removeSubIssue" in mock_graphql.call_args.args[0]
     assert mock_graphql.call_args.kwargs == {"parent": "EPIC_ID", "child": "TASK_ID"}
 
 
-# -- reparent_child (atomic single-parent-safe move, #2691) ------------------
+# -- _reparent_child (atomic single-parent-safe move, #2691) ------------------
 
 
 def test_reparent_mutation_uses_replace_parent() -> None:
@@ -1332,7 +1332,7 @@ def test_reparent_child_issues_replace_parent_mutation() -> None:
         patch("vergil_tooling.lib.epics._node_id", side_effect=["ARCHIVE_ID", "TASK_ID"]),
         patch("vergil_tooling.lib.github.graphql") as mock_graphql,
     ):
-        epics.reparent_child(EPIC, TASK)
+        epics._reparent_child(EPIC, TASK)
     mock_graphql.assert_called_once()
     assert "replaceParent: true" in mock_graphql.call_args.args[0]
     assert mock_graphql.call_args.kwargs == {"parent": "ARCHIVE_ID", "child": "TASK_ID"}
@@ -1793,7 +1793,7 @@ def test_rollup_noop_for_child_under_archive_parent() -> None:
         patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"archive", "ad-hoc"}),
         patch("vergil_tooling.lib.epics.ensure_standing_archive") as mock_ensure,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
     mock_ensure.assert_not_called()
@@ -2136,9 +2136,9 @@ def test_apply_drain_ensures_archive_moves_then_closes() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=arch) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
-        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._add_child") as mock_add,
+        patch("vergil_tooling.lib.epics._remove_child") as mock_rm,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
@@ -2163,7 +2163,7 @@ def test_apply_drain_skips_archive_equal_to_live() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=live),
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
@@ -2187,7 +2187,7 @@ def test_apply_drain_ensures_archive_once_per_quarter() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=arch) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     mock_ens.assert_called_once_with(epics.ADHOC, "org/.github", "tooling", "2026-Q2", segment=1)
@@ -2219,7 +2219,7 @@ def test_apply_drain_two_quarters_ensures_twice() -> None:
             "vergil_tooling.lib.epics.ensure_standing_archive",
             side_effect=lambda _kind, _home, _name, q, segment=1: archives[q],
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     assert mock_ens.call_count == 2
@@ -2248,7 +2248,7 @@ def test_apply_drain_rolls_to_new_segment_when_head_full() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[(1, seg1)]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=100),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=seg2) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     mock_ens.assert_called_once_with(epics.ADHOC, "org/.github", "tooling", "2026-Q2", segment=2)
@@ -2268,7 +2268,7 @@ def test_apply_drain_fills_head_then_rolls() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[(1, seg1)]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=94),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=seg2) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     # seg1 came from discovery (never ensured); only the rolled segment 2 is ensured, once.
@@ -2296,7 +2296,7 @@ def test_apply_drain_writes_to_highest_existing_segment_without_rolling() -> Non
         ),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=10),
         patch("vergil_tooling.lib.epics.ensure_standing_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     mock_ens.assert_not_called()  # head resolved from discovery; batch fits, no roll
@@ -2382,7 +2382,7 @@ def test_rollup_rolls_into_new_segment_when_head_full() -> None:
         patch(
             "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=seg2
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
     mock_ens.assert_called_once_with(epics.ADHOC, "org/.github", "tooling", "2026-Q2")
@@ -3563,7 +3563,7 @@ def test_rollup_drains_closed_intake_child_into_quarter_archive() -> None:
         patch(
             "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.rollup(task)
@@ -3581,7 +3581,7 @@ def test_rollup_skips_noncanonical_intake_epic_loudly(capsys: pytest.CaptureFixt
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (intake): elsewhere"),
         patch("vergil_tooling.lib.epics._issue_closed_at") as mock_closed,
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
     mock_ens.assert_not_called()
@@ -3599,7 +3599,7 @@ def test_rollup_intake_child_without_closed_at_is_noop() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (intake): org"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
     mock_ens.assert_not_called()
@@ -3616,7 +3616,7 @@ def test_rollup_leaves_intake_archive_terminal(kind_label: str) -> None:
         patch("vergil_tooling.lib.epics._container_parent", return_value=None),
         patch("vergil_tooling.lib.epics._labels", return_value={"archive", kind_label}),
         patch("vergil_tooling.lib.epics.drain_standing_child") as mock_drain,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.rollup(TASK)
@@ -3656,7 +3656,7 @@ def test_apply_standing_drain_intake_fills_then_rolls() -> None:
         patch("vergil_tooling.lib.epics._standing_archive_segments", return_value=[(1, seg1)]),
         patch("vergil_tooling.lib.epics._archive_child_count", return_value=94),
         patch("vergil_tooling.lib.epics.ensure_standing_archive", return_value=seg2) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_standing_drain(epics.INTAKE, "org/.github", "org", plan)
@@ -4054,7 +4054,7 @@ def test_drain_standing_child_hoshin() -> None:
         patch(
             "vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch
         ) as mock_ens,
-        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.rollup(task)

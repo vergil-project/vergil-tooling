@@ -96,19 +96,19 @@ def test_fake_refuses_past_the_depth(graph: FakeSubIssueGraph) -> None:
 
 def test_fake_mutations_go_through_epics(graph: FakeSubIssueGraph) -> None:
     task = graph.add_issue(IssueRef("org", "repo-a", 5), title="t")
-    epics.add_child(HEAD, task)
-    epics.reparent_child(OTHER_HEAD, task)
+    epics._add_child(HEAD, task)
+    epics._reparent_child(OTHER_HEAD, task)
     assert graph.children_of(HEAD) == []
     assert graph.parent_of(task) == OTHER_HEAD
-    epics.remove_child(OTHER_HEAD, task)
+    epics._remove_child(OTHER_HEAD, task)
     assert graph.mutations == [
         ("add", HEAD, task),
         ("reparent", OTHER_HEAD, task),
         ("remove", OTHER_HEAD, task),
     ]
     with pytest.raises(github.GitHubAPIError):
-        epics.remove_child(OTHER_HEAD, task)
-    epics.add_child(HEAD, task)
+        epics._remove_child(OTHER_HEAD, task)
+    epics._add_child(HEAD, task)
     assert [c.ref for c in epics.child_states(HEAD)] == [task]
     assert [c.ref for c in epics.child_states_with_blockers(HEAD)] == [task]
     assert epics.native_parent_of(task) == HEAD
@@ -479,7 +479,7 @@ def test_link_into_reuses_freed_slot_before_growing(graph: FakeSubIssueGraph) ->
     head_items = _items(graph, HEAD, 99)
     _continuation(graph, C2, HEAD)
     _items(graph, C2, 99)
-    epics.remove_child(HEAD, head_items[0])
+    epics._remove_child(HEAD, head_items[0])
     task = _new_task(graph)
     graph.clear_log()
     assert epic_chain.link_into(HEAD, task) == HEAD
@@ -573,7 +573,7 @@ def test_closed_continuation_link_uses_unchecked_add(
     (c3,) = _created(graph)
     assert unchecked == [(C2, c3)]
     with pytest.raises(epics.ClosedEpicError):
-        epics.add_child(C2, _new_task(graph))
+        epics._add_child(C2, _new_task(graph))
 
 
 def _references(tree: ast.AST, name: str) -> list[str | None]:
@@ -1101,8 +1101,8 @@ def test_fake_models_a_transfer_s_disagreeing_views(graph: FakeSubIssueGraph) ->
     (task,) = _items(graph, OTHER_HEAD, 1)
     graph.list_stale(HEAD, task)
     with pytest.raises(github.GitHubAPIError, match="Issue may not contain duplicate sub-issues"):
-        epics.reparent_child(HEAD, task)
-    epics.remove_child(OTHER_HEAD, task)
+        epics._reparent_child(HEAD, task)
+    epics._remove_child(OTHER_HEAD, task)
     assert graph.parent_of(task) == HEAD
     assert graph.children_of(HEAD) == [task]
     assert graph.children_of(OTHER_HEAD) == []
@@ -1218,7 +1218,7 @@ def _race(
     With *error*, the link then fails with that text instead of reaching
     GitHub. Returns the racers' items, in the order they were linked.
     """
-    real = epics.add_child
+    real = epics._add_child
     racers: list[IssueRef] = []
     left = [times]
 
@@ -1233,7 +1233,7 @@ def _race(
                 raise subissue_fake._graphql_error(error)
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", racing)
+    monkeypatch.setattr(epics, "_add_child", racing)
     return racers
 
 
@@ -1425,7 +1425,7 @@ def test_full_tail_heal_lost_to_a_racing_continuation(
     # continuation, and ours is left unlinked, an orphan for adoption.
     items = _items(graph, HEAD, 100)
     _continuation(graph, RIVAL, None, k=2)
-    real = epics.add_child
+    real = epics._add_child
     raced = [False]
 
     def racing(parent: IssueRef, child: IssueRef) -> None:
@@ -1434,7 +1434,7 @@ def test_full_tail_heal_lost_to_a_racing_continuation(
             real(HEAD, RIVAL)
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", racing)
+    monkeypatch.setattr(epics, "_add_child", racing)
     monkeypatch.setattr(epic_chain, "find_orphans", lambda head: [])
     _every_item_parented(graph, monkeypatch, items)
 
@@ -1456,14 +1456,14 @@ def test_full_tail_heal_lost_with_no_room_says_where_the_item_waits(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     items = _items(graph, HEAD, 100)
-    real = epics.add_child
+    real = epics._add_child
 
     def racing(parent: IssueRef, child: IssueRef) -> None:
         if parent == HEAD and len(graph.children_of(HEAD)) < 100:
             graph.link(HEAD, _new_task(graph))  # a racer's item takes the freed slot
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", racing)
+    monkeypatch.setattr(epics, "_add_child", racing)
 
     with pytest.raises(epic_chain.ChainLimitError) as exc:
         epic_chain.heal_full_tail(HEAD)
@@ -1481,14 +1481,14 @@ def test_full_tail_heal_link_failure_moves_the_item_back(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     items = _items(graph, HEAD, 100)
-    real = epics.add_child
+    real = epics._add_child
 
     def failing(parent: IssueRef, child: IssueRef) -> None:
         if parent == HEAD:
             raise subissue_fake._graphql_error("Something went wrong on our side")
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", failing)
+    monkeypatch.setattr(epics, "_add_child", failing)
     _every_item_parented(graph, monkeypatch, items)
 
     with pytest.raises(RuntimeError, match="Something went wrong on our side") as exc:
@@ -1510,7 +1510,7 @@ def test_full_tail_heal_reparent_failure_is_not_a_race(
     def failing(new_parent: IssueRef, child: IssueRef) -> None:
         raise subissue_fake._graphql_error("Something went wrong on our side")
 
-    monkeypatch.setattr(epics, "reparent_child", failing)
+    monkeypatch.setattr(epics, "_reparent_child", failing)
 
     with pytest.raises(RuntimeError, match="Something went wrong on our side") as exc:
         epic_chain.link_into(HEAD, task)
@@ -1532,14 +1532,14 @@ def test_full_tail_heal_depth_error_moves_the_item_back(
     graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     items = _items(graph, HEAD, 100)
-    real = epics.add_child
+    real = epics._add_child
 
     def too_deep(parent: IssueRef, child: IssueRef) -> None:
         if parent == HEAD:
             raise subissue_fake._graphql_error(DEPTH_ERROR.format(child=child.number, parent=10))
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", too_deep)
+    monkeypatch.setattr(epics, "_add_child", too_deep)
 
     with pytest.raises(epic_chain.ChainDepthError):
         epic_chain.heal_full_tail(HEAD)
@@ -1697,14 +1697,14 @@ def test_link_into_heals_duplicates_after_its_own_link(
     _continuation(graph, C2B, None)
     (rival_item,) = _items(graph, C2B, 1)
     task = _new_task(graph)
-    real = epics.add_child
+    real = epics._add_child
 
     def racing(parent: IssueRef, child: IssueRef) -> None:
         if child == task:
             graph.link(HEAD, C2B)  # a racing writer's continuation
         real(parent, child)
 
-    monkeypatch.setattr(epics, "add_child", racing)
+    monkeypatch.setattr(epics, "_add_child", racing)
 
     assert epic_chain.link_into(HEAD, task) == HEAD
     assert epic_chain.chain_of(HEAD) == [HEAD, C2A]

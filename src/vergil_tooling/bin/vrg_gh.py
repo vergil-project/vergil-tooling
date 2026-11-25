@@ -283,6 +283,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    if top == "issue" and sub == "edit":
+        raw = _raw_subissue_flag(argv[2:])
+        if raw is not None:
+            print(
+                f"vrg-gh: issue edit {raw} is refused. A raw sub-issue write bypasses "
+                "the epic chain, which links past GitHub's 100-child limit through "
+                "continuations (vergil-project/.github#1609): link a task with "
+                "vrg-epic-link and move one with vrg-epic-move.",
+                file=sys.stderr,
+            )
+            return 1
+
     if top == "issue" and sub == "close" and identity_mode.is_agent():
         refused = _operational_close_refusal(argv[2:])
         if refused is not None:
@@ -447,6 +459,27 @@ def _operational_close_refusal(args: list[str]) -> str | None:
             "vrg-gh could not check whether the issue is an operational task with a "
             f"recorded 'Outcome: SUCCESS', so it does not close it: {exc}"
         )
+
+
+_RAW_SUBISSUE_FLAGS = ("--parent", "--add-sub-issue", "--remove-sub-issue")
+
+
+def _raw_subissue_flag(args: list[str]) -> str | None:
+    """Return the first raw sub-issue flag of an ``issue edit``'s *args*, or ``None``.
+
+    The epic chain owns every sub-issue write (spec §4.2 of epic
+    vergil-project/.github#1609), so ``--parent``, ``--add-sub-issue`` and
+    ``--remove-sub-issue`` are refused for every identity, in the
+    separate-value and ``=`` forms alike. The args are parsed as gh parses
+    them (:func:`_parse_args`), so a value-taking flag's value is never read
+    as a flag, and a ``--`` taken as such a value (``--title -- --parent 7``)
+    does not end the flags.
+    """
+    parsed = _parse_args(args, _VALUE_FLAGS[("issue", "edit")])
+    for flag, _value in parsed.flag_values:
+        if flag in _RAW_SUBISSUE_FLAGS:
+            return flag
+    return None
 
 
 def _close_target(parsed: _ParsedArgs) -> epics.IssueRef:
@@ -1030,6 +1063,8 @@ def _print_help() -> None:
         "    denied.\n"
         "  - An agent's issue close of an operational task as completed is\n"
         "    refused until a trusted comment on it records 'Outcome: SUCCESS'.\n"
+        "  - issue edit's raw sub-issue flags (--parent, --add-sub-issue,\n"
+        "    --remove-sub-issue) are refused: use vrg-epic-link or vrg-epic-move.\n"
         "  - run job-log --repo <owner>/<repo> --job <id> prints one Actions\n"
         "    job's log from the read-only per-job log endpoint, for every identity.\n"
         "\n"

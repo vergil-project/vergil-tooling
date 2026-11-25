@@ -376,7 +376,7 @@ def test_ensure_standing_operations_creates_no_task(capsys: pytest.CaptureFixtur
         ),
         patch("vergil_tooling.lib.epics.ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics._add_child") as mock_add,
     ):
         rc = main(["--standing", "operations", "--org", "acme"])
     assert rc == 0
@@ -400,7 +400,7 @@ def test_ensure_standing_operations_reuses_existing(capsys: pytest.CaptureFixtur
             return_value=[{"number": 12, "title": _OPS_TITLE, "state": "OPEN"}],
         ),
         patch("vergil_tooling.lib.github.create_issue") as mock_create,
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics._add_child") as mock_add,
     ):
         rc = main(["--standing", "operations", "--org", "acme"])
     assert rc == 0

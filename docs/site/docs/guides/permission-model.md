@@ -151,7 +151,7 @@ rejected as not recognized.
 |---|---|---|---|---|
 | `issue view` | yes | yes | — | Read-only |
 | `issue list` | yes | yes | — | Read-only |
-| `issue edit` | yes | yes | — | Updating metadata |
+| `issue edit` | yes | yes | — | Updating metadata; the raw sub-issue flags (`--parent`, `--add-sub-issue`, `--remove-sub-issue`) are refused for every identity, since the epic chain owns sub-issue links: use `vrg-epic-link` or `vrg-epic-move` |
 | `issue comment` | yes | yes | — | Adding comments |
 | `issue close` | yes | yes | — | Closing is mechanical and reversible; an agent's completed close of an operational task waits for its result (see [Operational task close](#operational-task-close)) |
 | `issue reopen` | yes | yes | — | Non-destructive; an errant reopen is re-closed |
