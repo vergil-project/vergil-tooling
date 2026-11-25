@@ -341,7 +341,7 @@ class FakeSubIssueGraph:
         return f"https://github.com/{repo}/issues/{number}"
 
     def run(self, *args: str) -> None:
-        """``github.run``: ``issue edit``, ``issue comment``, ``issue close`` and ``label create``."""
+        """``github.run``: ``issue edit``, ``comment`` and ``close``, and ``label create``."""
         if args[:2] == ("label", "create"):
             self._record(("label", args[args.index("--repo") + 1], args[2]))
             return

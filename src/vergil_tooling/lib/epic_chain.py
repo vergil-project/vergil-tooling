@@ -746,8 +746,6 @@ def _renumber(head: IssueRef, continuation: IssueRef, k: int) -> None:
     )
 
 
-
-
 def find_or_create_continuation(
     head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
 ) -> IssueRef:
@@ -911,8 +909,8 @@ def heal_full_tail(head: IssueRef, *, own_item: IssueRef | None = None) -> bool:
             refused.append((tail.ref, exc))
             continue
         return True
-    container, exc = refused[-1]
-    raise ChainLimitError(head, container, None) from exc
+    container, error = refused[-1]
+    raise ChainLimitError(head, container, None) from error
 
 
 def heal_duplicate_continuations(head: IssueRef) -> bool:

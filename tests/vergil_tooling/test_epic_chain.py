@@ -1398,13 +1398,44 @@ def test_full_tail_heal_retries_exhausted(
 ) -> None:
     _items(graph, HEAD, 100)
 
-    def always_full(head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None) -> IssueRef:
+    def always_full(
+        head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
+    ) -> IssueRef:
         raise subissue_fake._graphql_error(LIMIT_ERROR.format(child=1, parent=tail.number))
 
     monkeypatch.setattr(epic_chain, "find_or_create_continuation", always_full)
     with pytest.raises(epic_chain.ChainLimitError) as exc:
         epic_chain.heal_full_tail(HEAD)
     assert exc.value.container == HEAD and exc.value.item is None
+
+
+@pytest.mark.usefixtures("rollover")
+def test_full_tail_heal_surfaces_a_failure_once_the_tail_has_room(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = _items(graph, HEAD, 100)
+
+    def unlink_then_fail(
+        head: IssueRef, tail: IssueRef, *, own_item: IssueRef | None = None
+    ) -> IssueRef:
+        graph._remove(tail, items[0])  # someone else freed a slot meanwhile
+        raise subissue_fake._graphql_error("Something went wrong on our side")
+
+    monkeypatch.setattr(epic_chain, "find_or_create_continuation", unlink_then_fail)
+    with pytest.raises(github.GitHubAPIError, match="Something went wrong on our side"):
+        epic_chain.heal_full_tail(HEAD)
+
+
+@pytest.mark.usefixtures("rollover")
+def test_settle_refuses_an_item_left_without_a_parent(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = _new_task(graph)
+    real = epics._container_parent
+    monkeypatch.setattr(epic_chain, "heal_full_tail", lambda head, *, own_item=None: True)
+    monkeypatch.setattr(epics, "_container_parent", lambda ref: None if ref == task else real(ref))
+    with pytest.raises(RuntimeError, match=f"{task.slug} has no parent after the chain"):
+        epic_chain.link_into(HEAD, task)
 
 
 @pytest.mark.usefixtures("rollover")
