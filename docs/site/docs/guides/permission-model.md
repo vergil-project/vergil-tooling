@@ -153,7 +153,7 @@ rejected as not recognized.
 | `issue list` | yes | yes | — | Read-only |
 | `issue edit` | yes | yes | — | Updating metadata |
 | `issue comment` | yes | yes | — | Adding comments |
-| `issue close` | yes | yes | — | Closing is mechanical and reversible |
+| `issue close` | yes | yes | — | Closing is mechanical and reversible; an agent's completed close of an operational task waits for its result (see [Operational task close](#operational-task-close)) |
 | `issue reopen` | yes | yes | — | Non-destructive; an errant reopen is re-closed |
 | `issue transfer` | yes | yes | — | Intra-org issue move (finite-epic relocation) |
 | `pr view` | yes | yes | yes | Read-only |
@@ -217,6 +217,26 @@ Other write actions of allowed top-level commands (`release
 create`, `workflow enable`/`disable`, `cache delete`, `variable
 set`/`delete` and so on)
 are rejected by the allowlist's deny-by-default.
+
+### Operational task close
+
+An operational task (a `validation` or `deployment` issue) is accepted
+by a recorded `Outcome: SUCCESS` comment, and closes only once that
+result has posted. For an agent identity, `vrg-gh issue close` makes
+that order mechanical: before it closes an issue as completed (gh's
+default reason), it reads the issue's labels and, for an operational
+task, its trusted comments through the trust layer. It refuses the
+close while no trusted comment carries an `Outcome: SUCCESS` line
+(`Outcome: PASS` is the legacy alias), so a close sent in one batch
+with a result comment that failed cannot close the task with no result
+above it. The close's own `--comment` does not count as the result.
+
+A close as `not planned` or a duplicate claims no result and is not
+gated, and a human's close is not gated either. A target the wrapper
+cannot resolve (a positional that is not one issue number or URL, or a
+`--repo` that is not `OWNER/REPO`) and a read that cannot complete
+refuse the close rather than let it through unchecked. The success
+marker is the one `vrg-epic-audit` checks on closed operational tasks.
 
 ### `gh api` by Identity
 
