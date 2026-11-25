@@ -13,7 +13,16 @@ import pytest
 from tests.vergil_tooling import trust_stubs
 from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_epic_audit import main
-from vergil_tooling.lib import epic_audit, epics, github, proxies, roadmap, trust
+from vergil_tooling.lib import (
+    epic_audit,
+    epic_chain,
+    epic_docs,
+    epics,
+    github,
+    proxies,
+    roadmap,
+    trust,
+)
 from vergil_tooling.lib.epic_audit import (
     BodyParents,
     EpicDocsFinding,
@@ -39,8 +48,17 @@ _PX = "vergil_tooling.lib.proxies"
 # The real check, taken before the autouse fixture stubs it out.
 _PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
 _PROXY_CLOSURES = epic_audit.proxy_closures
+_CHAIN_DRIFT = epic_audit.chain_drift
+_CONTAINERS = epic_chain.containers
 # The orgs the tests audit, each a Vergil org with a stanza of its own.
 _ORGS = ("org", "owner", "lab-org", "vergil-project", "logical-minds-foundry")
+
+
+def _one_container(head: IssueRef) -> list[epic_chain.Container]:
+    """The chain of an epic with no continuation: the head alone, open, with no item."""
+    return [epic_chain.Container(ref=head, state="OPEN", item_count=0, continuation=None)]
+
+
 AUTHORS = TrustedAuthors(
     human=("human",),
     agents=("vergil-user",),
@@ -74,6 +92,9 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])),
         patch(f"{_MOD}.epic_audit.misplaced_adhoc", return_value=[]),
+        # No chain is drifted, and every --epic names a one-container epic.
+        patch(f"{_MOD}.epic_audit.chain_drift", return_value=[]),
+        patch(f"{_MOD}.epic_chain.containers", side_effect=_one_container),
     ):
         yield mock_drain
 
@@ -1691,4 +1712,143 @@ def test_epic_audit_continuation_uses_head(
     assert "org/.github#50 is a continuation of org/.github#40; using org/.github#40" in (
         capsys.readouterr().err
     )
+    assert graph.events == []
+
+
+# -- chained epics (epic vergil-project/.github#1609, Task 9a) -------------------
+
+_CHAIN_HEAD = IssueRef("org", ".github", 40)
+
+
+def _chain_cli_graph(monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
+    """The fake graph, read from ``org/tooling``."""
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    monkeypatch.setattr(github, "current_repo", lambda: "org/tooling")
+    return graph
+
+
+@contextlib.contextmanager
+def _real_chain() -> Generator[None]:
+    """The real chain walk and chain-drift check, in place of the autouse fixture's stubs."""
+    with (
+        patch(f"{_MOD}.epic_chain.containers", _CONTAINERS),
+        patch(f"{_MOD}.epic_audit.chain_drift", _CHAIN_DRIFT),
+    ):
+        yield
+
+
+def _fill(graph: FakeSubIssueGraph, container: IssueRef, first: int, count: int) -> None:
+    """Link *count* closed items of ``org/tool``, numbered from *first*, under *container*."""
+    for n in range(first, first + count):
+        item = graph.add_issue(IssueRef("org", "tool", n), title=f"t{n}", state="CLOSED")
+        graph.link(container, item)
+
+
+def test_audit_epic_shows_container_count(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = IssueRef("org", ".github", 50)
+    c3 = IssueRef("org", ".github", 60)
+    _fill(graph, _CHAIN_HEAD, 1, 99)
+    graph.add_continuation(c2, _CHAIN_HEAD, _CHAIN_HEAD)
+    _fill(graph, c2, 100, 99)
+    graph.add_continuation(c3, _CHAIN_HEAD, c2, k=3)
+    _fill(graph, c3, 199, 1)
+    lone = graph.add_issue(IssueRef("org", ".github", 70), title="Epic: small", labels=["epic"])
+    _fill(graph, lone, 300, 2)
+    graph.clear_log()
+
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)  # stdout is one JSON object and nothing else
+    assert payload["containers"] == 3
+    assert len(payload["children"]) == 199
+    assert {c["number"] for c in payload["children"]} == set(range(1, 200))
+
+    with _real_chain():
+        assert main(["--epic", lone.slug]) == 0
+    assert json.loads(capsys.readouterr().out)["containers"] == 1
+    assert graph.events == []
+
+
+def test_audit_epic_chain_drift_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = graph.add_issue(
+        IssueRef("org", ".github", 50),
+        title="Epic: big (continuation 2)",
+        labels=["epic", epics.CONTINUATION_LABEL],
+        body="Continues: org/.github#999\nContainer: 2\n",
+    )
+    graph.link(_CHAIN_HEAD, c2)
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(
+        "vrg-epic-audit: epic org/.github#40: chain drift: org/.github#50 breaks the"
+        " continues-mismatch rule"
+    )
+
+
+def test_audit_epic_notes_closed_continuation_in_open_chain(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A closed continuation in an open chain is counted and noted; exit 0.
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    c2 = graph.add_continuation(IssueRef("org", ".github", 50), _CHAIN_HEAD, _CHAIN_HEAD)
+    _fill(graph, c2, 1, 1)
+    graph.close(c2)
+    with _real_chain():
+        assert main(["--epic", _CHAIN_HEAD.slug]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["containers"] == 2
+    assert [c["number"] for c in payload["children"]] == [1]
+    assert captured.err == (
+        "vrg-epic-audit: note: continuation org/.github#50 of epic org/.github#40 is closed;"
+        " its items are still listed\n"
+    )
+
+
+def test_audit_report_lists_chain_drift(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The org report lists an orphaned continuation under Chain drift, report
+    # only: the exit status is unchanged and nothing is written.
+    graph = _chain_cli_graph(monkeypatch)
+    graph.add_issue(_CHAIN_HEAD, title="Epic: big", labels=["epic"])
+    graph.add_continuation(IssueRef("org", ".github", 50), _CHAIN_HEAD, None)
+    graph.clear_log()
+    listing = [
+        epic_docs.EpicRecord(
+            number=ref.number,
+            title=issue.title,
+            state=issue.state,
+            stateReason=None,
+            createdAt="2026-11-01T00:00:00Z",
+            labels=list(issue.labels),
+            body=issue.body,
+        )
+        for ref, issue in graph.issues.items()
+    ]
+    with (
+        _patched(_report_patches()),
+        _real_chain(),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=listing),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "## Chain drift (report only)" in out
+    assert (
+        "- epic org/.github#40: org/.github#50 is an orphaned continuation, open and not"
+        " reached from the head"
+    ) in out
     assert graph.events == []

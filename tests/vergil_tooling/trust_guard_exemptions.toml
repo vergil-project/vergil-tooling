@@ -109,12 +109,13 @@ it again through trust.read_issue and counts the release marker only in a truste
 body."""
 
 [[judged]]
-path = "lib/epic_audit.py"
-function = "_repo_open_issues"
+path = "lib/epics.py"
+function = "list_open_issues"
 fields = ["body"]
 judge = ["lib/epic_audit.py:body_only_parents", "lib/release/__init__.py:is_release_tracking_issue"]
-reason = """The listing's body picks the candidates of a body Parent: line, which \
-body_only_parents reads again through trust.read_issue, and is passed to \
+reason = """The listing's body, which epic_audit.open_issues carries, picks the \
+candidates of a body Parent: line, which body_only_parents reads again through \
+trust.read_issue, and is passed to \
 is_legitimate_top_level, whose release check reads the body again through the layer. \
 Its third use, misplaced_adhoc, is the [[exempt]] entry of this function."""
 
@@ -237,8 +238,8 @@ names the issue, so the body can narrow what is printed but never adds to it, an
 nothing is written."""
 
 [[exempt]]
-path = "lib/epic_audit.py"
-function = "_repo_open_issues"
+path = "lib/epics.py"
+function = "list_open_issues"
 fields = ["body"]
 reason = """misplaced_adhoc reads the listing's body for cross-org epic refs. It is \
 report-only: a candidate is named in the audit's output and nothing is refused, \

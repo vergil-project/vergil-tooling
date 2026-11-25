@@ -525,13 +525,16 @@ def is_skipped(title: str, labels: Iterable[str]) -> bool:
 
     A container epic (one :func:`epics.is_standing` recognises, one carrying
     the retired ``standing`` label, or one titled ``Epic (standing): …``), a
-    proxy epic (:func:`epics.is_proxy`: its primary carries the documents) or
-    an archived one (titled ``[archived] …``).
+    proxy epic (:func:`epics.is_proxy`: its primary carries the documents), a
+    continuation (:func:`epics.is_continuation`: a container of its head's
+    chain, which carries the documents) or an archived one (titled
+    ``[archived] …``).
     """
     names = set(labels)
     return (
         epics.is_standing(names)
         or epics.is_proxy(names)
+        or epics.is_continuation(names)
         or _RETIRED_STANDING_LABEL in names
         or title.startswith((_STANDING_TITLE_PREFIX, _ARCHIVED_PREFIX))
     )
