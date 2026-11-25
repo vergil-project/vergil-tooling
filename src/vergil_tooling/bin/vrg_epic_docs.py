@@ -16,7 +16,8 @@ document lines elsewhere in the body (a ``Documents:`` list, a standalone
 ``Spec:`` line) are removed. The command does not check that a named file
 exists: at handoff it exists only on the PR branch, so the link resolves once
 that PR merges. Re-running with the same arguments makes no edit. An issue
-without the ``epic`` label is refused.
+without the ``epic`` label is refused, and a continuation's ref means its
+chain's head, whose body is written.
 
 A ``PATH`` is repo-relative, with no leading ``/``, whitespace or backtick
 (the link text is a backticked path); a ``<repo>`` name is letters, digits,
@@ -136,9 +137,15 @@ def _set(epic: epics.IssueRef, paths: dict[str, tuple[str | None, str] | None]) 
     a task's or a pull request's body. The default branches are looked up
     before the body is read, so the read and the write are as close together
     as they can be.
+
+    *epic* goes through the shared ref resolution, with no sentinel: a
+    continuation's ref (copied from GitHub's UI) means its chain's head, whose
+    body holds the section, and a line on stderr says so.
     """
-    if not epics.is_epic(epic):
-        print(f"{_PROG}: {epic.slug} is not an epic (missing the 'epic' label)", file=sys.stderr)
+    try:
+        epic = epics.resolve_epic_ref(epic.slug, repo=f"{epic.owner}/{epic.repo}", sentinels=False)
+    except ValueError as exc:
+        print(f"{_PROG}: {exc}", file=sys.stderr)
         return 1
     branches: dict[str, str] = {}
     for named in paths.values():

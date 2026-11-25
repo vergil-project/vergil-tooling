@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_epic_docs import main, parse_args
 from vergil_tooling.lib import epic_docs, github, trust
 from vergil_tooling.lib.epic_docs import PENDING, DocLink
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -33,11 +35,11 @@ class _Fake:
         self.write_body = MagicMock(side_effect=self._write)
         self.default_branch = MagicMock(side_effect=self._branch)
         self.epic = True
-        self.is_epic = MagicMock(side_effect=self._is_epic)
+        self.labels = MagicMock(side_effect=self._labels)
 
-    def _is_epic(self, ref: object) -> bool:
+    def _labels(self, ref: object) -> set[str]:
         self.orgs.append(("epic", github._target_org.get()))
-        return self.epic
+        return {"epic"} if self.epic else set()
 
     def _read(self, owner: str, repo: str, number: int) -> str:
         self.orgs.append(("read", github._target_org.get()))
@@ -59,7 +61,7 @@ def fake() -> Generator[_Fake]:
         patch(f"{_MOD}.epic_docs.read_body", state.read_body),
         patch(f"{_MOD}.epic_docs.write_body", state.write_body),
         patch(f"{_MOD}.epic_docs.default_branch", state.default_branch),
-        patch(f"{_MOD}.epics.is_epic", state.is_epic),
+        patch(f"{_MOD}.epics._labels", state.labels),
     ):
         yield state
 
@@ -299,7 +301,7 @@ def test_set_reads_the_body_through_the_trust_layer(
     with (
         patch("vergil_tooling.lib.github.graphql", return_value=answer),
         patch("vergil_tooling.lib.trust.load_trusted_authors", return_value=trust_stubs.AUTHORS),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epic_docs.write_body", write),
     ):
         rc = main(["set", "--epic", "o/.github#1"])
@@ -721,3 +723,24 @@ def test_backfill_missing_token_is_left_to_cli_main(capsys: pytest.CaptureFixtur
 def test_backfill_rejects_bad_arguments(argv: list[str]) -> None:
     with pytest.raises(SystemExit):
         parse_args(argv)
+
+
+def test_epic_docs_continuation_uses_head(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # set --epic naming a continuation writes the head's body, never the continuation's.
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(IssueRef("o", ".github", 1), title="Epic: big", labels=["epic"])
+    continuation = graph.add_continuation(IssueRef("o", ".github", 2), head, head)
+    state = _Fake("Epic description.\n")
+    with (
+        patch(f"{_MOD}.epic_docs.read_body", state.read_body),
+        patch(f"{_MOD}.epic_docs.write_body", state.write_body),
+        patch(f"{_MOD}.epic_docs.default_branch", state.default_branch),
+    ):
+        assert main(["set", "--epic", continuation.slug]) == 0
+    assert state.read_body.call_args.args == ("o", ".github", 1)
+    assert state.write_body.call_args.args[:3] == ("o", ".github", 1)
+    assert "o/.github#2 is a continuation of o/.github#1; using o/.github#1" in (
+        capsys.readouterr().err
+    )

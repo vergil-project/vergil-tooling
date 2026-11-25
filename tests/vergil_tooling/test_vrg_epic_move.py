@@ -246,13 +246,13 @@ def test_main_bare_epic_resolves_against_task_epic_home() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
         patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}) as mock_labels,
         patch(f"{_MOD}.epics.parent_of", return_value=None),
         patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
         rc = main(["--task", "org/lab#123", "--epic", "#407"])
     assert rc == 0
-    mock_is_epic.assert_called_once_with(expected_epic)
+    mock_labels.assert_any_call(expected_epic)
     mock_add.assert_called_once_with(expected_epic, task)
     assert seen == [("org", ".github", "org")]
 

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_epic_create import main, parse_args
 from vergil_tooling.lib import epics, github, proxies, trust
 from vergil_tooling.lib.epics import IssueRef
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 
 _MOD = "vergil_tooling.bin.vrg_epic_create"
 _URL = "https://github.com/org/.github/issues/50"
+_REAL_EPIC_HEAD = epics.epic_head
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +25,13 @@ def _ensure_labels_ok() -> Iterator[MagicMock]:
     """Patch label ensuring as vrg_epic_create imports it: no test reaches gh for it."""
     with patch(f"{_MOD}.ensure_labels_or_report", return_value=True) as mock_ensure:
         yield mock_ensure
+
+
+@pytest.fixture(autouse=True)
+def _primary_is_a_head() -> Iterator[MagicMock]:
+    """Every --proxy-for primary is a chain head unless a test says otherwise (no gh read)."""
+    with patch(f"{_MOD}.epics.epic_head", side_effect=lambda ref: ref) as mock_head:
+        yield mock_head
 
 
 def test_title_required_without_proxy_for(capsys: pytest.CaptureFixture[str]) -> None:
@@ -474,3 +483,28 @@ def test_proxy_for_refuses_org(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 1
     assert "--org" in capsys.readouterr().err
     mock_proxy.assert_not_called()
+
+
+def test_proxy_for_continuation_uses_head(
+    _primary_is_a_head: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A continuation's ref (copied from GitHub's UI) means its chain's head: the
+    # proxy is made for the head, so its Primary: line names the head.
+    _primary_is_a_head.side_effect = _REAL_EPIC_HEAD
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    head = graph.add_issue(_PRIMARY, title="Epic: big", labels=["epic", "epic-development"])
+    continuation = graph.add_continuation(IssueRef("vergil-project", ".github", 1500), head, head)
+    args = ["--proxy-for", continuation.slug, "--repo", "logical-minds-foundry/x"]
+    with patch(
+        f"{_MOD}.proxies.create_proxy", return_value=_result(created=True, commented=True)
+    ) as create:
+        assert main(args) == 0
+    create.assert_called_once_with(head, "logical-minds-foundry/x")
+    captured = capsys.readouterr()
+    assert (
+        "vergil-project/.github#1500 is a continuation of vergil-project/.github#1417; "
+        "using vergil-project/.github#1417" in captured.err
+    )
+    assert f"Created proxy {_PROXY.slug} for {head.slug}." in captured.out

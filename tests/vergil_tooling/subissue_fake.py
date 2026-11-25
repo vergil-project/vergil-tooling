@@ -7,8 +7,8 @@ container, parent and mutation queries, and passes the trust layer's queries
 to a :class:`~tests.vergil_tooling.trust_stubs.FakeItems` that serves each
 issue's body (trusted unless added with an untrusted *author*);
 ``github.read_output`` and ``github.read_json`` answer the REST reads of a node
-id, state, title, close time and labels, and the listing of a repo's open
-issues by label. The writes the chain layer makes besides links are faked
+id, state, title, close time and labels, and the listing of a repo's issues
+by label (open, or open and closed). The writes the chain layer makes besides links are faked
 too: ``github.create_issue`` adds an issue, and ``github.run`` answers
 ``issue edit`` (title and body), ``issue comment``, ``issue close`` and
 ``label create``.
@@ -116,6 +116,34 @@ class FakeSubIssueGraph:
         self.layer.items[(f"{ref.owner}/{ref.repo}", ref.number)] = trust_stubs.item(
             body=body, author=author
         )
+        return ref
+
+    def add_continuation(
+        self,
+        ref: IssueRef,
+        head: IssueRef,
+        under: IssueRef | None,
+        *,
+        k: int = 2,
+        author: Any = trust_stubs.HUMAN,
+    ) -> IssueRef:
+        """Add *ref*, container *k* of *head*'s chain, linked under *under* (None: an orphan).
+
+        Its title, labels and ``Continues:``/``Container:`` lines are as the
+        chain layer writes them; its body is served by *author*.
+        """
+        self.add_issue(
+            ref,
+            title=f"{self.issues[head].title} (continuation {k})",
+            labels=["epic", epics.CONTINUATION_LABEL],
+            body=(
+                f"Holds the overflow of {head.slug}; managed by the tooling.\n\n"
+                f"Continues: {head.slug}\nContainer: {k}\n"
+            ),
+            author=author,
+        )
+        if under is not None:
+            self.link(under, ref)
         return ref
 
     def link(self, parent: IssueRef, child: IssueRef) -> None:
@@ -248,15 +276,18 @@ class FakeSubIssueGraph:
             return {"addSubIssue": {"subIssue": {"number": child.number}}}
         ref = self._by_node_id(variables["id"])
         issue = self.issues[ref]
-        if query == epics._PARENT_QUERY:
+        if query in (epics._PARENT_QUERY, epics._PARENT_WITH_LABELS_QUERY):
             parent = issue.parent
-            return {
-                "node": {
-                    "parent": None
-                    if parent is None
-                    else {"number": parent.number, "repository": _repo_node(parent)}
+            if parent is None:
+                return {"node": {"parent": None}}
+            node: dict[str, Any] = {"number": parent.number, "repository": _repo_node(parent)}
+            if query == epics._PARENT_WITH_LABELS_QUERY:
+                names = self.issues[parent].labels
+                node["labels"] = {
+                    "totalCount": len(names),
+                    "nodes": [{"name": name} for name in names],
                 }
-            }
+            return {"node": {"parent": node}}
         if query == epics._CONTAINER_QUERY:
             nodes = [self._child_node(c, labels=True, blockers=False) for c in issue.children]
             return {
@@ -287,11 +318,10 @@ class FakeSubIssueGraph:
         raise AssertionError(f"unfaked jq read: {jq!r}")
 
     def read_json(self, *args: str) -> dict[str, object] | list[object]:
-        """``github.read_json``: one issue's labels and title, or a repo's open issues by label.
+        """``github.read_json``: one issue's labels, title and state, or a repo's issues by label.
 
-        ``issue view <N> --repo <o/r> --json labels[,title]``, and
-        ``issue list --repo <o/r> --label <name> --state open --limit <n>
-        --json number,labels``.
+        ``issue view <N> --repo <o/r> --json <fields>`` (of ``labels``,
+        ``title`` and ``state``), and ``issue list`` as :meth:`_list` takes it.
         """
         if args[:2] == ("issue", "list"):
             return self._list(args)
@@ -304,22 +334,41 @@ class FakeSubIssueGraph:
                 answer["labels"] = [{"name": label} for label in issue.labels]
             elif name == "title":
                 answer["title"] = issue.title
+            elif name == "state":
+                answer["state"] = issue.state
             else:
                 raise AssertionError(f"unfaked issue view field: {name!r}")
         return answer
 
     def _list(self, args: tuple[str, ...]) -> list[object]:
-        flags = dict(zip(args[2::2], args[3::2], strict=True))
-        assert set(flags) == {"--repo", "--label", "--state", "--limit", "--json"}, args
-        assert flags["--state"] == "open" and flags["--json"] == "number,labels", args
+        """``issue list --repo <o/r> (--label <name>)… --state <open|all> --limit <n> --json <f>``.
+
+        *f* is a comma-separated list of ``number``, ``labels``, ``title`` and
+        ``state``; every ``--label`` must be on a listed issue.
+        """
+        pairs = list(zip(args[2::2], args[3::2], strict=True))
+        wanted = [value for flag, value in pairs if flag == "--label"]
+        flags = {flag: value for flag, value in pairs if flag != "--label"}
+        assert set(flags) == {"--repo", "--state", "--limit", "--json"} and wanted, args
+        assert flags["--state"] in ("open", "all"), args
+        fields = flags["--json"].split(",")
+        assert set(fields) <= {"number", "labels", "title", "state"}, args
         owner, repo = flags["--repo"].split("/", 1)
-        rows: list[object] = [
-            {"number": ref.number, "labels": [{"name": label} for label in issue.labels]}
-            for ref, issue in self.issues.items()
-            if (ref.owner, ref.repo) == (owner, repo)
-            and issue.state == "OPEN"
-            and flags["--label"] in issue.labels
-        ]
+        rows: list[object] = []
+        for ref, issue in self.issues.items():
+            if (ref.owner, ref.repo) != (owner, repo):
+                continue
+            if flags["--state"] == "open" and issue.state != "OPEN":
+                continue
+            if not all(label in issue.labels for label in wanted):
+                continue
+            row: dict[str, object] = {
+                "number": ref.number,
+                "labels": [{"name": label} for label in issue.labels],
+                "title": issue.title,
+                "state": issue.state,
+            }
+            rows.append({name: row[name] for name in fields})
         return rows[: int(flags["--limit"])]
 
     def create_issue(

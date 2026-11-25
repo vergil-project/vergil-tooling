@@ -2916,13 +2916,15 @@ def _linkage_through_layer(layer: trust_stubs.FakeItems, monkeypatch: pytest.Mon
     def graphql(query: str, **variables: Any) -> object:
         if query in (trust._ITEM_QUERY, trust._EVENTS_QUERY):
             return layer(query, **variables)
-        assert query == epics._PARENT_QUERY, "only the parent lookup is answered here"
+        assert query == epics._PARENT_WITH_LABELS_QUERY, "only the parent lookup is answered here"
         return {"node": {"parent": None}}
 
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch("vergil_tooling.lib.github.graphql", side_effect=graphql),
+        # The Parent: line's epic is a head, not a continuation (parent_of reads its labels).
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.epics.is_epic", return_value=True) as is_epic,
     ):
         linkage = _task_linkage("#42", "Ref")

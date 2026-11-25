@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.lib import epics, proxies, trust
 from vergil_tooling.lib.epics import EpicListTruncatedError, IssueRef
 from vergil_tooling.lib.proxies import ProxyLinkError
@@ -824,3 +825,36 @@ def test_proxy_for_non_list_listing_raises() -> None:
     with pytest.raises(ProxyLinkError, match="unexpected 'gh issue list'"):
         fake.create()
     assert fake.writes() == []
+
+
+# -- a continuation's ref means its head (epic vergil-project/.github#1609) ------
+
+_HEAD = IssueRef("vergil-project", ".github", 10)
+_C2 = IssueRef("vergil-project", ".github", 20)
+
+
+def _chain_graph(monkeypatch: pytest.MonkeyPatch, *head_labels: str) -> FakeSubIssueGraph:
+    graph = FakeSubIssueGraph().install(monkeypatch)
+    graph.add_issue(_HEAD, title="Epic: big", labels=["epic", *head_labels])
+    graph.add_continuation(_C2, _HEAD, _HEAD)
+    return graph
+
+
+def test_require_open_development_epic_maps_continuation_to_head(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _chain_graph(monkeypatch, "epic-development")
+    assert proxies._require_open_development_epic(_C2) == (_HEAD, "Epic: big")
+    assert (
+        "vergil-project/.github#20 is a continuation of vergil-project/.github#10; "
+        "using vergil-project/.github#10" in capsys.readouterr().err
+    )
+
+
+def test_require_open_development_epic_checks_the_heads_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The continuation's own labels mark no kind; its head is a standing epic.
+    _chain_graph(monkeypatch, "intake")
+    with pytest.raises(proxies.ProxyRefusedError, match=r"\.github#10 is a standing epic"):
+        proxies._require_open_development_epic(_C2)

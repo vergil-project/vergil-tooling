@@ -897,7 +897,7 @@ def test_main_bare_epic_resolves_against_target_epic_home() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="cwd-org/elsewhere"),
         patch("vergil_tooling.lib.github.repo_exists", side_effect=exists),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
         patch(f"{_MOD}.github.create_issue", return_value="https://github.com/org/lab/issues/9"),
         patch(f"{_MOD}.epics.add_child") as mock_add,
     ):

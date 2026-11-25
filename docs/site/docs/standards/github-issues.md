@@ -330,6 +330,105 @@ registered label from the registry. Nothing checks the labels after that: an epi
 outside the tools, or whose label is removed by hand, stays unlabelled until
 someone fixes it, which changes no behaviour.
 
+### Chained epics
+
+GitHub allows at most 100 sub-issues under one parent. An epic of any kind
+grows past that as a **chain**: its **head** (the epic as created, the ref
+everything names) followed by zero or more **continuations**, in order. Each
+continuation is a native sub-issue of the container before it, in that
+container's last slot, so a container holds at most 99 items and, when it is
+not the last, exactly one continuation.
+
+A continuation is an issue in the head's repo, labelled `epic` and
+`continuation` and none of the head's kind labels, titled
+`<head title> (continuation <k>)` with `k` from 2 (the head is container 1).
+Its body says it holds the head's overflow and is managed by the tooling, and
+carries two lines, each alone on its line:
+
+```text
+Continues: <owner>/<repo>#<head>
+Container: <k>
+```
+
+The `Container:` line and the title's number are for display only: a
+container's position is the native chain's, and nothing checks the number. A
+continuation's kind is always its head's, and it is never a standing,
+proxy or development epic in its own right: no lookup of a canonical epic by
+label or title finds one.
+
+**A continuation's ref means its head.** GitHub's UI shows a continuation as a
+task's parent, so its ref gets copied into commands. Every command that takes
+an epic ref (`vrg-epic-link --epic`, `vrg-epic-audit --epic`,
+`vrg-epic-docs set --epic`, `vrg-epic-create --proxy-for`, `vrg-issue-create
+--epic`, `vrg-epic-move --epic`, `vrg-intake-route`'s targets) resolves it to
+the head and prints a line saying so:
+
+```text
+<continuation> is a continuation of <head>; using <head>
+```
+
+Every kind check then runs against the head.
+
+**The readers answer for the whole chain.** An epic's children are its
+chain's items, in container order, the continuations themselves left out; a
+task's epic is the head of the chain it is linked in, whichever container
+holds it. The rollup closes a development epic only when every item across
+its chain is closed, and then closes the head first, then each
+continuation; a continuation closing rolls nothing up on its own. A closed
+item of a standing epic drains to its archive from any container, judged by
+the head's title and kind.
+
+**Trust.** A continuation is followed only when it carries the label, its body
+passes the trust layer, its `Continues:` line names the head being walked,
+and it is a native sub-issue of the container before it. Anything else is
+**chain drift**: the reader stops with an error naming the container and the
+rule it broke (`label`, `untrusted-body`, `continues-mismatch`,
+`not-native-child` or `two-continuations`), and never guesses past it. A
+continuation closed by hand in an open chain is not drift: its items are
+still read.
+
+**Orphaned continuations.** A continuation that is open but not reachable
+from the head its `Continues:` line names (left by a writer that stopped
+partway) is an orphan. A reader resolves an item in one to the head its
+trusted `Continues:` line names and reports the drift, writing nothing.
+Before the rollup judges an epic it adopts each orphan of the head that passes
+the trust rules, linking it into the chain's last slot, and it refuses to
+close the epic while an orphan it cannot adopt exists. An orphan of a closed
+head is reported, never adopted.
+
+**First fit and rollover.** A link goes into the first open container, in
+chain order, with fewer than 99 items, so a slot a drain or a move frees is
+reused before the chain grows. Only when every container is full does the
+writer roll over: it finds or creates the next continuation, links it into
+the last container's last slot, then links the item. A development or proxy
+epic's rollover prints, and comments on the head:
+
+```text
+epic <head> rolled over into continuation <continuation> at 99 children; consider splitting it
+```
+
+A queue's rollover prints `queue <head> rolled over into continuation
+<continuation>; run epic-review <kind>`, and any other standing epic's a plain
+`epic <head> rolled over into continuation <continuation>`.
+
+**The depth limit.** Each continuation sits one level deeper than the
+container before it, and GitHub nests sub-issues at most eight levels deep.
+A link that would need a container past that limit is refused before
+anything is created or linked:
+
+```text
+epic <head> cannot grow: <n> items in <k> containers, at GitHub's nesting limit of 8; split the epic
+```
+
+**Rollover is not enabled yet.** Until every reader of an epic's children,
+the plugin skills included, reads through the chain, no tool creates a
+continuation: a head takes up to GitHub's 100 items, and a link into a full
+head is refused, naming it:
+
+```text
+epic <head> is at GitHub's limit of 100 sub-issues, and rollover into a continuation is not enabled yet
+```
+
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in
@@ -1090,6 +1189,7 @@ up to date (see
 | `operations` | Marks the standing operations epic (with `epic`) and its archives (with `archive`); never auto-closes |
 | `ops-report` | Ops issue filed for an unattended job, under the operations epic; never auto-closes |
 | `proxy` | Marks a [proxy epic](#proxy-epics) (with `epic`): a same-org umbrella for another org's epic tasks; open until its primary closes |
+| `continuation` | Marks a [continuation](#chained-epics) (with `epic`): an overflow container of an epic past GitHub's 100-sub-issue limit, managed by the tooling; its kind is its head's |
 | `epic-development` | Development epic: planned with epic-create, closes when its tasks close (a display-only [category label](#epic-categories)) |
 | `epic-management` | Management epic: the intake, planning, deferred, hoshin or operations epic; never auto-closes (a display-only [category label](#epic-categories)) |
 | `in-progress` | Planning item whose `epic-create` session is underway |

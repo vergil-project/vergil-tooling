@@ -221,6 +221,22 @@ query($id: ID!) {
 }
 """
 
+# A task's native parent with the parent's labels, in one read, so the
+# chain-aware parent lookup tells a continuation from a head without a read of
+# its own (epic vergil-project/.github#1609).
+_PARENT_WITH_LABELS_QUERY = """
+query($id: ID!) {
+  node(id: $id) {
+    ... on Issue {
+      parent {
+        number repository { name owner { login } }
+        labels(first: 100) { totalCount nodes { name } }
+      }
+    }
+  }
+}
+"""
+
 # One container of an epic's chain (epic vergil-project/.github#1609): its own
 # state, its sub-issue total (GitHub's count of every child, open and closed),
 # and each child with its labels, so the chain layer can tell a continuation
@@ -395,8 +411,15 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
 
 
 def child_states(epic: IssueRef) -> list[ChildState]:
-    """All child tasks of *epic*: native sub-issues preferred, reflink fallback."""
-    native = _native_child_states(epic)
+    """All child tasks of *epic*'s chain: native sub-issues preferred, reflink fallback.
+
+    *epic* is a head: its items and every continuation's, in container order,
+    the continuations themselves excluded
+    (:func:`~vergil_tooling.lib.epic_chain.chain_child_states`; chain drift
+    raises). A chain with no native items falls back to the issues whose
+    trusted body names the head on a ``Parent:`` line.
+    """
+    native = epic_chain.chain_child_states(epic)
     return native if native else _reflink_child_states(epic)
 
 
@@ -476,9 +499,18 @@ def child_states_with_blockers(
     it accepts carry their list: the rest carry ``None``, their list neither
     taken nor checked. A caller that lists every child but needs only the
     open ones' blockers so reads the listing once.
+
+    *epic* is a head, and the listing spans its chain: each container is read
+    in chain order, its continuation left out (chain drift raises).
     """
-    data: Any = github.graphql(_SUBISSUES_WITH_BLOCKERS_QUERY, id=_node_id(epic))
-    nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
+    chain = epic_chain.chain_of(epic)
+    continuations = set(chain[1:])
+    nodes = [
+        n
+        for container in chain
+        for n in _subissue_nodes_with_blockers(container)
+        if _ref_from_node(n) not in continuations
+    ]
     if not nodes:
         reflinked = _reflink_child_states(epic)
         return reflinked if wanted is None else [c for c in reflinked if wanted(c)]
@@ -501,8 +533,18 @@ def child_states_with_blockers(
     return states
 
 
+def _subissue_nodes_with_blockers(container: IssueRef) -> list[Any]:
+    """*container*'s own sub-issue nodes, each with its native blocked-by list."""
+    data: Any = github.graphql(_SUBISSUES_WITH_BLOCKERS_QUERY, id=_node_id(container))
+    nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
+    return list(nodes)
+
+
 def native_children(epic: IssueRef) -> list[IssueRef]:
     """*epic*'s native sub-issues only, never the body ``Parent:`` reflinks.
+
+    *epic* is a head: its items and every continuation's, in container order,
+    the continuations themselves excluded (chain drift raises).
 
     The sub-issue list is a separate view from each child's ``parent`` field,
     and GitHub can let the two disagree for a while after a transfer
@@ -510,7 +552,7 @@ def native_children(epic: IssueRef) -> list[IssueRef]:
     both. Unlike :func:`child_states` there is no reflink fallback: an empty
     list means no native sub-issues.
     """
-    return [child.ref for child in _native_child_states(epic)]
+    return [child.ref for child in epic_chain.chain_child_states(epic)]
 
 
 def render_blocked_by(deps: list[IssueRef]) -> str:
@@ -602,14 +644,45 @@ def _container_parent(task: IssueRef) -> IssueRef | None:
     return None
 
 
+def _label_names(connection: Any, what: str) -> set[str]:
+    """The label names of a GraphQL ``labels`` *connection*; a missing or short one raises."""
+    if not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list):
+        raise RuntimeError(f"the label read of {what} returned no label list")
+    nodes = connection["nodes"]
+    if int(connection.get("totalCount") or 0) > len(nodes):
+        raise RuntimeError(f"the label read of {what} was truncated")
+    return {str(label.get("name", "")) for label in nodes}
+
+
+def _chain_head(container: IssueRef, labels: Collection[str]) -> IssueRef:
+    """The head of *container*'s chain when its *labels* mark a continuation, else *container*.
+
+    A continuation is recognised by its label (:func:`is_continuation`) and
+    resolved with :func:`~vergil_tooling.lib.epic_chain.head_of`, which checks
+    every rule of spec §4.1 and raises chain drift on a broken one.
+    """
+    if is_continuation(labels):
+        return epic_chain.head_of(container)
+    return container
+
+
 def native_parent_of(task: IssueRef) -> IssueRef | None:
-    """*task*'s native sub-issue parent, or None — never the body ``Parent:`` line.
+    """*task*'s epic by its native link, or None — never the body ``Parent:`` line.
 
     The orphan sweep and the queue checks key off the native link only: a task
     whose sole link is a body ``Parent:`` reference is not attached on GitHub,
     so it must read as unparented here (unlike :func:`parent_of`).
+
+    Chain-aware (epic vergil-project/.github#1609): a task linked in a
+    continuation belongs to the chain's head, so the head is returned. The
+    parent's labels come in the same read, so only a continuation costs more.
     """
-    return _container_parent(task)
+    data: Any = github.graphql(_PARENT_WITH_LABELS_QUERY, id=_node_id(task))
+    parent = ((data or {}).get("node") or {}).get("parent")
+    if not isinstance(parent, dict):
+        return None
+    ref = _ref_from_node(parent)
+    return _chain_head(ref, _label_names(parent.get("labels"), ref.slug))
 
 
 @dataclass(frozen=True)
@@ -678,8 +751,13 @@ def _container_child_states(container: IssueRef) -> list[ChildState]:
 def parent_of(task: IssueRef) -> IssueRef | None:
     """The epic *task* belongs to: native parent preferred, reflink fallback.
 
-    The fallback reads the ``Parent:`` line of a trusted body only: an
-    untrusted body is reported and gives no parent (:func:`_trusted_body`).
+    Chain-aware: the epic is the head of the chain *task* is linked in
+    (:func:`native_parent_of`); an item in an orphaned continuation resolves
+    to the head its trusted ``Continues:`` line names, reported as drift, and
+    nothing is written. The fallback reads the ``Parent:`` line of a trusted
+    body only: an untrusted body is reported and gives no parent
+    (:func:`_trusted_body`). A ``Parent:`` line naming a continuation means
+    its head.
     """
     native = native_parent_of(task)
     if native is not None:
@@ -687,7 +765,8 @@ def parent_of(task: IssueRef) -> IssueRef | None:
     body = _trusted_body(task)
     match = _PARENT_RE.search(body or "")
     if match:
-        return IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
+        ref = IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
+        return _chain_head(ref, _labels(ref))
     return None
 
 
@@ -776,7 +855,7 @@ def reparent_child(new_parent: IssueRef, task: IssueRef) -> None:
 
 
 def all_children_closed(epic: IssueRef) -> bool:
-    """True iff *epic* has at least one child and all children are closed."""
+    """True iff *epic*'s chain has at least one child and all its children are closed."""
     children = child_states(epic)
     return bool(children) and all(child.state == "CLOSED" for child in children)
 
@@ -828,7 +907,24 @@ def qualify_epic_ref(ref: str, *, repo: str) -> IssueRef:
     return IssueRef(owner=home_owner, repo=home_repo, number=parsed.number)
 
 
-def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
+def epic_head(epic: IssueRef, *, labels: Collection[str] | None = None) -> IssueRef:
+    """The epic *epic* names: its chain's head when it is a continuation, else *epic*.
+
+    GitHub's UI shows a continuation as a task's parent, so its ref gets
+    copied into commands (spec §4.1 of epic vergil-project/.github#1609). A
+    continuation is mapped to its head
+    (:func:`~vergil_tooling.lib.epic_chain.head_of`, chain drift raises) and
+    ``<continuation> is a continuation of <head>; using <head>`` is printed to
+    stderr; every kind check then runs against the head. One label read,
+    none when the caller passes *epic*'s *labels*.
+    """
+    head = _chain_head(epic, _labels(epic) if labels is None else labels)
+    if head != epic:
+        print(f"{epic.slug} is a continuation of {head.slug}; using {head.slug}", file=sys.stderr)
+    return head
+
+
+def resolve_epic_ref(ref: str, *, repo: str, sentinels: bool = True) -> IssueRef:
     """Resolve an epic ref for a task in *repo*, accepting the standing sentinels.
 
     ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in its epic home — creating
@@ -843,7 +939,13 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     CLIs refuse the deferred epic themselves (:data:`DEFERRED_ROUTE_ONLY`); the
     sentinel resolves here so internal callers can reach it. Any other ref is parsed with
     :func:`qualify_epic_ref` (a bare ``#N`` reads against *repo*'s epic home)
-    and validated to carry the ``epic`` label.
+    and validated to carry the ``epic`` label. A continuation's ref resolves to
+    its chain's head, with a line on stderr saying so (:func:`epic_head`).
+
+    With *sentinels* False no sentinel is accepted, so nothing is created: a
+    sentinel is then parsed as a ref and refused as malformed. For the
+    read-only lookups (``vrg-epic-audit --epic``) and the commands that take
+    only an explicit epic (``vrg-epic-link``).
     """
     # Keyed by each StandingKind's sentinel, so this cannot drift from
     # EPIC_SENTINELS (the set the CLIs' cross-org guards exempt, #3514).
@@ -855,12 +957,13 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
         HOSHIN.sentinel: ensure_hoshin_epic,
         OPERATIONS.sentinel: ensure_operations_epic,
     }.get(ref)
-    if ensure is not None:
+    if ensure is not None and sentinels:
         return ensure(repo)
     epic = qualify_epic_ref(ref, repo=repo)
-    if not is_epic(epic):
+    labels = _labels(epic)
+    if "epic" not in labels:
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
-    return epic
+    return epic_head(epic, labels=labels)
 
 
 class EpicHomeError(Exception):
@@ -1190,7 +1293,7 @@ def _titled_rows(
         "--limit",
         str(EPIC_TITLE_LIST_LIMIT),
         "--json",
-        "number,title,state",
+        "number,title,state,labels",
     )
     if isinstance(raw, list) and len(raw) >= EPIC_TITLE_LIST_LIMIT:
         kind = "open issues" if states == "open" else "issues, open and closed,"
@@ -1201,7 +1304,16 @@ def _titled_rows(
         )
     if not isinstance(raw, list):
         return []
-    rows = [r for r in raw if isinstance(r, dict) and r.get("title") == title]
+    # A continuation is never a canonical epic (spec §4.1 of epic
+    # vergil-project/.github#1609): it carries no kind label and its own title,
+    # and a row labelled as one is dropped even if it somehow matched both.
+    rows = [
+        r
+        for r in raw
+        if isinstance(r, dict)
+        and r.get("title") == title
+        and not is_continuation({str(label.get("name", "")) for label in r.get("labels") or []})
+    ]
     if states == "open":
         return [{**r, "state": "OPEN"} for r in rows]
     for row in rows:
@@ -1488,9 +1600,10 @@ def standing_kind_of(labels: set[str]) -> StandingKind | None:
     """The :class:`StandingKind` a live standing epic with *labels* is, else None.
 
     A live standing epic carries ``epic`` plus its kind's key label; an archive
-    (``archive`` + key, no ``epic``) is not a live standing epic.
+    (``archive`` + key, no ``epic``) is not a live standing epic, and nor is a
+    continuation (:func:`is_continuation`), whose kind is its head's.
     """
-    if "epic" not in labels:
+    if "epic" not in labels or is_continuation(labels):
         return None
     return next((kind for kind in STANDING_KINDS if kind.key in labels), None)
 
@@ -1547,7 +1660,9 @@ class AmbiguousEpicCategoryError(ValueError):
     """An epic carries the markers of more than one category; none is guessed."""
 
 
-def epic_category(labels: Collection[str], title: str) -> EpicCategory | None:
+def epic_category(
+    labels: Collection[str], title: str, *, ref: IssueRef | None = None
+) -> EpicCategory | None:
     """The category of an issue with *labels* and *title*, or None if it is not an epic.
 
     Derived from the markers the tools already read (``epic``, :func:`is_archive`,
@@ -1555,7 +1670,20 @@ def epic_category(labels: Collection[str], title: str) -> EpicCategory | None:
     themselves. An archive, by label or stamped title, is not an epic. Several
     management kinds together are one category; markers of two categories
     raise :class:`AmbiguousEpicCategoryError`, naming them.
+
+    A continuation (:func:`is_continuation`) carries no kind marker, and its
+    category is its head's: it is read from the head of *ref*'s chain, so a
+    continuation is never taken for a development epic. Without *ref* a
+    continuation's category cannot be known, and :class:`ValueError` is raised.
     """
+    if is_continuation(labels):
+        if ref is None:
+            raise ValueError("a continuation's category is its head's; pass the continuation's ref")
+        head = epic_chain.head_of(ref)
+        head_labels, head_title = _labels_and_title(head)
+        if is_continuation(head_labels):
+            raise RuntimeError(f"the head {head.slug} of {ref.slug} is itself a continuation")
+        return epic_category(head_labels, head_title)
     if "epic" not in labels or is_archive(labels, title):
         return None
     markers: dict[EpicCategory, list[str]] = {}
@@ -1597,9 +1725,23 @@ def _queue_key(labels: set[str]) -> str | None:
     return None
 
 
+def _head_labels(epic: IssueRef) -> set[str]:
+    """*epic*'s labels, or its chain head's when *epic* is a continuation.
+
+    A continuation's kind is always its head's (spec §4.1 of epic
+    vergil-project/.github#1609), so every kind check reads the head.
+    """
+    labels = _labels(epic)
+    head = _chain_head(epic, labels)
+    return labels if head == epic else _labels(head)
+
+
 def queue_kind(epic: IssueRef) -> str | None:
-    """``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic, else None."""
-    return _queue_key(_labels(epic))
+    """``"intake"``, ``"planning"`` or ``"deferred"`` for a live queue epic, else None.
+
+    A continuation of a queue epic is that queue's kind: its head's.
+    """
+    return _queue_key(_head_labels(epic))
 
 
 def queue_or_archive_kind(epic: IssueRef) -> str | None:
@@ -1611,9 +1753,12 @@ def queue_or_archive_kind(epic: IssueRef) -> str | None:
     recognized as :func:`is_archive` recognizes it, by its ``archive`` label or
     its stamped title alone, and its kind comes from its kind label or its
     title prefix. None for a development epic, an ad-hoc epic or archive, or a
-    non-epic. One read of the labels and title; a failed read raises.
+    non-epic. One read of the labels and title; a failed read raises. A
+    continuation is its head's kind, read from the head.
     """
     labels, title = _labels_and_title(epic)
+    if is_continuation(labels):
+        labels, title = _labels_and_title(epic_chain.head_of(epic))
     live = _queue_key(labels)
     if live is not None or not is_archive(labels, title):
         return live
@@ -1629,9 +1774,10 @@ def container_kind(epic: IssueRef) -> str | None:
     ``"ad-hoc"``, ``"intake"``, ``"planning"``, ``"deferred"``, ``"hoshin"`` or
     ``"operations"``
     when *epic* is the live standing epic of that kind; None for a development
-    (finite) epic, a proxy epic, an archive, or a non-epic. One label read.
+    (finite) epic, a proxy epic, an archive, or a non-epic. One label read; a
+    continuation is its head's kind, read from the head.
     """
-    kind = standing_kind_of(_labels(epic))
+    kind = standing_kind_of(_head_labels(epic))
     return kind.key if kind is not None else None
 
 
@@ -1642,9 +1788,10 @@ def unbuildable_kind(epic: IssueRef) -> str | None:
     (:func:`queue_kind`'s rule), and ``"operations"`` for the live operations
     epic, whose ops issues are closed by hand (epic
     vergil-project/.github#1494). None for any other epic or a non-epic. One
-    label read; a failed read raises.
+    label read; a failed read raises. A continuation is its head's kind, read
+    from the head.
     """
-    kind = standing_kind_of(_labels(epic))
+    kind = standing_kind_of(_head_labels(epic))
     if kind in QUEUE_KINDS or kind is OPERATIONS:
         return kind.key
     return None
@@ -1660,7 +1807,9 @@ def unbuildable_parent_kind(ref: str, *, default_repo: str) -> str | None:
     (a fix for it is a follow-up task of its own). Keys off the **native**
     parent only (:func:`native_parent_of`), the same link intake review lists
     and the orphan migration writes. Self-scoping: an unparseable ref returns
-    None. A failed lookup raises — it is never read as "buildable".
+    None. A failed lookup raises — it is never read as "buildable". An item
+    linked in a continuation is judged by the chain's head, so an intake item
+    in a continuation of the intake queue is still refused.
     """
     try:
         issue = parse_issue_ref(ref, default_repo=default_repo)
@@ -1964,6 +2113,8 @@ def plan_standing_drain(
     Buckets each closed child of the live epic by its close-quarter and lists the
     open *kind* archives in *home* whose quarter is strictly before the current
     quarter (so they are eligible to close). Pure/read-only: no mutation here.
+    The live epic's children are its whole chain's (:func:`child_states`), so
+    a closed child in any continuation is planned too.
     """
     live = find_standing_epic(kind, home, name)
     if live is None:
@@ -2161,6 +2312,11 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     - **intake / planning / deferred / hoshin / operations**: the epic must be titled for its
       org, whose ``.github`` is its only home. Any other title is reported on
       stderr and skipped (never guessed at).
+
+    *parent* is the chain's head, as :func:`rollup` resolves it, so its title
+    and kind decide the drain whichever container *task* is in (spec §4.6 of
+    epic vergil-project/.github#1609); the re-parent moves *task* out of that
+    container.
     """
     title = _issue_title(parent)
     if kind is ADHOC:
@@ -2390,9 +2546,21 @@ def rollup(task: IssueRef) -> None:
     (:func:`~vergil_tooling.lib.trust.require_trusted_close`). An untrusted
     one is a stop before any write
     (:class:`~vergil_tooling.lib.trust.UntrustedContentError`).
+
+    Chain-aware (spec §4.6 of epic vergil-project/.github#1609): the epic is
+    the head of the chain *task* is in (:func:`parent_of`), whose title and
+    kind decide the drain, from any container. A finite epic closes only when
+    every item across its chain is closed, and then its whole chain closes,
+    head first (:func:`~vergil_tooling.lib.epic_chain.close_chain`). Before
+    judging, its orphaned continuations are adopted (:func:`_adopt_orphans`).
+    A continuation closing rolls nothing up.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
+        return
+    if is_continuation(_labels(task)):
+        # close_chain closes a chain's continuations after its head: their
+        # close events are not the close of an item.
         return
     labels = _labels(parent)
     kind = standing_kind_of(labels)
@@ -2404,9 +2572,75 @@ def rollup(task: IssueRef) -> None:
     if kind is not None:
         drain_standing_child(kind, parent, task)
         return
-    if all_children_closed(parent):
-        for child in child_states(parent):
+    _adopt_orphans(parent)
+    children = child_states(parent)
+    if children and all(child.state == "CLOSED" for child in children):
+        for child in children:
             if child.ref != task:
                 trust.require_trusted_close(_repo_slug(child.ref), child.ref.number)
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")
-        github.run("issue", "close", str(parent.number), "--repo", f"{parent.owner}/{parent.repo}")
+        epic_chain.close_chain(parent)
+
+
+class OrphanedContinuationError(EpicRefusalError, RuntimeError):
+    """*head* has orphaned continuations the rollup cannot adopt, so it is not judged."""
+
+    def __init__(self, head: IssueRef, orphans: Sequence[IssueRef], reason: str) -> None:
+        super().__init__(
+            f"epic {head.slug} is not rolled up: its orphaned continuations "
+            f"{', '.join(ref.slug for ref in orphans)} cannot be adopted, {reason}"
+        )
+        self.head = head
+        self.orphans = tuple(orphans)
+
+
+def _adopt_orphans(head: IssueRef) -> None:
+    """Adopt *head*'s orphaned continuations into its chain before the rollup judges it.
+
+    An item that closed inside an orphan fired no rollup the head could see,
+    and an open item there must hold the epic open, so the rollup looks
+    first (spec §4.6). Each orphan that passes the trust rules is linked
+    into the tail's last slot
+    (:func:`~vergil_tooling.lib.epic_chain.find_or_create_continuation`),
+    lowest number first, and reported. One that fails them raises
+    :class:`~vergil_tooling.lib.epic_chain.ChainDriftError`, so the epic is
+    never closed past it. An orphan of a closed head is reported as drift and
+    never adopted (closed is closed). While rollover is off nothing may link
+    a continuation, so an orphan raises :class:`OrphanedContinuationError`.
+    """
+    orphans = epic_chain.find_orphans(head)
+    if not orphans:
+        return
+    if _issue_state(head) == "CLOSED":
+        for orphan in orphans:
+            print(
+                f"chain drift: {orphan.slug} is an orphaned continuation of the closed epic "
+                f"{head.slug}; it is not adopted, since closed epics are not written to",
+                file=sys.stderr,
+            )
+        return
+    if not epic_chain.ROLLOVER_ENABLED:
+        raise OrphanedContinuationError(
+            head, orphans, "since rollover into a continuation is not enabled yet"
+        )
+    remaining = orphans
+    for _ in range(len(orphans)):
+        # Each call adopts the lowest-numbered orphan into the current tail.
+        tail = epic_chain.chain_of(head)[-1]
+        adopted = epic_chain.find_or_create_continuation(head, tail)
+        print(f"adopted orphaned continuation {adopted.slug} into epic {head.slug}")
+        remaining = epic_chain.find_orphans(head)
+        if not remaining:
+            return
+    # More orphans than were found (a racing writer's), or one adoption missed.
+    raise OrphanedContinuationError(
+        head,
+        remaining,
+        f"since they were still outside the chain after {len(orphans)} "
+        + ("adoption" if len(orphans) == 1 else "adoptions"),
+    )
+
+
+# Imported last: the chain layer imports this module, and the readers above
+# reach it only at call time (epic vergil-project/.github#1609).
+from vergil_tooling.lib import epic_chain  # noqa: E402

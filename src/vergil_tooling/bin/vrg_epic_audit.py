@@ -54,24 +54,19 @@ def main(argv: list[str] | None = None) -> int:
         return _outsider_report(args)
     # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
     # and emit its children (with states) as machine-readable JSON, bypassing the
-    # drift-audit path entirely (issue #2538). Qualify + validate directly rather
-    # than via resolve_epic_ref so the read-only 'adhoc' sentinel (which *creates*
-    # an epic) is not reachable from an enumeration. With no task to anchor on, a
-    # bare '#N' reads against the current repo's epic home (#3415), and the
-    # existence check behind it runs under the current repo owner's App token.
+    # drift-audit path entirely (issue #2538). Resolved with no sentinel, so the
+    # 'adhoc' sentinel (which *creates* an epic) is not reachable from an
+    # enumeration; a continuation's ref resolves to its chain's head. With no
+    # task to anchor on, a bare '#N' reads against the current repo's epic home
+    # (#3415), and the existence check behind it runs under the current repo
+    # owner's App token.
     if args.epic is not None:
         repo = github.current_repo()
         try:
             with github.target_org(repo.split("/", 1)[0]):
-                epic = epics.qualify_epic_ref(args.epic, repo=repo)
+                epic = epics.resolve_epic_ref(args.epic, repo=repo, sentinels=False)
         except ValueError as exc:
             print(f"vrg-epic-audit: {exc}", file=sys.stderr)
-            return 1
-        if not epics.is_epic(epic):
-            print(
-                f"vrg-epic-audit: {epic.slug} is not an epic (missing the 'epic' label)",
-                file=sys.stderr,
-            )
             return 1
         return _epic_listing(epic)
     # Gate the write path before any network work so a rejected agent run is
