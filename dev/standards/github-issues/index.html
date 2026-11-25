@@ -20058,7 +20058,10 @@ and it is a native sub-issue of the container before it. Anything else is
 rule it broke (<code>label</code>, <code>untrusted-body</code>, <code>continues-mismatch</code>,
 <code>not-native-child</code> or <code>two-continuations</code>), and never guesses past it. A
 continuation closed by hand in an open chain is not drift: its items are
-still read.</p>
+still read. <code>vrg-epic-audit</code> reports every chain's drift in its <strong>Chain
+drift</strong> section, and each closed continuation of an open chain as a note,
+and <code>vrg-epic-audit --epic</code> counts an epic's containers in its <code>containers</code>
+key.</p>
 <p><strong>Orphaned continuations.</strong> A continuation that is open but not reachable
 from the head its <code>Continues:</code> line names (left by a writer that stopped
 partway) is an orphan. A reader resolves an item in one to the head its
