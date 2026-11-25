@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.347] - 2026-11-25
+
+### Bug fixes
+
+- resume a merged release by re-running only its failed CD run (#5170)
+
 ## [2.1.346] - 2026-11-24
 
 ### Documentation
