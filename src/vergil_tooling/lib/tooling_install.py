@@ -24,9 +24,13 @@ The install is rendered as shell lines (:func:`install_lines`,
 container cache build and ``vrg-vm``. The lines run under ``bash`` and need
 no ``set -e``: each step that can fail names itself and exits non-zero.
 
-:func:`install_release` runs the same released install in Python, here, for
+:func:`install_ref` runs the same released install in Python, here, for
 a host: ``vrg-tooling-install`` (vergil-tooling#4827), which takes a line
-``vX.Y`` through the same resolver as well as an exact ``vX.Y.Z``. The Mac's
+``vX.Y`` through the same resolver as well as an exact ``vX.Y.Z``, and any
+other git ref of vergil-tooling (a branch, a tag or a full commit SHA,
+vergil-tooling#4841), resolved to one commit and locked to that commit's
+``uv.lock`` too. :func:`resolve` keeps its release-or-dev contract for the
+rendered installs. The Mac's
 install stage (``vergil.toml``'s ``[publish].install``) runs the
 installed ``vrg-tooling-install`` (vergil-tooling#4830), so the
 installed vergil-tooling installs the just-released one; that reverses spec
@@ -34,7 +38,7 @@ installed vergil-tooling installs the just-released one; that reverses spec
 If the installed copy is broken, the documented install by hand is the
 workaround while it is fixed. The container and VM paths keep the
 rendered lines for now; vergil-project/.github#1435 looks at moving them to
-:func:`install_release`.
+:func:`install_ref`.
 """
 
 from __future__ import annotations
@@ -382,90 +386,255 @@ def check_lines(bin_dir: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Installed:
-    """What :func:`install_release` installed: the release tag and its commit."""
+    """What :func:`install_ref` installed: the ref it reports and its commit.
 
-    tag: str
+    ``ref`` is the exact ``vX.Y.Z`` for a release (a line reports the release
+    its tag names) and the ref as given for any other ref.
+    """
+
+    ref: str
     sha: str
 
 
-def install_release(
-    tag: str,
+@dataclass(frozen=True)
+class _Target:
+    """What :func:`install_ref` fetches, and how its steps and errors name it."""
+
+    ref: str
+    label: str
+    fetch: str
+    expected_sha: str | None
+    source: str
+
+
+# What git's ref-name rules (``git check-ref-format``) refuse, with ``:``
+# refusing a URL or a refspec too.
+_REF_BAD_CHARS = frozenset(" ~^:?*[\\")
+_REF_BAD_SEQUENCES = ("..", "@{", "//")
+_REF_NAMESPACES = ("refs/heads/", "refs/tags/")
+_DEL = 0x7F
+_SPACE = 0x20
+
+
+def check_ref_name(ref: str) -> None:
+    """Raise unless *ref* is a plain git ref name, never an option, URL or refspec.
+
+    It refuses anything starting with ``-`` (so it can never be read as an
+    option), and anything git's ref-name rules refuse: a ``:`` (which a URL
+    or a refspec needs), whitespace or a control character, any of
+    ``~^?*[\\``, ``..``, ``@{``, ``//``, a leading ``+`` or ``/``, a trailing
+    ``/`` or ``.``, a ``.lock`` suffix, a path component starting with ``.``,
+    or ``@`` alone. A full name under ``refs/`` must be a branch
+    (``refs/heads/``) or a tag (``refs/tags/``). It checks the form only:
+    whether the ref exists is for the resolution to say.
+    """
+    if not ref:
+        msg = "the ref is empty"
+        raise ToolingInstallError(msg)
+    if ref.startswith("-"):
+        msg = f"{ref!r} starts with '-'; a ref is never an option"
+        raise ToolingInstallError(msg)
+    bad = (
+        any(c in _REF_BAD_CHARS or ord(c) <= _SPACE or ord(c) == _DEL for c in ref)
+        or any(s in ref for s in _REF_BAD_SEQUENCES)
+        or ref.startswith(("+", "/"))
+        or ref.endswith(("/", ".", ".lock"))
+        or any(part.startswith(".") for part in ref.split("/"))
+        or ref == "@"
+    )
+    if bad:
+        msg = f"{ref!r} is not a git ref name (a branch, tag or commit SHA of {GIT_URL})"
+        raise ToolingInstallError(msg)
+    if ref.startswith("refs/") and not ref.startswith(_REF_NAMESPACES):
+        msg = f"{ref!r} is neither a branch (refs/heads/) nor a tag (refs/tags/)"
+        raise ToolingInstallError(msg)
+
+
+def git_ls_refs(url: str, patterns: tuple[str, ...]) -> str:
+    """``git ls-remote <url> <patterns…>``'s output; raises on any failure."""
+    shown = " ".join(patterns)
+    try:
+        result = subprocess.run(  # noqa: S603
+            ("git", "ls-remote", url, *patterns),  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        msg = f"git ls-remote {url} {shown} could not run: {exc}"
+        raise ToolingInstallError(msg) from exc
+    if result.returncode != 0:
+        msg = (
+            f"git ls-remote {url} {shown} failed (exit {result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
+        raise ToolingInstallError(msg)
+    return result.stdout
+
+
+def _ref_shas(listing: str) -> dict[str, str]:
+    """Map each ref in an ``ls-remote`` *listing* to its commit, peeling annotated tags."""
+    direct: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not fields[1].startswith("refs/"):  # noqa: PLR2004
+            continue
+        sha, name = fields
+        if name.endswith("^{}"):
+            peeled[name.removesuffix("^{}")] = sha
+        else:
+            direct[name] = sha
+    return {name: peeled.get(name, sha) for name, sha in direct.items()}
+
+
+def _resolve_any(ref: str, *, ls_refs: Callable[[str, tuple[str, ...]], str]) -> _Target:
+    """The commit a non-release *ref* names: a full SHA as itself, else its branch or tag.
+
+    A 40-character SHA names its commit and makes no call. Any other ref is
+    looked up with one *ls_refs* call among the branches and tags of
+    :data:`GIT_URL` (never its pull-request or other refs): it must name
+    exactly one, else the resolution fails, naming the URL and the ref. Each
+    tag name is also asked for as ``<tag>^{}``: ``ls-remote`` lists an
+    annotated tag's peeled commit only under that pattern, and the commit,
+    not the tag object, is what is fetched and checked.
+    """
+    if _SHA.fullmatch(ref):
+        return _Target(ref, f"commit {ref}", ref, ref, "ref names")
+    names = (ref,) if ref.startswith(_REF_NAMESPACES) else tuple(p + ref for p in _REF_NAMESPACES)
+    patterns = tuple(
+        pattern
+        for name in names
+        for pattern in ((name, f"{name}^{{}}") if name.startswith("refs/tags/") else (name,))
+    )
+    try:
+        listing = ls_refs(GIT_URL, patterns)
+    except (ToolingInstallError, OSError, subprocess.SubprocessError) as exc:
+        msg = f"could not list the refs of {GIT_URL} to resolve {ref}: {exc}"
+        raise ToolingInstallError(msg) from exc
+    refs = _ref_shas(listing)
+    found = [name for name in names if name in refs]
+    if not found:
+        msg = (
+            f"no branch or tag {ref} at {GIT_URL} (a commit is named by its full 40-character SHA)"
+        )
+        raise ToolingInstallError(msg)
+    if len(found) > 1:
+        msg = f"{ref} is both a branch and a tag at {GIT_URL}; name one: {' or '.join(found)}"
+        raise ToolingInstallError(msg)
+    name = found[0]
+    sha = refs[name]
+    if not _SHA.fullmatch(sha):
+        msg = f"{name} at {GIT_URL} lists {sha!r}, not a commit SHA"
+        raise ToolingInstallError(msg)
+    kind = "branch" if name.startswith("refs/heads/") else "tag"
+    label = f"{kind} {name.removeprefix('refs/heads/').removeprefix('refs/tags/')}"
+    return _Target(ref, label, sha, sha, f"{label} names")
+
+
+def _target(
+    ref: str,
+    *,
+    ls_remote: Callable[[str, str], str] | None,
+    ls_refs: Callable[[str, tuple[str, ...]], str] | None,
+) -> _Target:
+    """What :func:`install_ref` fetches for *ref*, resolved (but not fetched) here."""
+    kind = classify_ref(ref)
+    if kind == "dev":
+        check_ref_name(ref)
+        return _resolve_any(ref, ls_refs=ls_refs or git_ls_refs)
+    if kind == "line":
+        tag, sha = _resolve_release(ref, kind, ls_remote=ls_remote or git_ls_remote)
+        return _Target(tag, f"tag {tag}", f"refs/tags/{tag}", sha, "line's tag names")
+    return _Target(ref, f"tag {ref}", f"refs/tags/{ref}", None, "")
+
+
+def install_ref(
+    ref: str,
     *,
     environ: Mapping[str, str] | None = None,
     ls_remote: Callable[[str, str], str] | None = None,
+    ls_refs: Callable[[str, tuple[str, ...]], str] | None = None,
 ) -> Installed:
-    """Install the release *tag* names with uv here, locked to that release's ``uv.lock``.
+    """Install the commit *ref* names with uv here, locked to that commit's ``uv.lock``.
 
-    *tag* is a line ``vX.Y`` or an exact ``vX.Y.Z``. A line is first resolved
-    with :func:`resolve` (one *ls_remote* call, default :func:`git_ls_remote`)
-    to the exact ``vX.Y.Z`` its rolling tag names, and that exact tag is what
-    is fetched, installed and reported: :attr:`Installed.tag` is always
-    ``vX.Y.Z``. The fetched commit must be the one the line resolved to.
+    *ref* is a git ref of :data:`GIT_URL`, and only of it
+    (vergil-tooling#4841):
 
-    In a temporary directory it shallow-fetches the exact tag over git, reads the
-    commit the tag names, exports that commit's ``uv.lock`` as constraints and
-    runs ``uv tool install --force --no-config --python 3.15 --managed-python``
-    of that commit under them. The code and the lock therefore come from one
-    commit. ``UV_PYTHON``, ``UV_PYTHON_PREFERENCE`` and
-    ``UV_NO_MANAGED_PYTHON`` are removed from the environment each command
-    sees (*environ*, or ``os.environ``), so no interpreter variable can change
-    or block the install. The temporary directory is removed however the
-    install ends.
+    - a line ``vX.Y`` is first resolved with :func:`resolve`'s release
+      resolution (one *ls_remote* call, default :func:`git_ls_remote`) to the
+      exact ``vX.Y.Z`` its rolling tag names, and that exact tag is what is
+      fetched, installed and reported. The fetched commit must be the one the
+      line resolved to;
+    - an exact ``vX.Y.Z`` is fetched as that tag;
+    - any other ref is first checked by :func:`check_ref_name`, then
+      resolved: a full commit SHA as itself, a branch (``develop``) or any
+      other tag with one *ls_refs* call (default :func:`git_ls_refs`) to the
+      commit it names now. That commit is fetched by its SHA, and the fetched
+      commit must be it. It is reported as *ref*, as given.
+
+    :func:`resolve` and its other callers are unchanged: the container cache
+    and ``vrg-vm`` still install a non-release ref from git, unconstrained,
+    while this host install locks every ref to its commit's ``uv.lock``.
+
+    In a temporary directory it shallow-fetches the commit over git, reads it,
+    exports its ``uv.lock`` as constraints and runs ``uv tool install --force
+    --no-config --python 3.15 --managed-python`` of that commit under them.
+    The code and the lock therefore come from one commit. ``UV_PYTHON``,
+    ``UV_PYTHON_PREFERENCE`` and ``UV_NO_MANAGED_PYTHON`` are removed from
+    the environment each command sees (*environ*, or ``os.environ``), so no
+    interpreter variable can change or block the install. The temporary
+    directory is removed however the install ends.
 
     Every failure raises :class:`ToolingInstallError` naming the step that
-    failed and its error output: a *tag* that is neither ``vX.Y`` nor
-    ``vX.Y.Z``, a line that does not resolve, a failed git or uv command, a
-    tag that names no commit (or not the resolved one), an empty constraints
-    export, or one that names a non-registry package. ``uv tool install``'s
-    own output goes straight to this process's standard output and error.
+    failed and its error output: a *ref* that is not a ref name, one that
+    does not resolve, a failed git or uv command, a fetch that names no
+    commit (or not the resolved one), an empty constraints export, or one
+    that names a non-registry package. ``uv tool install``'s own output goes
+    straight to this process's standard output and error.
 
     The running ``vrg-tooling-install`` is itself an installed vergil-tooling,
     which the install replaces: nothing is imported after it.
     """
-    kind = classify_ref(tag)
-    if kind == "dev":
-        msg = f"{tag!r} is not a release (vX.Y or vX.Y.Z)"
-        raise ToolingInstallError(msg)
-    expected_sha: str | None = None
-    if kind == "line":
-        tag, expected_sha = _resolve_release(tag, kind, ls_remote=ls_remote or git_ls_remote)
+    target = _target(ref, ls_remote=ls_remote, ls_refs=ls_refs)
+    name, label = target.ref, target.label
     source = os.environ if environ is None else environ
-    env = {name: value for name, value in source.items() if name not in _UV_VARS}
+    env = {key: value for key, value in source.items() if key not in _UV_VARS}
     with tempfile.TemporaryDirectory(prefix="vrg-tooling-install-") as tmp:
         src = Path(tmp) / "src"
         constraints = Path(tmp) / "constraints.txt"
         _run_step(("git", "init", "-q", str(src)), env=env, what="creating a git repository")
         _run_step(
-            ("git", "-C", str(src), "fetch", "-q", "--depth", "1", GIT_URL, f"refs/tags/{tag}"),
+            ("git", "-C", str(src), "fetch", "-q", "--depth", "1", GIT_URL, target.fetch),
             env=env,
-            what=f"fetching tag {tag} from {GIT_URL}",
+            what=f"fetching {label} from {GIT_URL}",
         )
         _run_step(
             ("git", "-C", str(src), "checkout", "-q", "FETCH_HEAD"),
             env=env,
-            what=f"checking out tag {tag}",
+            what=f"checking out {label}",
         )
         sha = _run_step(
             ("git", "-C", str(src), "rev-parse", "HEAD"),
             env=env,
-            what=f"reading the commit of tag {tag}",
+            what=f"reading the commit of {label}",
         ).strip()
         if not _SHA.fullmatch(sha):
-            msg = f"tag {tag} from {GIT_URL} checked out as {sha!r}, not a commit SHA"
+            msg = f"{label} from {GIT_URL} checked out as {sha!r}, not a commit SHA"
             raise ToolingInstallError(msg)
-        if expected_sha is not None and sha != expected_sha:
+        if target.expected_sha is not None and sha != target.expected_sha:
             msg = (
-                f"tag {tag} from {GIT_URL} checked out as commit {sha}, not the commit "
-                f"{expected_sha} the line's tag names"
+                f"{label} from {GIT_URL} checked out as commit {sha}, not the commit "
+                f"{target.expected_sha} the {target.source}"
             )
             raise ToolingInstallError(msg)
         _run_step(
             (*shlex.split(_EXPORT), "-o", str(constraints)),
             env=env,
             cwd=src,
-            what=f"exporting the uv.lock of {tag} (commit {sha})",
+            what=f"exporting the uv.lock of {name} (commit {sha})",
         )
-        _check_constraints(constraints, tag=tag, sha=sha)
+        _check_constraints(constraints, tag=name, sha=sha)
         spec = f"{_PACKAGE} @ git+{GIT_URL}@{sha}"
         argv = (
             *("uv", "tool", "install", "--force", "--no-config"),
@@ -475,12 +644,12 @@ def install_release(
         try:
             result = subprocess.run(argv, env=env, check=False)  # noqa: S603
         except OSError as exc:
-            msg = f"uv tool install of {tag} (commit {sha}) could not run: {exc}"
+            msg = f"uv tool install of {name} (commit {sha}) could not run: {exc}"
             raise ToolingInstallError(msg) from exc
         if result.returncode != 0:
-            msg = f"uv tool install of {tag} (commit {sha}) failed (exit {result.returncode})"
+            msg = f"uv tool install of {name} (commit {sha}) failed (exit {result.returncode})"
             raise ToolingInstallError(msg)
-    return Installed(tag=tag, sha=sha)
+    return Installed(ref=name, sha=sha)
 
 
 def _run_step(

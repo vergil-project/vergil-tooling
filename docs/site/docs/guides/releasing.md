@@ -28,7 +28,11 @@ and then installs and reports that exact release. Given an exact tag
 `vX.Y.Z` (which cannot move, under tag protection, so it needs no
 `git ls-remote`), it fetches that tag. Either way it installs the commit the
 release's tag names with that commit's `uv.lock` as constraints, and runs on
-uv's managed 3.15.
+uv's managed 3.15. By hand it also takes any other git ref of vergil-tooling
+(a branch such as `develop`, another tag, or a full commit SHA), resolved to
+one commit and locked to that commit's `uv.lock`; the next release install
+replaces it (see
+[`vrg-tooling-install`](../reference/cli-tools-overview.md#vrg-tooling-install)).
 
 A fresh host has no `vrg-tooling-install` yet, and an installed one that
 fails cannot fix itself. Both install by hand (see
