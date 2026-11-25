@@ -22333,7 +22333,9 @@ the current list's order, <code>removed</code> in the block's.</p>
 <p>Link a task under an epic as a native GitHub sub-issue. A closed epic is
 refused by name and never reopened. Used when creating a task under an epic
 and to backfill reflink-only children. A bare <code>#N</code> epic ref resolves to the
-task's epic home.</p>
+task's epic home. An <code>--epic</code> without the <code>epic</code> label is refused, and a
+<a href="../../standards/github-issues/#chained-epics">continuation</a>'s ref resolves to
+its chain's head, with a line saying so.</p>
 <table>
 <thead>
 <tr>
