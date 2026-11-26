@@ -20,6 +20,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     OVERRIDE_MERGE_REVIEW_REMOVED,
     SubmitSummary,
     _create_pr,
+    _finish,
     _local_worktree_with_state,
     _metadata_from_state,
     _origin_has_branch,
@@ -1610,8 +1611,9 @@ class TestFinalizeByDefault:
         assert rc == 3
         assert calls == []
         err = capsys.readouterr().err
-        assert f"{_URL1} — refused" in err
-        assert "No PR opened, so nothing was finalized." in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
+        assert "Nothing was finalized: 1 PR(s) opened but a later step failed" in err
+        assert "No PR opened" not in err
 
     def test_release_skipped_after_failed_submit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A failed submit drops --release from finalize and says so; exit at least 3."""
@@ -1622,7 +1624,7 @@ class TestFinalizeByDefault:
         assert calls == [("vrg-finalize-pr", _URL2)]
         err = capsys.readouterr().err
         assert "Release skipped: 1 PR(s) failed to submit." in err
-        assert f"{_URL1} — refused" in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
 
     def test_failed_submits_printed_after_finalize_report(
         self, capsys: pytest.CaptureFixture[str]
@@ -1679,7 +1681,7 @@ class TestFinalizeByDefault:
         assert not any("vrg-release" in cmd for cmd in calls)
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
-        assert f"{_URL1} — refused" in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
         assert "Release skipped: 1 PR(s) failed to submit." in err
 
     @pytest.mark.parametrize(("finalize_rc", "expected"), [(0, 3), (3, 3)])
@@ -2219,7 +2221,7 @@ def test_provenance_violation_fails_pr_others_continue(
     enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
     out = capsys.readouterr().out
     assert "✗ feature/1-a" in out
-    assert "PR #1 opened, submit failed: provenance violations found" in out
+    assert "PR #1 opened at h0; the provenance check failed: provenance violations found" in out
     assert "✓ feature/2-b" in out
     assert "PR #2 auto-merge on (squash, pinned to h0)" in out
 
@@ -2262,7 +2264,13 @@ def test_provenance_without_trusted_authors_fails_pr_others_continue() -> None:
         enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
         summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
-    assert summary.failed == [("https://x/pull/1", "no trusted authors are configured")]
+    assert summary.failed == [
+        (
+            "https://x/pull/1",
+            "opened at h0; the provenance check failed: no trusted authors are configured",
+        )
+    ]
+    assert summary.left_open == ["https://x/pull/1"]
     enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
 
 
@@ -2284,8 +2292,13 @@ def test_auto_merge_refusal_fails_pr_others_continue() -> None:
         summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [
-        ("https://x/pull/1", "https://x/pull/1: enabling auto-merge failed: nope")
+        (
+            "https://x/pull/1",
+            "opened at h0; turning auto-merge on failed: "
+            "https://x/pull/1: enabling auto-merge failed: nope",
+        )
     ]
+    assert summary.left_open == ["https://x/pull/1"]
 
 
 def test_open_failure_names_the_branch_others_continue() -> None:
@@ -2303,6 +2316,87 @@ def test_open_failure_names_the_branch_others_continue() -> None:
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [("feature/1-a", "pushing 'feature/1-a' failed")]
     create.assert_called_once()
+    assert summary.left_open == []
+
+
+def test_failure_before_the_pr_opens_says_no_pr_opened(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A submit that fails before ``gh pr create`` says no PR was opened (#5198)."""
+    with (
+        patch(_MOD + "._push_branch", side_effect=SystemExit("vrg-submit-pr: push failed")),
+        patch(_MOD + "._create_pr") as create,
+    ):
+        summary = _submit_all([_submission(record_in=None)], _ARGS)
+        rc = _finish(summary, _ARGS)
+    create.assert_not_called()
+    assert rc == 3
+    assert summary.left_open == []
+    out, err = capsys.readouterr()
+    assert "no PR opened: push failed" in out
+    assert "No PR opened, so nothing was finalized." in err
+
+
+@pytest.mark.parametrize(
+    ("failing", "step"),
+    [
+        ("record", "recording the submission"),
+        ("provenance", "the provenance check"),
+        ("auto_merge", "turning auto-merge on"),
+    ],
+)
+def test_failure_after_the_pr_opens_reports_the_pr_head_and_step(
+    failing: str, step: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A step that fails after the PR opened names its URL, head and the step (#5198)."""
+
+    def fail_if(name: str, value: object = None) -> MagicMock:
+        if failing == name:
+            return MagicMock(side_effect=ValueError("server error"))
+        return MagicMock(return_value=value)
+
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".submission.record_submission", fail_if("record")),
+        patch(
+            _MOD + ".pr_provenance.check_pr",
+            fail_if("provenance", pr_provenance.ProvenanceResult()),
+        ),
+        patch(
+            _MOD + ".auto_merge.enable_auto_merge",
+            fail_if("auto_merge", auto_merge.AutoMergeResult(merged_now=False)),
+        ),
+    ):
+        summary = _submit_all([_submission(record_in=tmp_path)], _ARGS)
+        rc = _finish(summary, _ARGS)
+    reason = f"opened at h0; {step} failed: server error"
+    assert rc == 3
+    assert summary.opened == []
+    assert summary.failed == [("https://x/pull/9", reason)]
+    assert summary.left_open == ["https://x/pull/9"]
+    out, err = capsys.readouterr()
+    assert f"PR #9 {reason}" in out
+    assert f"https://x/pull/9 — {reason}" in err
+    assert "Nothing was finalized: 1 PR(s) opened but a later step failed" in err
+    assert "No PR opened" not in err
+
+
+def test_unexpected_error_after_the_pr_opens_names_the_pr() -> None:
+    """An error outside the per-PR set after the PR opened still names it (#5198)."""
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".pr_provenance.check_pr", side_effect=KeyError("boom")),
+        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        pytest.raises(KeyError) as raised,
+    ):
+        _submit_all([_submission(record_in=None)], _ARGS)
+    enable.assert_not_called()
+    assert raised.value.__notes__ == [
+        "https://x/pull/9 was opened at h0; the provenance check failed, "
+        "so its auto-merge is not on."
+    ]
 
 
 def test_submission_recorded_when_auto_merge_fails() -> None:
@@ -3695,7 +3789,10 @@ class TestRelayBranchPath:
             assert main(["feature/x"]) == 3
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
-        assert "https://x/pull/7 — https://x/pull/7: refused" in err
+        assert (
+            "https://x/pull/7 — opened at abc123; turning auto-merge on failed: "
+            "https://x/pull/7: refused"
+        ) in err
 
     def test_relay_dry_run_skips_verify_and_create(
         self, capsys: pytest.CaptureFixture[str]

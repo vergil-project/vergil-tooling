@@ -671,11 +671,15 @@ class SubmitSummary:
     *opened* holds the URL of every PR opened with auto-merge on, or merged
     at once because it could already merge. *failed* holds a ``(branch or
     PR, reason)`` pair for every PR whose submit failed: the branch when it
-    failed before the PR opened, the PR's URL once it had.
+    failed before the PR opened, the PR's URL once it had, its reason then
+    naming the head it opened at and the step that failed. *left_open* holds
+    the URL of every PR that opened but failed a later step, so it is open
+    without auto-merge (vergil-tooling#5198).
     """
 
     opened: list[str]
     failed: list[tuple[str, str]]
+    left_open: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -782,14 +786,14 @@ def _run_gates(sub: _Submission) -> None:
 
 
 def _open_one(sub: _Submission) -> str:
-    """Open *sub*'s PR at its expected head, record the submission, return the URL.
+    """Open *sub*'s PR at its expected head and return its URL.
 
     The gate runs first (:func:`_run_gates`), then a batch is re-checked at
     the head, both before anything is pushed; then the branch is pushed (when
-    *sub.push*), origin's tip is held to the head, and the PR is opened. The
-    submission is recorded as soon as the PR exists, so a later step that
-    fails leaves the worktree marked with the PR it opened rather than ready
-    for a second one.
+    *sub.push*), origin's tip is held to the head, and the PR is opened. A
+    failure here means no PR was opened; the steps after the PR exists run in
+    :meth:`_SubmitRun._submit`, which reports a failure among them with the
+    PR it opened.
     """
     _run_gates(sub)
     _recheck_batch(
@@ -802,8 +806,6 @@ def _open_one(sub: _Submission) -> str:
     print(f"Creating PR for {sub.branch}...")
     pr_url = _create_or_adopt(sub)
     print(f"PR created: {pr_url}")
-    if sub.record_in is not None:
-        submission.record_submission(sub.record_in, pr_url=pr_url)
     return pr_url
 
 
@@ -841,7 +843,7 @@ def _pr_label(pr_url: str) -> str:
 class _SubmitRun:
     """The state one :func:`_submit_all` rollup builds up, one stage per PR.
 
-    *opened* and *failed* become the run's :class:`SubmitSummary`. *fatal* is
+    *opened*, *failed* and *left_open* become the run's :class:`SubmitSummary`. *fatal* is
     an error outside :data:`_PER_PR_ERRORS` (a bug, not a failed PR): the PRs
     after it are not attempted, and :func:`_submit_all` raises it once the
     rollup's summary is printed, as the loop before the rollup did.
@@ -849,6 +851,7 @@ class _SubmitRun:
 
     opened: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    left_open: list[str] = field(default_factory=list)
     fatal: Exception | None = None
 
     def stage(self, sub: _Submission) -> progress.Stage:
@@ -875,15 +878,29 @@ class _SubmitRun:
             self.failed.append((sub.branch, reason))
             raise progress.StageFailedError(f"no PR opened: {reason}") from exc
         method = _merge_method(sub.issue_refs)
+        # The submission is recorded as soon as the PR exists, so a later step
+        # that fails leaves the worktree marked with the PR it opened rather
+        # than ready for a second one. A failure from here on reports the PR,
+        # its head and the step that failed (vergil-tooling#5198).
+        step = "recording the submission"
         try:
+            if sub.record_in is not None:
+                submission.record_submission(sub.record_in, pr_url=pr_url)
+            step = "the provenance check"
             _check_provenance(pr_url)
+            step = "turning auto-merge on"
             result = auto_merge.enable_auto_merge(pr_url, head=sub.expected_head, method=method)
         except _PER_PR_ERRORS as exc:
-            reason = _failure_reason(exc)
+            reason = f"opened at {sub.expected_head[:12]}; {step} failed: {_failure_reason(exc)}"
             self.failed.append((pr_url, reason))
-            raise progress.StageFailedError(
-                f"{_pr_label(pr_url)} opened, submit failed: {reason}"
-            ) from exc
+            self.left_open.append(pr_url)
+            raise progress.StageFailedError(f"{_pr_label(pr_url)} {reason}") from exc
+        except Exception as exc:
+            exc.add_note(
+                f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed, "
+                "so its auto-merge is not on."
+            )
+            raise
         self.opened.append(pr_url)
         if result.merged_now:
             outcome = f"merged directly ({method.lower()})"
@@ -940,7 +957,7 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     if rc != EXIT_OK and not run.failed:
         msg = f"internal error: the submit rollup exited {rc} with no PR recorded as failed"
         raise RuntimeError(msg)
-    return SubmitSummary(opened=run.opened, failed=run.failed)
+    return SubmitSummary(opened=run.opened, failed=run.failed, left_open=run.left_open)
 
 
 def _print_failed(summary: SubmitSummary) -> None:
@@ -986,11 +1003,19 @@ def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
 
     One ``vrg-finalize-pr`` runs over every opened PR, with ``--release``
     dropped when any PR failed to submit; when none opened, it is not run at
-    all. The failed submits are named after finalize's report.
+    all. The failed submits are named after finalize's report, each PR that
+    opened with its head and the step that failed.
     """
     if not summary.opened:
         _print_failed(summary)
-        print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
+        if summary.left_open:
+            print(
+                f"\nNothing was finalized: {len(summary.left_open)} PR(s) opened but a later "
+                "step failed (named above), so they are open without auto-merge.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
         return EXIT_NOT_ALL_MERGED
     release = args.release and not summary.failed
     cmd = _finalize_cmd(summary.opened, args, release=release)
