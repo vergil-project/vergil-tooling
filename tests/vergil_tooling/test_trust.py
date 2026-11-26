@@ -521,6 +521,47 @@ def test_read_issue_roles_parameter_narrows(fake: Any) -> None:
     assert [s.cause for s in content.skipped] == [trust.NOT_ACCEPTED, trust.NOT_ACCEPTED]
 
 
+def test_report_skipped_calls_a_role_the_reader_does_not_accept_ignored_not_untrusted(
+    fake: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5154: a human-only reader's agent comment is ignored by design, not untrusted."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    spam = {"__typename": "User", "login": SPAM_LOGIN}
+    fake(_item(comments=[_comment("1"), _comment("2", AGENT), _comment("3", spam, SPAM)]))
+    content = _read(roles=frozenset({Role.HUMAN}))
+    assert [c.id for c in content.comments] == ["1"]
+    report_skipped(content.skipped, stream=(stream := io.StringIO()))
+    assert stream.getvalue() == (
+        "ignored content from a trusted role this reader does not accept:"
+        f" {REPO}#7 comment the-agent at {CREATED} on comment 2 (not-accepted)\n"
+        f"skipped untrusted content: {REPO}#7 comment {SPAM_LOGIN} at {CREATED}"
+        " on comment 3 (untrusted)\n"
+    )
+
+
+def test_report_skipped_only_not_accepted_prints_no_untrusted_line() -> None:
+    skipped = [Skipped(REPO, 7, "comment", "the-agent", CREATED, "comment 2", trust.NOT_ACCEPTED)]
+    report_skipped(skipped, stream=(stream := io.StringIO()))
+    assert "untrusted" not in stream.getvalue()
+
+
+def test_report_skipped_under_actions_counts_not_accepted_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    ignored = Skipped(REPO, 7, "comment", "the-agent", CREATED, "comment 1", trust.NOT_ACCEPTED)
+    spam = Skipped(REPO, 7, "comment", SPAM_LOGIN, CREATED, "comment 2", trust.UNTRUSTED)
+    report_skipped([ignored, ignored, spam], stream=(stream := io.StringIO()))
+    assert stream.getvalue() == (
+        "skipped 1 untrusted item(s) (untrusted: 1)\n"
+        "ignored 2 item(s) from trusted roles this reader does not accept\n"
+    )
+    report_skipped([ignored], stream=(stream := io.StringIO()))
+    assert stream.getvalue() == (
+        "ignored 1 item(s) from trusted roles this reader does not accept\n"
+    )
+
+
 def test_read_issue_roles_parameter_applies_to_editors(fake: Any) -> None:
     fake(_item(editor=AGENT, edited=True, edits=_edits([AGENT])))
     content = _read(roles=frozenset({Role.HUMAN}))

@@ -28,7 +28,9 @@ The main modules under `src/vergil_tooling/lib/`:
   or comment is trusted when its author and its editors hold a role; a
   close or reopen when its actor does. Readers return the trusted items
   and report each untrusted one as metadata only, or, where the content
-  is load-bearing, stop. A read it cannot complete fails loudly, never
+  is load-bearing, stop. An item from a trusted role the reader does not
+  accept (`not-accepted`) is reported as ignored, never as untrusted.
+  A read it cannot complete fails loudly, never
   as "trusted" or "nothing found", and a batch run stops the one item,
   not the run. `trusted_authors.py` loads the configuration,
   `trust_publish.py` publishes and checks its GitHub Actions copies, and

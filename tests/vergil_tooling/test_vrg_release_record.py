@@ -426,7 +426,8 @@ def test_check_ignores_agent_record_with_warning(
     assert out is not None
     assert out["record"]["version"] == "2.1.2"
     assert out["warnings"] == []
-    assert err.count("skipped untrusted content") == 2
+    assert err.count("ignored content from a trusted role this reader does not accept") == 2
+    assert "skipped untrusted content" not in err
 
 
 def test_check_ignores_outsider_and_impostor_records(
