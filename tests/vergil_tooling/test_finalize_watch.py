@@ -297,11 +297,8 @@ def test_head_branch_confirmed_once_through_the_trust_layer(fake: FakeGitHub) ->
     assert fake.branch_lookups == [("o/r", "feature/1-thing", "all")]
 
 
-def test_unconfirmed_pr_not_watched(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_unconfirmed_pr_not_watched(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
     """A PR the trust layer does not confirm on its branch is never watched or named by branch."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake.script(1, pr_state(1, _fork=True))
 
     [result] = run([url(1)])

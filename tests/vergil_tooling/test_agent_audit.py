@@ -111,7 +111,6 @@ def origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Origin:
     for var in ("AUTHOR", "COMMITTER"):
         monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
         monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     for var in ("GH_TOKEN", "GITHUB_TOKEN", "VRG_APP_ID", "VRG_PRIVATE_KEY_PATH"):
         monkeypatch.delenv(var, raising=False)
     return Origin(tmp_path)

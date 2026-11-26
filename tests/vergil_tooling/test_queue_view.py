@@ -40,10 +40,9 @@ _LAYER: dict[int, dict[str, Any]] = {}
 
 
 @pytest.fixture(autouse=True)
-def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
+def layer() -> Iterator[MagicMock]:
     """The trust layer's GraphQL reads, answered from :data:`_LAYER`."""
     _LAYER.clear()
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
     def graphql(query: str, **variables: Any) -> dict[str, Any]:
         return trust_stubs.item(**_LAYER.get(int(variables["number"]), {}))

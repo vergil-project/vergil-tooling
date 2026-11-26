@@ -95,7 +95,6 @@ def _stopped(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 def test_main_untrusted_close_is_a_stop(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     err = _stopped(monkeypatch, capsys)
     assert err == (
         "stopped: org/repo#42 event drive-by at 2026-11-02T10:00:00Z on close (untrusted)\n"

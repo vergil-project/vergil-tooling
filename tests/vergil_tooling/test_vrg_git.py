@@ -48,7 +48,6 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
     The guard reads the current repo, then the issue through the real layer,
     answered by :class:`~tests.vergil_tooling.trust_stubs.FakeItems`.
     """
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     monkeypatch.setattr(github, "current_repo", lambda: _REPO)
     fake = trust_stubs.FakeItems()

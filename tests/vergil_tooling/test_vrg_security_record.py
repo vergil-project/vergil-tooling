@@ -1606,9 +1606,8 @@ def test_create_attach_to_an_untrusted_issue_stops_with_one_line(
 
 
 def test_sync_reports_an_untrusted_issue_and_exits_1(
-    env: MagicMock, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    env: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     write = MagicMock()
     untrusted = SecurityIssue(EXISTING, False, (), "completed", skipped=_SKIP)
     advisory = Advisory(GHSA, "draft", "tool", (EXISTING,), external=False)
@@ -1638,11 +1637,9 @@ def test_sync_reports_an_untrusted_issue_and_exits_1(
 def test_a_trust_error_reaching_the_boundary_is_one_line(
     env: MagicMock,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
     # cli_main maps a trust-layer error that escapes a command to one line.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     env.list_advisories.side_effect = error
     with pytest.raises(SystemExit) as excinfo:
         main(["list"])

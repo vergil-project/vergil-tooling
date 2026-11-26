@@ -691,9 +691,8 @@ def _run_tasks(
 
 @pytest.mark.parametrize("view", ["adhoc", "hoshin"])
 def test_task_view_text_lists_the_rest_and_the_stops(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, view: str
+    capsys: pytest.CaptureFixture[str], view: str
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     rc, out, err = _run_tasks(capsys, [view], _stopping_tasks(_ADHOC_ITEM))
     assert rc == 1
     lines = out.splitlines()
@@ -711,9 +710,8 @@ def test_task_view_text_lists_the_rest_and_the_stops(
 
 @pytest.mark.parametrize("view", ["adhoc", "hoshin"])
 def test_task_view_json_with_a_stop_prints_nothing(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, view: str
+    capsys: pytest.CaptureFixture[str], view: str
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     rc, out, err = _run_tasks(capsys, [view, "--json"], _stopping_tasks(_ADHOC_ITEM))
     assert rc == 1
     assert out == ""
@@ -741,10 +739,7 @@ def test_task_view_under_actions_never_names_an_untrusted_stop(
     assert "drive-by" not in out + err
 
 
-def test_task_view_without_stops_exits_0(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_task_view_without_stops_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
     rc, out, err = _run_tasks(capsys, ["hoshin"], lambda _h, **_k: [_HOSHIN_ITEM])
     assert rc == 0
     assert out.splitlines()[0] == "hoshin queue for org in org/.github: 1 open task(s)"
@@ -977,12 +972,6 @@ _STOP_LINE = f"stopped on a read failure: org/.github#9 on comments: {_DETAIL}"
 _STOPPED_OUT = "org/.github#9  stopped: its comments could not be read (see stderr)"
 
 
-@pytest.fixture
-def local(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Outside GitHub Actions, where the stop summary lists each stop in full."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
 def _stopping(*items: QueueItem) -> Any:
     """A view listing *items* that stops org/.github#9 on a read failure."""
 
@@ -1001,7 +990,6 @@ def _no_json_line(queue: str) -> str:
     )
 
 
-@pytest.mark.usefixtures("local")
 def test_named_text_lists_the_rest_and_the_stop(capsys: pytest.CaptureFixture[str]) -> None:
     rc, out, err = _run(capsys, ["planning"], {"planning": _stopping(_S3)})
     assert rc == 1
@@ -1013,7 +1001,6 @@ def test_named_text_lists_the_rest_and_the_stop(capsys: pytest.CaptureFixture[st
     assert err == f"{_STOP_LINE}\n"
 
 
-@pytest.mark.usefixtures("local")
 def test_named_json_with_a_stop_prints_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     rc, out, err = _run(capsys, ["intake", "--json"], {"intake": _stopping(_ITEM)})
     assert rc == 1
@@ -1021,7 +1008,6 @@ def test_named_json_with_a_stop_prints_nothing(capsys: pytest.CaptureFixture[str
     assert err.splitlines() == [_STOP_LINE, _no_json_line("intake")]
 
 
-@pytest.mark.usefixtures("local")
 def test_stop_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
     rc, out, err = _run(capsys, ["deferred"], {"deferred": _stopping(_IN_ERROR)})
     assert rc == 1
@@ -1029,7 +1015,6 @@ def test_stop_beats_size_error(capsys: pytest.CaptureFixture[str]) -> None:
     assert err.splitlines() == [_STOP_LINE, f"vrg-queue: org/.github#4: {_ERROR}"]
 
 
-@pytest.mark.usefixtures("local")
 def test_filtered_header_counts_stops_before_shown(capsys: pytest.CaptureFixture[str]) -> None:
     views = {"planning": _stopping(_S3, _M14)}
     rc, out, _err = _run(capsys, ["planning", "--size", "M"], views)
@@ -1040,7 +1025,6 @@ def test_filtered_header_counts_stops_before_shown(capsys: pytest.CaptureFixture
     assert lines[2] == _STOPPED_OUT
 
 
-@pytest.mark.usefixtures("local")
 def test_bare_text_lists_every_queue_with_its_stop(capsys: pytest.CaptureFixture[str]) -> None:
     views = {
         "intake": lambda _h, _n, **_k: [_ITEM],
@@ -1057,7 +1041,6 @@ def test_bare_text_lists_every_queue_with_its_stop(capsys: pytest.CaptureFixture
     assert err == f"{_STOP_LINE}\n"
 
 
-@pytest.mark.usefixtures("local")
 def test_bare_json_with_a_stop_prints_no_partial_object(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1091,7 +1074,6 @@ def _untrusted_body(*items: QueueItem) -> Any:
     return view
 
 
-@pytest.mark.usefixtures("local")
 def test_planning_untrusted_body_text_and_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc, out, err = _run(capsys, ["planning"], {"planning": _untrusted_body(_S3)})
     assert rc == 1

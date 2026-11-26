@@ -98,7 +98,6 @@ def _fake_semgrep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str) 
     fake.write_text(f"#!/bin/sh\n{script}")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
 
 def test_scan_failure_prints_semgrep_output(

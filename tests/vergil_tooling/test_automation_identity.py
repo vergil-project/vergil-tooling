@@ -69,8 +69,6 @@ class TestAutomationAppSlug:
     @pytest.fixture(autouse=True)
     def _config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("VRG_TRUSTED_AUTHORS", raising=False)
         monkeypatch.delenv("GITHUB_REPOSITORY_OWNER", raising=False)
 
     @staticmethod

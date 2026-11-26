@@ -34,7 +34,6 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
-    monkeypatch.delenv("VRG_AUTOMATION_APP", raising=False)
 
 
 def _vergil_dir(tmp_path: Path) -> Path:

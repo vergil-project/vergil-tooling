@@ -2024,11 +2024,8 @@ def _layer(*answers: dict[str, object]) -> Generator[MagicMock]:
         yield graphql
 
 
-def test_close_refs_closes_only_trusted_references(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_close_refs_closes_only_trusted_references(capsys: pytest.CaptureFixture[str]) -> None:
     """A reference an outsider linked by hand is reported and left open."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     answer = trust_stubs.closing_pr(
         "o/r",
         123,
@@ -2047,11 +2044,8 @@ def test_close_refs_closes_only_trusted_references(
     assert "skipped untrusted content: o/r#123 event drive-by" in captured.err
 
 
-def test_close_refs_untrusted_body_closes_nothing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_close_refs_untrusted_body_closes_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     """An outsider's edit of the body leaves every reference it names open."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     answer = trust_stubs.closing_pr("o/r", 123, ("o/r", 7, "OPEN"), editor=trust_stubs.OUTSIDER)
     ctx = _stage_ctx(["123"])
     with _layer(answer) as graphql, patch(_MOD + ".github.close_issue") as close:
@@ -4140,12 +4134,9 @@ def _fork_pr_page(number: int, branch: str) -> dict[str, object]:
     return {"repository": {"pullRequests": page}}
 
 
-def test_finalize_never_adopts_fork_pr(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_finalize_never_adopts_fork_pr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A fork PR on a worktree's branch name is never watched (GHSA-r4j2-cwcp-xg56):
     it is reported on stderr, metadata only, and its text appears nowhere."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     authors = TrustedAuthors(human=("the-human",), agents=("the-agent",), orgs={})
     with (
         _settle_env(tmp_path, []),
@@ -4882,13 +4873,6 @@ def _run_logs(root: Path) -> list[Path]:
     return sorted((root / ".vergil").glob("vrg-finalize-pr-*.log"))
 
 
-@pytest.fixture
-def plain_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the plain renderer: under GitHub Actions detect_format() picks gha."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
-@pytest.mark.usefixtures("plain_renderer")
 def test_watch_is_a_stage_sharing_the_settle_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -4912,7 +4896,6 @@ def test_watch_is_a_stage_sharing_the_settle_log(
     assert f"full log → {log}" in out
 
 
-@pytest.mark.usefixtures("plain_renderer")
 @pytest.mark.parametrize(
     ("results", "line"),
     [
@@ -4940,7 +4923,6 @@ def test_watch_stage_warns_unless_every_pr_merged_cleanly(
     assert re.search(rf"\n{pattern}\n", capsys.readouterr().out)
 
 
-@pytest.mark.usefixtures("plain_renderer")
 def test_nothing_merged_names_the_watch_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -4953,7 +4935,6 @@ def test_nothing_merged_names_the_watch_log(
     assert "=== watch: warn (0 merged, 1 failed, " in log.read_text()
 
 
-@pytest.mark.usefixtures("plain_renderer")
 def test_a_watch_error_fails_the_stage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     watch = MagicMock(side_effect=FinalizeWatchError(f"{_PR_A}: reading the PR failed: boom"))
@@ -4967,7 +4948,6 @@ def test_a_watch_error_fails_the_stage(tmp_path: Path, capsys: pytest.CaptureFix
     assert "=== watch: failed (FinalizeWatchError: " in log.read_text()
 
 
-@pytest.mark.usefixtures("plain_renderer")
 def test_watch_without_trusted_authors_exits_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -2913,7 +2913,6 @@ def test_task_linkage_noop_when_ref_unresolvable() -> None:
 
 def _linkage_through_layer(layer: trust_stubs.FakeItems, monkeypatch: pytest.MonkeyPatch) -> str:
     """:func:`_task_linkage` for org/repo#42, with no native parent, through the real layer."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
 
     def graphql(query: str, **variables: Any) -> object:
@@ -3002,10 +3001,8 @@ def test_submit_linkage_ignores_untrusted_parent_line(
 def test_trust_failure_before_any_pr_is_one_line(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     # A trust-layer failure in the per-issue checks is one line, never a traceback.
     _write_workflow_state(tmp_path)
     with (
@@ -3022,10 +3019,7 @@ def test_trust_failure_before_any_pr_is_one_line(
     assert capsys.readouterr().err == f"vrg-submit-pr: {error}\n"
 
 
-def test_relay_untrusted_payload_opens_no_pr(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_relay_untrusted_payload_opens_no_pr(capsys: pytest.CaptureFixture[str]) -> None:
     stop = trust.UntrustedContentError(
         trust.Skipped("org/repo", 0, "commit", "drive-by", "t", "the relay ref", "untrusted"),
         "the commit's author is untrusted",

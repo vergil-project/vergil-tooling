@@ -147,11 +147,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Any:
     return install
 
 
-@pytest.fixture(autouse=True)
-def _not_actions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
 def _read(**kwargs: Any) -> trust.IssueContent:
     return read_issue(REPO, 7, authors=AUTHORS, **kwargs)
 
@@ -1001,8 +996,7 @@ def test_batch_stopped_lists_items_in_order() -> None:
     assert [item.number for item in _stops().stopped] == [7, 9]
 
 
-def test_batch_named_is_every_stop_outside_actions(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_batch_named_is_every_stop_outside_actions() -> None:
     assert BatchStops().named == ()
     assert [item.number for item in _stops().named] == [7, 9]
 

@@ -262,14 +262,11 @@ def test_back_merge_ignores_closed_unmerged_pr(_branch_lookup: MagicMock) -> Non
     assert ctx.next_version == "2.1.1"
 
 
-def test_bump_ignores_fork_post_release_pr(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bump_ignores_fork_post_release_pr(capsys: pytest.CaptureFixture[str]) -> None:
     """A fork PR on the post branch's name is never adopted or merged, only reported.
 
     GHSA-r4j2-cwcp-xg56: the fresh path runs and opens the release's own PR.
     """
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     ctx = _ctx()
     with (
         branch_lookup(skipped=(fork_skip(666),)) as lookup,

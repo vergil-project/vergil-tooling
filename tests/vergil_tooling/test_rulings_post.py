@@ -228,7 +228,6 @@ def test_a_landed_comment_by_a_user_named_like_the_agent_does_not_count(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     text = "R1.1: fixed as asked"
     forged = trust_stubs.comment(55, text, {"__typename": "User", "login": AGENT})
     real = fake_gh.graphql

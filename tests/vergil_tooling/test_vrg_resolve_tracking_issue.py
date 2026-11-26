@@ -393,11 +393,8 @@ def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) ->
     assert capsys.readouterr().out.strip() == "830"
 
 
-def test_untrusted_pr_body_is_a_stop(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_untrusted_pr_body_is_a_stop(capsys: pytest.CaptureFixture[str]) -> None:
     """A body an untrusted identity edited is never parsed: exit 1, metadata only."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     item = trust.Skipped(
         "org/repo", 42, "edit", "outsider", "2026-11-01T00:00:00Z", "body", trust.UNTRUSTED
     )

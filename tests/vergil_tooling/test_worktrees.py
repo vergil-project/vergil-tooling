@@ -737,13 +737,10 @@ def _graphql_pr(number: int, *, fork: bool, state: str, author: str, title: str)
     }
 
 
-def test_worktree_state_ignores_fork_pr(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_worktree_state_ignores_fork_pr(capsys: pytest.CaptureFixture[str]) -> None:
     """A fork's merged PR on the branch name never makes the worktree MERGED or
     removable (GHSA-r4j2-cwcp-xg56); a fork's open PR is no open PR either.
     Each is reported on stderr, metadata only, and its text appears nowhere."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     nodes = [
         _graphql_pr(70, fork=True, state="MERGED", author=_SPAM_LOGIN, title=_SPAM_TITLE),
         _graphql_pr(71, fork=True, state="OPEN", author=_SPAM_LOGIN, title=_SPAM_TITLE),

@@ -57,10 +57,7 @@ def graphql() -> Iterator[list[Any]]:
         yield nodes
 
 
-def test_pr_for_branch_reports_fork(
-    graphql: list[Any], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+def test_pr_for_branch_reports_fork(graphql: list[Any], capsys: pytest.CaptureFixture[str]) -> None:
     graphql.extend([_pr(7, fork=True), _pr(5)])
     prs = branch_prs(_REPO, _BRANCH, phase="prepare")
     assert prs.open_pr is not None
@@ -86,9 +83,8 @@ def test_pr_for_branch_reports_fork_under_actions_as_counts(
 
 
 def test_pr_for_branch_skips_untrusted_author(
-    graphql: list[Any], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    graphql: list[Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     graphql.extend([_pr(8, author=OUTSIDER, state="MERGED")])
     prs = branch_prs(_REPO, _BRANCH, phase="prepare")
     assert prs == type(prs)(open_pr=None, latest_closed=None)

@@ -515,11 +515,8 @@ def test_fresh_start_open_release_read_failure_raises() -> None:
 _SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
 
 
-def test_outsider_release_issue_does_not_block_start(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_outsider_release_issue_does_not_block_start(capsys: pytest.CaptureFixture[str]) -> None:
     """An outsider's ``release:`` issue is reported, metadata only, and never blocks."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     open_issues = [_release_issue("2.0.33", 99, f"{_SPAM}\n{_state_body('2.0.33')}")]
     _BODIES[99] = None
     with patch(_RESUME_READ, return_value=open_issues):
@@ -1122,10 +1119,7 @@ def test_pending_deps_prs_parses_fix_task() -> None:
     assert "body" not in args[args.index("--json") + 1].split(",")
 
 
-def test_fix_task_link_from_untrusted_body_ignored(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
+def test_fix_task_link_from_untrusted_body_ignored(capsys: pytest.CaptureFixture[str]) -> None:
     listed = [
         {
             "url": "https://github.com/o/r/pull/9",
@@ -1479,14 +1473,11 @@ def test_preflight_branch_already_deleted_counts_as_deleted(
     assert "already deleted" in capsys.readouterr().out
 
 
-def test_deps_gate_never_deletes_for_fork_pr(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_deps_gate_never_deletes_for_fork_pr(capsys: pytest.CaptureFixture[str]) -> None:
     """A fork PR's head is in the fork: the same-named branch here is never deleted.
 
     GHSA-r4j2-cwcp-xg56: the PR is still closed, its fork reported, metadata only.
     """
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     _FORK_PRS.add(9)
     pending = [PendingDepsPr(head=_HEAD, url=_PR9, fix_task=_TASK10)]
     ctx, calls = _run_preflight_with_tasks(pending, {_TASK10: ("CLOSED", "COMPLETED")})

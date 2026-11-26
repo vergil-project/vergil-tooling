@@ -170,7 +170,6 @@ class OrgSpy:
 
 @pytest.fixture
 def gh(monkeypatch: pytest.MonkeyPatch) -> FakeGh:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = FakeGh()
     monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr("vergil_tooling.lib.rulings.draft_ref.fetch_draft", fake.fetch_draft)
