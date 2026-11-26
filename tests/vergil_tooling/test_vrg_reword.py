@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     import argparse
     from collections.abc import Iterator
     from pathlib import Path
-    from unittest.mock import MagicMock
 
 _MOD = "vergil_tooling.bin.vrg_reword"
 
@@ -361,15 +360,34 @@ def _push_through_path(
     result: pr_path.PushResult | Exception,
 ) -> tuple[int, MagicMock, MagicMock]:
     """Run ``_maybe_push`` on a branch with an open PR, the path answering *result*."""
-    answer = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+    path_push = MagicMock()
+    if isinstance(result, Exception):
+        path_push.side_effect = result
+    else:
+        path_push.return_value = result
     with (
         patch(f"{_MOD}._rev_parse", side_effect=_SHAS.get),
         patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=_PR_URL),
-        patch(f"{_MOD}.pr_path.push_to_open_pr", **answer) as path_push,
+        patch(f"{_MOD}.pr_path.push_to_open_pr", path_push),
         patch(f"{_MOD}.git.run") as run,
     ):
         rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
     return rc, path_push, run
+
+
+def test_reword_unreadable_local_head_not_pushed(capsys: pytest.CaptureFixture[str]) -> None:
+    remote_only = {"refs/remotes/origin/feature/1-x": "remotesha"}
+    with (
+        patch(f"{_MOD}._rev_parse", side_effect=remote_only.get),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=_PR_URL),
+        patch(f"{_MOD}.pr_path.push_to_open_pr") as path_push,
+        patch(f"{_MOD}.git.run") as run,
+    ):
+        rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
+    assert rc == 1
+    path_push.assert_not_called()
+    run.assert_not_called()
+    assert "its local head refs/heads/feature/1-x could not be read" in capsys.readouterr().err
 
 
 def test_reword_on_open_pr_branch_pushes_through_path(
