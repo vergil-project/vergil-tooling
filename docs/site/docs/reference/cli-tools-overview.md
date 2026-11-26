@@ -1149,7 +1149,7 @@ the current list's order, `removed` in the block's.
 | Source | `vergil_tooling.bin.vrg_checkpoint` (stage lists, format and parser: `lib/checkpoint.py`) |
 | Args | `init`, `status`, `tick`, `reset`, `reconcile`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE`; `reconcile`: `--tick STAGE` (repeatable, new stages only) |
 | Preconditions | GitHub App credentials for the issue's org; trusted authors configured |
-| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status`; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
+| Failure mode | Error on stderr, nothing written; a failed write says the edit may not have been applied, and to re-run `status` to confirm; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
 | Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick, a `reconcile` with no skew or a `--tick` of a stage that is not new, a failed `reconcile` comment); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
 | Status | Active |
 
