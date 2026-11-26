@@ -20842,6 +20842,12 @@ which cannot reword. It is bounded:</p>
 <li><strong>Force-with-lease</strong>: when the branch is already on origin, the rewrite is
   pushed with <code>--force-with-lease</code>, never a bare <code>--force</code>. <code>--no-push</code>
   skips the push and prints the command to run.</li>
+<li><strong>Through the one PR path on an open PR's branch</strong>: when the branch has an
+  open PR into <code>develop</code>, the rewrite is pushed through the same path as
+  <code>vrg-submit-pr --push</code>, with the same lease, so the rewritten head is
+  judged before it is pushed and a head the path refuses is not pushed. If
+  it cannot tell whether the branch has an open PR, it pushes nothing (epic
+  vergil-project/.github#1664).</li>
 </ul>
 <p>Rewording a mid-chain commit re-applies the commits after it, which changes
 their committer (the author is kept), so the tool first prints a note on
@@ -21119,7 +21125,11 @@ such a failure, in <code>report-ready</code> and in <code>vrg-git push</code> al
 <code>workflows: write</code> in the repository's installation, and the human must accept
 that permission on the installation (#5176). A branch
 with no commits ahead of <code>--base</code> is refused before any push, with nothing
-recorded and no freeze (#3870). A re-run on
+recorded and no freeze (#3870). A branch that already has an open PR into
+<code>develop</code> is refused before any push too, with nothing recorded: a new head
+for it goes through <code>vrg-submit-pr --push</code>. If <code>report-ready</code> cannot tell
+whether the branch has one, it refuses the same way (epic
+vergil-project/.github#1664). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
 before any push. After a deliberate <code>unfreeze</code>, a re-run pushes with
 <code>--force-with-lease=refs/heads/&lt;branch&gt;:&lt;recorded head_sha&gt;</code>, so a rebased
