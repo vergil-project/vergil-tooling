@@ -963,14 +963,21 @@ class _Row:
     """One PR's row in the status table; *waited* is in seconds since the watch started."""
 
     number: str
+    branch: str
     title: str
     state: str
     waited: float
 
 
-def _row(snap: Snapshot, state: str, waited: float) -> _Row:
+def _row(snap: Snapshot, watched: _Watched, state: str, waited: float) -> _Row:
+    """*snap*'s row, its branch the one *watched* confirmed, ``-`` when none was.
+
+    ``gh``'s head ref is a candidate only, so a PR the trust layer did not
+    confirm is never named by its branch.
+    """
     number = f"#{snap.url.rsplit('/', 1)[-1]}"
-    return _Row(number=number, title=snap.title, state=state, waited=waited)
+    branch = watched.branch or "-"
+    return _Row(number=number, branch=branch, title=snap.title, state=state, waited=waited)
 
 
 def _duration(secs: float) -> str:
@@ -1000,14 +1007,18 @@ def _totals(results: Collection[PRResult], pending: int, left: float) -> str:
 
 
 def _status_lines(rows: Sequence[_Row], totals: str, elapsed: float) -> list[str]:
-    """The status table: a header, one line per PR, then the totals line."""
-    table = [("PR", "TITLE", "STATE", "WAITING")]
-    table += [(r.number, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
-    widths = [max(len(line[i]) for line in table) for i in range(3)]
+    """The status table: a header, one line per PR, then the totals line.
+
+    The branch sits between the PR and its title (vergil-tooling#5223):
+    branch names are easier to scan than titles.
+    """
+    table = [("PR", "BRANCH", "TITLE", "STATE", "WAITING")]
+    table += [(r.number, r.branch, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
+    widths = [max(len(line[i]) for line in table) for i in range(4)]
     lines = [f"Watch status after {_duration(elapsed)}:"]
     for line in table:
-        cells = [cell.ljust(width) for cell, width in zip(line[:3], widths, strict=True)]
-        lines.append(f"  {'  '.join([*cells, line[3]])}")
+        cells = [cell.ljust(width) for cell, width in zip(line[:4], widths, strict=True)]
+        lines.append(f"  {'  '.join([*cells, line[4]])}")
     lines.append(f"  {totals}")
     return lines
 
@@ -1085,10 +1096,10 @@ def watch(
         result = _judge(snap, watched, now=now)
         if result is None:
             pending[snap.url] = (watched, snap)
-            rows[snap.url] = _row(snap, _pending_state(snap, watched), now - start)
+            rows[snap.url] = _row(snap, watched, _pending_state(snap, watched), now - start)
             return
         results[snap.url] = result
-        rows[snap.url] = _row(snap, result.outcome, now - start)
+        rows[snap.url] = _row(snap, watched, result.outcome, now - start)
         pending.pop(snap.url, None)
         if result.outcome in _CHECK_OUTCOMES:
             recheck[snap.url] = watched
@@ -1128,7 +1139,7 @@ def watch(
             if failed is not None:
                 del recheck[url]
                 results[url] = failed
-                rows[url] = _row(snap, failed.outcome, time.monotonic() - start)
+                rows[url] = _row(snap, watched, failed.outcome, time.monotonic() - start)
         for url, (watched, _) in list(pending.items()):
             judge(snapshot(url), watched)
         now = time.monotonic()
