@@ -237,15 +237,16 @@ the batch:
 
 ```text
 Watch status after 0m30s:
-  PR     TITLE                                     STATE               WAITING
-  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
-  #4662  fix(provenance): flag a merged violation  checks pending (2)  0m30s
-  #4663  docs: describe the watch                  failed: CI          0m15s
+  PR     BRANCH                    TITLE                                     STATE               WAITING
+  #4661  feature/4655-batch-watch  feat(finalize): watch a batch of PRs      merged              0m15s
+  #4662  feature/4656-merged-flag  fix(provenance): flag a merged violation  checks pending (2)  0m30s
+  #4663  feature/4657-watch-docs   docs: describe the watch                  failed: CI          0m15s
   1 merged, 1 pending, 1 failed; 1h59m30s left before the batch deadline
 ```
 
-- **PR** and **TITLE**: the PR number and its title, cut to 50
-  characters with `...`.
+- **PR**, **BRANCH** and **TITLE**: the PR number, its head branch (`-`
+  for a PR the trust layer did not confirm on its branch), and its
+  title, cut to 50 characters with `...`.
 - **STATE**: while the PR is pending, `conflict reported, waiting for
   GitHub to settle it` (a conflict not yet reported for two minutes),
   `checks pending (<n>)` (checks not

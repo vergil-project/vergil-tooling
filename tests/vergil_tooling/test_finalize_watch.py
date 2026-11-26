@@ -308,7 +308,9 @@ def test_unconfirmed_pr_not_watched(fake: FakeGitHub, capsys: pytest.CaptureFixt
     assert result.branch == ""
     assert fake.provenance_checks == []
     assert fake.sleeps == []
-    assert "feature/1-thing" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "feature/1-thing" not in out
+    assert "  #1  -       feat: change 1  failed: not a develop PR  0m00s\n" in out
 
 
 def test_trust_read_failure_stops_the_watch(
@@ -843,9 +845,11 @@ def test_a_settling_conflict_is_pending_in_the_status_table(
     run([url(1)])
 
     first = _tables(capsys.readouterr().out)[0]
-    assert "  #1  feat: change 1  conflict reported, waiting for GitHub to settle it  0m00s\n" in (
-        first
+    row = (
+        "  #1  feature/1-thing  feat: change 1  "
+        "conflict reported, waiting for GitHub to settle it  0m00s\n"
     )
+    assert row in first
 
 
 def test_closed(fake: FakeGitHub) -> None:
@@ -1153,23 +1157,23 @@ def test_status_table_for_a_mixed_batch(
     # One table after start-up and one after each of the two polls.
     assert [b.text for b in blocks] == [
         "Watch status after 0m00s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  checks pending (2)  0m00s\n"
-        "  #2  feat: change 2  checks pending (2)  0m00s\n"
-        "  #3  feat: change 3  checks pending (2)  0m00s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  checks pending (2)  0m00s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m00s\n"
+        "  #3  feature/3-thing  feat: change 3  checks pending (2)  0m00s\n"
         "  0 merged, 3 pending, 0 failed; 0m30s left before the batch deadline",
         "Watch status after 0m15s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  merged              0m15s\n"
-        "  #2  feat: change 2  checks pending (2)  0m15s\n"
-        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged              0m15s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m15s\n"
+        "  #3  feature/3-thing  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m15s left before the batch deadline",
         # The ended PRs keep their rows, their waiting time frozen.
         "Watch status after 0m30s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  merged              0m15s\n"
-        "  #2  feat: change 2  checks pending (2)  0m30s\n"
-        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged              0m15s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m30s\n"
+        "  #3  feature/3-thing  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline",
     ]
     # The last poll changed no PR's state, only the waiting times (issue #4694).
@@ -1195,7 +1199,7 @@ def test_status_table_change_of_pending_state_is_a_change(
 
     run([url(1)])
 
-    states = [re.split(r"\s{2,}", b.lines[2].strip())[2] for b in blocks]
+    states = [re.split(r"\s{2,}", b.lines[2].strip())[3] for b in blocks]
     assert states == ["checks pending (2)", "checks pending (2)", "checks green, merging", "merged"]
     assert [b.changed for b in blocks] == [True, False, True, True]
 
@@ -1284,7 +1288,7 @@ def test_status_table_pending_states(
     run([url(1)])
 
     first = _tables(capsys.readouterr().out)[0]
-    assert f"  #1  feat: change 1  {state}  0m00s\n" in first
+    assert f"  #1  feature/1-thing  feat: change 1  {state}  0m00s\n" in first
 
 
 def test_status_table_with_unknown_required_checks(
@@ -1295,7 +1299,8 @@ def test_status_table_with_unknown_required_checks(
 
     run([url(1)])
 
-    assert "  #1  feat: change 1  waiting (no merge state)  0m00s\n" in capsys.readouterr().out
+    row = "  #1  feature/1-thing  feat: change 1  waiting (no merge state)  0m00s\n"
+    assert row in capsys.readouterr().out
 
 
 def test_status_table_shortens_long_titles_and_counts_hours(
@@ -1308,7 +1313,7 @@ def test_status_table_shortens_long_titles_and_counts_hours(
     run([url(1)], poll=3725.0)
 
     first, second = _tables(capsys.readouterr().out)
-    assert "  #1  feat(finalize): print a status table on every p...  " in first
+    assert "  #1  feature/1-thing  feat(finalize): print a status table on every p...  " in first
     assert title not in first
     assert "2h00m00s left before the batch deadline" in first
     assert "Watch status after 1h02m05s:" in second
@@ -1326,9 +1331,9 @@ def test_status_table_when_every_pr_ended_at_start_up(
 
     assert _tables(capsys.readouterr().out) == [
         "Watch status after 0m00s:\n"
-        "  PR  TITLE           STATE           WAITING\n"
-        "  #1  feat: change 1  merged          0m00s\n"
-        "  #2  feat: change 2  failed: closed  0m00s\n"
+        "  PR  BRANCH           TITLE           STATE           WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged          0m00s\n"
+        "  #2  feature/2-thing  feat: change 2  failed: closed  0m00s\n"
         "  1 merged, 0 pending, 1 failed; 2h00m00s left before the batch deadline"
     ]
 
