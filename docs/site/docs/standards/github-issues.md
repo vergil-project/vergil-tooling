@@ -1059,8 +1059,9 @@ Deferred from: <owner>/<repo>#<N>
 prose — a date, an event ("`<owner>/<repo>#<N>` merges", "Zensical 1.0
 ships"), or both — written so a later review can actually check it. `--date
 YYYY-MM-DD` stamps an original deferral date instead of today. Running `defer`
-on an item already in the deferred queue is a **refresh**: a new dated record,
-no move, no `Deferred from:` line.
+on an item already in the deferred queue is a **refresh**: a new dated record
+and no move, carrying forward the `Deferred from:` line of the latest record
+that has one (or saying it has none to carry).
 
 **Bringing it back.** `epic-review deferred` lists the queue with
 `vrg-queue deferred` (least recently deferred first), checks each item's

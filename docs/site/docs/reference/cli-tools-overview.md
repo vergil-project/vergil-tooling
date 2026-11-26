@@ -1303,9 +1303,11 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   `--date` stamps an original deferral date instead of today. The item is
   linked before the record is posted, and a planning item's `in-progress`
   label is removed. On an item already deferred, `defer` is a **refresh**: a
-  new record, no move, and no `Deferred from:` line. If the record fails after
-  the move, the command fails loudly and prints the full intended comment to
-  post by hand.
+  new record and no move. The record carries forward the `Deferred from:`
+  line of the item's latest trusted deferral record that has one; when none
+  has, the record has no such line and the route says so on stderr. If the
+  record fails after the move, the command fails loudly and prints the full
+  intended comment to post by hand.
 - `intake` — reparent a deferred item back onto its home's intake epic.
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
