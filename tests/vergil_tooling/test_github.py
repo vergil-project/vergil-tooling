@@ -3702,9 +3702,7 @@ def test_repo_exists_does_not_memoize_a_missing_repo() -> None:
 # -- repo_is_archived / is_archived_repo_refusal (issue #5212) ---------------
 @pytest.mark.parametrize("archived", [True, False])
 def test_repo_is_archived_reads_the_repo_state_on_every_call(archived: bool) -> None:
-    with patch(
-        "vergil_tooling.lib.github.read_json", return_value={"isArchived": archived}
-    ) as rj:
+    with patch("vergil_tooling.lib.github.read_json", return_value={"isArchived": archived}) as rj:
         assert github.repo_is_archived("org", "repo") is archived
         assert github.repo_is_archived("org", "repo") is archived
     rj.assert_called_with("repo", "view", "org/repo", "--json", "isArchived")

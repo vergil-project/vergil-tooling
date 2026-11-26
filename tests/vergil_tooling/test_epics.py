@@ -17,7 +17,7 @@ from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 from vergil_tooling.lib.labels import load_labels
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
     from tests.vergil_tooling.trust_stubs import FakeItems
 
@@ -1265,7 +1265,7 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
 
 
 @contextlib.contextmanager
-def _adhoc_drain() -> Iterator[None]:
+def _adhoc_drain() -> Generator[None]:
     """Patch the reads of an ad-hoc drain of TASK, whose live epic is org/.github#40."""
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
