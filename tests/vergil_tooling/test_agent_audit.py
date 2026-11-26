@@ -259,7 +259,10 @@ class FakeGitHub:
             branch = endpoint.removeprefix(activity)
             self.activity_reads.append(branch)
             return [
-                row for pr in self.prs.values() if pr.head_ref == branch for row in pr.activity_rows()
+                row
+                for pr in self.prs.values()
+                if pr.head_ref == branch
+                for row in pr.activity_rows()
             ]
         parts = endpoint.removeprefix(f"repos/{REPO}/").split("/")
         if parts[0] == "commits":
@@ -932,9 +935,7 @@ def test_deleted_author_is_not_human_only(
 # The head branch's pushers, from the repository activity.
 
 
-def _human_pr_with_activity(
-    gh: FakeGitHub, origin: Origin, activity: list[dict[str, Any]]
-) -> PR:
+def _human_pr_with_activity(gh: FakeGitHub, origin: Origin, activity: list[dict[str, Any]]) -> PR:
     pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
     pr.activity = activity
     return pr
@@ -1086,8 +1087,11 @@ def test_branch_activity_endpoint_quotes_the_ref(monkeypatch: pytest.MonkeyPatch
         (_activity("", HUMAN, _BEFORE_OPEN, "feature/11 #x"), "an entry has no type"),
         (_activity("push", HUMAN, _BEFORE_OPEN, "other"), "an entry is for another ref"),
         (
-            {k: v for k, v in _activity("push", HUMAN, _BEFORE_OPEN, "feature/11 #x").items()
-             if k != "has_actor"},
+            {
+                k: v
+                for k, v in _activity("push", HUMAN, _BEFORE_OPEN, "feature/11 #x").items()
+                if k != "has_actor"
+            },
             "an entry has no actor",
         ),
         (_activity("push", HUMAN, "yesterday", "feature/11 #x"), "an entry's time is not a time"),

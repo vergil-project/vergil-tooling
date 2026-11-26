@@ -525,7 +525,8 @@ def _branch_pushers(repo: str, pr: _PullRequest) -> tuple[trust.Identity, ...]:
     what = f"the activity of {repo} branch {pr.head_ref}"
     jq = (
         "[.[] | {activity_type, timestamp, ref}"
-        f' + (if has("actor") then {{actor: (.actor | {_ACCOUNT}), has_actor: true}} else {{}} end)]'
+        f' + (if has("actor") then {{actor: (.actor | {_ACCOUNT}), has_actor: true}}'
+        " else {} end)]"
     )
     rows = _read(
         what,
