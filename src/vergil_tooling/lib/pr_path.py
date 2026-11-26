@@ -2,9 +2,11 @@
 
 Spec §5.1 and §5.4 of the release-lock epic. Every PR into ``develop`` that
 the tooling opens or arms is armed here, by :func:`arm`, and nothing else
-turns auto-merge on or merges a PR into ``develop``. ``vrg-submit-pr`` is its
-first caller; the mechanized automation, update-deps, the back-merge and the
-re-arm sweeps converge on it in later tasks.
+turns auto-merge on or merges a PR into ``develop``. ``vrg-submit-pr``, the
+mechanized automation (:func:`vergil_tooling.lib.mechanized_pr.open_sync_pr`)
+and update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`) are
+its callers; the back-merge and the re-arm sweeps converge on it in later
+tasks.
 
 :func:`accepts` is the path's admission rule: an open, non-draft PR into
 ``develop`` whose head is a same-repo branch with a trusted author, as the

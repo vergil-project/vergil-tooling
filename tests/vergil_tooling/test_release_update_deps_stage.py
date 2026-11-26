@@ -226,7 +226,7 @@ def test_release_deps_stage_uses_path(monkeypatch: pytest.MonkeyPatch) -> None:
     waited: list[str] = []
     monkeypatch.setattr(
         deps_pr + ".pr_merge.wait_until_merged",
-        lambda url, *, strategy, deadline_secs: waited.append(url),  # noqa: ARG005
+        lambda url, *, deadline_secs: waited.append(url),  # noqa: ARG005
     )
 
     def no_merge(*a: object, **k: object) -> None:

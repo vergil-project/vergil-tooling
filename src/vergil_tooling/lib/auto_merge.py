@@ -2,9 +2,7 @@
 
 The auto-merge helper of the one PR path (:mod:`vergil_tooling.lib.pr_path`,
 epic vergil-project/.github#1664, spec §5.4). It is private to the path:
-:func:`vergil_tooling.lib.pr_path.arm` is its caller, and the mechanized PRs
-(:mod:`vergil_tooling.lib.mechanized_pr`) call it directly only until
-vergil-project/vergil-tooling#5251 moves them onto the path.
+:func:`vergil_tooling.lib.pr_path.arm` is its one caller.
 :func:`_enable` turns auto-merge on through the GraphQL
 ``enablePullRequestAutoMerge`` mutation, with the caller's merge method and
 the pushed commit as ``expectedHeadOid``, so a head pushed later is never

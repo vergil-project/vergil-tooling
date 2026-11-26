@@ -24,18 +24,20 @@ the way a person would, with plain git in that checkout:
    :func:`vergil_tooling.lib.pr_create.create_or_adopt`: when ``gh pr create``
    fails, the open PR from the branch is adopted if its head, base, title and
    head commit match what was pushed, and any other open PR fails the run,
-   naming it (#4699). GitHub auto-merge is then turned on through the
-   one PR path's helper (``auto_merge._enable``, called directly here
-   until vergil-project/vergil-tooling#5251 arms the PR through
-   :func:`vergil_tooling.lib.pr_path.arm`) with the squash
-   method and the pushed commit as the expected head, then read back to
-   confirm it is on. When GitHub refuses because the PR can already merge, the
-   helper merges it directly with the same method and head, and the result is
-   ``merged`` with no wait. Any other refusal raises
-   :class:`MechanizedPRError`.
+   naming it (#4699). The PR is then armed through the one PR path
+   (:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664,
+   spec §5.4), with the clone and the pushed commit as the expected head: the
+   path turns auto-merge on, pinned to that head, with the method it works out
+   from the PR (squash for a sync PR). When GitHub refuses because the PR can
+   already merge, the path merges it directly, and the result is ``merged``
+   with no wait. An arm the path ``refused`` fails the job with
+   :class:`PRNotMergedError` giving the path's reason, as does any outcome but
+   ``armed`` or ``merged``; an arm that cannot be completed raises
+   :class:`MechanizedPRError`. This module never turns auto-merge on or
+   merges a PR itself.
 5. **Wait until merged** (:func:`vergil_tooling.lib.pr_merge.wait_until_merged`).
-   A merged PR is the result ``merged``. A PR whose checks are green is merged
-   by the wait itself if auto-merge has not merged it first. A failed check, a
+   A merged PR is the result ``merged``. The wait only watches: GitHub's
+   auto-merge merges the PR once its checks are green. A failed check, a
    conflict, a closed PR or the deadline stops the wait with
    :class:`PRNotMergedError`, naming the PR and the reason. The deadline is
    the caller's ``deadline_secs`` when it gives one. A job that holds an App
@@ -47,9 +49,9 @@ the way a person would, with plain git in that checkout:
    default, inside the one hour an ambient App installation token lasts.
 
 Each step that changes GitHub prints one line as it happens: each earlier
-run's PR it closes, the PR it opens, a direct merge, and how the wait ended,
-with the time it waited. A run that waits for an hour or more can then be read
-from its log alone.
+run's PR it closes, the PR it opens, a direct merge by the path or an arm it
+refused, and how the wait ended, with the time it waited. A run that waits
+for an hour or more can then be read from its log alone.
 
 Every GitHub call names the repo (``--repo``, a ``repos/<repo>/…`` endpoint or
 the PR's URL), so nothing depends on the cwd. The push authenticates the way
@@ -77,7 +79,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from vergil_tooling.lib import auto_merge, git, github, pr_create, pr_merge, trust
+from vergil_tooling.lib import git, github, pr_create, pr_merge, pr_path, trust
 from vergil_tooling.lib.develop_clone import DEVELOP_BRANCH
 from vergil_tooling.lib.process_errors import error_text
 
@@ -89,9 +91,6 @@ RUN_ID_ENV = "GITHUB_RUN_ID"
 #: else 40 minutes, inside the one hour an App installation token lasts.
 DEADLINE_ENV = "VRG_MECHANIZED_PR_DEADLINE"
 DEFAULT_DEADLINE_SECS = 2400
-
-#: Mechanized PRs are squash-merged, the method auto-merge is turned on with.
-_MERGE_STRATEGY = "squash"
 
 # A job name is one branch-path segment, so one job's prefix never contains
 # another's (``automation/a/`` is not inside ``automation/a-b/``).
@@ -314,13 +313,24 @@ def _open_pr(repo: str, branch: str, title: str, body: str, head: str) -> str:
     return url
 
 
-def _enable_auto_merge(repo: str, pr_url: str, head: str) -> bool:
-    """Turn on squash auto-merge for *pr_url* at *head*; true when it merged directly."""
+def _arm(repo: str, clone: Path, pr_url: str, head: str) -> bool:
+    """Arm *pr_url* at *head* through the one PR path; true when the path merged it.
+
+    An outcome but ``armed`` or ``merged`` raises :class:`PRNotMergedError`
+    with the path's reason; an arm that cannot be completed raises
+    :class:`MechanizedPRError`.
+    """
     try:
-        result = auto_merge._enable(pr_url, head=head, method="SQUASH")  # noqa: SLF001 - until #5251
-    except auto_merge.AutoMergeError as exc:
-        raise _fail("enabling auto-merge", repo, exc) from exc
-    return result.merged_now
+        result = pr_path.arm(pr_url, clone=clone, head=head)
+    except pr_path.PRPathError as exc:
+        raise _fail("arming the PR", repo, exc) from exc
+    if result.outcome == "merged":
+        return True
+    if result.outcome == "armed":
+        return False
+    reason = f"the one PR path did not arm it ({result.outcome}): {result.detail}"
+    print(f"{repo}: {pr_url} was not armed: {reason}")
+    raise PRNotMergedError(repo, pr_url, reason)
 
 
 def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
@@ -335,7 +345,7 @@ def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
         print(f"{repo}: the wait for {pr_url} ended after {waited}s: {outcome}")
 
     try:
-        pr_merge.wait_until_merged(pr_url, strategy=_MERGE_STRATEGY, deadline_secs=deadline)
+        pr_merge.wait_until_merged(pr_url, deadline_secs=deadline)
     except pr_merge.MergeAbortError as exc:
         ended(f"not merged ({exc})")
         raise PRNotMergedError(repo, pr_url, str(exc)) from exc
@@ -385,8 +395,8 @@ def open_sync_pr(  # noqa: PLR0913 - the PR's parts and its deadline, all keywor
     head = _commit_and_push(repo, clone, branch, title)
     pr_url = _open_pr(repo, branch, title, body, head)
     print(f"{repo}: opened {pr_url}; waiting up to {deadline}s for it to merge")
-    if _enable_auto_merge(repo, pr_url, head):
-        print(f"{repo}: {pr_url} was already mergeable and merged directly")
+    if _arm(repo, clone, pr_url, head):
+        print(f"{repo}: {pr_url} was already mergeable and the one PR path merged it")
     else:
         _wait_until_merged(repo, pr_url, deadline)
     return SyncResult(status="merged", pr_url=pr_url, closed=closed)

@@ -2291,7 +2291,7 @@ def test_update_undeclared_parameter_still_opens_pr_then_exits_1(
 @pytest.mark.parametrize(
     "failure",
     [
-        MechanizedPRError("mechanized PR for o/r: enabling auto-merge failed: boom"),
+        MechanizedPRError("mechanized PR for o/r: arming the PR failed: boom"),
         develop_clone.DevelopCloneError("Could not clone the 'develop' branch of o/r: boom"),
     ],
     ids=["pr", "clone"],
@@ -2320,6 +2320,18 @@ def test_update_pr_that_does_not_merge_exits_2_naming_it(
         assert main(["update", "--repo", "o/r"]) == 2
     err = capsys.readouterr().err
     assert f"mechanized PR for o/r: {_PR_URL} did not merge: Checks failed on PR x" in err
+
+
+def test_update_sync_pr_the_path_refused_exits_2_naming_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A refused arm fails the job with the path's reason (spec §5.4).
+    reason = "the one PR path did not arm it (refused): provenance violations found (x)"
+    stack, mocks = _update_env()
+    with stack:
+        mocks["sync"].side_effect = PRNotMergedError("o/r", _PR_URL, reason)
+        assert main(["update", "--repo", "o/r"]) == 2
+    assert f"mechanized PR for o/r: {_PR_URL} did not merge: {reason}" in capsys.readouterr().err
 
 
 def test_update_unmerged_pr_outranks_unfixable_drift() -> None:

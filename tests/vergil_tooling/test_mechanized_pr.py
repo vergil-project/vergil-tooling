@@ -8,6 +8,7 @@ so a branch an earlier run left is really there, and really gone once deleted.
 
 from __future__ import annotations
 
+import inspect
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -17,12 +18,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vergil_tooling.lib import (
-    auto_merge,
     develop_clone,
     github,
     mechanized_pr,
     pr_create,
     pr_merge,
+    pr_path,
     retry,
     trust,
 )
@@ -74,12 +75,13 @@ class FakeGitHub:
     origin: Path
     prs: list[_PR] = field(default_factory=list)
     calls: list[tuple[str, ...]] = field(default_factory=list)
-    mutations: list[dict[str, object]] = field(default_factory=list)
-    auto_merge: dict[str, str] | None = None
-    confirm_auto_merge: bool = True
-    auto_merge_refusal: BaseException | None = None
+    # What the stand-in for ``pr_path.arm`` (tested in test_pr_path) returns.
+    arm_outcome: pr_path.ArmOutcome = "armed"
+    arm_detail: str = ""
+    arm_failure: BaseException | None = None
+    arms: list[tuple[str, Path | None, str | None]] = field(default_factory=list)
     merges: list[tuple[str, str, str | None]] = field(default_factory=list)
-    waits: list[tuple[str, str, int]] = field(default_factory=list)
+    waits: list[tuple[str, int]] = field(default_factory=list)
     wait_failure: BaseException | None = None
     # Errors the next ``gh pr create`` calls raise, in turn; with *create_lands*
     # the first one is raised after GitHub opened the PR (a lost response).
@@ -124,14 +126,6 @@ class FakeGitHub:
                 for pr in self.prs
                 if pr.head == head and pr.state == "open" and base in {None, "develop"}
             ]
-        if args[:2] == ("pr", "view"):
-            fields = args[args.index("--json") + 1]
-            if fields == "id":
-                return {"id": f"PR_{args[2].rsplit('/', 1)[1]}"}
-            if fields == "state":
-                merged = any(pr == args[2] for pr, _strategy, _head in self.merges)
-                return {"state": "MERGED" if merged else "OPEN"}
-            return {"autoMergeRequest": self.auto_merge}
         raise AssertionError(args)
 
     def run(self, *args: str) -> None:
@@ -170,23 +164,33 @@ class FakeGitHub:
             raise self.create_errors.pop(0)
         return pr.url
 
-    def graphql(self, query: str, **variables: object) -> dict[str, object]:
-        assert "enablePullRequestAutoMerge" in query
-        self.mutations.append({"query": query, **variables})
-        if self.auto_merge_refusal is not None:
-            raise self.auto_merge_refusal
-        if self.confirm_auto_merge:
-            self.auto_merge = {"mergeMethod": str(variables["method"])}
-        return {"enablePullRequestAutoMerge": {"pullRequest": {"number": 1}}}
+    def graphql(self, query: str, **_variables: object) -> dict[str, object]:
+        msg = f"mechanized_pr never calls GraphQL itself: {query}"
+        raise AssertionError(msg)
 
     def merge(self, pr: str, *, strategy: str, match_head: str | None = None) -> None:
         self.calls.append(("pr", "merge", pr))
         self.merges.append((pr, strategy, match_head))
 
-    def wait_until_merged(self, pr: str, *, strategy: str, deadline_secs: int) -> None:
+    def arm(
+        self, pr_url: str, *, clone: Path | None = None, head: str | None = None
+    ) -> pr_path.ArmResult:
+        """Stands in for ``pr_path.arm`` (tested in test_pr_path)."""
+        self.arms.append((pr_url, clone, head))
+        if self.arm_failure is not None:
+            raise self.arm_failure
+        return pr_path.ArmResult(
+            outcome=self.arm_outcome,
+            pr_url=pr_url,
+            head=head or "",
+            method="SQUASH",
+            detail=self.arm_detail,
+        )
+
+    def wait_until_merged(self, pr: str, *, deadline_secs: int) -> None:
         """Stands in for ``pr_merge.wait_until_merged`` (tested in test_pr_merge)."""
-        assert self.auto_merge is not None, "the wait starts only after auto-merge is on"
-        self.waits.append((pr, strategy, deadline_secs))
+        assert [url for url, _clone, _head in self.arms] == [pr], "the wait follows one arm"
+        self.waits.append((pr, deadline_secs))
         if self.wait_failure is not None:
             raise self.wait_failure
 
@@ -262,6 +266,7 @@ def fake(origin: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(github, "graphql", api.graphql)
     monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
+    monkeypatch.setattr(pr_path, "arm", api.arm)
     monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
     monkeypatch.delenv("VRG_MECHANIZED_PR_DEADLINE", raising=False)
     return api
@@ -324,7 +329,7 @@ def test_clean_clone_closes_earlier_pr_and_reports_in_sync(
     assert result == SyncResult(status="in_sync", pr_url=None, closed=[fake.prs[0].url])
     assert fake.prs[0].state == "closed"
     assert fake.branches() == ["develop"]
-    assert not fake.mutations
+    assert not fake.arms
 
 
 def test_changes_pushed_on_new_branch_and_pr_opened(
@@ -383,91 +388,86 @@ def test_branch_without_pr_under_own_prefix_deleted(
     assert _git(origin, "show", f"{BRANCH}:vergil.toml") == "v2"
 
 
-def test_mechanized_uses_helper_squash(
-    fake: FakeGitHub, origin: Path, clone: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    seen: list[tuple[str, str, str]] = []
-    helper = auto_merge._enable  # noqa: SLF001 - the helper spied on
-
-    def spy(pr_url: str, *, head: str, method: auto_merge.MergeMethod) -> object:
-        seen.append((pr_url, head, method))
-        return helper(pr_url, head=head, method=method)
-
-    monkeypatch.setattr(auto_merge, "_enable", spy)
-    (clone / "vergil.toml").write_text("v2\n")
-
-    _sync(clone)
-
-    head = _git(origin, "rev-parse", BRANCH)
-    assert seen == [(fake.prs[0].url, head, "SQUASH")]
-    [mutation] = fake.mutations
-    assert mutation["method"] == "SQUASH"
-    assert mutation["head"] == head
-    assert mutation["id"] == f"PR_{fake.prs[0].number}"
-
-
-def test_mechanized_auto_merge_refusal_is_mechanized_error(fake: FakeGitHub, clone: Path) -> None:
-    fake.auto_merge_refusal = github.GitHubAPIError(
-        1,
-        ("gh", "api", "graphql"),
-        "",
-        "GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)",
-    )
-    (clone / "vergil.toml").write_text("v2\n")
-
-    with pytest.raises(MechanizedPRError) as excinfo:
-        _sync(clone)
-
-    assert not isinstance(excinfo.value, auto_merge.AutoMergeError)
-    message = str(excinfo.value)
-    assert message.startswith(f"mechanized PR for {REPO}: enabling auto-merge failed: ")
-    assert fake.prs[0].url in message
-    assert "Auto merge is not allowed" in message
-    assert fake.merges == []
-    assert fake.waits == []
-
-
-def test_mechanized_already_mergeable_merges_directly(
-    fake: FakeGitHub, origin: Path, clone: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    fake.auto_merge_refusal = github.GitHubAPIError(
-        1,
-        ("gh", "api", "graphql"),
-        "",
-        "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)",
-    )
+def test_sync_pr_arms_through_pr_path(fake: FakeGitHub, origin: Path, clone: Path) -> None:
+    """The PR is armed once, through the one PR path, pinned to the pushed head (§5.4)."""
     (clone / "vergil.toml").write_text("v2\n")
 
     result = _sync(clone)
 
     url = fake.prs[0].url
-    assert result.status == "merged"
-    assert result.pr_url == url
-    assert fake.merges == [(url, "squash", _git(origin, "rev-parse", BRANCH))]
-    assert fake.waits == []
-    assert f"{REPO}: {url} was already mergeable and merged directly" in capsys.readouterr().out
+    assert fake.arms == [(url, clone, _git(origin, "rev-parse", BRANCH))]
+    assert result == SyncResult(status="merged", pr_url=url, closed=[])
+    assert fake.waits == [(url, 2400)]
 
 
-def test_auto_merge_not_confirmed_raises(fake: FakeGitHub, clone: Path) -> None:
-    fake.confirm_auto_merge = False
-    (clone / "vergil.toml").write_text("v2\n")
-
-    with pytest.raises(MechanizedPRError, match="auto-merge is not confirmed"):
-        _sync(clone)
-
-
-def test_auto_merge_mutation_failure_raises(
-    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("outcome", "detail"),
+    [
+        ("refused", "provenance violations found (mallory (outsider): committed)"),
+        ("held", "held for release 9.9.9"),
+    ],
+)
+def test_sync_pr_refused_arm_fails_job(
+    fake: FakeGitHub, clone: Path, outcome: pr_path.ArmOutcome, detail: str
 ) -> None:
-    def refuse(_query: str, **_variables: object) -> dict[str, object]:
-        msg = "GraphQL errors: auto-merge is not allowed"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(github, "graphql", refuse)
+    fake.arm_outcome = outcome
+    fake.arm_detail = detail
     (clone / "vergil.toml").write_text("v2\n")
 
-    with pytest.raises(MechanizedPRError, match="enabling auto-merge"):
+    with pytest.raises(PRNotMergedError) as excinfo:
         _sync(clone)
+
+    url = fake.prs[0].url
+    assert excinfo.value.pr_url == url
+    assert excinfo.value.reason == f"the one PR path did not arm it ({outcome}): {detail}"
+    assert isinstance(excinfo.value, MechanizedPRError)
+    assert fake.waits == []
+    assert fake.merges == []
+
+
+def test_sync_pr_merged_by_the_path_needs_no_wait(
+    fake: FakeGitHub, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The path merged the PR directly (GitHub refused auto-merge at clean status)."""
+    fake.arm_outcome = "merged"
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    url = fake.prs[0].url
+    assert result == SyncResult(status="merged", pr_url=url, closed=[])
+    assert fake.waits == []
+    assert f"{REPO}: {url} was already mergeable and the one PR path merged it" in (
+        capsys.readouterr().out
+    )
+
+
+def test_sync_pr_arm_that_cannot_complete_fails_job(fake: FakeGitHub, clone: Path) -> None:
+    fake.arm_failure = pr_path.PRPathError("https://github.com/o/r/pull/100: reading the PR failed")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(MechanizedPRError) as excinfo:
+        _sync(clone)
+
+    assert not isinstance(excinfo.value, PRNotMergedError)
+    message = str(excinfo.value)
+    assert message.startswith(f"mechanized PR for {REPO}: arming the PR failed: ")
+    assert "reading the PR failed" in message
+    assert fake.waits == []
+
+
+def test_sync_pr_never_merges_itself(fake: FakeGitHub, clone: Path) -> None:
+    """No merge and no auto-merge enable in the module: it arms, then waits for GitHub."""
+    source = inspect.getsource(mechanized_pr)
+    for call in ("github.merge", "auto_merge", "enablePullRequestAutoMerge", "gh pr merge"):
+        assert call not in source, call
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    assert result.status == "merged"
+    assert fake.merges == []
+    assert fake.waits == [(fake.prs[0].url, 2400)]
 
 
 def test_push_failure_raises_naming_step(fake: FakeGitHub, clone: Path, tmp_path: Path) -> None:
@@ -506,7 +506,8 @@ def test_pr_opened_for_named_repo_from_unrelated_cwd(
     _sync(clone)
 
     kinds = {call[1] for call in fake.pr_calls()}
-    assert {"create", "list", "close", "view"} <= kinds
+    assert {"create", "list", "close"} <= kinds
+    assert [url for url, _clone, _head in fake.arms] == [fake.prs[1].url]
     for call in fake.pr_calls():
         if "--repo" in call:
             assert call[call.index("--repo") + 1] == REPO, call
@@ -654,7 +655,7 @@ def test_create_pr_failure_raises(fake: FakeGitHub, clone: Path, sleep: list[flo
     assert fake.create_calls == retry.MAX_RETRIES + 1
     assert len(sleep) == retry.MAX_RETRIES
     assert fake.prs == []
-    assert fake.mutations == []
+    assert fake.arms == []
     assert BRANCH in fake.branches()
 
 
@@ -672,10 +673,10 @@ def test_create_that_really_failed_once_is_retried(
     assert result.pr_url == fake.prs[0].url
 
 
-def test_create_that_landed_is_adopted_and_auto_merged(
+def test_create_that_landed_is_adopted_and_armed(
     fake: FakeGitHub, origin: Path, clone: Path, sleep: list[float]
 ) -> None:
-    """GitHub opened the PR but the response was lost: it is adopted, then auto-merged (#4699)."""
+    """GitHub opened the PR but the response was lost: it is adopted, then armed (#4699)."""
     fake.create_errors = [github.GitHubAPIError(1, ("gh",), "", "HTTP 504: Gateway Timeout")]
     fake.create_lands = True
     (clone / "vergil.toml").write_text("v2\n")
@@ -686,10 +687,8 @@ def test_create_that_landed_is_adopted_and_auto_merged(
     assert fake.create_calls == 1
     assert sleep == []
     assert result == SyncResult(status="merged", pr_url=pr.url, closed=[])
-    [mutation] = fake.mutations
-    assert mutation["id"] == f"PR_{pr.number}"
-    assert mutation["head"] == _git(origin, "rev-parse", BRANCH)
-    assert fake.waits == [(pr.url, "squash", 2400)]
+    assert fake.arms == [(pr.url, clone, _git(origin, "rev-parse", BRANCH))]
+    assert fake.waits == [(pr.url, 2400)]
 
 
 def test_open_pr_that_is_not_this_runs_is_refused_by_name(
@@ -711,7 +710,7 @@ def test_open_pr_that_is_not_this_runs_is_refused_by_name(
     assert f"its head commit is '{'f' * 40}'" in message
     assert fake.create_calls == 1
     assert sleep == []
-    assert fake.mutations == []
+    assert fake.arms == []
 
 
 def test_create_pr_without_url_raises(
@@ -726,46 +725,6 @@ def test_create_pr_without_url_raises(
     assert fake.branches()
 
 
-@pytest.mark.parametrize(
-    ("view", "match"),
-    [
-        ("raise", "reading the PR's node ID failed"),
-        (["a list"], "gh pr view returned"),
-        ({"id": ""}, "has no node ID"),
-    ],
-)
-def test_pr_view_failures_raise(
-    fake: FakeGitHub,
-    clone: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    view: object,
-    match: str,
-) -> None:
-    def read_json(*args: str) -> object:
-        if args[:2] != ("pr", "view"):
-            return fake.read_json(*args)
-        if view == "raise":
-            raise _api_error(*args)
-        return view
-
-    monkeypatch.setattr(github, "read_json", read_json)
-    (clone / "vergil.toml").write_text("v2\n")
-
-    with pytest.raises(MechanizedPRError, match=match):
-        _sync(clone)
-
-    assert not fake.mutations
-
-
-def test_auto_merge_with_other_method_not_confirmed(fake: FakeGitHub, clone: Path) -> None:
-    fake.confirm_auto_merge = False
-    fake.auto_merge = {"mergeMethod": "MERGE"}
-    (clone / "vergil.toml").write_text("v2\n")
-
-    with pytest.raises(MechanizedPRError, match="auto-merge is not confirmed"):
-        _sync(clone)
-
-
 # --- Wait until merged (vergil-tooling#4370) ---------------------------------
 
 
@@ -777,7 +736,7 @@ def test_opened_pr_is_watched_until_merged_with_the_default_deadline(
     result = _sync(clone)
 
     assert result.status == "merged"
-    assert fake.waits == [(fake.prs[0].url, "squash", 2400)]
+    assert fake.waits == [(fake.prs[0].url, 2400)]
 
 
 def test_in_sync_clone_waits_for_nothing(fake: FakeGitHub, clone: Path) -> None:
@@ -793,7 +752,7 @@ def test_deadline_follows_the_env_override(
 
     _sync(clone)
 
-    assert fake.waits == [(fake.prs[0].url, "squash", 600)]
+    assert fake.waits == [(fake.prs[0].url, 600)]
 
 
 def test_caller_deadline_overrides_the_env(
@@ -804,7 +763,7 @@ def test_caller_deadline_overrides_the_env(
 
     open_sync_pr(REPO, clone, job=JOB, title="chore: sync", body="the body", deadline_secs=6600)
 
-    assert fake.waits == [(fake.prs[0].url, "squash", 6600)]
+    assert fake.waits == [(fake.prs[0].url, 6600)]
 
 
 def test_no_caller_deadline_keeps_the_env_rule(
@@ -815,7 +774,7 @@ def test_no_caller_deadline_keeps_the_env_rule(
 
     open_sync_pr(REPO, clone, job=JOB, title="chore: sync", body="the body", deadline_secs=None)
 
-    assert fake.waits == [(fake.prs[0].url, "squash", 900)]
+    assert fake.waits == [(fake.prs[0].url, 900)]
 
 
 @pytest.mark.parametrize("secs", [0, -1, True])

@@ -2,9 +2,11 @@
 
 Used by the release workflow (merge strategy) through :func:`wait_and_merge`,
 and by the mechanized-PR building block and ``vrg-update-deps`` through
-:func:`wait_until_merged`, which shares
-the same loop pieces but treats a merged PR as success and runs under one
-overall deadline (epic vergil-project/.github#1064). Doomed outcomes — already merged, draft,
+:func:`wait_until_merged`, which shares the same loop pieces but treats a
+merged PR as success, runs under one overall deadline (epic
+vergil-project/.github#1064) and only watches: it never merges, leaving the
+merge to the auto-merge the one PR path armed (epic
+vergil-project/.github#1664). Doomed outcomes — already merged, draft,
 conflicting, behind — are checked *before* waiting, never after
 letting a pointless CI run finish:
 
@@ -88,6 +90,10 @@ _UPDATE_SETTLE_SECS = 5
 # The ceiling is the shared pending-checks deadline (checks_timeout_secs(), read
 # per call so $VRG_CHECKS_TIMEOUT applies) so the waits never drift.
 _NOT_READY_POLL_SECS = _POLL_INTERVAL_SECS
+# How long the watch-only wait_until_merged sleeps between reads of a ready PR
+# it is waiting for GitHub's auto-merge to merge: long enough that a PR left
+# with auto-merge off does not spend the token's API quota until the deadline.
+_MERGE_POLL_SECS = 30
 # The command to run again once the checks can finish.
 _RESUME = "vrg-release --resume for a release, vrg-update-deps for a dependency update"
 # How to get a merge moving again once a wait gives up on a check that is not
@@ -653,13 +659,15 @@ def _merged_or_refuse_closed(pr: str) -> bool:
     return False
 
 
-def wait_until_merged(pr: str, *, strategy: str, deadline_secs: int) -> None:
-    """Watch *pr* until it is merged, merging it as soon as it is ready.
+def wait_until_merged(pr: str, *, deadline_secs: int) -> None:
+    """Watch *pr* until GitHub merges it; the watch itself never merges.
 
-    The loop for a PR that automation opened (``mechanized_pr``). Unlike
-    :func:`wait_and_merge`, a merged PR is this loop's success, not an abort,
-    so auto-merge may finish the job at any point and the loop simply sees it.
-    Auto-merge is never required, though: each iteration, in order,
+    The watch-only loop for a PR the one PR path armed
+    (:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664,
+    spec §5.4): nothing but the path turns auto-merge on or merges a PR into
+    ``develop``, so this loop never calls ``gh pr merge``. Unlike
+    :func:`wait_and_merge`, a merged PR is this loop's success, not an abort.
+    Each iteration, in order,
 
     - **merged:** returns;
     - **closed** (without merging): raises;
@@ -670,17 +678,18 @@ def wait_until_merged(pr: str, *, strategy: str, deadline_secs: int) -> None:
     - otherwise waits for the checks, then: a failed check on a behind branch
       updates it (#2914), any other failed check raises; a required check still
       outstanding waits a poll; a branch that fell behind meanwhile goes round
-      again; and a ready PR is merged with *strategy*, whether or not
-      auto-merge is on. A merge refused because auto-merge got there first is
-      success; a refusal for a behind branch updates it, and a policy block
-      with no failed checks waits a poll, as in :func:`wait_and_merge`.
+      again; and a ready PR waits one poll of :data:`_MERGE_POLL_SECS` for
+      GitHub's auto-merge to merge it, then goes round again. A ready PR whose
+      auto-merge is off is waited for the same way, never merged here: it
+      ends merged (someone turned auto-merge on, or merged it), closed, or at
+      the deadline.
 
     *deadline_secs* is the whole watch's wall-clock limit. Every wait inside
-    it, the check wait included, is clamped to what is left, so the watch ends
-    within it (give or take one GitHub API call). Every stop raises
-    :class:`MergeAbortError` (a :class:`MergeDeadlineError` for the deadline)
-    whose message names the PR and the reason; a GitHub API failure that is
-    not a known merge refusal propagates as :class:`GitHubAPIError`.
+    it, the check wait and the polls included, is clamped to what is left, so
+    the watch ends within it (give or take one GitHub API call). Every stop
+    raises :class:`MergeAbortError` (a :class:`MergeDeadlineError` for the
+    deadline) whose message names the PR and the reason; a GitHub API failure
+    propagates as :class:`GitHubAPIError`.
     """
     start = time.monotonic()
     deadline = start + deadline_secs
@@ -727,18 +736,5 @@ def wait_until_merged(pr: str, *, strategy: str, deadline_secs: int) -> None:
         if _is_behind(pr):
             continue  # something merged while we waited -> update at loop top
 
-        try:
-            print(f"Checks passed. Merging {pr} (--{strategy})...")
-            github.merge(pr, strategy=strategy)
-        except GitHubAPIError as exc:
-            if _merged_or_refuse_closed(pr):
-                return  # auto-merge got there first
-            if _is_behind_rejection(exc):
-                updater.update()
-                continue
-            if not _is_policy_rejection(exc):
-                raise
-            not_ready.pause(_policy_block_reason(pr, required, resolved))
-            continue
-        print("Merged.")
-        return
+        print(f"Checks passed on {pr}; waiting for GitHub's auto-merge to merge it...")
+        time.sleep(max(0.0, min(_MERGE_POLL_SECS, deadline - time.monotonic())))
