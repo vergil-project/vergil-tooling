@@ -585,7 +585,7 @@ def test_cleanup_worktree_chdir_remove_delete(monkeypatch) -> None:
     removed: list[Path] = []
     runs: list[tuple[str, ...]] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: chdirs.append(Path(p)))
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
     ctx = _ctx()
     pr.cleanup_worktree(ctx)
@@ -604,7 +604,7 @@ def test_cleanup_worktree_skips_branch_delete_when_none(monkeypatch) -> None:
     removed: list[Path] = []
     runs: list[tuple[str, ...]] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
     ctx = _ctx()
     ctx.branch = None

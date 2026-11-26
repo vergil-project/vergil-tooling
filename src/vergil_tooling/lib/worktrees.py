@@ -21,10 +21,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib import branch_names, git, github, trust
+from vergil_tooling.lib import branch_names, git, github, progress, trust
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.process_errors import failure_message
+from vergil_tooling.lib.process_errors import error_text, failure_message
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
@@ -776,6 +776,83 @@ def worktree_for_branch(branch: str, repo_root: Path) -> Path | None:
         if wt.branch == branch:
             return wt.path
     return None
+
+
+# The branch prefix of every release worktree: release/<version> and
+# release/post-<version>.
+RELEASE_BRANCH_PREFIX = "release/"
+
+
+@dataclass(frozen=True)
+class ReleaseProtection:
+    """Whether cleanup must keep every ``release/*`` worktree, and why.
+
+    ``active`` while an open release tracking issue with a trusted body exists
+    (spec §5.8 of epic vergil-project/.github#1664, the fix for issue #5187).
+    """
+
+    active: bool
+    reason: str
+
+
+class ProtectionReadError(Exception):
+    """The open release tracking issues could not be read.
+
+    Cleanup treats it as protected: a release worktree is never removed on a
+    read that did not complete.
+    """
+
+
+# Every way the tracking-issue read can fail: a gh failure (GitHubAPIError and
+# MissingGitHubTokenError are CalledProcessErrors), a refused or malformed
+# listing or an untrusted-author read (ReleaseError), JSON that does not parse
+# (ValueError), no App installation or token (AppAuthError,
+# NoInstallationError, RuntimeError) and gh not runnable (OSError).
+PROTECTION_READ_ERRORS = (
+    subprocess.CalledProcessError,
+    ValueError,
+    OSError,
+    RuntimeError,
+    github.AppAuthError,
+    github.NoInstallationError,
+)
+
+
+def release_protection(repo: str) -> ReleaseProtection:
+    """Whether a release is running in *repo*: any open, trusted release tracking issue.
+
+    Only a ``release: X.Y.Z`` issue with a trusted body counts, by the rule a
+    fresh ``vrg-release`` start uses (``preflight._trusted_release_issues``).
+    A read that cannot complete raises :class:`ProtectionReadError`.
+    """
+    # Imported here, not at the top: the release package imports
+    # managed_worktree, which imports this module for log_removal.
+    from vergil_tooling.lib.release.context import ReleaseError
+    from vergil_tooling.lib.release.preflight import _trusted_release_issues
+    from vergil_tooling.lib.release.resume import _open_release_issues
+
+    try:
+        issues = _trusted_release_issues(_open_release_issues(repo, phase="cleanup"), repo)
+    except ReleaseError as exc:
+        detail = f" ({exc.detail})" if exc.detail else ""
+        msg = f"could not read the open release tracking issues of {repo}: {exc}{detail}"
+        raise ProtectionReadError(msg) from exc
+    except PROTECTION_READ_ERRORS as exc:
+        msg = f"could not read the open release tracking issues of {repo}: {error_text(exc)}"
+        raise ProtectionReadError(msg) from exc
+    if not issues:
+        return ReleaseProtection(active=False, reason="no release tracking issue is open")
+    names = ", ".join(f"release {ver} (#{number})" for ver, number, _ in issues)
+    return ReleaseProtection(active=True, reason=f"open tracking issue: {names}")
+
+
+def log_removal(path: Path, branch: str, reason: str) -> None:
+    """Record one worktree removal: on stderr and in the running command's run log.
+
+    Every removal is logged, naming the worktree, its branch and why it was
+    judged removable (spec §5.8 of epic vergil-project/.github#1664).
+    """
+    progress.stderr_line(f"removed worktree {path} (branch {branch}): {reason}")
 
 
 def require_tty(context: str) -> None:

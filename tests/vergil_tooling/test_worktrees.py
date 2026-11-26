@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 from pathlib import Path
@@ -9,12 +10,16 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib import progress
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
+from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
+    ProtectionReadError,
     RawWorktree,
+    ReleaseProtection,
     Worktree,
     WorktreeKind,
     WorktreeState,
@@ -33,7 +38,9 @@ from vergil_tooling.lib.worktrees import (
     gone_branches,
     is_canonical_worktree,
     list_worktrees,
+    log_removal,
     match_worktrees,
+    release_protection,
     require_tty,
     select_worktree,
     select_worktrees,
@@ -1274,3 +1281,101 @@ def test_gone_branches_propagates_remote_failure() -> None:
         pytest.raises(subprocess.CalledProcessError),
     ):
         gone_branches(["feature/1-x"])
+
+
+# -- release protection and removal logging (issue #5187) --------------------
+
+_RESUME = "vergil_tooling.lib.release.resume._open_release_issues"
+_PREFLIGHT = "vergil_tooling.lib.release.preflight._trusted_release_issues"
+
+
+def test_release_protection_active_while_a_trusted_release_issue_is_open() -> None:
+    listed = [("2.1.9", 77, "listed body")]
+    with (
+        patch(_RESUME, return_value=listed) as listing,
+        patch(_PREFLIGHT, return_value=[("2.1.9", 77, "trusted body")]) as trusted,
+    ):
+        protection = release_protection("o/r")
+    assert protection == ReleaseProtection(
+        active=True, reason="open tracking issue: release 2.1.9 (#77)"
+    )
+    listing.assert_called_once_with("o/r", phase="cleanup")
+    trusted.assert_called_once_with(listed, "o/r")
+
+
+def test_release_protection_inactive_with_no_trusted_release_issue() -> None:
+    """An open release issue whose body is untrusted is no release running."""
+    with (
+        patch(_RESUME, return_value=[("2.1.9", 77, "outsider body")]),
+        patch(_PREFLIGHT, return_value=[]),
+    ):
+        protection = release_protection("o/r")
+    assert protection.active is False
+    assert protection.reason == "no release tracking issue is open"
+
+
+def test_release_protection_raises_on_a_refused_listing() -> None:
+    refusal = ReleaseError(
+        phase="cleanup", command="gh issue list", message="search returned str", detail="raw"
+    )
+    with patch(_RESUME, side_effect=refusal), pytest.raises(ProtectionReadError) as info:
+        release_protection("o/r")
+    assert "search returned str" in str(info.value)
+    assert "raw" in str(info.value)
+
+
+def test_release_protection_raises_on_a_failed_gh_call() -> None:
+    failure = subprocess.CalledProcessError(1, ("gh", "issue", "list"))
+    with patch(_RESUME, side_effect=failure), pytest.raises(ProtectionReadError, match="o/r"):
+        release_protection("o/r")
+
+
+def test_release_protection_raises_on_a_failed_trust_read() -> None:
+    refusal = ReleaseError(phase="preflight", command="read_issue", message="refusing blind")
+    with (
+        patch(_RESUME, return_value=[("2.1.9", 77, "body")]),
+        patch(_PREFLIGHT, side_effect=refusal),
+        pytest.raises(ProtectionReadError, match="refusing blind"),
+    ):
+        release_protection("o/r")
+
+
+def test_log_removal_outside_a_pipeline_prints_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_removal(Path("/r/.worktrees/issue-1-x"), "feature/1-x", "PR merged")
+    err = capsys.readouterr().err
+    assert err == "removed worktree /r/.worktrees/issue-1-x (branch feature/1-x): PR merged\n"
+
+
+def test_log_removal_in_a_stage_reaches_the_run_log_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+    try:
+        progress.run_stage(
+            "cleanup",
+            lambda: log_removal(Path("/r/.worktrees/release-2.1.9"), "release/2.1.9", "why"),
+            args=argparse.Namespace(output_window=None, output_format="plain"),
+            log=log,
+            describe=lambda _: ("ok", "done"),
+        )
+    finally:
+        log.close()
+    line = "removed worktree /r/.worktrees/release-2.1.9 (branch release/2.1.9): why"
+    assert log.path.read_text(encoding="utf-8").count(line) == 1
+    assert line in capsys.readouterr().out
+
+
+def test_log_removal_with_an_attached_log_reaches_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = progress.RunLog("test-cmd", tmp_path)
+    try:
+        with progress.attach_log(log):
+            log_removal(Path("/r/.worktrees/issue-1-x"), "feature/1-x", "PR closed")
+    finally:
+        log.close()
+    line = "removed worktree /r/.worktrees/issue-1-x (branch feature/1-x): PR closed"
+    assert log.path.read_text(encoding="utf-8").count(line) == 1
+    assert line in capsys.readouterr().err

@@ -163,7 +163,7 @@ def test_teardown_worktree_chdirs_root_and_removes(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: calls.append(("chdir", p)))
     monkeypatch.setattr(
         _MOD + ".remove_worktree",
-        lambda p: calls.append(("remove", p)),
+        lambda p, **_kw: calls.append(("remove", p)),
     )
     monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
     teardown_worktree(ctx)
@@ -179,7 +179,7 @@ def test_teardown_worktree_noop_without_path(monkeypatch) -> None:
     ctx.worktree_path = None
     removed: list[object] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: removed.append(p))
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     teardown_worktree(ctx)  # returns early; no chdir, no removal
     assert removed == []
 
@@ -193,7 +193,7 @@ def test_teardown_worktree_with_none_succeeds_doing_nothing(
     ctx.worktree_path = None
     calls: list[object] = []
     monkeypatch.setattr(_MOD + ".os.chdir", calls.append)
-    monkeypatch.setattr(_MOD + ".remove_worktree", calls.append)
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: calls.append(p))
     teardown_worktree(ctx)
     assert calls == []
     assert ctx.worktree_path is None
@@ -208,7 +208,7 @@ def test_teardown_worktree_skips_removal_when_already_gone(monkeypatch) -> None:
     chdirs: list[object] = []
     removed: list[object] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: chdirs.append(p))
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
     teardown_worktree(ctx)
     assert chdirs == [ctx.repo_root]

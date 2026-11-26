@@ -477,6 +477,10 @@ def cleanup_worktree(ctx: UpdateDepsContext) -> None:
     if ctx.worktree_path is None:
         return
     os.chdir(ctx.repo_root)
-    remove_worktree(ctx.worktree_path)
+    remove_worktree(
+        ctx.worktree_path,
+        branch=ctx.branch or "(no branch recorded)",
+        reason="the vrg-update-deps run is finished",
+    )
     if ctx.branch is not None:
         git.run("branch", "-D", ctx.branch)

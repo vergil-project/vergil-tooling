@@ -27,7 +27,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     import argparse
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
 LOG_RETAIN = 20
@@ -475,11 +475,50 @@ def log_only(line: str) -> None:
     install stage, whose commands' output is one check line on the
     terminal on success (issue #4812). The line goes to the same
     :class:`RunLog`, under the same lock, as every emitted line. Outside a
-    running pipeline there is no run log, and it is a harmless no-op.
+    running pipeline it writes to the log :func:`attach_log` attached, and
+    with none attached it is a harmless no-op.
     """
     session = _session
     if session is not None:
         session.handle_log_line(line)
+    elif _attached_log is not None:
+        _attached_log.write(line)
+
+
+# The run log a caller attaches while it runs work outside a pipeline, after
+# the pipeline has finished (attach_log): log_only and stderr_line write there.
+_attached_log: RunLog | None = None
+
+
+@contextlib.contextmanager
+def attach_log(log: RunLog) -> Iterator[None]:
+    """Make *log* the run log for :func:`log_only` and :func:`stderr_line` outside a pipeline.
+
+    For work a command runs on real stdio once its pipeline has finished
+    (``vrg-finalize-pr``'s ``--clean-dirty`` clear, issue #2348), whose lines
+    must still reach the same run log. Inside a running pipeline the
+    pipeline's own log is used as before.
+    """
+    global _attached_log  # noqa: PLW0603
+    previous = _attached_log
+    _attached_log = log
+    try:
+        yield
+    finally:
+        _attached_log = previous
+
+
+def stderr_line(line: str) -> None:
+    """Print *line* on stderr and leave it in the running command's run log, once.
+
+    Inside a running stage, stderr is already routed through :func:`emit`,
+    which renders the line and writes it to the run log. Outside one the line
+    is printed on stderr and written to the log :func:`attach_log` attached,
+    if any.
+    """
+    print(line, file=sys.stderr)
+    if _session is None:
+        log_only(line)
 
 
 def status_block(lines: Sequence[str], *, changed: bool, heartbeat: str) -> None:

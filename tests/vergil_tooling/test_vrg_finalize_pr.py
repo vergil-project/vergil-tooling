@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     CDUnreadableError,
     FinalizeContext,
     FinalizeError,
+    ReleaseGuard,
     _classify_failed_jobs,
     _clean_branch_images,
     _confirmed_merged_branch,
@@ -3104,7 +3105,9 @@ def test_sweep_removes_squash_merged_worktree_branch(tmp_path: Path) -> None:
     ):
         result = main(["--cleanup-only"])
     assert result == 0
-    deleter.assert_any_call("feature/1-x", tmp_path, dry_run=False)
+    deleter.assert_any_call(
+        "feature/1-x", tmp_path, dry_run=False, reason="PR merged", guard=ANY
+    )
 
 
 def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
@@ -3157,7 +3160,9 @@ def test_sweep_worktree_delete_decline_does_not_record(tmp_path: Path) -> None:
     ):
         result = main(["--cleanup-only"])
     assert result == 0
-    deleter.assert_called_once_with("feature/3-z", tmp_path, dry_run=False)
+    deleter.assert_called_once_with(
+        "feature/3-z", tmp_path, dry_run=False, reason="PR merged", guard=ANY
+    )
 
 
 def test_sweep_keeps_reused_branch_name_worktree(tmp_path: Path) -> None:
@@ -3215,6 +3220,214 @@ def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
     assert result == 0
     gather.assert_not_called()
     deleter.assert_not_called()
+
+
+# -- cleanup safety while a release is running (issue #5187) ------------------
+
+
+_RELEASE_OPEN = worktrees.ReleaseProtection(
+    active=True, reason="open tracking issue: release 2.1.9 (#77)"
+)
+_NO_RELEASE = worktrees.ReleaseProtection(active=False, reason="no release tracking issue is open")
+
+
+@contextmanager
+def _sweep_one_worktree(
+    tmp_path: Path, wt: Worktree, *, protection: object
+) -> Generator[list[tuple[str, ...]]]:
+    """Drive a cleanup-only run whose one worktree, *wt*, is merged and removable.
+
+    The real ``_delete_branch_and_worktree`` runs; ``git.run`` is captured and
+    yielded. *protection* is what ``worktrees.release_protection`` returns, or
+    the exception it raises.
+    """
+    removable = WorktreeStatus(
+        worktree=wt, state=WorktreeState.MERGED, pr_number=1, ahead=2, dirty=False
+    )
+    calls: list[tuple[str, ...]] = []
+    if isinstance(protection, BaseException):
+        guard = patch(_MOD + ".worktrees.release_protection", side_effect=protection)
+    else:
+        guard = patch(_MOD + ".worktrees.release_protection", return_value=protection)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=lambda *a: calls.append(a)),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
+        patch(_MOD + "._worktree_is_dirty", return_value=False),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + "._report_cd_run"),
+        guard,
+    ):
+        yield calls
+
+
+def _release_worktree(tmp_path: Path) -> Worktree:
+    return Worktree(path=tmp_path / ".worktrees" / "release-2.1.9", branch="release/2.1.9")
+
+
+def _run_log_text(root: Path) -> str:
+    """The text of the one vrg-finalize-pr run log under *root*."""
+    (log,) = sorted((root / ".vergil").glob("vrg-finalize-pr-*.log"))
+    return log.read_text(encoding="utf-8")
+
+
+def test_cleanup_skips_release_worktree_while_release_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A merged release/* worktree is kept while a release tracking issue is open."""
+    _make_profile(tmp_path, "library-release")
+    wt = _release_worktree(tmp_path)
+    with _sweep_one_worktree(tmp_path, wt, protection=_RELEASE_OPEN) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert ("branch", "-D", "release/2.1.9") not in calls
+    out = capsys.readouterr().out
+    assert "kept .worktrees/release-2.1.9: a release is running" in out
+    assert "release 2.1.9 (#77)" in out
+
+
+def test_cleanup_removes_release_worktree_when_no_release_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With no release running, a merged release/* worktree is removed and logged."""
+    _make_profile(tmp_path, "library-release")
+    wt = _release_worktree(tmp_path)
+    with _sweep_one_worktree(tmp_path, wt, protection=_NO_RELEASE) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert ("worktree", "remove", str(wt.path)) in calls
+    assert ("branch", "-D", "release/2.1.9") in calls
+    line = f"removed worktree {wt.path} (branch release/2.1.9): PR merged"
+    assert line in capsys.readouterr().out
+    assert line in _run_log_text(tmp_path)
+
+
+def test_cleanup_treats_failed_protection_read_as_protected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed protection read keeps every release/* worktree, says why and exits non-zero."""
+    _make_profile(tmp_path, "library-release")
+    wt = _release_worktree(tmp_path)
+    failure = worktrees.ProtectionReadError("could not read the open release tracking issues")
+    with _sweep_one_worktree(tmp_path, wt, protection=failure) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc != 0
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert ("branch", "-D", "release/2.1.9") not in calls
+    out = capsys.readouterr().out
+    assert "could not read the open release tracking issues" in out
+    assert "kept .worktrees/release-2.1.9" in out
+
+
+def test_cleanup_reads_protection_only_for_a_release_worktree(tmp_path: Path) -> None:
+    """A feature worktree's removal never asks whether a release is running."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    with (
+        _sweep_one_worktree(tmp_path, wt, protection=_RELEASE_OPEN) as calls,
+        patch(_MOD + ".worktrees.release_protection") as read,
+    ):
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    read.assert_not_called()
+    assert ("worktree", "remove", str(wt.path)) in calls
+
+
+def test_every_removal_is_logged(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A merged feature worktree's removal is logged, with its reason, on the
+    terminal and in the run log."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    with _sweep_one_worktree(tmp_path, wt, protection=_NO_RELEASE):
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    line = f"removed worktree {wt.path} (branch feature/1-x): PR merged"
+    assert line in capsys.readouterr().out
+    assert _run_log_text(tmp_path).count(line) == 1
+
+
+def test_clean_dirty_keeps_release_worktree_while_release_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--clean-dirty never clears a release/* worktree while a release is running,
+    and asks nothing about it."""
+    _make_profile(tmp_path, "library-release")
+    wt = _release_worktree(tmp_path)
+    status = WorktreeStatus(
+        worktree=wt,
+        state=WorktreeState.MERGED,
+        pr_number=5,
+        ahead=0,
+        dirty=True,
+        detail="worktree is dirty",
+        needs_attention=True,
+    )
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".worktrees.release_protection", return_value=_RELEASE_OPEN),
+        patch(_MOD + ".confirm") as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    confirm.assert_not_called()
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert "kept .worktrees/release-2.1.9: a release is running" in capsys.readouterr().out
+
+
+def test_clean_dirty_failed_protection_read_exits_non_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed protection read during --clean-dirty keeps the worktree and fails the run."""
+    _make_profile(tmp_path, "library-release")
+    wt = _release_worktree(tmp_path)
+    status = WorktreeStatus(
+        worktree=wt,
+        state=WorktreeState.MERGED,
+        pr_number=5,
+        ahead=0,
+        dirty=True,
+        detail="worktree is dirty",
+        needs_attention=True,
+    )
+    failure = worktrees.ProtectionReadError("could not read the open release tracking issues")
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".worktrees.release_protection", side_effect=failure),
+        patch(_MOD + ".confirm") as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc != 0
+    confirm.assert_not_called()
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert "could not read the open release tracking issues" in capsys.readouterr().err
+
+
+def test_clean_dirty_removal_is_logged_in_the_run_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The post-pipeline --clean-dirty removal still reaches the run log."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path)
+    with (
+        _sweep_with_stuck(tmp_path, status),
+        patch(_MOD + "._worktree_porcelain", return_value="?? out.log\n"),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    line = (
+        f"removed worktree {status.worktree.path} (branch feature/9-x): "
+        "PR merged, its dirt untracked only (--clean-dirty)"
+    )
+    assert line in capsys.readouterr().err
+    assert _run_log_text(tmp_path).count(line) == 1
 
 
 # -- surface + guarded clear of stuck merged worktrees (issue #2348) ----------
@@ -4613,7 +4826,9 @@ def test_delete_branch_and_worktree_prunes_relay_ref(tmp_path: Path) -> None:
         patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
-        assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=False)
+        assert _delete_branch_and_worktree(
+            "feature/9-x", tmp_path, dry_run=False, reason="PR merged", guard=ReleaseGuard()
+        )
     mock_transport.assert_called_once_with("feature/9-x")
     mock_transport.return_value.delete.assert_called_once_with()
 
@@ -4626,7 +4841,9 @@ def test_delete_branch_and_worktree_skips_relay_ref_on_dry_run(tmp_path: Path) -
         patch(_MOD + ".clean_branch_images", return_value=(0, [])),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
-        assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=True)
+        assert _delete_branch_and_worktree(
+            "feature/9-x", tmp_path, dry_run=True, reason="PR merged", guard=ReleaseGuard()
+        )
     mock_transport.assert_not_called()
 
 

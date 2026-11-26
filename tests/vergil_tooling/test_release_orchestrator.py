@@ -17,6 +17,7 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.merge import ReleaseConflictError
 from vergil_tooling.lib.release.orchestrator import (
+    ReleaseWorktreeVanished,
     ReleaseState,
     _phase_details,
     _preflight_stage,
@@ -1597,3 +1598,92 @@ def test_resume_after_finalize_skips_branch_stages(write_state: MagicMock) -> No
     m_bump.assert_not_called()
     m_teardown.assert_not_called()
     write_state.assert_not_called()
+
+
+# -- a release worktree that vanished mid-run (issue #5187) ------------------
+
+
+def test_release_fails_when_worktree_vanished_before_teardown(tmp_path: Path) -> None:
+    """A worktree gone before confirm-main fails the stage, naming the path."""
+    state = ReleaseState(version_override=None, repo_root=tmp_path)
+    state.ctx = _ctx()
+    gone = tmp_path / ".worktrees" / "release-2.1.0"
+    state.ctx.worktree_path = gone
+    fn = MagicMock()
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseWorktreeVanished, match="Release worktree vanished") as info,
+    ):
+        _tracked("confirm-main", fn)(state)
+    fn.assert_not_called()
+    assert str(gone) in str(info.value)
+    assert info.value.path == gone
+    assert info.value.phase == "confirm-main"
+    assert isinstance(info.value, ReleaseError)
+    m_failed.assert_called_once_with(state.ctx, "confirm-main", info.value)
+    assert state.ctx.deferred_failures == ["confirm-main"]
+
+
+def test_release_runs_a_stage_before_teardown_with_its_worktree_present(tmp_path: Path) -> None:
+    state = ReleaseState(version_override=None, repo_root=tmp_path)
+    state.ctx = _ctx()
+    present = tmp_path / ".worktrees" / "release-2.1.0"
+    present.mkdir(parents=True)
+    state.ctx.worktree_path = present
+    fn = MagicMock()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("back-merge-bump", fn)(state)
+    fn.assert_called_once_with(state.ctx)
+
+
+@pytest.mark.parametrize("name", ["teardown-worktree", "confirm-develop", "finalize"])
+def test_no_vanished_check_after_teardown(name: str) -> None:
+    """From teardown-worktree on the worktree is gone by design: no check."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+    state.ctx.worktree_path = None
+    fn = MagicMock()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked(name, fn)(state)
+    fn.assert_called_once_with(state.ctx)
+
+
+def test_teardown_with_its_worktree_already_gone_is_not_a_vanished_error(
+    tmp_path: Path,
+) -> None:
+    """teardown-worktree removes the worktree by design, so it runs even when
+    the path is already gone (a prior partial run)."""
+    state = ReleaseState(version_override=None, repo_root=tmp_path)
+    state.ctx = _ctx()
+    state.ctx.worktree_path = tmp_path / ".worktrees" / "release-2.1.0"
+    fn = MagicMock()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("teardown-worktree", fn)(state)
+    fn.assert_called_once_with(state.ctx)
+
+
+def test_no_vanished_check_for_a_run_with_no_worktree() -> None:
+    """A resume that runs in the root checkout (#4889) has no worktree to check."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+    state.ctx.worktree_path = None
+    fn = MagicMock()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("confirm-main", fn)(state)
+    fn.assert_called_once_with(state.ctx)

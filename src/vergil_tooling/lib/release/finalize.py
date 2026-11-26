@@ -45,7 +45,11 @@ def teardown_worktree(ctx: ReleaseContext) -> None:
     os.chdir(ctx.repo_root)
     if ctx.worktree_path.exists():
         print(f"Removing release worktree: {ctx.worktree_path}")
-        remove_worktree(ctx.worktree_path)
+        remove_worktree(
+            ctx.worktree_path,
+            branch=ctx.release_branch or f"release/{ctx.version}",
+            reason="the release's teardown-worktree stage",
+        )
     else:
         print(f"Release worktree already removed: {ctx.worktree_path}")
     ctx.worktree_path = None

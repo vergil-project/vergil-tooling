@@ -143,5 +143,32 @@ def test_adopt_worktree_wraps_any_add_failure(tmp_path: Path, monkeypatch) -> No
 def test_remove_worktree_force_removes(tmp_path: Path, monkeypatch) -> None:
     runs: list[tuple[str, ...]] = []
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
-    remove_worktree(tmp_path / ".worktrees" / "x")
+    remove_worktree(tmp_path / ".worktrees" / "x", branch="deps/update-x", reason="test")
     assert ("worktree", "remove", "--force", str(tmp_path / ".worktrees" / "x")) in runs
+
+
+def test_remove_worktree_logs_the_removal(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every managed removal (update-deps' worktree among them) is logged with its reason."""
+    monkeypatch.setattr(_MOD + ".git.run", lambda *_a: None)
+    path = tmp_path / ".worktrees" / "deps-update-2.1.10"
+    remove_worktree(path, branch="deps/update-2.1.10", reason="the vrg-update-deps run is finished")
+    assert capsys.readouterr().err == (
+        f"removed worktree {path} (branch deps/update-2.1.10): "
+        "the vrg-update-deps run is finished\n"
+    )
+
+
+def test_remove_worktree_failure_logs_nothing(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A removal git refused is no removal: nothing is logged."""
+
+    def _fail(*args: str) -> None:
+        raise subprocess.CalledProcessError(128, ("git", *args), stderr="fatal: busy")
+
+    monkeypatch.setattr(_MOD + ".git.run", _fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        remove_worktree(tmp_path / ".worktrees" / "x", branch="release/2.1.0", reason="why")
+    assert "removed worktree" not in capsys.readouterr().err
