@@ -22,7 +22,9 @@ from vergil_tooling.lib.auto_merge import (
     AutoMergeResult,
     MergeMethod,
     auto_merge_enabled,
-    enable_auto_merge,
+)
+from vergil_tooling.lib.auto_merge import (
+    _enable as enable_auto_merge,
 )
 
 PR = "https://github.com/o/r/pull/7"
@@ -95,7 +97,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     return api
 
 
-@pytest.mark.parametrize("method", ["SQUASH", "REBASE"])
+@pytest.mark.parametrize("method", ["SQUASH", "REBASE", "MERGE"])
 def test_enables_and_reads_back(fake: FakeGitHub, method: MergeMethod) -> None:
     result = enable_auto_merge(PR, head=HEAD, method=method)
 
@@ -111,7 +113,9 @@ def test_mutation_pins_method_and_head_as_variables() -> None:
     assert "expectedHeadOid: $head" in query
 
 
-@pytest.mark.parametrize(("method", "strategy"), [("REBASE", "rebase"), ("SQUASH", "squash")])
+@pytest.mark.parametrize(
+    ("method", "strategy"), [("REBASE", "rebase"), ("SQUASH", "squash"), ("MERGE", "merge")]
+)
 def test_already_mergeable_merges_directly_with_method_and_head(
     fake: FakeGitHub, method: MergeMethod, strategy: str
 ) -> None:
@@ -197,8 +201,8 @@ def test_direct_merge_that_leaves_pr_open_raises(fake: FakeGitHub) -> None:
 
 
 def test_unknown_method_raises_before_any_call(fake: FakeGitHub) -> None:
-    with pytest.raises(AutoMergeError, match="merge method must be one of SQUASH, REBASE"):
-        enable_auto_merge(PR, head=HEAD, method=cast("Any", "MERGE"))
+    with pytest.raises(AutoMergeError, match="merge method must be one of SQUASH, REBASE, MERGE"):
+        enable_auto_merge(PR, head=HEAD, method=cast("Any", "FAST_FORWARD"))
     assert fake.mutations == []
 
 

@@ -1,8 +1,11 @@
 """Turn on GitHub auto-merge for a PR, pinned to its head (epic vergil-project/.github#1218).
 
-The one auto-merge helper that ``vrg-submit-pr`` and the mechanized PRs
-(:mod:`vergil_tooling.lib.mechanized_pr`) share (spec §6.2).
-:func:`enable_auto_merge` turns auto-merge on through the GraphQL
+The auto-merge helper of the one PR path (:mod:`vergil_tooling.lib.pr_path`,
+epic vergil-project/.github#1664, spec §5.4). It is private to the path:
+:func:`vergil_tooling.lib.pr_path.arm` is its caller, and the mechanized PRs
+(:mod:`vergil_tooling.lib.mechanized_pr`) call it directly only until
+vergil-project/vergil-tooling#5251 moves them onto the path.
+:func:`_enable` turns auto-merge on through the GraphQL
 ``enablePullRequestAutoMerge`` mutation, with the caller's merge method and
 the pushed commit as ``expectedHeadOid``, so a head pushed later is never
 merged. It then reads the setting back and checks that it is on with that
@@ -36,8 +39,10 @@ from vergil_tooling.lib import github
 from vergil_tooling.lib.process_errors import error_text
 
 #: The GraphQL merge methods the helper turns auto-merge on with: squash for
-#: a single-issue PR, rebase for a batch PR (spec §6.2).
-MergeMethod = Literal["SQUASH", "REBASE"]
+#: a single-issue PR, rebase for a batch PR, and a merge commit for a
+#: release's back-merge and a dependency-update PR (release-lock spec §5.4).
+#: :func:`vergil_tooling.lib.pr_path.merge_method` chooses among them.
+MergeMethod = Literal["SQUASH", "REBASE", "MERGE"]
 
 _METHODS: tuple[str, ...] = get_args(MergeMethod)
 
@@ -130,7 +135,7 @@ def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
         raise AutoMergeError(msg)
 
 
-def enable_auto_merge(pr_url: str, *, head: str, method: MergeMethod) -> AutoMergeResult:
+def _enable(pr_url: str, *, head: str, method: MergeMethod) -> AutoMergeResult:
     """Turn on auto-merge for *pr_url* with *method*, pinned to *head*, and confirm it.
 
     When GitHub refuses because the PR can already merge

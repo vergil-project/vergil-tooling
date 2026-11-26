@@ -469,8 +469,12 @@ def _pr_repo_and_number(snap: Snapshot) -> tuple[str, int]:
     return match.group(1), int(match.group(2))
 
 
-def _require_clone_of(clone: Path, repo: str, pr: str) -> None:
-    """Refuse unless *clone*'s ``origin`` is *repo*: the gates judge local git objects."""
+def require_clone_of(clone: Path, repo: str, pr: str) -> None:
+    """Refuse unless *clone*'s ``origin`` is *repo*: the gates judge local git objects.
+
+    The watch's re-check and the one PR path (:mod:`vergil_tooling.lib.pr_path`)
+    both check a clone they are given this way.
+    """
     try:
         url = git.remote_url("origin", repo=clone)
     except subprocess.CalledProcessError as exc:
@@ -481,7 +485,7 @@ def _require_clone_of(clone: Path, repo: str, pr: str) -> None:
         shown = origin or "not a GitHub repository"
         msg = (
             f"{pr}: the gates cannot be re-checked from {clone}, whose origin is {shown},"
-            f" not the PR's repository {repo}; run vrg-finalize-pr from a clone of {repo}"
+            f" not the PR's repository {repo}; run it from a clone of {repo}"
         )
         raise FinalizeWatchError(msg)
 
@@ -593,7 +597,7 @@ def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
     failure is returned as the reason, never a pass.
     """
     repo, number = _pr_repo_and_number(snap)
-    _require_clone_of(clone, repo, snap.url)
+    require_clone_of(clone, repo, snap.url)
     try:
         authors = load_trusted_authors()
         ready = ready_state(clone, repo, branch)
