@@ -34,9 +34,8 @@ run it with `! <command>` in the prompt.
 
 ## PR handoff
 
-- After the merge review, record the PR with `vrg-pr-workflow report-ready
-  --issue <N> --title --summary --notes`. It pushes the branch itself. Leave
-  `--linkage` at its default (`Ref`).
+- After the merge review, record the PR with `vrg-pr-workflow report-ready --issue <N> --title --summary --notes`. It pushes the branch itself.
+  Leave `--linkage` at its default (`Ref`): `vrg-submit-pr` upgrades it to `Closes` for a managed task (an issue under an epic), so the PR closes it on merge.
 - Agents submit and finalize their own PRs into `develop` through the tools,
   never with `--release`: `vrg-submit-pr` runs the gates, opens the PR with
   auto-merge on and finalizes it; after a fix, rerun `vrg-finalize-pr`.
