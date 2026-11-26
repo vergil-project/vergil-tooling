@@ -259,7 +259,12 @@ def read_issue_body(ctx: ReleaseContext) -> str:
 
 
 def _write_issue_body(ctx: ReleaseContext, body: str) -> None:
-    """Replace the tracking-issue body with *body*."""
+    """Replace the tracking-issue body with *body*.
+
+    gh's stdout, the tracking issue's URL, is not echoed: the body is
+    rewritten after every recorded issue and every stage, and the URL said
+    nothing about either (vergil-tooling#5221).
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name
@@ -272,6 +277,7 @@ def _write_issue_body(ctx: ReleaseContext, body: str) -> None:
             ctx.repo,
             "--body-file",
             tmp_path,
+            echo=False,
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)

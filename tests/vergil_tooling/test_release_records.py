@@ -247,6 +247,18 @@ def test_records_posted_on_closed_and_reopened_issues(fake: _FakeGitHub) -> None
     assert "Released: o/r v2.1.2 on 2026-11-20" in first
 
 
+def test_records_name_each_issue_once(
+    fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One line per recorded issue, naming it and what happened (vergil-tooling#5221)."""
+    fake.comments["o/r#2"] = [_record()]
+    ctx = _ctx(_state(_issues(1, 2)))
+    post_records(ctx)
+    lines = capsys.readouterr().out.splitlines()
+    assert "posted: https://github.com/o/r/issues/1" in lines
+    assert "found existing: https://github.com/o/r/issues/2" in lines
+
+
 def test_records_say_none_configured_without_an_install(fake: _FakeGitHub) -> None:
     ctx = _ctx(_state(_issues(1), install_done=False))
     post_records(ctx)

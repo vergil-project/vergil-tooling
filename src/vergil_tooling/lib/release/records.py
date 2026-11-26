@@ -172,6 +172,12 @@ def _split_ref(ref: str) -> tuple[str, int]:
     return match.group("repo"), int(match.group("number"))
 
 
+def _issue_url(ref: str) -> str:
+    """The web URL of issue *ref* (``<owner>/<repo>#<N>``)."""
+    repo, number = _split_ref(ref)
+    return f"https://github.com/{repo}/issues/{number}"
+
+
 def record_comments(ref: str, *, authors: TrustedAuthors) -> tuple[trust.TrustedComment, ...]:
     """The comments on issue *ref* (``<owner>/<repo>#<N>``) that may hold a record.
 
@@ -326,10 +332,12 @@ def post_records(ctx: ReleaseContext) -> None:
     An issue the state block records as posted is skipped. Every other one
     is read for a counting record (:func:`counting_record`), and given one
     when it has none; either way it is then recorded as posted in the state
-    block before the next issue, so a resume never posts a second. An issue
-    whose read or post fails is named, and the stage carries on to the
-    rest, then fails naming each. Writing the state block is never
-    tolerated: a failed write stops the stage at once.
+    block before the next issue, so a resume never posts a second, and
+    named on one line, ``posted: <issue URL>`` or ``found existing: <issue
+    URL>`` (vergil-tooling#5221). An issue whose read or post fails is
+    named, and the stage carries on to the rest, then fails naming each.
+    Writing the state block is never tolerated: a failed write stops the
+    stage at once.
     """
     ctx.records_new = ctx.records_found = 0
     current = ctx.state
@@ -357,6 +365,7 @@ def post_records(ctx: ReleaseContext) -> None:
             continue
         current = replace(current, records_posted=(*current.records_posted, issue.ref))
         write_state(ctx, current)
+        print(f"{'posted' if new else 'found existing'}: {_issue_url(issue.ref)}")
         if new:
             ctx.records_new += 1
         else:

@@ -1072,10 +1072,15 @@ def is_http_404(result: subprocess.CompletedProcess[str]) -> bool:
     return "404" in http_status_line(result)
 
 
-def run(*args: str) -> None:
-    """Run a gh command and raise on failure."""
+def run(*args: str, echo: bool = True) -> None:
+    """Run a gh command and raise on failure.
+
+    gh's stdout is echoed to the terminal unless *echo* is false, for a caller
+    whose command prints nothing worth showing (such as the URL ``gh issue
+    edit`` prints for every edit). gh's stderr is always echoed.
+    """
     result = _run_with_retry(("gh", *args), check=True, capture_output=True, text=True)  # noqa: S607
-    if result.stdout:
+    if result.stdout and echo:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
