@@ -3,6 +3,6 @@ Unable to read consumer identity
 
 This system is not registered with an entitlement server. You can use subscription-manager to register.
 
-vergil packages (capture)                        28 kB/s | 833  B     00:00    
+vergil packages (capture)                        78 kB/s | 833  B     00:00    
 vergil packages (capture)                       3.8 MB/s | 3.9 kB     00:00    
-Is this ok [y/N]: vergil packages (capture)                        60 kB/s | 833  B     00:00    
+Is this ok [y/N]: vergil packages (capture)                       203 kB/s | 833  B     00:00    
