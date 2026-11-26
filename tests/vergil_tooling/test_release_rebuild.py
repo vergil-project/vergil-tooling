@@ -673,7 +673,12 @@ def test_a_closing_comment_the_layer_does_not_trust_does_not_count(
     assert _rebuild().issues == _OWN
     mocks["read"].assert_not_called()
     captured = capsys.readouterr()
-    assert f"skipped untrusted content: {_REPO}#39 " in captured.err
-    assert captured.err.count("skipped untrusted content") == 1
+    what = (
+        "ignored content from a trusted role this reader does not accept"
+        if cause == "not-accepted"
+        else "skipped untrusted content"
+    )
+    assert f"{what}: {_REPO}#39 " in captured.err
+    assert captured.err.count(what) == 1
     assert f"on comment 1 ({cause})" in captured.err
     assert trust_stubs.SPAM_TEXT not in captured.out + captured.err

@@ -895,6 +895,10 @@ also carries `linked_issues`, the issues its trusted body links by a `Ref`
 or `Closes` line (`{"repo", "number", "keyword"}`).
 
 `--roles human,agents,automation` narrows the roles trusted, in both modes.
+An item from a trusted role left out this way is reported on stderr as
+`ignored content from a trusted role this reader does not accept: …
+(not-accepted)`, never as untrusted content; under GitHub Actions it is
+counted on a line of its own.
 
 | Attribute | Value |
 |---|---|

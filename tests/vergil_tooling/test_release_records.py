@@ -316,8 +316,11 @@ def test_foreign_marker_ignored_with_warning(
     post_records(ctx)
     assert fake.posts == ["o/r#1"]
     err = capsys.readouterr().err
-    assert f"skipped untrusted content: o/r#1 comment {_AGENT} at {_CREATED} on comment 1" in err
-    assert "(not-accepted)" in err
+    assert (
+        "ignored content from a trusted role this reader does not accept:"
+        f" o/r#1 comment {_AGENT} at {_CREATED} on comment 1 (not-accepted)"
+    ) in err
+    assert "skipped untrusted content" not in err
     assert "the task body" not in err
 
 
@@ -361,7 +364,8 @@ def test_skip_report_counts_only_under_actions(
     fake.comments["o/r#1"] = [_record(author=_AGENT), Comment("drive-by", None, "x")]
     post_records(_ctx(_state(_issues(1))))
     err = capsys.readouterr().err
-    assert "skipped 2 untrusted item(s) (not-accepted: 1, untrusted: 1)" in err
+    assert "skipped 1 untrusted item(s) (untrusted: 1)\n" in err
+    assert "ignored 1 item(s) from trusted roles this reader does not accept\n" in err
     assert "drive-by" not in err
 
 
