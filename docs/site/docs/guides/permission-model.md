@@ -130,8 +130,10 @@ Anything not on the allowlist is rejected. Notable denials:
 ### Escape Hatch
 
 None in the wrapper. If the agent genuinely needs a denied
-operation, it explains the situation to the human, who runs the
-raw command via `! git <command>` in the Claude Code prompt.
+operation, it explains the situation to the human and hands over
+the raw command as a separate copy-paste block, with no `!`
+prefix. The human runs it in their own terminal, not through `!`
+in the agent session.
 
 ## `vrg-gh` Wrapper
 
