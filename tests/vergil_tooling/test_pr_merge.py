@@ -33,13 +33,16 @@ def _gh(
     required: frozenset[str] | None = frozenset(),
     outstanding: list[dict[str, str]] | None = None,
     review: str = "",
+    base: str = "main",
 ) -> MagicMock:
     """Build a mocked github module for one scenario.
 
     ``outstanding`` is the sequence of ``required_checks_outstanding`` results,
     one per call; once exhausted (or when omitted) nothing is outstanding.
+    ``base`` is the PR's base: ``wait_and_merge`` merges only into ``main``.
     """
     gh = MagicMock()
+    gh.base_ref.return_value = base
     gh.pr_state.return_value = state
     gh.is_draft.return_value = draft
     gh.mergeable.return_value = mergeable
@@ -59,6 +62,33 @@ def test_green_first_try_merges() -> None:
     gh.wait_for_checks.assert_called_once_with("99", required=frozenset())
     gh.merge.assert_called_once_with("99", strategy="squash")
     gh.update_branch.assert_not_called()
+
+
+@pytest.mark.parametrize("bypass", [None, "Main updates"])
+def test_wait_and_merge_refuses_a_develop_base_before_any_wait(bypass: str | None) -> None:
+    """Only the one PR path merges into develop (epic .github#1664, spec §5.4)."""
+    gh = _gh(base="develop")
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match="its base is 'develop', not 'main'"),
+    ):
+        wait_and_merge("99", strategy="merge", bypass_ruleset=bypass)
+    gh.wait_for_checks.assert_not_called()
+    gh.update_branch.assert_not_called()
+    gh.merge.assert_not_called()
+
+
+def test_wait_and_merge_rereads_the_base_before_the_merge() -> None:
+    """A base edited to develop while the loop waited is refused at the merge call."""
+    gh = _gh()
+    gh.base_ref.side_effect = ["main", "develop"]
+    with (
+        patch(_MOD + ".github", gh),
+        pytest.raises(MergeAbortError, match="its base is 'develop', not 'main'"),
+    ):
+        wait_and_merge("99", strategy="merge")
+    gh.wait_for_checks.assert_called_once()
+    gh.merge.assert_not_called()
 
 
 def test_merged_on_entry_raises() -> None:

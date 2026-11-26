@@ -396,7 +396,6 @@ def merge_release(ctx: ReleaseContext) -> None:
                 ctx.release_pr_url,
                 phase="merge-release",
                 on_branch_updated=lambda: updates.append(None),
-                into_main=True,
             )
             break
         except ReleaseConflictError as exc:
