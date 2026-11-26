@@ -150,10 +150,10 @@ def prepare_pr_stage(state: UpdateDepsState) -> None:
 
 
 def merge_stage(state: UpdateDepsState) -> None:
-    """Merge only a green update; a red one stays open for its fix task."""
+    """Arm only a green update through the one PR path; a red one stays open for its fix task."""
     ctx = _require_ctx(state)
     if ctx.has_work and ctx.failure is None:
-        pr.merge_pr(ctx)
+        pr.arm_and_wait(ctx)
 
 
 def fix_task_stage(state: UpdateDepsState) -> None:

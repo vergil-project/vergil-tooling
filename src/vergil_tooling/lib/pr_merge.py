@@ -1,8 +1,8 @@
 """Shared wait-and-merge engine with fail-fast ordering.
 
-Used by the release workflow and ``vrg-update-deps`` (merge strategy)
-through :func:`wait_and_merge`, and by the
-mechanized-PR building block through :func:`wait_until_merged`, which shares
+Used by the release workflow (merge strategy) through :func:`wait_and_merge`,
+and by the mechanized-PR building block and ``vrg-update-deps`` through
+:func:`wait_until_merged`, which shares
 the same loop pieces but treats a merged PR as success and runs under one
 overall deadline (epic vergil-project/.github#1064). Doomed outcomes — already merged, draft,
 conflicting, behind — are checked *before* waiting, never after
