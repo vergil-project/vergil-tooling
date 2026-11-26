@@ -96,6 +96,14 @@ def test_a_transient_read_error_is_retried_with_back_off() -> None:
     assert sleep.call_count == 4
 
 
+def test_a_view_of_the_wrong_shape_is_read_again() -> None:
+    view, read, _ = _wait(
+        ["[]", json.dumps({"status": "completed"}), _view("completed", "success")]
+    )
+    assert view.conclusion == "success"
+    assert read.call_count == 3
+
+
 def test_a_completed_view_with_no_conclusion_is_read_again() -> None:
     view, read, _ = _wait([_view("completed", None), _view("completed", "success")])
     assert view.conclusion == "success"
@@ -153,8 +161,6 @@ def test_the_deadline_defaults_to_vrg_cd_timeout(monkeypatch: pytest.MonkeyPatch
         patch(_MOD + ".github.read_output", return_value=_view("queued")),
         pytest.raises(ReleaseError, match="had not completed"),
     ):
-        wait_run_completed(
-            "o/r", "5", phase="confirm-main", sleep=sleep, clock=lambda: next(clock)
-        )
+        wait_run_completed("o/r", "5", phase="confirm-main", sleep=sleep, clock=lambda: next(clock))
     # Sleeps are clamped to the deadline.
     assert all(call.args[0] <= 30 for call in sleep.call_args_list)

@@ -28,8 +28,8 @@ from vergil_tooling.lib.cd_runs import (
     is_release_job,
 )
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.state import FailedJob
 from vergil_tooling.lib.release.run_wait import wait_run_completed
+from vergil_tooling.lib.release.state import FailedJob
 from vergil_tooling.lib.release.tracking import write_state
 
 if TYPE_CHECKING:

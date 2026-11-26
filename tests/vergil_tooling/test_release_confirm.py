@@ -1186,9 +1186,7 @@ def test_rerun_and_watch_waits_for_the_new_attempt() -> None:
         patch(_MOD + "._watch_run", return_value="https://run/5") as watch,
         patch(_MOD + ".time.sleep"),
     ):
-        url = rerun_and_watch(
-            ctx, "5", rerun_args=("--failed",), phase="cd-publish"
-        )
+        url = rerun_and_watch(ctx, "5", rerun_args=("--failed",), phase="cd-publish")
     run.assert_called_once_with("run", "rerun", "5", "--repo", "owner/repo", "--failed")
     # The wait is for the new attempt, never the one that already finished.
     watch.assert_called_once_with(ctx, "5", phase="cd-publish", attempt=2)
