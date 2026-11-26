@@ -859,7 +859,10 @@ one that is behind when the release runs it. The pipeline:
    The tracking-issue comment says "No dependency changes; no PR opened."
 4. Otherwise run `vrg-container-run -- vrg-validate` once, push the
    branch, and open a PR to `develop` labelled `dependency-update`.
-5. If validation passed, wait for the PR's checks and merge it. Once
+5. If validation passed, arm the PR through the one PR path (auto-merge
+   with a merge commit, pinned to the pushed head) and wait until it
+   merges. A PR the path refuses is a merge failure, with the path's
+   reason. Once
    the PR is confirmed merged, remove the worktree and delete the
    `deps/update-<version>` branch on origin and locally. If the PR did
    not merge, the branch stays on origin, as the open PR's head, for a

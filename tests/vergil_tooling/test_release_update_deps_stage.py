@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.pr_path import ArmResult
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.handoff import holds
 from vergil_tooling.lib.release.orchestrator import ReleaseState, _preflight_stage, build_stages
@@ -174,6 +175,70 @@ def test_success_records_report_and_pr(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "| python | p | 1 | 2 |" in (ctx.deps_report or "")
     assert ctx.deps_pr_url == "https://x/pull/9"
     assert ctx.deps_fix_issue_url is None
+    assert ctx.deps_failure is None
+
+
+class _Changed:
+    name = "changed"
+
+    def applies(self, ctx: UpdateDepsContext) -> bool:  # noqa: ARG002
+        return True
+
+    def apply(self, ctx: UpdateDepsContext) -> UpdateResult:  # noqa: ARG002
+        return UpdateResult(
+            updater="changed", changed=True, summary="s", commit_message="chore(deps): s"
+        )
+
+
+def test_release_deps_stage_uses_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stage's run_update arms its PR through the one PR path and only waits on it."""
+    rec = _Recorder()
+    _patch_lock(monkeypatch, rec)
+    monkeypatch.setattr(_MOD + ".os.chdir", rec.chdirs.append)
+    monkeypatch.setattr(_MOD + ".git.current_branch", lambda: "develop")
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)  # noqa: ARG005
+    orch = "vergil_tooling.lib.update_deps.orchestrator"
+    deps_pr = "vergil_tooling.lib.update_deps.pr"
+    deps = UpdateDepsContext(
+        repo="o/r", repo_root=Path("/r"), version="2.1.243", branch="deps/update-2.1.243"
+    )
+
+    def fake_preflight(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:  # noqa: ARG001
+        return deps
+
+    monkeypatch.setattr(orch + ".preflight", fake_preflight)
+    monkeypatch.setattr(orch + ".DEFAULT_REGISTRY", [_Changed()])
+    monkeypatch.setattr(orch + ".git.run", lambda *a: None)  # noqa: ARG005
+    monkeypatch.setattr(orch + ".validate.run_validation", lambda: None)
+    monkeypatch.setattr(
+        orch + ".pr.prepare_pr", lambda c: setattr(c, "pr_url", "https://github.com/o/r/pull/9")
+    )
+    monkeypatch.setattr(orch + ".pr.cleanup_worktree", lambda c: None)  # noqa: ARG005
+    monkeypatch.setattr(orch + ".pr.delete_merged_branch", lambda c: None)  # noqa: ARG005
+    monkeypatch.setattr(deps_pr + ".git.read_output", lambda *a: "a" * 40)  # noqa: ARG005
+    armed: list[tuple[str, str | None]] = []
+
+    def fake_arm(url: str, *, clone: Path | None = None, head: str | None = None) -> ArmResult:
+        armed.append((url, head))
+        return ArmResult(outcome="armed", pr_url=url, head="a" * 40, method="MERGE")
+
+    monkeypatch.setattr(deps_pr + ".pr_path.arm", fake_arm)
+    waited: list[str] = []
+    monkeypatch.setattr(
+        deps_pr + ".pr_merge.wait_until_merged",
+        lambda url, *, strategy, deadline_secs: waited.append(url),  # noqa: ARG005
+    )
+
+    def no_merge(*a: object, **k: object) -> None:
+        pytest.fail(f"merged directly: {a} {k}")
+
+    monkeypatch.setattr(deps_pr + ".pr_merge.wait_and_merge", no_merge)
+    ctx = _rctx()
+    update_deps(ctx)
+    assert armed == [("https://github.com/o/r/pull/9", "a" * 40)]
+    assert waited == ["https://github.com/o/r/pull/9"]
+    assert deps.merged is True
+    assert ctx.deps_pr_url == "https://github.com/o/r/pull/9"
     assert ctx.deps_failure is None
 
 
