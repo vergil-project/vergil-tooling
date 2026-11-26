@@ -413,6 +413,50 @@ def test_audit_rolling_tag_branch_is_noncompliant() -> None:
     assert code == 1
 
 
+def _inactive_workflow_item() -> DiffItem:
+    return DiffItem(
+        field="inactive_workflows..github/workflows/epic-sweep.yml",
+        expected="active",
+        actual="disabled_inactivity",
+    )
+
+
+def test_apply_reports_inactive_workflow_and_never_re_enables(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # vergil-tooling#5226: the audit reports a workflow GitHub disabled for
+    # inactivity and leaves it for a human, at exit 1.
+    code, mock_apply = _run_main("apply", ConfigDiff(items=[_inactive_workflow_item()]))
+    assert code == 1
+    mock_apply.assert_not_called()
+    out = capsys.readouterr().out
+    assert (
+        "inactive_workflows..github/workflows/epic-sweep.yml: "
+        "expected='active', actual='disabled_inactivity'"
+    ) in out
+    assert "apply does not re-enable workflows" in out
+    assert "then re-run: .github/workflows/epic-sweep.yml" in out
+
+
+def test_apply_converges_other_drift_beside_inactive_workflow() -> None:
+    other = DiffItem(field="repo_settings.has_wiki", expected=True, actual=False)
+    code, mock_apply = _run_main("apply", ConfigDiff(items=[other, _inactive_workflow_item()]))
+    assert code == 1
+    mock_apply.assert_called_once()
+
+
+def test_apply_reports_inactive_workflow_beside_rolling_tag_branch() -> None:
+    items = [_rolling_tag_branch_item(), _inactive_workflow_item()]
+    code, mock_apply = _run_main("apply", ConfigDiff(items=items))
+    assert code == 1
+    mock_apply.assert_not_called()
+
+
+def test_audit_inactive_workflow_is_noncompliant() -> None:
+    code, _ = _run_main("audit", ConfigDiff(items=[_inactive_workflow_item()]))
+    assert code == 1
+
+
 def test_apply_refuses_when_settings_not_checked(capsys: pytest.CaptureFixture[str]) -> None:
     code, mock_apply = _run_main("apply", _mock_github_not_checked(drift=True))
     assert code == 2
@@ -2286,6 +2330,19 @@ def test_update_undeclared_parameter_still_opens_pr_then_exits_1(
         assert main(["update", "--repo", "o/r"]) == 1
     mocks["sync"].assert_called_once()
     assert "apply cannot resolve 1 undeclared ruleset parameter(s)" in capsys.readouterr().out
+
+
+def test_update_inactive_workflow_still_opens_pr_then_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # vergil-tooling#5226: the nightly update reports the workflow and fails
+    # the run, but never re-enables it and still syncs the managed files.
+    stack, mocks = _update_env(github_diff=ConfigDiff(items=[_inactive_workflow_item()]))
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 1
+    mocks["apply"].assert_not_called()
+    mocks["sync"].assert_called_once()
+    assert "apply does not re-enable workflows" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
