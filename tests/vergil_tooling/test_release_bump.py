@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +15,9 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from vergil_tooling.lib.auto_merge import MergeMethod
+    from vergil_tooling.lib.pr_path import ArmOutcome
 
 _MOD = "vergil_tooling.lib.release.bump"
 
@@ -533,12 +536,12 @@ def test_back_merge_create_that_really_failed_is_retried() -> None:
 
 
 def _arm_result(outcome: str, detail: str = "") -> pr_path.ArmResult:
-    method = None if outcome == "refused" else "MERGE"
+    method: MergeMethod | None = None if outcome == "refused" else "MERGE"
     return pr_path.ArmResult(
-        outcome=outcome,  # type: ignore[arg-type]
+        outcome=cast("ArmOutcome", outcome),
         pr_url=_BUMP_PR,
         head=_BUMP_HEAD,
-        method=method,  # type: ignore[arg-type]
+        method=method,
         detail=detail,
     )
 
