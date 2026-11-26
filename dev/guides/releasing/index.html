@@ -20950,6 +20950,9 @@ contents lookup.</p>
   done.</li>
 <li>Every issue in the list gets its record, whatever its state: closed as
   completed, reopened, or closed another way.</li>
+<li>The stage prints one line per issue as it records it:
+  <code>posted: &lt;issue URL&gt;</code> for a new record, or
+  <code>found existing: &lt;issue URL&gt;</code> when the issue already has one.</li>
 <li>A release that supersedes another adds a <code>- Supersedes: vX.Y.Z</code> line
   to the record on each issue it absorbed from it (see
   <a href="#superseding-a-release">Superseding a release</a>).</li>

@@ -20835,8 +20835,9 @@ planning item's <code>in-progress</code> label) and posts the record:</p>
 prose — a date, an event ("<code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> merges", "Zensical 1.0
 ships"), or both — written so a later review can actually check it. <code>--date
 YYYY-MM-DD</code> stamps an original deferral date instead of today. Running <code>defer</code>
-on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record,
-no move, no <code>Deferred from:</code> line.</p>
+on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record
+and no move, carrying forward the <code>Deferred from:</code> line of the latest record
+that has one (or saying it has none to carry).</p>
 <p><strong>Bringing it back.</strong> <code>epic-review deferred</code> lists the queue with
 <code>vrg-queue deferred</code> (least recently deferred first), checks each item's
 conditions against their real sources, and recommends one outcome:</p>

@@ -22450,7 +22450,7 @@ the current list's order, <code>removed</code> in the block's.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with <code>status</code>; a <code>reconcile</code> whose comment failed says the block was written and prints the comment to post by hand</td>
+<td>Error on stderr, nothing written; a failed write says the edit may not have been applied, and to re-run <code>status</code> to confirm; a <code>reconcile</code> whose comment failed says the block was written and prints the comment to post by hand</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -22747,9 +22747,11 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
 <p><code>--date</code> stamps an original deferral date instead of today. The item is
   linked before the record is posted, and a planning item's <code>in-progress</code>
   label is removed. On an item already deferred, <code>defer</code> is a <strong>refresh</strong>: a
-  new record, no move, and no <code>Deferred from:</code> line. If the record fails after
-  the move, the command fails loudly and prints the full intended comment to
-  post by hand.
+  new record and no move. The record carries forward the <code>Deferred from:</code>
+  line of the item's latest trusted deferral record that has one; when none
+  has, the record has no such line and the route says so on stderr. If the
+  record fails after the move, the command fails loudly and prints the full
+  intended comment to post by hand.
 - <code>intake</code> — reparent a deferred item back onto its home's intake epic.
 - <code>one-off --repo OWNER/REPO [--epic REF]</code> — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
