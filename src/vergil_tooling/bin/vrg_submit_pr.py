@@ -501,7 +501,8 @@ def _run_push_mode(args: argparse.Namespace) -> int:
         branch = git.current_branch()
         head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
     except subprocess.CalledProcessError as exc:
-        print(f"{_PUSH_PREFIX}: cannot read the worktree's branch: {error_text(exc)}", file=sys.stderr)
+        msg = f"{_PUSH_PREFIX}: cannot read the worktree's branch: {error_text(exc)}"
+        print(msg, file=sys.stderr)
         return 1
     if branch == "HEAD":
         print(f"{_PUSH_PREFIX}: HEAD is detached; run it on the PR's branch", file=sys.stderr)

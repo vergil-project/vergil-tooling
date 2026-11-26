@@ -675,9 +675,7 @@ def pusher(monkeypatch: pytest.MonkeyPatch) -> Pusher:
 
 
 @pytest.fixture
-def push(
-    monkeypatch: pytest.MonkeyPatch, clone: Path, gates: Gates, pusher: Pusher
-) -> Pushes:
+def push(monkeypatch: pytest.MonkeyPatch, clone: Path, gates: Gates, pusher: Pusher) -> Pushes:
     """Run the push mode from *clone*, with its pushes recorded and nothing fetched."""
     spy = Pushes()
     monkeypatch.setattr(pr_path.git, "run", spy.run)
@@ -741,7 +739,9 @@ def test_push_mode_refuses_branch_with_no_open_develop_pr(
     assert result == PushResult(
         pushed=False,
         pr_url="",
-        detail=f"{BRANCH} has no open PR into develop; push mode pushes only to an open PR's branch",
+        detail=(
+            f"{BRANCH} has no open PR into develop; push mode pushes only to an open PR's branch"
+        ),
     )
     assert push.calls == []
     assert gates.calls == []
@@ -815,7 +815,9 @@ def test_push_mode_failed_push_raises_naming_the_pr(
 ) -> None:
     push.fail = True
 
-    with pytest.raises(PRPathError, match=f"(?s){PR}: pushing {OTHER_HEAD[:12]} to {BRANCH}.*stale"):
+    with pytest.raises(
+        PRPathError, match=f"(?s){PR}: pushing {OTHER_HEAD[:12]} to {BRANCH}.*stale"
+    ):
         push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=HEAD)
 
 
@@ -839,3 +841,93 @@ def test_push_mode_gates_judge_the_local_head_without_fetching_it(
     monkeypatch.setattr(finalize_watch, "_fetch_for_gates", no_fetch)
 
     assert push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None).pushed
+
+
+def test_push_mode_outside_a_clone_raises(
+    fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.chdir(plain)
+
+    with pytest.raises(PRPathError, match="cannot read the current clone and its origin"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+
+def test_push_mode_from_a_clone_with_no_github_origin_raises(
+    fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = _repo_with_origin(tmp_path / "local", str(tmp_path / "bare.git"))
+    monkeypatch.chdir(local)
+
+    with pytest.raises(PRPathError, match="is not a GitHub repository"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+
+def test_push_mode_failed_pr_lookup_raises(
+    fake: FakeGitHub, push: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise trust.TrustReadError("prs_for_branch o/r feature/7-fix", "HTTP 502")
+
+    monkeypatch.setattr(trust, "prs_for_branch", fail)
+
+    with pytest.raises(PRPathError, match=f"reading the open PRs on {BRANCH} failed: .*502"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+    assert push.calls == []
+
+
+def test_push_mode_refuses_several_open_develop_prs(
+    fake: FakeGitHub, gates: Gates, push: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def two(*_args: object, **_kwargs: object) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        refs = [
+            trust.PRRef(
+                number=n,
+                url=f"https://github.com/o/r/pull/{n}",
+                title="t",
+                head=BRANCH,
+                head_oid=HEAD,
+                base="develop",
+                author_role=trust.Role.AGENTS,
+                state="OPEN",
+            )
+            for n in (7, 8)
+        ]
+        return refs, []
+
+    monkeypatch.setattr(trust, "prs_for_branch", two)
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result == PushResult(
+        pushed=False, pr_url="", detail=f"{BRANCH} has 2 open PRs into develop (#7, #8)"
+    )
+    assert push.calls == []
+    assert gates.calls == []
+
+
+def test_push_mode_refuses_a_pr_whose_branch_has_changed(
+    fake: FakeGitHub, gates: Gates, push: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(finalize_watch, "confirmed_head", lambda _snap: "feature/8-other")
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert not result.pushed
+    assert result.detail == f"its head branch is feature/8-other, not {BRANCH}"
+    assert push.calls == []
+
+
+def test_push_mode_gates_that_cannot_run_raise(
+    fake: FakeGitHub, push: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> str:
+        raise finalize_watch.FinalizeWatchError(f"{PR}: the gates cannot be re-checked")
+
+    monkeypatch.setattr(finalize_watch, "gates_before_push", fail)
+
+    with pytest.raises(PRPathError, match="the gates cannot be re-checked"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+    assert push.calls == []

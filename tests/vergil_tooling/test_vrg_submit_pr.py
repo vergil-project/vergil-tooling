@@ -5110,6 +5110,33 @@ class TestPushMode:
         push.assert_not_called()
         assert "the branch is frozen" in capsys.readouterr().err
 
+    def test_push_mode_warns_on_an_unreadable_state_file(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        unreadable = freeze.FreezeCheck(frozen=False, read_error="a corrupt state file")
+        with (
+            patch(_MOD + ".freeze.check_worktree", return_value=unreadable),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+        ):
+            assert main(["--push"]) == 0
+        assert "warning: a corrupt state file" in capsys.readouterr().err
+
+    def test_push_mode_outside_a_worktree_is_refused(
+        self,
+        push_worktree: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        monkeypatch.chdir(plain)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "cannot read the worktree's branch" in capsys.readouterr().err
+
     def test_push_mode_refuses_a_detached_head(
         self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

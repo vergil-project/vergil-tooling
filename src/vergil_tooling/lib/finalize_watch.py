@@ -617,10 +617,8 @@ def _gates_at(
         if not pusher_is_agent and not agent_involvement(snap.url, ready, authors):
             return ""
         refs = task_issue_refs(repo, number, ready)
-        if pushed:
-            base = _fetch_for_gates(clone, head)
-        else:
-            base = _fetch_develop_for_gates(clone, head)
+        fetch = _fetch_for_gates if pushed else _fetch_develop_for_gates
+        base = fetch(clone, head)
         result = agent_gates.evaluate(clone, base=base, head=head, issue_refs=refs, authors=authors)
     except _RECHECK_ERRORS as exc:
         return f"the gates could not be re-checked at {head[:12]}: {error_text(exc)}"
