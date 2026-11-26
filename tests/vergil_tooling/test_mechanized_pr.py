@@ -387,13 +387,13 @@ def test_mechanized_uses_helper_squash(
     fake: FakeGitHub, origin: Path, clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[tuple[str, str, str]] = []
-    helper = auto_merge.enable_auto_merge
+    helper = auto_merge._enable  # noqa: SLF001 - the helper spied on
 
     def spy(pr_url: str, *, head: str, method: auto_merge.MergeMethod) -> object:
         seen.append((pr_url, head, method))
         return helper(pr_url, head=head, method=method)
 
-    monkeypatch.setattr(auto_merge, "enable_auto_merge", spy)
+    monkeypatch.setattr(auto_merge, "_enable", spy)
     (clone / "vergil.toml").write_text("v2\n")
 
     _sync(clone)

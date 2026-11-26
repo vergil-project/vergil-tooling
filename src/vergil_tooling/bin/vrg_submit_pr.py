@@ -30,8 +30,11 @@ arguments already chose the selection, and the body is on the opened PR.
 For each PR it
 re-checks a batch PR's rules, pushes the branch when the mode pushes, holds
 origin's tip to the head the PR must open at, opens the PR and records the
-submission, runs the provenance check, and turns auto-merge on, pinned to
-that head: the rebase method for a batch PR, squash otherwise. A PR whose
+submission, runs the provenance check, and arms it through the one PR path
+(:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664),
+pinned to that head, with the method the path works out from the PR: rebase
+for a batch PR, squash otherwise. A PR the path refuses fails its submit
+with auto-merge off. A PR whose
 submit fails is named in the final summary and the other PRs continue; a
 provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
@@ -140,7 +143,6 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     agent_gates,
-    auto_merge,
     epics,
     finalize_watch,
     git,
@@ -148,6 +150,7 @@ from vergil_tooling.lib import (
     identity_mode,
     planning_close,
     pr_create,
+    pr_path,
     pr_provenance,
     progress,
     trust,
@@ -721,7 +724,7 @@ _PER_PR_ERRORS = (
     TrustedAuthorsNotConfiguredError,
     trust.UntrustedContentError,
     trust.TrustReadError,
-    auto_merge.AutoMergeError,
+    pr_path.PRPathError,
     _SubmitFailedError,
 )
 
@@ -731,11 +734,6 @@ def _failure_reason(exc: BaseException) -> str:
     if isinstance(exc, SystemExit):
         return str(exc.code).removeprefix("vrg-submit-pr: ")
     return error_text(exc)
-
-
-def _merge_method(issue_refs: list[str]) -> auto_merge.MergeMethod:
-    """Rebase for a batch PR (one commit per issue), squash otherwise (spec §6.2)."""
-    return "REBASE" if batch_rules.is_batch(issue_refs) else "SQUASH"
 
 
 def _qualified(issue_ref: str) -> str:
@@ -828,6 +826,24 @@ def _check_provenance(pr_url: str) -> None:
     raise _SubmitFailedError(msg)
 
 
+def _arm(pr_url: str, head: str) -> pr_path.ArmResult:
+    """Arm *pr_url* through the one PR path, pinned to *head*; anything but armed or merged fails.
+
+    :func:`pr_path.arm` judges the PR again at its head (what the path
+    accepts, the provenance check, and the gates for an agent-involved PR,
+    in the main worktree, a clone of this repo), works out the merge method
+    from the PR (rebase for a batch PR, squash otherwise) and turns
+    auto-merge on, or merges the PR directly when GitHub refuses that at
+    clean status. A ``refused`` result
+    raises :class:`_SubmitFailedError` with its reason, so the PR's submit
+    fails with auto-merge left off.
+    """
+    result = pr_path.arm(pr_url, clone=git.main_worktree_root(), head=head)
+    if result.outcome in ("armed", "merged"):
+        return result
+    raise _SubmitFailedError(result.detail or f"the one PR path left it {result.outcome}")
+
+
 _SUBMIT_COMMAND = "vrg-submit-pr"
 
 _NOT_ATTEMPTED = "not attempted: an earlier PR's submit stopped on an unexpected error"
@@ -877,7 +893,6 @@ class _SubmitRun:
             reason = _failure_reason(exc)
             self.failed.append((sub.branch, reason))
             raise progress.StageFailedError(f"no PR opened: {reason}") from exc
-        method = _merge_method(sub.issue_refs)
         # The submission is recorded as soon as the PR exists, so a later step
         # that fails leaves the worktree marked with the PR it opened rather
         # than ready for a second one. A failure from here on reports the PR,
@@ -889,7 +904,7 @@ class _SubmitRun:
             step = "the provenance check"
             _check_provenance(pr_url)
             step = "turning auto-merge on"
-            result = auto_merge.enable_auto_merge(pr_url, head=sub.expected_head, method=method)
+            result = _arm(pr_url, sub.expected_head)
         except _PER_PR_ERRORS as exc:
             reason = f"opened at {sub.expected_head[:12]}; {step} failed: {_failure_reason(exc)}"
             self.failed.append((pr_url, reason))
@@ -902,11 +917,12 @@ class _SubmitRun:
             )
             raise
         self.opened.append(pr_url)
-        if result.merged_now:
-            outcome = f"merged directly ({method.lower()})"
+        method = str(result.method).lower()
+        if result.outcome == "merged":
+            outcome = f"merged directly ({method})"
             print(f"{pr_url}: {outcome}; it could already merge.")
         else:
-            outcome = f"auto-merge on ({method.lower()}, pinned to {sub.expected_head[:12]})"
+            outcome = f"auto-merge on ({method}, pinned to {sub.expected_head[:12]})"
             print(f"{pr_url}: {outcome}.")
         progress.note(f"{_pr_label(pr_url)} {outcome}")
 
@@ -917,10 +933,11 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     Every mode reaches this rollup with its PRs already gated (ready state,
     freeze, recorded head) and listed. Each PR is one stage of a
     :mod:`~vergil_tooling.lib.progress` rollup, named after its branch: open
-    it (:func:`_open_one`), run the provenance check, then turn auto-merge on
-    pinned to the expected head, with the rebase method for a batch PR and
-    squash otherwise. GitHub refuses auto-merge on a PR that can already
-    merge; :func:`auto_merge.enable_auto_merge` then merges it directly. The
+    it (:func:`_open_one`), run the provenance check, then arm it through the
+    one PR path (:func:`_arm`, :func:`pr_path.arm`), pinned to the expected
+    head, with the method the path works out from the PR: rebase for a batch
+    PR, squash otherwise. GitHub refuses auto-merge on a PR that can already
+    merge; the path then merges it directly. The
     steps' output goes to the run log (``.vergil/vrg-submit-pr-<stamp>.log``
     in the main worktree); each stage ends on one line with its outcome,
     and the summary points at the log.

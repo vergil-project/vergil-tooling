@@ -24,9 +24,10 @@ the way a person would, with plain git in that checkout:
    :func:`vergil_tooling.lib.pr_create.create_or_adopt`: when ``gh pr create``
    fails, the open PR from the branch is adopted if its head, base, title and
    head commit match what was pushed, and any other open PR fails the run,
-   naming it (#4699). GitHub auto-merge is then turned on
-   through the shared helper
-   (:func:`vergil_tooling.lib.auto_merge.enable_auto_merge`) with the squash
+   naming it (#4699). GitHub auto-merge is then turned on through the
+   one PR path's helper (``auto_merge._enable``, called directly here
+   until vergil-project/vergil-tooling#5251 arms the PR through
+   :func:`vergil_tooling.lib.pr_path.arm`) with the squash
    method and the pushed commit as the expected head, then read back to
    confirm it is on. When GitHub refuses because the PR can already merge, the
    helper merges it directly with the same method and head, and the result is
@@ -316,7 +317,7 @@ def _open_pr(repo: str, branch: str, title: str, body: str, head: str) -> str:
 def _enable_auto_merge(repo: str, pr_url: str, head: str) -> bool:
     """Turn on squash auto-merge for *pr_url* at *head*; true when it merged directly."""
     try:
-        result = auto_merge.enable_auto_merge(pr_url, head=head, method="SQUASH")
+        result = auto_merge._enable(pr_url, head=head, method="SQUASH")  # noqa: SLF001 - until #5251
     except auto_merge.AutoMergeError as exc:
         raise _fail("enabling auto-merge", repo, exc) from exc
     return result.merged_now
