@@ -1020,8 +1020,6 @@ def test_merge_release_calls_wait_and_merge() -> None:
     assert args == ("https://github.com/o/r/pull/100",)
     assert kwargs["phase"] == "merge-release"
     assert callable(kwargs["on_branch_updated"])
-    # The release PR's merge into main uses the human's ruleset bypass (#5095).
-    assert kwargs["into_main"] is True
     # No server-side update -> the local release branch is left alone (#3175).
     m_sync.assert_not_called()
     assert ctx.release_merge_sha == "merged"
@@ -1030,9 +1028,7 @@ def test_merge_release_calls_wait_and_merge() -> None:
 def _updating_wait_and_merge(updates: int) -> MagicMock:
     """A wait_and_merge stand-in that reports *updates* server-side branch updates."""
 
-    def fake(
-        _pr: str, *, phase: str, on_branch_updated: Callable[[], None], into_main: bool
-    ) -> None:
+    def fake(_pr: str, *, phase: str, on_branch_updated: Callable[[], None]) -> None:
         for _ in range(updates):
             on_branch_updated()
 

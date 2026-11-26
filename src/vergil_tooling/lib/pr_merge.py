@@ -1,11 +1,12 @@
 """Shared wait-and-merge engine with fail-fast ordering.
 
-Used by the release workflow (merge strategy) through :func:`wait_and_merge`,
-and by the mechanized-PR building block and ``vrg-update-deps`` through
-:func:`wait_until_merged`, which shares the same loop pieces but treats a
-merged PR as success, runs under one overall deadline (epic
-vergil-project/.github#1064) and only watches: it never merges, leaving the
-merge to the auto-merge the one PR path armed (epic
+Used by the release PR's merge into ``main`` (merge strategy) through
+:func:`wait_and_merge`, which merges only a PR whose base is ``main``, and by
+the mechanized-PR building block, ``vrg-update-deps`` and the release's
+back-merge through :func:`wait_until_merged`, which shares the same loop
+pieces but treats a merged PR as success, runs under one overall deadline
+(epic vergil-project/.github#1064) and only watches: it never merges, leaving
+the merge to the auto-merge the one PR path armed (epic
 vergil-project/.github#1664). Doomed outcomes — already merged, draft,
 conflicting, behind — are checked *before* waiting, never after
 letting a pointless CI run finish:
@@ -473,6 +474,22 @@ def _policy_block_reason(pr: str, required: frozenset[str], resolved: frozenset[
     )
 
 
+#: The one base branch :func:`wait_and_merge` merges into.
+_MAIN = "main"
+
+
+def _require_main_base(pr: str) -> None:
+    """Refuse to merge *pr* unless its base is ``main`` (spec §5.4 of epic .github#1664)."""
+    base = github.base_ref(pr)
+    if base != _MAIN:
+        msg = (
+            f"Refusing to merge PR {pr}: its base is {base!r}, not {_MAIN!r}. "
+            "wait_and_merge serves the release PR into main only; a PR into develop "
+            "merges only through the one PR path."
+        )
+        raise MergeAbortError(msg)
+
+
 def wait_and_merge(
     pr: str,
     *,
@@ -525,11 +542,18 @@ def wait_and_merge(
     required set afterwards, so a custom waiter that only watches registered
     checks still cannot merge early.
 
+    It merges only a PR whose base is ``main``: nothing but the one PR path
+    (:mod:`vergil_tooling.lib.pr_path`) merges a PR into ``develop`` (epic
+    vergil-project/.github#1664, spec §5.4). The base is read before any
+    wait and again immediately before each merge call; any other base raises
+    :class:`MergeAbortError` with nothing merged.
+
     Raises ``MergeAbortError`` on any unmergeable condition.
     """
     if bypass_ruleset is not None and batch_check is not None:
         msg = "bypass_ruleset and batch_check cannot be combined"
         raise ValueError(msg)
+    _require_main_base(pr)
     resolved, required = _resolve_required(pr)
     if bypass_ruleset is not None and resolved is None:
         # Without the required set the engine cannot prove what --admin would
@@ -587,6 +611,8 @@ def wait_and_merge(
         if _is_behind(pr):
             continue  # something merged while we waited -> update at loop top
 
+        # Re-read at every merge: a base edited while the loop waited is caught.
+        _require_main_base(pr)
         try:
             if bypass_ruleset is not None:
                 pinned = _bypass_head(pr, required)

@@ -22,12 +22,30 @@ from vergil_tooling.lib.release.merge import (
 from vergil_tooling.lib.retry import KnownResourceNotFoundError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 _MOD = "vergil_tooling.lib.release.merge"
 _PR = "https://github.com/o/r/pull/5"
 _RETRY_SLEEP = "vergil_tooling.lib.retry.time.sleep"
 _RETRY_CLOCK = "vergil_tooling.lib.retry.time.monotonic"
+
+
+@pytest.fixture(autouse=True)
+def _release_pr_into_main() -> Iterator[None]:
+    """The release PR into main, merged by the human, unless a test says otherwise.
+
+    :func:`wait_and_merge` serves only that merge, so it reads the PR's base
+    and the identity first; the tests below patch them again where it matters.
+    """
+    from vergil_tooling.lib.identity_mode import IdentityMode
+
+    with (
+        patch(_MOD + ".github.base_ref", return_value="main"),
+        patch(_MOD + ".identity_mode.current_mode", return_value=IdentityMode.HUMAN),
+        patch(_MOD + ".identity_mode.any_agent_signal", return_value=False),
+    ):
+        yield
 
 
 def _not_found() -> subprocess.CalledProcessError:
@@ -277,20 +295,29 @@ def test_into_main_asks_the_engine_for_the_main_ruleset_bypass() -> None:
         patch(_MOD + ".github.base_ref", return_value="main"),
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
     ):
-        wait_and_merge(_PR, phase="merge-release", into_main=True)
+        wait_and_merge(_PR, phase="merge-release")
     assert engine.call_args.kwargs["bypass_ruleset"] == "Main updates"
 
 
-def test_a_plain_merge_asks_for_no_bypass() -> None:
-    """The back-merge into develop (and every other caller) never bypasses."""
+@pytest.mark.parametrize("base", ["develop", "release/post-2.1.0", ""])
+def test_release_wait_and_merge_refuses_develop_base(base: str) -> None:
+    """A PR into develop merges only through the one PR path (epic .github#1664).
+
+    The refusal comes before the identity test, so it holds for every caller,
+    the human included, and the engine is never reached.
+    """
     with (
+        _as_human(),
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".github.base_ref") as base_ref,
+        patch(_MOD + ".github.base_ref", return_value=base),
+        patch(_MOD + ".identity_mode.current_mode") as mode,
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        pytest.raises(ReleaseError, match=f"its base is {base!r}, not 'main'") as excinfo,
     ):
         wait_and_merge(_PR, phase="back-merge-bump")
-    assert engine.call_args.kwargs["bypass_ruleset"] is None
-    base_ref.assert_not_called()
+    assert "one PR path" in str(excinfo.value)
+    mode.assert_not_called()
+    engine.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -308,20 +335,8 @@ def test_into_main_refuses_every_identity_but_the_human(mode: str, agent_signal:
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
         pytest.raises(ReleaseError, match="only the human maintainer") as excinfo,
     ):
-        wait_and_merge(_PR, phase="merge-release", into_main=True)
+        wait_and_merge(_PR, phase="merge-release")
     assert excinfo.value.phase == "merge-release"
-    engine.assert_not_called()
-
-
-def test_into_main_refuses_a_pr_whose_base_is_not_main() -> None:
-    with (
-        _as_human(),
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".github.base_ref", return_value="develop"),
-        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
-        pytest.raises(ReleaseError, match="its base is 'develop', not 'main'"),
-    ):
-        wait_and_merge(_PR, phase="merge-release", into_main=True)
     engine.assert_not_called()
 
 
@@ -336,4 +351,4 @@ def test_into_main_bypass_refusal_is_a_release_error_naming_the_ruleset() -> Non
         ),
         pytest.raises(ReleaseError, match="'Main updates' ruleset"),
     ):
-        wait_and_merge(_PR, phase="merge-release", into_main=True)
+        wait_and_merge(_PR, phase="merge-release")

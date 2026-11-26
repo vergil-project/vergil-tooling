@@ -6,16 +6,23 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github, pr_create, version
+from vergil_tooling.lib import git, github, pr_create, pr_merge, pr_path, version
 from vergil_tooling.lib.release.branch_pr import branch_prs
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.merge import known_pr_state, wait_and_merge
+from vergil_tooling.lib.release.merge import known_pr_state
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _PHASE = "back-merge-bump"
 _BUMP_SUBJECT = "chore(release): bump version to {}"
+
+#: How long the back-merge waits for its armed PR to merge into ``develop``,
+#: in seconds. Fixed here, at the watch deadline every other armed PR has by
+#: default (``$VRG_FINALIZE_DEADLINE``'s 7200), so a release's wait does not
+#: move with an environment variable. A wait that runs out raises, and
+#: ``vrg-release --resume`` re-arms the open PR and waits again.
+BACK_MERGE_DEADLINE_SECS = 7200
 
 
 def back_merge_and_bump(ctx: ReleaseContext) -> None:
@@ -26,8 +33,12 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     ``develop`` is fast-forwarded to the back-merge later, by the
     finalize cleanup stage, from the root checkout.
 
+    The PR is armed through the one PR path (epic vergil-project/.github#1664,
+    spec §5.4), which merges a ``release/post-*`` head with a merge commit,
+    then watched until GitHub merges it: see :func:`_arm_and_wait`.
+
     Resume-safe (#1612, #3328): if the back-merge PR already exists it is
-    adopted — merged when still open, skipped when already merged — and
+    adopted — re-armed when still open, skipped when already merged — and
     ``bump_pr_url`` / ``bump_merge_sha`` / ``next_version`` are hydrated
     rather than re-creating the branch. A closed, unmerged PR is not adopted.
     The context is never persisted: a resume re-runs this stage, so every
@@ -36,7 +47,8 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     With no PR yet, the post branch an earlier run left behind is reused
     rather than re-created (#4415): see :func:`_checkout_post_branch`.
     """
-    branch = f"release/post-{ctx.version}"
+    # The prefix the path keys the merge commit on (pr_path.merge_method).
+    branch = f"{pr_path.POST_RELEASE_PREFIX}{ctx.version}"
 
     # Only a same-repo PR with a trusted author is adopted (GHSA-r4j2-cwcp-xg56):
     # a fork PR on the post branch's name is skipped and reported.
@@ -46,8 +58,8 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
         if known_pr_state(ctx.bump_pr_url) == "MERGED":
             print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
         else:
-            print(f"Back-merge PR already open — merging: {ctx.bump_pr_url}")
-            wait_and_merge(ctx.bump_pr_url, phase="back-merge-bump")
+            print(f"Back-merge PR already open — arming it: {ctx.bump_pr_url}")
+            _arm_and_wait(ctx, ctx.bump_pr_url, head=None)
         ctx.bump_merge_sha = _merge_commit(ctx.bump_pr_url)
         ctx.next_version = _post_branch_version(ctx, branch)
         return
@@ -83,14 +95,66 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     # _checkout_post_branch has checked is the only remote state it accepts.
     git.run("push", "-u", "origin", branch)
 
-    pr_url = _create_bump_pr(ctx, next_ver, branch)
+    head = git.branch_commit(branch)
+    pr_url = _create_bump_pr(ctx, next_ver, branch, head)
     print(f"Back-merge PR created: {pr_url}")
 
-    wait_and_merge(pr_url, phase="back-merge-bump")
+    _arm_and_wait(ctx, pr_url, head=head)
 
     ctx.bump_pr_url = pr_url
     ctx.bump_merge_sha = _merge_commit(pr_url)
     ctx.next_version = next_ver
+
+
+def _arm_and_wait(ctx: ReleaseContext, pr_url: str, *, head: str | None) -> None:
+    """Arm the back-merge PR through the one PR path, then wait for it to merge.
+
+    :func:`pr_path.arm` works the merge method out from the PR (a merge
+    commit, for a trusted ``release/post-*`` head) and judges it from the
+    release worktree, a clone of the repository. *head* is the tip this run
+    pushed, which the path pins; ``None`` on a resume of an open PR, which is
+    armed at its current head. Then:
+
+    - ``armed``: auto-merge is on, and :func:`pr_merge.wait_until_merged`
+      watches the PR, never merging it, under :data:`BACK_MERGE_DEADLINE_SECS`.
+    - ``merged``: the path merged it directly (it could already merge).
+    - any other outcome: nothing was armed, so nothing will merge it. It
+      raises ``ReleaseError`` naming the outcome and its detail, with no wait.
+
+    A path step that cannot be completed, and a wait that ends without a merge
+    (a closed PR, a failed check, a conflict, the deadline), raise
+    ``ReleaseError`` too.
+    """
+    try:
+        result = pr_path.arm(pr_url, clone=ctx.work_root, head=head)
+    except pr_path.PRPathError as exc:
+        raise ReleaseError(
+            phase=_PHASE,
+            command="pr_path.arm",
+            message=f"Arming the back-merge PR failed: {exc}",
+        ) from exc
+    if result.outcome == "merged":
+        print(f"Back-merge PR merged by the one PR path ({result.method}): {pr_url}")
+        return
+    if result.outcome != "armed":
+        raise ReleaseError(
+            phase=_PHASE,
+            command="pr_path.arm",
+            message=(
+                f"The one PR path did not arm the back-merge PR {pr_url}: "
+                f"{result.outcome}: {result.detail}. Nothing will merge it; deal with "
+                "the reason, then re-run: vrg-release --resume"
+            ),
+        )
+    print(f"Back-merge PR armed ({result.method} at {result.head[:12]}); waiting for the merge...")
+    try:
+        pr_merge.wait_until_merged(pr_url, deadline_secs=BACK_MERGE_DEADLINE_SECS)
+    except pr_merge.MergeAbortError as exc:
+        raise ReleaseError(
+            phase=_PHASE,
+            command="pr_merge.wait_until_merged",
+            message=f"{exc} Re-run once it can merge: vrg-release --resume",
+        ) from exc
 
 
 def _checkout_post_branch(ctx: ReleaseContext, branch: str) -> str | None:
@@ -288,7 +352,7 @@ def _merged_pr_version(ctx: ReleaseContext, number: str) -> str:
     return version.show(ctx.repo_root, ref="FETCH_HEAD")
 
 
-def _create_bump_pr(ctx: ReleaseContext, next_ver: str, branch: str) -> str:
+def _create_bump_pr(ctx: ReleaseContext, next_ver: str, branch: str, head: str) -> str:
     """Open the back-merge PR for the pushed *branch*, adopting one a failed create opened.
 
     A ``gh pr create`` that GitHub carried out can still fail, and a blind
@@ -303,9 +367,7 @@ def _create_bump_pr(ctx: ReleaseContext, next_ver: str, branch: str) -> str:
         f"Ref #{ctx.issue_number}\n\n"
         f"Generated with `vrg-release`\n"
     )
-    spec = pr_create.PRSpec(
-        head=branch, base="develop", title=title, head_oid=git.branch_commit(branch)
-    )
+    spec = pr_create.PRSpec(head=branch, base="develop", title=title, head_oid=head)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name

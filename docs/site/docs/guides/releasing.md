@@ -218,7 +218,7 @@ stages not recorded done.
 | `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
 | `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed: a failed one is recorded in the state block, and recovered by the resume (see [A failed release job](#a-failed-release-job)). Every other failed publish job is recorded in the state block, by its run and full name, and deferred to `cd-publish` (see [Stale job records](#stale-job-records)) |
-| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), and merges it to `develop`. Records the back-merge's merge commit |
+| `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), opens a PR to `develop`, arms it through the one PR path (a merge commit) and waits until it merges. Records the back-merge's merge commit |
 | `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `finalize`, which prunes the release branches, runs only once all of them have succeeded |
 | `confirm-develop` | deferred | Watches the CD run on `develop` for the back-merge's merge commit; a failed publish job (the docs publish) is recorded in the state block and deferred to `cd-publish` |
 | `promote` | deferred | Moves the rolling `vX.Y` tag to the new release once the tag and the GitHub Release exist, whatever `cd-publish` and `package-index` show (see [Promote and the index](#promote-and-the-index)) |
@@ -562,8 +562,8 @@ nothing is reset, discarded or pushed over: a branch that does not contain
 uncommitted changes that are not a partial bump, or a local branch whose
 tip differs from `origin`'s. Remove or reconcile the branch, then resume.
 
-An open back-merge PR from the earlier run is adopted and merged, and a
-merged one is skipped. A PR closed without merging is not adopted: the
+An open back-merge PR from the earlier run is adopted, armed again
+through the one PR path and waited for, and a merged one is skipped. A PR closed without merging is not adopted: the
 resume opens a new PR from the reused branch. Here, and when `prepare`
 adopts the release PR, only a same-repo PR with a trusted author is
 adopted: a fork PR on the branch's name is reported on stderr and never
