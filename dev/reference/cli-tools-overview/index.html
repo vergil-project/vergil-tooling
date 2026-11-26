@@ -22127,7 +22127,11 @@ skipped results on stderr. <code>--json</code> prints an array of <code>{"repo",
 "kind", "title", "url", "state", "labels", "author_role"}</code>; a pull request
 also carries <code>linked_issues</code>, the issues its trusted body links by a <code>Ref</code>
 or <code>Closes</code> line (<code>{"repo", "number", "keyword"}</code>).</p>
-<p><code>--roles human,agents,automation</code> narrows the roles trusted, in both modes.</p>
+<p><code>--roles human,agents,automation</code> narrows the roles trusted, in both modes.
+An item from a trusted role left out this way is reported on stderr as
+<code>ignored content from a trusted role this reader does not accept: …
+(not-accepted)</code>, never as untrusted content; under GitHub Actions it is
+counted on a line of its own.</p>
 <table>
 <thead>
 <tr>
