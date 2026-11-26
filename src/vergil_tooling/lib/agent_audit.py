@@ -512,8 +512,10 @@ def _branch_pushers(repo: str, pr: _PullRequest) -> tuple[trust.Identity, ...]:
     this reads that of ``refs/heads/<head branch>`` for a same-repo *pr*.
 
     A branch name can be reused, so the window is the branch's current
-    life: after its last deletion before the PR was opened, up to the
-    merge. A deletion is never a push. A ``null`` actor is a deleted
+    life: from its last deletion before the PR was opened, up to the
+    merge. Activity times are to the second, so an entry in the same
+    second as that deletion is counted: a doubt is resolved toward
+    involvement. A deletion is never a push. A ``null`` actor is a deleted
     account, which :func:`~vergil_tooling.lib.agent_gates.agent_involved`
     counts. When the window holds no activity at all, who pushed the
     branch cannot be told, so the deleted-account identity is given and
@@ -556,7 +558,7 @@ def _branch_pushers(repo: str, pr: _PullRequest) -> tuple[trust.Identity, ...]:
     pushers = tuple(
         who
         for at, kind, who in entries
-        if kind != _BRANCH_DELETION and (start is None or at > start) and at <= pr.merged_at
+        if kind != _BRANCH_DELETION and (start is None or at >= start) and at <= pr.merged_at
     )
     return pushers or (trust.Identity(None, None),)
 

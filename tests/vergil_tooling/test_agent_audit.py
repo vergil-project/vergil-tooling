@@ -999,6 +999,24 @@ def test_agent_push_in_an_earlier_life_of_the_branch_is_not_counted(
     assert gates.calls == []
 
 
+def test_push_in_the_same_second_as_the_bounding_deletion_is_counted(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(
+        gh,
+        origin,
+        [
+            _activity("branch_deletion", HUMAN, _BEFORE_OPEN, branch),
+            _activity("branch_creation", AGENT, _BEFORE_OPEN, branch),
+            _activity("push", HUMAN, _WHILE_OPEN, branch),
+        ],
+    )
+    agent_audit.audit(clone, REPO, AUTHORS)
+    assert len(gates.calls) == 1
+
+
 def test_deleted_pusher_makes_the_pr_involved(
     origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
 ) -> None:
