@@ -18922,8 +18922,8 @@ merge. Every <code>vrg-release</code> already runs the same pipeline as its
 <a href="../../../guides/releasing/#dependency-updates">Dependency updates</a>), so
 run this command by hand only when you want an update outside a
 release, or to move the repo to a new vergil series with <code>--vergil</code>.</p>
-<p><code>vrg-update-deps</code> merges its own PR, so it is human-only: it refuses to
-run under an agent identity.</p>
+<p><code>vrg-update-deps</code> arms its own PR to merge, so it is human-only: it
+refuses to run under an agent identity.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-update-deps<span class="w"> </span><span class="o">[</span>--only<span class="w"> </span>NAME<span class="o">[</span>,NAME<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--skip<span class="w"> </span>NAME<span class="o">[</span>,NAME<span class="o">]</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>--vergil<span class="w"> </span>X.Y<span class="o">]</span>
 </code></pre></div>
@@ -19158,7 +19158,7 @@ tries the deletion again.</p>
 </tr>
 <tr>
 <td><code>merge</code></td>
-<td>Waits for the PR's checks and merges it, if validation passed (see <a href="../release/#waiting-for-green">Waiting for green</a>)</td>
+<td>If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see <a href="../release/#waiting-for-green">Waiting for green</a>). A PR the path refuses is recorded as a merge failure with the path's reason, without a wait</td>
 </tr>
 <tr>
 <td><code>fix-task</code></td>

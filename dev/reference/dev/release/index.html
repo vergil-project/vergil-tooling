@@ -19090,9 +19090,12 @@ the next develop CD run. With no run for the head, the latest completed
 run on an ancestor must be green. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-develop-cd-gate">The develop-CD gate</a>.</p>
 <h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
-<p>The <code>merge-release</code> and <code>back-merge-bump</code> stages, and <code>vrg-update-deps</code>'s
-<code>merge</code> stage, wait for their PR's checks and merge it once everything is
-green and current. The wait is <strong>bounded</strong> by a deadline: it never blocks
+<p>The <code>merge-release</code> and <code>back-merge-bump</code> stages wait for their PR's
+checks and merge it once everything is green and current.
+<code>vrg-update-deps</code>'s <code>merge</code> stage (and so the release's <code>update-deps</code>
+stage) arms its PR through the one PR path instead, then waits the same
+way until the PR merges, within <code>$VRG_FINALIZE_DEADLINE</code> seconds (7200
+by default). The wait is <strong>bounded</strong> by a deadline: it never blocks
 forever, and it never merges past a non-terminal check. Doomed outcomes
 abort immediately rather than after the wait: a draft PR, merge conflicts,
 a failed check (named in the error), or a branch still behind after five
