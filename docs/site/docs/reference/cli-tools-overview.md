@@ -2791,7 +2791,7 @@ after a restart.
 
 ### vrg-container-build-command
 
-Print a repo's declared `[container].build-command` verbatim, for CI
+Print a repo's declared `[container].build-command`, for CI
 consumption. The CI test jobs call `--script` to obtain the exact
 provisioning command to run per job — the same command the local cache
 build bakes into the per-branch image — so the two paths run one
@@ -2801,7 +2801,7 @@ See [Container Config Reference → `build-command`](container-config.md#build-c
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_build_command` |
-| Args | `--script` (explicit CI intent; identical output), `--repo-root` (default: CWD) |
+| Args | `--script` (the step CI runs: the command after `export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC`), `--repo-root` (default: CWD) |
 | Preconditions | A readable `vergil.toml` at the repo root (absent/empty key prints nothing) |
 | Failure mode | argparse error on unknown flags; no failure for an unset key |
 | Exit codes | 0 always |

@@ -34,15 +34,19 @@ def _write(tmp_path: Path, build_command: str) -> Path:
     return tmp_path
 
 
-def test_script_mode_prints_command(
+def test_script_mode_prints_command_after_noninteractive_export(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # CI runs this step: an apt-get install in it must not hang on a debconf
+    # prompt (#5225), so it follows the same export the local cache build uses.
     _write(tmp_path, '"make deps"')
     monkeypatch.chdir(tmp_path)
     assert cli.main(["--script"]) == 0
-    assert capsys.readouterr().out.strip() == "make deps"
+    assert capsys.readouterr().out.strip() == (
+        "export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC && make deps"
+    )
 
 
 def test_script_mode_no_command_prints_nothing(
