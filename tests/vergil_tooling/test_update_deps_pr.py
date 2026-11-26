@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import auto_merge, finalize_watch, github, pr_create, pr_merge, pr_path, trust
+from vergil_tooling.lib import (
+    auto_merge,
+    finalize_watch,
+    github,
+    pr_create,
+    pr_merge,
+    pr_path,
+    trust,
+)
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
