@@ -556,7 +556,7 @@ def _settled_run_jobs(
 ) -> list[dict[str, Any]]:
     """Poll until a job satisfying every *expected* matcher is ``completed``.
 
-    ``gh run watch`` returns when the run-level status is terminal, but a
+    The wait returns when the run-level status is terminal, but a
     reusable-workflow leaf job's ``conclusion`` can still be ``null`` in the
     jobs API for a few seconds (issue #1611). Reading once raced that window
     and aborted an already-succeeded release. Polling for ``completed`` closes
