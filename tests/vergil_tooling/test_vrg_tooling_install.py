@@ -329,9 +329,13 @@ def remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return {"url": repo.as_uri(), "branch": branch, "tagged": tagged, "loose": loose}
 
 
-@pytest.mark.parametrize(("key", "expected"), [("branch", True), ("tagged", True), ("loose", False)])
+@pytest.mark.parametrize(
+    ("key", "expected"), [("branch", True), ("tagged", True), ("loose", False)]
+)
 def test_git_reachable_counts_only_branch_and_tag_history(
-    remote: dict[str, str], key: str, expected: bool  # noqa: FBT001
+    remote: dict[str, str],
+    key: str,
+    expected: bool,  # noqa: FBT001
 ) -> None:
     assert tooling_install.git_reachable(remote["url"], remote[key]) is expected
 

@@ -536,11 +536,11 @@ def _resolve_any(
     """
     if _SHA.fullmatch(ref):
         try:
-            found = reachable(GIT_URL, ref)
+            reached = reachable(GIT_URL, ref)
         except (ToolingInstallError, OSError, subprocess.SubprocessError) as exc:
             msg = f"could not check that commit {ref} is on a branch or tag of {GIT_URL}: {exc}"
             raise ToolingInstallError(msg) from exc
-        if not found:
+        if not reached:
             msg = (
                 f"commit {ref} is not reachable from any branch or tag of {GIT_URL}; "
                 "only a commit of vergil-tooling's own history installs"
@@ -640,10 +640,11 @@ def install_ref(
 
     Every failure raises :class:`ToolingInstallError` naming the step that
     failed and its error output: a *ref* that is not a ref name, one that
-    does not resolve, a commit SHA no branch or tag reaches, a failed git or uv command, a fetch that names no
-    commit (or not the resolved one), an empty constraints export, or one
-    that names a non-registry package. ``uv tool install``'s own output goes
-    straight to this process's standard output and error.
+    does not resolve, a commit SHA no branch or tag reaches, a failed git or
+    uv command, a fetch that names no commit (or not the resolved one), an
+    empty constraints export, or one that names a non-registry package.
+    ``uv tool install``'s own output goes straight to this process's
+    standard output and error.
 
     The running ``vrg-tooling-install`` is itself an installed vergil-tooling,
     which the install replaces: nothing is imported after it.
