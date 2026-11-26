@@ -164,7 +164,12 @@ Once every PR in the selection has been tried, submit runs **one**
 the main worktree. It watches them merge, then syncs, cleans up and
 validates `develop` once (see [vrg-finalize-pr](finalize-pr.md)). A PR
 whose submit failed is left out of that list and named after finalize's
-report. When no PR opened, finalize is not run at all.
+report. A PR that opened but failed a later step (recording the
+submission, the provenance check or turning auto-merge on) is named by
+its URL, with the head it opened at and the step that failed, so the
+caller knows it is open without auto-merge. When no PR has auto-merge
+on, finalize is not run at all; the summary then names any PR left open
+without auto-merge, or says no PR was opened.
 `$VRG_FINALIZE_DEADLINE` is checked before any PR opens, so a malformed
 value refuses the run with nothing done.
 
