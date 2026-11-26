@@ -18,6 +18,7 @@ from vergil_tooling.bin.vrg_reword import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import pr_path
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     import argparse
     from collections.abc import Iterator
     from pathlib import Path
+    from unittest.mock import MagicMock
 
 _MOD = "vergil_tooling.bin.vrg_reword"
 
@@ -328,6 +330,7 @@ def test_maybe_push_skips_when_no_remote_branch() -> None:
 def test_maybe_push_runs_force_with_lease() -> None:
     with (
         patch(f"{_MOD}._rev_parse", return_value="remotesha"),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=None),
         patch(f"{_MOD}.git.run") as run,
     ):
         rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
@@ -339,10 +342,106 @@ def test_maybe_push_reports_rejected_push() -> None:
     err = subprocess.CalledProcessError(1, ("git", "push"))
     with (
         patch(f"{_MOD}._rev_parse", return_value="remotesha"),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=None),
         patch(f"{_MOD}.git.run", side_effect=err),
     ):
         rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
     assert rc == 1
+
+
+# --------------------------------------------------------------------------
+# an open PR's branch: the push goes through the one PR path (spec §5.4)
+# --------------------------------------------------------------------------
+
+_PR_URL = "https://github.com/o/r/pull/7"
+_SHAS = {"refs/remotes/origin/feature/1-x": "remotesha", "refs/heads/feature/1-x": "localsha"}
+
+
+def _push_through_path(
+    result: pr_path.PushResult | Exception,
+) -> tuple[int, MagicMock, MagicMock]:
+    """Run ``_maybe_push`` on a branch with an open PR, the path answering *result*."""
+    answer = {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+    with (
+        patch(f"{_MOD}._rev_parse", side_effect=_SHAS.get),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=_PR_URL),
+        patch(f"{_MOD}.pr_path.push_to_open_pr", **answer) as path_push,
+        patch(f"{_MOD}.git.run") as run,
+    ):
+        rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
+    return rc, path_push, run
+
+
+def test_reword_on_open_pr_branch_pushes_through_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    done = pr_path.PushResult(pushed=True, pr_url=_PR_URL, detail="pushed localsha to feature/1-x")
+
+    rc, path_push, run = _push_through_path(done)
+
+    assert rc == 0
+    # The local branch's head, leased on the head this clone last saw on origin.
+    path_push.assert_called_once_with("feature/1-x", head="localsha", lease="remotesha")
+    run.assert_not_called()
+    assert "pushed localsha to feature/1-x" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pr_path.PushResult(
+            pushed=False, pr_url=_PR_URL, detail="the gates refused the head localsha: no record"
+        ),
+        pr_path.PRPathError(f"{_PR_URL}: pushing localsha to feature/1-x failed: stale info"),
+    ],
+    ids=["refused", "path-error"],
+)
+def test_reword_refused_head_not_pushed(
+    result: pr_path.PushResult | Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, path_push, run = _push_through_path(result)
+
+    assert rc == 1
+    path_push.assert_called_once()
+    # Nothing pushed around the path: the remote branch stays as it was.
+    run.assert_not_called()
+    err = capsys.readouterr().err
+    reason = result.detail if isinstance(result, pr_path.PushResult) else str(result)
+    assert reason in err
+    assert "the reword succeeded locally" in err
+    assert "vrg-submit-pr --push --force-with-lease" in err
+
+
+def test_reword_on_branch_with_no_pr_pushes_as_today() -> None:
+    with (
+        patch(f"{_MOD}._rev_parse", side_effect=_SHAS.get),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", return_value=None) as lookup,
+        patch(f"{_MOD}.pr_path.push_to_open_pr") as path_push,
+        patch(f"{_MOD}.git.run") as run,
+    ):
+        rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
+    assert rc == 0
+    lookup.assert_called_once_with("feature/1-x")
+    path_push.assert_not_called()
+    run.assert_called_once_with("push", "--force-with-lease", "origin", "feature/1-x")
+
+
+def test_open_pr_lookup_failure_refuses_push(capsys: pytest.CaptureFixture[str]) -> None:
+    failure = pr_path.PRPathError("push mode: reading the open PRs on feature/1-x failed: HTTP 502")
+    with (
+        patch(f"{_MOD}._rev_parse", side_effect=_SHAS.get),
+        patch(f"{_MOD}.pr_path.open_develop_pr_url", side_effect=failure),
+        patch(f"{_MOD}.pr_path.push_to_open_pr") as path_push,
+        patch(f"{_MOD}.git.run") as run,
+    ):
+        rc = vrg_reword._maybe_push("feature/1-x", no_push=False)
+    # Fail closed: a lookup that fails refuses the push, naming the error.
+    assert rc == 1
+    path_push.assert_not_called()
+    run.assert_not_called()
+    err = capsys.readouterr().err
+    assert "HTTP 502" in err
+    assert "feature/1-x was not pushed" in err
 
 
 # --------------------------------------------------------------------------
@@ -602,6 +701,8 @@ def test_reword_works_on_implementing_branch_end_to_end(
     _record_workflow(repo, ready=False)
     monkeypatch.chdir(repo)
     origin_before = _git(origin, "rev-parse", "feature/1-x")
+    # A branch with no open PR into develop: the local origin is not GitHub.
+    monkeypatch.setattr(pr_path, "open_develop_pr_url", lambda _branch: None)
 
     rc = main([sha_b, "--type", "feat", "--scope", "core", "--message", "good B message"])
 

@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import epics, trust
+from vergil_tooling.lib import epics, pr_path, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -332,7 +332,8 @@ def relay() -> Iterator[MagicMock]:
 def per_issue() -> Iterator[dict[str, MagicMock]]:
     """The GitHub reads behind report-ready's per-issue refusals, all passing.
 
-    The planning-close lookup finds no documentation task.
+    The planning-close lookup finds no documentation task, and the branch has
+    no open PR into ``develop``.
     """
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="acme/tools"),
@@ -340,12 +341,14 @@ def per_issue() -> Iterator[dict[str, MagicMock]]:
         patch(f"{_EPICS}.is_operational_task", return_value=False) as operational,
         patch(f"{_EPICS}.unbuildable_parent_kind", return_value=None) as queue,
         patch(f"{_WF}.planning_close.find", return_value=None) as planning,
+        patch(f"{_WF}.pr_path.open_develop_pr_url", return_value=None) as open_pr,
     ):
         yield {
             "non_task": non_task,
             "operational": operational,
             "queue": queue,
             "planning": planning,
+            "open_pr": open_pr,
         }
 
 
@@ -516,6 +519,47 @@ def test_report_ready_batch_rerun_with_the_same_list_succeeds(
     assert _report("10", "11") == 0
     assert _report("10", "11") == 0
     assert json.loads(_state_file(ready_clone).read_text())["issues"] == ["10", "11"]
+
+
+def test_report_ready_push_refused_on_open_pr_branch(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec §5.4: a push to an open PR's branch goes through the path, which
+    # report-ready's own push never is.
+    _branch(ready_clone, "feat: one thing")
+    per_issue["open_pr"].return_value = "https://github.com/acme/tools/pull/7"
+    assert _report("10") == 1
+    err = capsys.readouterr().err
+    assert "feature/10-batch-x has an open PR into develop" in err
+    assert "https://github.com/acme/tools/pull/7" in err
+    assert "vrg-submit-pr --push" in err
+    assert "nothing was pushed or recorded" in err
+    per_issue["open_pr"].assert_called_once_with("feature/10-batch-x")
+    _assert_nothing_recorded(ready_clone, relay)
+
+
+def test_open_pr_lookup_failure_refuses_push(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _branch(ready_clone, "feat: one thing")
+    per_issue["open_pr"].side_effect = pr_path.PRPathError(
+        "push mode: reading the open PRs on feature/10-batch-x failed: HTTP 502"
+    )
+    # Fail closed: a lookup that fails refuses the push, naming the error.
+    assert _report("10") == 1
+    err = capsys.readouterr().err
+    assert "could not tell whether feature/10-batch-x has an open PR into develop" in err
+    assert "HTTP 502" in err
+    assert "nothing was pushed or recorded" in err
+    _assert_nothing_recorded(ready_clone, relay)
 
 
 def test_report_ready_batch_refuses_rule_break(

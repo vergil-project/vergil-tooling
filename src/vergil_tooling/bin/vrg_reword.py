@@ -19,7 +19,12 @@ It is a deliberate relaxation of a tight restriction, so it is bounded:
   is passed.
 - **Force-with-lease** — when the branch is already on the remote, the
   rewrite is pushed with ``--force-with-lease`` (never bare ``--force``);
-  safe on an unmerged feature branch (the #1557 pattern).
+  safe on an unmerged feature branch (the #1557 pattern). On the branch of
+  an open PR into ``develop`` the push goes through the one PR path
+  (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`, spec §5.4 of epic
+  vergil-project/.github#1664), which judges the rewritten head before it
+  pushes it, with the same lease; a head it refuses is not pushed. When
+  whether the branch has an open PR cannot be told, nothing is pushed.
 - **Not on a frozen branch** — refuses once the branch was reported ready
   (``vrg-pr-workflow report-ready``), with the same freeze check and wording
   as ``vrg-commit`` and the ``vrg-git`` push path (#3772); the deliberate
@@ -46,7 +51,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, pr_path
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
@@ -418,16 +423,32 @@ def _maybe_push(branch: str, *, no_push: bool) -> int:
     Skips silently when the branch was never pushed (nothing to update)
     or when ``--no-push`` is given. ``--force-with-lease`` refuses to
     clobber commits pushed elsewhere since the last fetch.
+
+    The branch of an open PR into ``develop`` is pushed through the one PR
+    path instead (spec §5.4), with the same lease: the head this clone last
+    saw on origin. The open-PR lookup fails closed: when it cannot be told,
+    nothing is pushed.
     """
     if no_push:
         print(
             "Skipping push (--no-push). Update the remote with:\n"
-            f"  vrg-git push --force-with-lease origin {branch}"
+            f"  vrg-git push --force-with-lease origin {branch}\n"
+            "  (or, on the branch of an open PR into develop, "
+            "vrg-submit-pr --push --force-with-lease)"
         )
         return 0
-    if _rev_parse(f"refs/remotes/origin/{branch}") is None:
+    remote_sha = _rev_parse(f"refs/remotes/origin/{branch}")
+    if remote_sha is None:
         print(f"Branch '{branch}' is not on origin yet; nothing to push.")
         return 0
+    try:
+        pr_url = pr_path.open_develop_pr_url(branch)
+    except pr_path.PRPathError as exc:
+        return _not_pushed(
+            branch, f"whether it has an open PR into develop could not be told: {exc}"
+        )
+    if pr_url is not None:
+        return _push_through_path(branch, pr_url, lease=remote_sha)
     print(f"Updating origin/{branch} with --force-with-lease...")
     try:
         git.run("push", "--force-with-lease", "origin", branch)
@@ -439,6 +460,34 @@ def _maybe_push(branch: str, *, no_push: bool) -> int:
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def _not_pushed(branch: str, reason: str) -> int:
+    """Report that the reworded *branch* was not pushed, and why; return 1."""
+    print(
+        f"vrg-reword: the reword succeeded locally, but {branch} was not pushed: {reason}.\n"
+        "  origin is unchanged. Once the cause is fixed, push the rewritten head with\n"
+        "  `vrg-submit-pr --push --force-with-lease` (the branch of an open PR into develop)\n"
+        f"  or `vrg-git push --force-with-lease origin {branch}`.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _push_through_path(branch: str, pr_url: str, *, lease: str) -> int:
+    """Push the reworded *branch*, whose open PR into develop is *pr_url*, through the path."""
+    head = _rev_parse(f"refs/heads/{branch}")
+    if head is None:
+        return _not_pushed(branch, f"its local head refs/heads/{branch} could not be read")
+    print(f"Updating origin/{branch} ({pr_url}) through the one PR path, with its lease...")
+    try:
+        result = pr_path.push_to_open_pr(branch, head=head, lease=lease)
+    except pr_path.PRPathError as exc:
+        return _not_pushed(branch, str(exc))
+    if not result.pushed:
+        return _not_pushed(branch, f"the one PR path refused it ({pr_url}): {result.detail}")
+    print(f"{result.detail} ({result.pr_url}); auto-merge stays on.")
     return 0
 
 
