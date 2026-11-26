@@ -350,13 +350,110 @@ def test_arm_refuses_a_provenance_violation(fake: FakeGitHub, gates: Gates, clon
     assert gates.calls == []
 
 
-def test_arm_refuses_a_method_it_cannot_work_out(fake: FakeGitHub, gates: Gates) -> None:
+def _untrusted_body(*_args: object, **_kwargs: object) -> trust.IssueContent:
+    skip = trust.Skipped("o/r", 7, "pr", "outsider", "now", "body", trust.UNTRUSTED)
+    raise trust.UntrustedContentError(skip, "the pull request body is untrusted")
+
+
+def test_arm_refuses_a_method_it_cannot_work_out(
+    fake: FakeGitHub, gates: Gates, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(trust, "read_issue", _untrusted_body)
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "refused"
+    assert result.method is None
+    assert "its merge method cannot be worked out" in result.detail
+    assert fake.mutations == []
+    assert gates.calls == []
+
+
+def test_arm_refuses_an_untrusted_deps_pr_before_its_method(fake: FakeGitHub, gates: Gates) -> None:
     fake.labels = ("dependency-update",)
     fake.confirmed = False
 
     result = arm(PR)
 
     assert result.outcome == "refused"
+    assert "not a same-repo PR with a trusted author" in result.detail
+    assert fake.mutations == []
+
+
+def test_arm_refuses_a_pr_url_with_no_repo_and_number(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = fake.read_json
+
+    def odd_url(*args: str) -> object:
+        data = real(*args)
+        if isinstance(data, dict) and "headRefOid" in data and "title" in data:
+            return {**data, "url": "https://example.com/not-a-pr"}
+        return data
+
+    monkeypatch.setattr(github, "read_json", odd_url)
+
+    with pytest.raises(PRPathError, match="cannot read the repository and number"):
+        arm(PR)
+
+
+def test_arm_refuses_a_view_with_no_draft_flag(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *_args: {"isDraft": None})
+
+    with pytest.raises(PRPathError, match=f"{PR}: gh pr view returned no isDraft"):
+        arm(PR)
+
+
+def test_arm_read_failure_raises_naming_the_pr(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: str) -> object:
+        raise subprocess.CalledProcessError(1, ("gh",), output="", stderr="HTTP 502: Bad Gateway")
+
+    monkeypatch.setattr(github, "read_json", fail)
+
+    with pytest.raises(PRPathError, match=f"(?s){PR}: reading the PR failed: .*502"):
+        arm(PR)
+
+
+def test_arm_provenance_check_that_cannot_run_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: str) -> list[dict[str, object]]:
+        raise ValueError("a malformed timeline page")
+
+    monkeypatch.setattr(github, "read_json_paginated", fail)
+
+    with pytest.raises(PRPathError, match=f"{PR}: the provenance check could not run: a malformed"):
+        arm(PR, clone=clone)
+    assert fake.mutations == []
+
+
+def test_arm_fresh_clone_that_cannot_be_made_raises(
+    fake: FakeGitHub, gates: Gates, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: str) -> str:
+        raise subprocess.CalledProcessError(1, ("git", *args), output="", stderr="no space")
+
+    monkeypatch.setattr(pr_path.git, "read_output", fail)
+
+    with pytest.raises(PRPathError, match="could not make a fresh clone of o/r for the gates"):
+        arm(PR)
+    assert fake.mutations == []
+
+
+def test_arm_gates_recheck_error_raises(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: object) -> str:
+        raise finalize_watch.FinalizeWatchError(f"{PR}: the gates cannot be re-checked")
+
+    monkeypatch.setattr(finalize_watch, "recheck_gates", fail)
+
+    with pytest.raises(PRPathError, match="the gates cannot be re-checked"):
+        arm(PR, clone=clone)
     assert fake.mutations == []
 
 

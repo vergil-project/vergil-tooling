@@ -51,7 +51,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from vergil_tooling.lib import auto_merge, finalize_watch, git, github, pr_provenance, retry, trust
 from vergil_tooling.lib.develop_clone import clone_url
@@ -278,7 +278,7 @@ def arm(pr_url: str, *, clone: Path | None = None, head: str | None = None) -> A
         return ArmResult(outcome="refused", pr_url=url, head=current, method=method, detail=detail)
 
     reason = _refusal(pr)
-    if reason is not None or pr.branch is None:
+    if reason is not None:
         return refused(f"the one PR path does not accept it: {reason}")
     if head is not None and current != head:
         return refused(f"its head is {current[:12]}, not the expected {head[:12]}")
@@ -289,7 +289,8 @@ def arm(pr_url: str, *, clone: Path | None = None, head: str | None = None) -> A
         method = _method(pr)
     except PRPathError as exc:
         return refused(str(exc))
-    gates = _gates(pr, pr.branch, clone)
+    # _refusal refuses a PR with no confirmed branch, so it has one here.
+    gates = _gates(pr, cast("str", pr.branch), clone)
     if gates:
         return refused(f"the gates refused its head {current[:12]}: {gates}", method)
     try:
