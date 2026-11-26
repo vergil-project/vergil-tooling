@@ -50,7 +50,9 @@ PR's is a ``no-pr`` finding. For each landing:
    author and every actor GitHub records on its timeline, bar the events
    :func:`~vergil_tooling.lib.pr_provenance.not_involvement` leaves out:
    arming, and on a PR the path accepts its merge and the merge's closing,
-   the rule the finalize watch uses): the merge-review
+   the rule the finalize watch uses), and, on a same-repo PR, every
+   account that pushed to, created or force-pushed its head branch in the
+   repository's activity (:func:`_branch_pushers`): the merge-review
    coverage of :func:`~vergil_tooling.lib.agent_gates.evaluate`, on the
    change from the branch tip before the landing to the PR's head,
    ``refs/pull/<n>/head`` (merged branches are deleted). The task issues are
@@ -76,7 +78,9 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 from vergil_tooling.lib import agent_gates, git, github, pr_provenance, trust
 from vergil_tooling.lib.github_config import APP_MERGES_RELEASES
@@ -149,6 +153,11 @@ _LOCAL_PREFIX = "refs/vergil-audit"
 
 # The fields of an account a REST answer is projected to: never content.
 _ACCOUNT = "if . then {login, type} else null end"
+
+# The repository activity that ends a branch's life. It changes no content,
+# so its actor is never a pusher, and the last one before a PR was opened
+# bounds the head branch's current life from below.
+_BRANCH_DELETION = "branch_deletion"
 
 
 class AuditError(Exception):
@@ -425,6 +434,9 @@ class _PullRequest:
     merged_by: trust.Identity | None
     merge_commit: str
     same_repo: bool
+    head_ref: str
+    created_at: datetime
+    merged_at: datetime
 
 
 # The REST pull's head projected to the fields :func:`trust.is_same_repo`
@@ -438,7 +450,7 @@ _SAME_REPO = (
 
 def _read_pull(repo: str, number: int) -> _PullRequest:
     jq = (
-        "{number, html_url, merged, merge_commit_sha,"
+        "{number, html_url, merged, merge_commit_sha, created_at, merged_at, head_ref: .head.ref,"
         f" user: (.user | {_ACCOUNT}), merged_by: (.merged_by | {_ACCOUNT}), {_SAME_REPO}}}"
     )
     data = _read(
@@ -453,6 +465,13 @@ def _read_pull(repo: str, number: int) -> _PullRequest:
     if not isinstance(url, str) or not isinstance(merge, str):
         msg = f"cannot read {repo} PR #{number}: it has no URL or merge commit"
         raise AuditError(msg)
+    head_ref = data.get("head_ref")
+    if not isinstance(head_ref, str) or not head_ref:
+        msg = f"cannot read {repo} PR #{number}: it has no head branch"
+        raise AuditError(msg)
+    what = f"{repo} PR #{number}"
+    created_at = _timestamp(data.get("created_at"), what, "its creation time")
+    merged_at = _timestamp(data.get("merged_at"), what, "its merge time")
     try:
         same_repo = trust.is_same_repo(repo, data)
     except trust.TrustReadError as exc:
@@ -466,7 +485,82 @@ def _read_pull(repo: str, number: int) -> _PullRequest:
         merged_by=None if merged_by is None else _identity(merged_by),
         merge_commit=merge,
         same_repo=same_repo,
+        head_ref=head_ref,
+        created_at=created_at,
+        merged_at=merged_at,
     )
+
+
+def _timestamp(value: object, what: str, name: str) -> datetime:
+    """The ISO 8601 time *value* GitHub gives as *what*'s *name*; anything else raises."""
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed.tzinfo is not None:
+            return parsed
+    msg = f"cannot read {what}: {name} is not a time"
+    raise AuditError(msg)
+
+
+def _branch_pushers(repo: str, pr: _PullRequest) -> tuple[trust.Identity, ...]:
+    """Every account that pushed *pr*'s head branch in its current life, up to the merge.
+
+    The repository activity records every push, force push and creation of
+    a branch with its actor, including those made before the PR was opened:
+    this reads that of ``refs/heads/<head branch>`` for a same-repo *pr*.
+
+    A branch name can be reused, so the window is the branch's current
+    life: from its last deletion before the PR was opened, up to the
+    merge. Activity times are to the second, so an entry in the same
+    second as that deletion is counted: a doubt is resolved toward
+    involvement. A deletion is never a push. A ``null`` actor is a deleted
+    account, which :func:`~vergil_tooling.lib.agent_gates.agent_involved`
+    counts. When the window holds no activity at all, who pushed the
+    branch cannot be told, so the deleted-account identity is given and
+    the PR counts as involved: its gates are checked, never skipped. A
+    read failure, or an entry with no type, actor or time or for another
+    ref, raises :class:`AuditError`.
+    """
+    ref = f"refs/heads/{pr.head_ref}"
+    what = f"the activity of {repo} branch {pr.head_ref}"
+    jq = (
+        "[.[] | {activity_type, timestamp, ref}"
+        f' + (if has("actor") then {{actor: (.actor | {_ACCOUNT}), has_actor: true}}'
+        " else {} end)]"
+    )
+    rows = _read(
+        what,
+        lambda: github.read_json_paginated(
+            f"repos/{repo}/activity?ref={quote(ref, safe='/')}", jq=jq
+        ),
+    )
+    entries: list[tuple[datetime, str, trust.Identity]] = []
+    for row in cast("list[object]", rows):
+        data = cast("Mapping[str, object]", row) if isinstance(row, dict) else {}
+        kind = data.get("activity_type")
+        if not isinstance(kind, str) or not kind:
+            msg = f"cannot read {what}: an entry has no type"
+            raise AuditError(msg)
+        if data.get("ref") != ref:
+            msg = f"cannot read {what}: an entry is for another ref"
+            raise AuditError(msg)
+        if data.get("has_actor") is not True:
+            msg = f"cannot read {what}: an entry has no actor"
+            raise AuditError(msg)
+        at = _timestamp(data.get("timestamp"), what, "an entry's time")
+        entries.append((at, kind, _identity(data.get("actor"))))
+    start = max(
+        (at for at, kind, _ in entries if kind == _BRANCH_DELETION and at < pr.created_at),
+        default=None,
+    )
+    pushers = tuple(
+        who
+        for at, kind, who in entries
+        if kind != _BRANCH_DELETION and (start is None or at >= start) and at <= pr.merged_at
+    )
+    return pushers or (trust.Identity(None, None),)
 
 
 @dataclass(frozen=True)
@@ -732,7 +826,10 @@ def _check_landing(
     found += _provenance_findings(repo, branch, pr)
     if branch != "develop":
         return found
-    involved = agent_gates.agent_involved(authors=authors, actors=(pr.author, *timeline.actors))
+    pushers = _branch_pushers(repo, pr) if pr.same_repo else ()
+    involved = agent_gates.agent_involved(
+        authors=authors, actors=(pr.author, *timeline.actors, *pushers)
+    )
     if involved:
         found += _gate_findings(clone, repo, branch, landing, authors)
     return found

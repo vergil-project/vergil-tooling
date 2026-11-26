@@ -143,6 +143,39 @@ class PR:
     events: list[dict[str, Any]] = field(default_factory=list)
     body: str | None = "Summary.\n\n- Ref #7\n"
     pull: dict[str, object] = field(default_factory=dict)
+    # The repository activity of the PR's head branch: by default its
+    # author created it before opening the PR.
+    activity: list[dict[str, Any]] | None = None
+
+    @property
+    def head_ref(self) -> str:
+        return f"feature/{self.number}-change"
+
+    def activity_rows(self) -> list[dict[str, Any]]:
+        if self.activity is not None:
+            return self.activity
+        return [_activity("branch_creation", self.author, _BEFORE_OPEN, self.head_ref)]
+
+
+_BEFORE_OPEN = "2026-11-22T08:00:00Z"
+_OPENED_AT = "2026-11-22T09:00:00Z"
+_WHILE_OPEN = "2026-11-22T09:30:00Z"
+_MERGED_AT = "2026-11-22T10:00:00Z"
+_AFTER_MERGE = "2026-11-22T11:00:00Z"
+
+
+def _activity(
+    kind: str, actor: dict[str, str] | None, at: str, branch: str, **extra: object
+) -> dict[str, Any]:
+    """One repository activity entry, as the audit's ``--jq`` projects it."""
+    return {
+        "activity_type": kind,
+        "timestamp": at,
+        "ref": f"refs/heads/{branch}",
+        "actor": actor,
+        "has_actor": True,
+        **extra,
+    }
 
 
 class Markers(MutableMapping[str, str]):
@@ -182,6 +215,7 @@ class FakeGitHub:
         self.prs: dict[int, PR] = {}
         self.writes: list[tuple[str, str, dict[str, object]]] = []
         self.fail_on: set[str] = set()
+        self.activity_reads: list[str] = []
 
     # the refs
     def read_ref(self, repo: str, branch: str) -> str | None:
@@ -220,6 +254,16 @@ class FakeGitHub:
     ) -> list[object]:
         self._check(endpoint)
         assert jq is not None
+        activity = f"repos/{REPO}/activity?ref=refs/heads/"
+        if endpoint.startswith(activity):
+            branch = endpoint.removeprefix(activity)
+            self.activity_reads.append(branch)
+            return [
+                row
+                for pr in self.prs.values()
+                if pr.head_ref == branch
+                for row in pr.activity_rows()
+            ]
         parts = endpoint.removeprefix(f"repos/{REPO}/").split("/")
         if parts[0] == "commits":
             sha = parts[1]
@@ -247,6 +291,9 @@ class FakeGitHub:
             "html_url": f"https://github.com/{REPO}/pull/{number}",
             "merged": True,
             "merge_commit_sha": pr.merge_commit,
+            "created_at": _OPENED_AT,
+            "merged_at": _MERGED_AT,
+            "head_ref": pr.head_ref,
             "user": pr.author,
             "merged_by": pr.merged_by,
             # A same-repo PR unless the test says otherwise: the projection
@@ -720,8 +767,6 @@ def test_provenance_violation_reported(
 # branch has a trusted author, whoever authored it; arming and that merge are
 # not involvement, so they do not make the PR gated.
 
-_MERGED_AT = "2026-11-22T10:00:00Z"
-
 
 def _arm(actor: dict[str, str]) -> dict[str, object]:
     return {"event": "auto_squash_enabled", "actor": actor, "has_actor": True}
@@ -814,6 +859,9 @@ def test_read_pull_contradictory_head_raises(monkeypatch: pytest.MonkeyPatch) ->
         "merged": True,
         "html_url": "u",
         "merge_commit_sha": "c" * 40,
+        "created_at": _OPENED_AT,
+        "merged_at": _MERGED_AT,
+        "head_ref": "feature/11-change",
         "isCrossRepository": False,
         "headRepositoryOwner": {"login": "someone-else"},
         "headRepository": {"name": "r"},
@@ -882,6 +930,225 @@ def test_deleted_author_is_not_human_only(
     _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=None, merger=HUMAN)
     agent_audit.audit(clone, REPO, AUTHORS)
     assert len(gates.calls) == 1
+
+
+# The head branch's pushers, from the repository activity.
+
+
+def _human_pr_with_activity(gh: FakeGitHub, origin: Origin, activity: list[dict[str, Any]]) -> PR:
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
+    pr.activity = activity
+    return pr
+
+
+@pytest.mark.parametrize("kind", ["branch_creation", "push", "force_push"])
+def test_agent_pushed_branch_of_human_pr_is_gated(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, kind: str
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(
+        gh,
+        origin,
+        [
+            _activity("branch_creation", HUMAN, _BEFORE_OPEN, branch),
+            _activity(kind, AGENT, _BEFORE_OPEN, branch),
+        ],
+    )
+    gates.result = GateResult(ok=False, reasons=("merge review: no record covers it",))
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["gates"]
+    assert gh.activity_reads == [branch]
+
+
+def test_human_pushed_branch_of_human_pr_is_not_gated(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(
+        gh,
+        origin,
+        [
+            _activity("branch_creation", HUMAN, _BEFORE_OPEN, branch),
+            _activity("push", HUMAN, _WHILE_OPEN, branch),
+        ],
+    )
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gates.calls == []
+
+
+def test_agent_push_in_an_earlier_life_of_the_branch_is_not_counted(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(
+        gh,
+        origin,
+        [
+            _activity("branch_creation", AGENT, "2026-11-01T08:00:00Z", branch),
+            _activity("branch_deletion", AGENT, "2026-11-02T08:00:00Z", branch),
+            _activity("branch_creation", HUMAN, _BEFORE_OPEN, branch),
+            _activity("branch_deletion", AGENT, _AFTER_MERGE, branch),
+            _activity("branch_creation", AGENT, _AFTER_MERGE, branch),
+        ],
+    )
+    agent_audit.audit(clone, REPO, AUTHORS)
+    assert gates.calls == []
+
+
+def test_push_in_the_same_second_as_the_bounding_deletion_is_counted(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(
+        gh,
+        origin,
+        [
+            _activity("branch_deletion", HUMAN, _BEFORE_OPEN, branch),
+            _activity("branch_creation", AGENT, _BEFORE_OPEN, branch),
+            _activity("push", HUMAN, _WHILE_OPEN, branch),
+        ],
+    )
+    agent_audit.audit(clone, REPO, AUTHORS)
+    assert len(gates.calls) == 1
+
+
+def test_deleted_pusher_makes_the_pr_involved(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    branch = "feature/11-change"
+    _human_pr_with_activity(gh, origin, [_activity("push", None, _BEFORE_OPEN, branch)])
+    agent_audit.audit(clone, REPO, AUTHORS)
+    assert len(gates.calls) == 1
+
+
+def test_branch_with_no_activity_is_gated(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    _human_pr_with_activity(gh, origin, [])
+    agent_audit.audit(clone, REPO, AUTHORS)
+    assert len(gates.calls) == 1
+
+
+def test_fork_pr_branch_activity_is_not_read(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _human_pr_with_activity(gh, origin, [])
+    pr.pull = _FORK
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gh.activity_reads == []
+    assert gates.calls == []
+
+
+def test_main_landing_reads_no_branch_activity(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN, base="main")
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gh.activity_reads == []
+
+
+def test_branch_activity_read_failure_is_a_read_failure(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    before = origin.tip("develop")
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
+    gh.fail_on.add("/activity?")
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert [(f.kind, f.detail[:40]) for f in results[0].findings] == [
+        ("read-failure", "cannot read the activity of o/r branch f")
+    ]
+    assert gh.refs["vergil/agent-audit/develop"] == before
+
+
+_PULL_FOR_ACTIVITY = agent_audit._PullRequest(
+    number=11,
+    url="u",
+    author=trust.Identity("human", "User"),
+    merged_by=trust.Identity("human", "User"),
+    merge_commit="c" * 40,
+    same_repo=True,
+    head_ref="feature/11 #x",
+    created_at=agent_audit._timestamp(_OPENED_AT, "t", "t"),
+    merged_at=agent_audit._timestamp(_MERGED_AT, "t", "t"),
+)
+
+
+def test_branch_activity_endpoint_quotes_the_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def read(endpoint: str, jq: str | None = None) -> list[object]:
+        seen.append(endpoint)
+        return [_activity("push", HUMAN, _BEFORE_OPEN, "feature/11 #x")]
+
+    monkeypatch.setattr(github, "read_json_paginated", read)
+    pushers = agent_audit._branch_pushers(REPO, _PULL_FOR_ACTIVITY)
+    assert seen == ["repos/o/r/activity?ref=refs/heads/feature/11%20%23x"]
+    assert pushers == (trust.Identity("human", "User"),)
+
+
+@pytest.mark.parametrize(
+    ("row", "error"),
+    [
+        ("not a row", "an entry has no type"),
+        (_activity("", HUMAN, _BEFORE_OPEN, "feature/11 #x"), "an entry has no type"),
+        (_activity("push", HUMAN, _BEFORE_OPEN, "other"), "an entry is for another ref"),
+        (
+            {
+                k: v
+                for k, v in _activity("push", HUMAN, _BEFORE_OPEN, "feature/11 #x").items()
+                if k != "has_actor"
+            },
+            "an entry has no actor",
+        ),
+        (_activity("push", HUMAN, "yesterday", "feature/11 #x"), "an entry's time is not a time"),
+        (_activity("push", HUMAN, "2026-11-22T08:00:00", "feature/11 #x"), "is not a time"),
+    ],
+)
+def test_branch_activity_malformed_raises(
+    monkeypatch: pytest.MonkeyPatch, row: object, error: str
+) -> None:
+    _rows(monkeypatch, [row])
+    with pytest.raises(agent_audit.AuditError, match=error):
+        agent_audit._branch_pushers(REPO, _PULL_FOR_ACTIVITY)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "error"),
+    [
+        ("head_ref", None, "it has no head branch"),
+        ("head_ref", "", "it has no head branch"),
+        ("created_at", None, "its creation time is not a time"),
+        ("merged_at", "soon", "its merge time is not a time"),
+    ],
+)
+def test_read_pull_without_head_or_times_raises(
+    monkeypatch: pytest.MonkeyPatch, field_name: str, value: object, error: str
+) -> None:
+    answer = {
+        "number": 11,
+        "merged": True,
+        "html_url": "u",
+        "merge_commit_sha": "c" * 40,
+        "created_at": _OPENED_AT,
+        "merged_at": _MERGED_AT,
+        "head_ref": "feature/11-change",
+        field_name: value,
+    }
+    monkeypatch.setattr(github, "read_json", lambda *args: answer)
+    with pytest.raises(agent_audit.AuditError, match=error):
+        agent_audit._read_pull(REPO, 11)
 
 
 def test_gate_failure_is_a_finding_and_the_marker_moves(
