@@ -24450,7 +24450,10 @@ turned auto-merge on must be the human, or the user agent or the
 automation App on its own PR or on any same-repo PR whose branch has a
 trusted author, the PRs the one PR path accepts (into <code>main</code>, the human
 only), and its provenance must be clean. Turning auto-merge on or off,
-and on such a PR its merge, are not involvement. For an agent-involved
+and on such a PR its merge, are not involvement. A PR is agent-involved
+when an agent authored it, acted on it, or pushed, created or
+force-pushed its head branch (on a same-repo PR, read from the
+repository activity). For an agent-involved
 PR merged into <code>develop</code>,
 its change must be covered by a merge-review record or an approved
 merge-review exemption. It then moves each
