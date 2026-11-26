@@ -56,7 +56,7 @@ _CONFLICT_SETTLE_SECS = 10
 _TEARDOWN_STAGE = "teardown-worktree"
 
 
-class ReleaseWorktreeVanished(ReleaseError):
+class ReleaseWorktreeVanished(ReleaseError):  # noqa: N818 - the name the plan gives it
     """The release worktree is gone at a stage before ``teardown-worktree`` (#5187).
 
     Something outside the release removed it. The release stops here, naming

@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, worktrees
+from vergil_tooling.lib import git, worktree_log
 from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
@@ -94,8 +94,8 @@ def adopt_worktree(repo_root: Path, *, branch: str) -> Path:
 def remove_worktree(path: Path, *, branch: str, reason: str) -> None:
     """Force-remove a managed worktree (the branch ref is left for the caller).
 
-    The removal is logged with :func:`worktrees.log_removal`, naming *branch*
+    The removal is logged with :func:`worktree_log.log_removal`, naming *branch*
     and the *reason* the caller removes it.
     """
     git.run("worktree", "remove", "--force", str(path))
-    worktrees.log_removal(path, branch, reason)
+    worktree_log.log_removal(path, branch, reason)

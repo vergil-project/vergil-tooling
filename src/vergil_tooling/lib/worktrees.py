@@ -21,10 +21,13 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from vergil_tooling.lib import branch_names, git, github, progress, trust
+from vergil_tooling.lib import branch_names, git, github, trust, worktree_log
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text, failure_message
+from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.preflight import _trusted_release_issues
+from vergil_tooling.lib.release.resume import _open_release_issues
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
@@ -825,12 +828,6 @@ def release_protection(repo: str) -> ReleaseProtection:
     fresh ``vrg-release`` start uses (``preflight._trusted_release_issues``).
     A read that cannot complete raises :class:`ProtectionReadError`.
     """
-    # Imported here, not at the top: the release package imports
-    # managed_worktree, which imports this module for log_removal.
-    from vergil_tooling.lib.release.context import ReleaseError
-    from vergil_tooling.lib.release.preflight import _trusted_release_issues
-    from vergil_tooling.lib.release.resume import _open_release_issues
-
     try:
         issues = _trusted_release_issues(_open_release_issues(repo, phase="cleanup"), repo)
     except ReleaseError as exc:
@@ -850,9 +847,11 @@ def log_removal(path: Path, branch: str, reason: str) -> None:
     """Record one worktree removal: on stderr and in the running command's run log.
 
     Every removal is logged, naming the worktree, its branch and why it was
-    judged removable (spec §5.8 of epic vergil-project/.github#1664).
+    judged removable (spec §5.8 of epic vergil-project/.github#1664). The
+    line is :func:`worktree_log.log_removal`'s, the one
+    ``managed_worktree.remove_worktree`` writes too.
     """
-    progress.stderr_line(f"removed worktree {path} (branch {branch}): {reason}")
+    worktree_log.log_removal(path, branch, reason)
 
 
 def require_tty(context: str) -> None:

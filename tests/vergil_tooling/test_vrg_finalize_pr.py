@@ -3105,9 +3105,7 @@ def test_sweep_removes_squash_merged_worktree_branch(tmp_path: Path) -> None:
     ):
         result = main(["--cleanup-only"])
     assert result == 0
-    deleter.assert_any_call(
-        "feature/1-x", tmp_path, dry_run=False, reason="PR merged", guard=ANY
-    )
+    deleter.assert_any_call("feature/1-x", tmp_path, dry_run=False, reason="PR merged", guard=ANY)
 
 
 def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:

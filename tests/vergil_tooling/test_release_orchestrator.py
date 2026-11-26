@@ -17,8 +17,8 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.merge import ReleaseConflictError
 from vergil_tooling.lib.release.orchestrator import (
-    ReleaseWorktreeVanished,
     ReleaseState,
+    ReleaseWorktreeVanished,
     _phase_details,
     _preflight_stage,
     _publish_status_stage,

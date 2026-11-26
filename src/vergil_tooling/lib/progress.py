@@ -27,7 +27,7 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     import argparse
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Generator, Sequence
     from pathlib import Path
 
 LOG_RETAIN = 20
@@ -491,7 +491,7 @@ _attached_log: RunLog | None = None
 
 
 @contextlib.contextmanager
-def attach_log(log: RunLog) -> Iterator[None]:
+def attach_log(log: RunLog) -> Generator[None]:
     """Make *log* the run log for :func:`log_only` and :func:`stderr_line` outside a pipeline.
 
     For work a command runs on real stdio once its pipeline has finished

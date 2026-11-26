@@ -1285,8 +1285,8 @@ def test_gone_branches_propagates_remote_failure() -> None:
 
 # -- release protection and removal logging (issue #5187) --------------------
 
-_RESUME = "vergil_tooling.lib.release.resume._open_release_issues"
-_PREFLIGHT = "vergil_tooling.lib.release.preflight._trusted_release_issues"
+_RESUME = _MOD + "._open_release_issues"
+_PREFLIGHT = _MOD + "._trusted_release_issues"
 
 
 def test_release_protection_active_while_a_trusted_release_issue_is_open() -> None:
