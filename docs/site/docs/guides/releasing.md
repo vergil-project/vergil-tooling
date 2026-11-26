@@ -1285,6 +1285,9 @@ Released: vergil-project/vergil-tooling v2.1.340 on 2026-11-20
   done.
 - Every issue in the list gets its record, whatever its state: closed as
   completed, reopened, or closed another way.
+- The stage prints one line per issue as it records it:
+  `posted: <issue URL>` for a new record, or
+  `found existing: <issue URL>` when the issue already has one.
 - A release that supersedes another adds a `- Supersedes: vX.Y.Z` line
   to the record on each issue it absorbed from it (see
   [Superseding a release](#superseding-a-release)).

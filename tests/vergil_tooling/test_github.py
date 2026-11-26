@@ -68,6 +68,15 @@ def test_run_prints_captured_output(capsys: pytest.CaptureFixture[str]) -> None:
     assert "warning" in captured.err
 
 
+def test_run_without_echo_drops_stdout_keeps_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(stdout="https://x/issues/1\n", stderr="warning\n")
+        github.run("issue", "edit", echo=False)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "warning" in captured.err
+
+
 def test_read_output_returns_stripped_stdout() -> None:
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed(stdout="  result\n")
