@@ -25,10 +25,15 @@ required checks pass. Has three modes:
 - **CLI mode** (`--issue/--summary/--title`): direct invocation for
   human emergency use. It stays single-issue.
 
+It also has a [push mode](#push-mode-a-new-head-for-an-open-pr)
+(`--push`), which opens no PR: it pushes a new head to the branch of an
+open PR, judged before it is pushed.
+
 !!! warning "Who may submit"
     The user agent may submit in template mode (with `--all`/`--select`
     from the repo root), after it records the PR metadata with
-    `vrg-pr-workflow report-ready` (epic vergil-project/.github#1384).
+    `vrg-pr-workflow report-ready` (epic vergil-project/.github#1384),
+    and may push a new head to its open PR with `--push`.
     The CLI mode, the relay branch mode and `--release` are refused to
     every agent identity, and the audit agent is refused outright.
     Releases and promotion stay with the human.
@@ -52,6 +57,9 @@ vrg-submit-pr <branch> [<branch> …] [options]
 
 # CLI mode (emergency): from inside the worktree
 vrg-submit-pr --issue NUMBER --summary TEXT --title TEXT [options]
+
+# Push mode: from the worktree of an open PR's branch
+vrg-submit-pr --push [--force-with-lease]
 ```
 
 ## The one submit path
@@ -273,6 +281,40 @@ The relay ref is cleaned up by [`vrg-finalize-pr`](finalize-pr.md), which
 deletes it alongside the branch once the PR merges and sweeps any
 orphaned relay ref whose branch no longer exists.
 
+## Push mode: a new head for an open PR
+
+Once a PR is open with auto-merge on, GitHub merges any head pushed to
+its branch as soon as that head's checks pass. So every push the tooling
+makes to the branch of an open PR into `develop` (a fix after review, a
+rebase onto a newer `develop`) goes through the one PR path, which judges
+the new head **before** it is pushed (epic vergil-project/.github#1664).
+Run it from the branch's worktree, with the new head checked out:
+
+```bash
+vrg-submit-pr --push                     # a fix on top of the PR's head
+vrg-submit-pr --push --force-with-lease  # a rebased head
+```
+
+It finds the branch's one open PR into `develop` and, at the checked-out
+`HEAD`, checks that the one PR path accepts the PR (an open, non-draft,
+same-repo PR with a trusted author), runs the provenance check, and runs
+the merge-review gates on `origin/develop...HEAD`. The gates apply to an
+agent-involved PR, and a push by an agent identity makes the PR
+agent-involved, so a head an agent pushes is always gated. Only a head
+that passes is pushed. Auto-merge is never touched, so it stays on.
+
+`--force-with-lease` pushes with a lease on the branch's remote-tracking
+ref (`refs/remotes/origin/<branch>`), the head this clone last saw on
+origin, so a head pushed elsewhere since the last fetch is never
+overwritten. A branch frozen by `report-ready` is refused, as `vrg-git`
+refuses its push.
+
+Push mode takes no other mode's arguments. It exits 0 once the head is
+pushed, and 1 when it is refused (no open PR into `develop` on the
+branch, a PR the path does not accept, a provenance violation, a head the
+gates refuse, a frozen branch) or a step cannot be completed, naming why.
+Nothing is pushed on a refusal.
+
 ## Arguments
 
 | Argument | Required (CLI mode) | Description |
@@ -288,6 +330,8 @@ orphaned relay ref whose branch no longer exists.
 | `--select` | No | From the repo root: a comma-separated list of ready worktrees, by issue number or worktree directory name |
 | `--release` | No | Pass `--release` to `vrg-finalize-pr`, which chains into `vrg-release` (install is part of every release) on full success |
 | `--dry-run` | No | Print what would be done without executing |
+| `--push` | No | [Push mode](#push-mode-a-new-head-for-an-open-pr): push `HEAD` to the open PR's branch, judged first. Takes no other mode's arguments |
+| `--force-with-lease` | No | With `--push`, for a rebased head: push with a lease on the branch's remote-tracking ref |
 | `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything); passed on to the chained `vrg-finalize-pr` |
 | `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain`; passed on to the chained `vrg-finalize-pr` |
 
@@ -412,8 +456,8 @@ failed to submit it returns at least 3, and a tool error from finalize
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted |
-| 1 | A usage error or a refusal before anything opened (a removed flag, the audit agent, the user agent in the CLI or relay branch mode or with `--release`, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
+| 0 | Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted, and a head push mode pushed |
+| 1 | A usage error or a refusal before anything opened (a removed flag, a push mode refusal, the audit agent, the user agent in the CLI or relay branch mode or with `--release`, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
 | 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |

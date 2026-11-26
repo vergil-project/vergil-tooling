@@ -4987,3 +4987,211 @@ class TestGateStep:
         with patch(_MOD + ".github.current_repo", return_value="no-slash"):
             _submit_all([_gate_sub()], _ARGS)
         assert real_gates["evaluate"].call_args.kwargs["issue_refs"] == ["#42"]
+
+
+# --- push mode (epic vergil-project/.github#1664, spec §5.4) ----------------------------
+
+_PUSH_PR = "https://github.com/o/r/pull/7"
+_PUSH_BRANCH = "feature/7-fix"
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def push_worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A clone on the PR's branch, as the user agent, with a remote-tracking ref for it."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    repo = tmp_path / "wt"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", _PUSH_BRANCH)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_PUSH_BRANCH}", "HEAD")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "fix")
+    monkeypatch.chdir(repo)
+    _as_mode(monkeypatch, "user")
+    return repo
+
+
+def _pushed(detail: str = "pushed it") -> pr_path.PushResult:
+    return pr_path.PushResult(pushed=True, pr_url=_PUSH_PR, detail=detail)
+
+
+class TestPushMode:
+    """``vrg-submit-pr --push [--force-with-lease]``: a push to an open PR's branch."""
+
+    def test_push_mode_pushes_passing_head(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push,
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main(["--push"]) == 0
+        head = _git(push_worktree, "rev-parse", "HEAD")
+        push.assert_called_once_with(_PUSH_BRANCH, head=head, lease=None)
+        template.assert_not_called()
+        assert "auto-merge stays on" in capsys.readouterr().out
+
+    def test_push_mode_rebased_head_uses_lease(self, push_worktree: Path) -> None:
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--force-with-lease"]) == 0
+        lease = _git(push_worktree, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        assert push.call_args.kwargs["lease"] == lease
+        assert lease != _git(push_worktree, "rev-parse", "HEAD")
+
+    def test_push_mode_lease_with_no_tracking_ref_is_refused(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _git(push_worktree, "update-ref", "-d", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", "--force-with-lease"]) == 1
+        push.assert_not_called()
+        assert "run `vrg-git fetch origin` first" in capsys.readouterr().err
+
+    def test_push_mode_refuses_head_failing_gates(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        refused = pr_path.PushResult(
+            pushed=False, pr_url=_PUSH_PR, detail="the gates refused the head abc: no record"
+        )
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=refused):
+            assert main(["--push"]) == 1
+        err = capsys.readouterr().err
+        assert f"refused ({_PUSH_PR}): the gates refused the head abc: no record" in err
+
+    def test_push_mode_refuses_branch_with_no_open_develop_pr(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        none = pr_path.PushResult(pushed=False, pr_url="", detail=f"{_PUSH_BRANCH} has no open PR")
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=none):
+            assert main(["--push"]) == 1
+        assert f"refused: {_PUSH_BRANCH} has no open PR" in capsys.readouterr().err
+
+    def test_push_mode_path_error_exits_one(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            _MOD + ".pr_path.push_to_open_pr", side_effect=pr_path.PRPathError("push failed")
+        ):
+            assert main(["--push"]) == 1
+        assert "push failed; nothing was pushed" in capsys.readouterr().err
+
+    def test_push_mode_leaves_auto_merge_on(self, push_worktree: Path) -> None:
+        """Push mode neither arms, disarms nor finalizes: it only pushes through the path."""
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+            patch(_MOD + ".pr_path.arm") as arm,
+            patch(_MOD + "._chain_finalize") as finalize,
+        ):
+            assert main(["--push"]) == 0
+        arm.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_push_mode_refuses_a_frozen_branch(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        frozen = freeze.FreezeCheck(frozen=True, message="the branch is frozen")
+        with (
+            patch(_MOD + ".freeze.check_worktree", return_value=frozen),
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+        ):
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "the branch is frozen" in capsys.readouterr().err
+
+    def test_push_mode_warns_on_an_unreadable_state_file(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        unreadable = freeze.FreezeCheck(frozen=False, read_error="a corrupt state file")
+        with (
+            patch(_MOD + ".freeze.check_worktree", return_value=unreadable),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+        ):
+            assert main(["--push"]) == 0
+        assert "warning: a corrupt state file" in capsys.readouterr().err
+
+    def test_push_mode_outside_a_worktree_is_refused(
+        self,
+        push_worktree: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        monkeypatch.chdir(plain)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "cannot read the worktree's branch" in capsys.readouterr().err
+
+    def test_push_mode_refuses_a_detached_head(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _git(push_worktree, "checkout", "-q", "--detach")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "HEAD is detached" in capsys.readouterr().err
+
+    def test_lease_without_push_is_refused(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main(["--force-with-lease"]) == 1
+        push.assert_not_called()
+        template.assert_not_called()
+        assert "pass it with --push" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("extra", "named"),
+        [
+            (["--all"], "--all"),
+            (["--select", "7"], "--select"),
+            (["--dry-run"], "--dry-run"),
+            (["--base", "develop"], "--base"),
+        ],
+    )
+    def test_push_mode_takes_no_other_modes_arguments(
+        self,
+        push_worktree: Path,
+        capsys: pytest.CaptureFixture[str],
+        extra: list[str],
+        named: str,
+    ) -> None:
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", *extra]) == 1
+        push.assert_not_called()
+        assert f"takes no other mode's arguments, got {named}" in capsys.readouterr().err
+
+    def test_push_mode_human_may_push(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _as_mode(monkeypatch, "human")
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--release"]) == 1
+            assert main(["--push"]) == 0
+        push.assert_called_once()
+
+    def test_push_mode_audit_agent_is_refused(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _as_mode(monkeypatch, "audit")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()

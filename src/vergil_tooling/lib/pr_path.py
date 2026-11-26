@@ -42,18 +42,35 @@ The path then turns auto-merge on with that method, pinned to that head
 method. A PR the path does not accept, or that fails a check, is
 ``refused`` and left unarmed. A step that cannot be completed (a read, the
 provenance check, the enable) raises :class:`PRPathError`, naming the PR.
+
+:func:`push_to_open_pr` is the path's push mode (``vrg-submit-pr --push``):
+every push the tooling makes to the branch of an open PR into ``develop``
+goes through it. It runs the same admission rule, the provenance check and
+the gates against the new head **before** pushing it
+(:func:`finalize_watch.gates_before_push`), and never pushes a head that
+fails them. It never touches auto-merge, so the PR stays armed throughout.
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from vergil_tooling.lib import auto_merge, finalize_watch, git, github, pr_provenance, retry, trust
+from vergil_tooling.lib import (
+    auto_merge,
+    finalize_watch,
+    git,
+    github,
+    identity_mode,
+    pr_provenance,
+    retry,
+    trust,
+)
 from vergil_tooling.lib.develop_clone import clone_url
 from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.process_errors import error_text
@@ -300,3 +317,107 @@ def arm(pr_url: str, *, clone: Path | None = None, head: str | None = None) -> A
         raise PRPathError(str(exc)) from exc
     outcome: ArmOutcome = "merged" if result.merged_now else "armed"
     return ArmResult(outcome=outcome, pr_url=url, head=current, method=method)
+
+
+@dataclass(frozen=True)
+class PushResult:
+    """What :func:`push_to_open_pr` did.
+
+    *pr_url* is the branch's open PR into ``develop``, ``""`` when it has
+    none. *detail* says what was pushed, or why nothing was.
+    """
+
+    pushed: bool
+    pr_url: str
+    detail: str
+
+
+def _here() -> tuple[Path, str]:
+    """The clone the push runs from (the current worktree) and its ``origin`` repository."""
+    try:
+        clone = Path(git.read_output("rev-parse", "--show-toplevel"))
+        origin = github.github_remote_repo(git.remote_url("origin", repo=clone))
+    except (subprocess.CalledProcessError, OSError) as exc:
+        msg = f"push mode: cannot read the current clone and its origin: {error_text(exc)}"
+        raise PRPathError(msg) from exc
+    if origin is None:
+        msg = f"push mode: the origin of {clone} is not a GitHub repository"
+        raise PRPathError(msg)
+    return clone, origin
+
+
+def _open_develop_pr(repo: str, branch: str) -> trust.PRRef | None | str:
+    """*branch*'s one open PR into ``develop``, ``None`` for none, or why it cannot be told."""
+    try:
+        prs, skipped = trust.prs_for_branch(repo, branch, state="open")
+    except _STEP_ERRORS as exc:
+        msg = f"push mode: reading the open PRs on {branch} failed: {error_text(exc)}"
+        raise PRPathError(msg) from exc
+    trust.report_skipped(skipped, stream=sys.stderr)
+    found = [pr for pr in prs if pr.state == _OPEN and pr.base == _DEVELOP]
+    if len(found) > 1:
+        numbers = ", ".join(f"#{pr.number}" for pr in found)
+        return f"{branch} has {len(found)} open PRs into {_DEVELOP} ({numbers})"
+    return found[0] if found else None
+
+
+def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
+    """Push *head* to *branch*, the branch of an open PR into ``develop``, through the path.
+
+    Spec §5.4: every push the tooling makes to an open PR's branch is judged
+    before it is pushed. Run from a clone of the PR's repository (the
+    branch's worktree), which holds *head*. It finds the branch's open PR
+    into ``develop``, reads it (the first read behind the known-resource
+    retry, as :func:`arm` does), and at *head* runs :func:`accepts`, the
+    provenance check and the agent gates
+    (:func:`finalize_watch.gates_before_push`). A push by an agent identity
+    makes the PR agent-involved, so its head is gated even on a PR no agent
+    has acted on yet. Only then does it push: with
+    ``--force-with-lease=<branch>:<lease>`` when *lease* is given (a rebased
+    head; *lease* is the head the caller expects origin to have), a plain
+    push otherwise. A head that fails a check is not pushed. Auto-merge is
+    never touched, so it stays on throughout.
+
+    A branch with no open PR into ``develop``, a PR the path does not
+    accept, and a head that fails a check give ``pushed=False`` with the
+    reason. A step that cannot be completed (a read, the provenance check,
+    the push itself) raises :class:`PRPathError`.
+    """
+    clone, repo = _here()
+    found = _open_develop_pr(repo, branch)
+    if isinstance(found, str):
+        return PushResult(pushed=False, pr_url="", detail=found)
+    if found is None:
+        detail = (
+            f"{branch} has no open PR into {_DEVELOP}; push mode pushes only to an open PR's branch"
+        )
+        return PushResult(pushed=False, pr_url="", detail=detail)
+    pr = _read(found.url)
+    url = pr.snap.url
+
+    def refused(detail: str) -> PushResult:
+        return PushResult(pushed=False, pr_url=url, detail=detail)
+
+    reason = _refusal(pr)
+    if reason is not None:
+        return refused(f"the one PR path does not accept it: {reason}")
+    if pr.branch != branch:
+        return refused(f"its head branch is {pr.branch}, not {branch}")
+    found_violations = _violations(url)
+    if found_violations:
+        return refused(f"provenance violations found ({found_violations})")
+    try:
+        gates = finalize_watch.gates_before_push(
+            pr.snap, branch, clone, head=head, pusher_is_agent=identity_mode.any_agent_signal()
+        )
+    except finalize_watch.FinalizeWatchError as exc:
+        raise PRPathError(str(exc)) from exc
+    if gates:
+        return refused(f"the gates refused the head {head[:12]}: {gates}; it was not pushed")
+    lease_args = () if lease is None else (f"--force-with-lease={branch}:{lease}",)
+    try:
+        git.run("push", *lease_args, "origin", f"{head}:refs/heads/{branch}")
+    except subprocess.CalledProcessError as exc:
+        msg = f"{url}: pushing {head[:12]} to {branch} failed: {error_text(exc)}"
+        raise PRPathError(msg) from exc
+    return PushResult(pushed=True, pr_url=url, detail=f"pushed {head[:12]} to {branch}")

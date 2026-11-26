@@ -22,6 +22,17 @@ Supports three modes:
   cloud→Mac relay handoff, where the branch and its metadata already rode
   GitHub.
 
+It also has a **push mode** (``--push [--force-with-lease]``, epic
+vergil-project/.github#1664, spec §5.4), which opens nothing: run in the
+worktree of an open PR's branch, it pushes the checked-out ``HEAD`` to that
+branch through the one PR path (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`),
+which runs the provenance check and the agent gates against the new head
+before it pushes, and never pushes a head that fails them. Auto-merge stays
+on throughout. ``--force-with-lease`` is for a rebased head: the lease is
+the branch's remote-tracking ref, the head this clone last saw on origin. A
+branch frozen by ``report-ready`` is refused, as ``vrg-git`` refuses its
+push. It exits 0 once the head is pushed, 1 when it is refused, naming why.
+
 **One path** (epic vergil-project/.github#1218, spec §6.2). Every mode gates
 its PRs, prints one compact table of the selection (issues and linkage,
 branch, title), then hands the whole selection to :func:`_submit_all`. There
@@ -220,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         print(refusal, file=sys.stderr)
         return 1
 
+    if args.push or args.force_with_lease:
+        return _run_push_mode(args)
+
     # The finalize run's batch deadline is checked before any PR opens, so a
     # malformed $VRG_FINALIZE_DEADLINE refuses the run with nothing done.
     try:
@@ -377,6 +391,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated list of ready worktrees to batch-submit, by issue "
         "number or worktree directory name (issue #1673).",
     )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push mode: from the worktree of an open PR's branch into develop, push "
+        "HEAD to that branch through the one PR path, which runs the provenance check "
+        "and the agent gates on the new head before pushing it. Opens no PR and leaves "
+        "auto-merge on. Takes no other mode's arguments.",
+    )
+    parser.add_argument(
+        "--force-with-lease",
+        dest="force_with_lease",
+        action="store_true",
+        help="With --push, for a rebased head: push with a lease on the branch's "
+        "remote-tracking ref, so a head pushed elsewhere since the last fetch is "
+        "never overwritten.",
+    )
     parser.add_argument("--yes", "-y", action="store_true", help=argparse.SUPPRESS)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -430,6 +460,83 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
     if args.yes:
         return YES_REMOVED
     return None
+
+
+_PUSH_PREFIX = "vrg-submit-pr --push"
+
+
+def _push_mode_refusal(args: argparse.Namespace) -> str | None:
+    """Why *args* are not a push-mode run, or ``None`` when they are."""
+    if not args.push:
+        return "vrg-submit-pr: --force-with-lease is a push-mode flag; pass it with --push"
+    others = {
+        "branch arguments": bool(args.branches),
+        "--issue": args.issue is not None,
+        "--summary": args.summary is not None,
+        "--title": args.title is not None,
+        "--all": args.all_worktrees,
+        "--select": args.select is not None,
+        "--release": args.release,
+        "--dry-run": args.dry_run,
+        "--base": args.base is not None,
+    }
+    named = [name for name, given in others.items() if given]
+    if named:
+        return f"{_PUSH_PREFIX}: takes no other mode's arguments, got {', '.join(named)}"
+    return None
+
+
+def _run_push_mode(args: argparse.Namespace) -> int:
+    """Push the worktree's ``HEAD`` to its open PR's branch through the one PR path.
+
+    Exit 0 once the head is pushed, 1 when the push is refused or a step
+    cannot be completed, naming why. Nothing is pushed on a refusal.
+    """
+    refusal = _push_mode_refusal(args)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+    try:
+        root = Path(git.read_output("rev-parse", "--show-toplevel"))
+        branch = git.current_branch()
+        head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
+    except subprocess.CalledProcessError as exc:
+        msg = f"{_PUSH_PREFIX}: cannot read the worktree's branch: {error_text(exc)}"
+        print(msg, file=sys.stderr)
+        return 1
+    if branch == "HEAD":
+        print(f"{_PUSH_PREFIX}: HEAD is detached; run it on the PR's branch", file=sys.stderr)
+        return 1
+    check = freeze.check_worktree(root, action="push")
+    if check.read_error is not None:
+        print(f"{_PUSH_PREFIX}: warning: {check.read_error}", file=sys.stderr)
+    if check.frozen:
+        print(check.message, file=sys.stderr)
+        return 1
+    lease = None
+    if args.force_with_lease:
+        tracking = f"refs/remotes/origin/{branch}"
+        try:
+            lease = git.read_output("rev-parse", "--verify", f"{tracking}^{{commit}}")
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"{_PUSH_PREFIX}: --force-with-lease needs {tracking}, the head this clone "
+                f"last saw on origin, and it cannot be read ({error_text(exc)}); run "
+                "`vrg-git fetch origin` first",
+                file=sys.stderr,
+            )
+            return 1
+    try:
+        result = pr_path.push_to_open_pr(branch, head=head, lease=lease)
+    except pr_path.PRPathError as exc:
+        print(f"{_PUSH_PREFIX}: {exc}; nothing was pushed", file=sys.stderr)
+        return 1
+    if not result.pushed:
+        where = f" ({result.pr_url})" if result.pr_url else ""
+        print(f"{_PUSH_PREFIX}: refused{where}: {result.detail}", file=sys.stderr)
+        return 1
+    print(f"{_PUSH_PREFIX}: {result.detail} ({result.pr_url}); auto-merge stays on.")
+    return 0
 
 
 _DEVELOP = "develop"
