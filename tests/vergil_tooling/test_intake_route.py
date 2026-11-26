@@ -507,10 +507,22 @@ def test_route_defer_defaults_to_today(env: Env) -> None:
     assert _comment_calls(env)[0].args[-1].startswith("Deferred 2027-01-02: later\n")
 
 
-def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
+def test_route_defer_refresh_without_an_earlier_origin_says_so(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh with no earlier record to carry its origin from says so (#5224)."""
     env.parent = DEFERRED
     env.native_parent[ITEM] = DEFERRED
+    env.comments = [
+        # Not a deferral record, so its line is not taken.
+        "Deferred from: org/.github#99 is what the old record said",
+        "Deferred 2026-01-02: older\nRevisit when: later",
+    ]
     result = route(ITEM, Defer(reason="still waiting", revisit_when="Y ships"), today=TODAY)
+    assert capsys.readouterr().err.endswith(
+        "org/.github#352: no earlier deferral record of it carries a 'Deferred from:' "
+        "line, so the refreshed record has none\n"
+    )
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.run.assert_called_once_with(
         "issue",
@@ -524,6 +536,26 @@ def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
     env.ensure_deferred_epic.assert_not_called()
     assert env.calls("add") == []
     assert env.calls("reparent") == []
+
+
+def test_route_defer_refresh_carries_the_origin_forward(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh keeps the latest record's ``Deferred from:`` line, past one without (#5224)."""
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    env.comments = [
+        "Deferred 2026-01-02: first\nRevisit when: later\nDeferred from: org/.github#5",
+        "Deferred 2026-03-04: moved\nRevisit when: later\nDeferred from: org/.github#7",
+        # A refresh written before #5224, with no origin of its own.
+        "Deferred 2026-05-06: refreshed\nRevisit when: later",
+        "A note that is not a record.",
+    ]
+    route(ITEM, Defer(reason="still waiting", revisit_when="Y ships"), today=TODAY)
+    assert _comment_calls(env)[0].args[-1] == (
+        "Deferred 2026-10-23: still waiting\nRevisit when: Y ships\nDeferred from: org/.github#7"
+    )
+    assert "Deferred from:" not in capsys.readouterr().err
 
 
 def test_route_defer_from_planning_removes_in_progress(env: Env) -> None:
