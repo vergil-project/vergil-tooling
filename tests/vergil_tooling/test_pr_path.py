@@ -22,12 +22,21 @@ from vergil_tooling.lib import (
     agent_gates,
     finalize_watch,
     github,
+    identity_mode,
     pr_path,
     pr_provenance,
     retry,
     trust,
 )
-from vergil_tooling.lib.pr_path import ArmResult, PRPathError, accepts, arm, merge_method
+from vergil_tooling.lib.pr_path import (
+    ArmResult,
+    PRPathError,
+    PushResult,
+    accepts,
+    arm,
+    merge_method,
+    push_to_open_pr,
+)
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
@@ -137,8 +146,9 @@ class FakeGitHub:
     def prs_for_branch(
         self, repo: str, branch: str, *, state: str
     ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
-        assert (repo, branch, state) == ("o/r", self.head_ref, "all")
-        if not self.confirmed:
+        assert (repo, branch) == ("o/r", self.head_ref)
+        assert state in ("all", "open"), state
+        if not self.confirmed or (state == "open" and self.state != "OPEN"):
             return [], []
         ref = trust.PRRef(
             number=7,
@@ -628,3 +638,204 @@ def test_arm_enable_failure_raises_naming_the_pr(
 
 def test_held_is_an_outcome_for_the_arming_gate() -> None:
     assert "held" in pr_path.ArmOutcome.__args__
+
+
+# --- push mode for an open PR's branch ----------------------------------------------
+
+BRANCH = "feature/7-fix"
+
+
+@dataclass
+class Pushes:
+    """Every ``git push`` the path runs, and whether it fails."""
+
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+    fail: bool = False
+
+    def run(self, *args: str) -> None:
+        self.calls.append(args)
+        if self.fail:
+            raise subprocess.CalledProcessError(
+                1, ("git", *args), output="", stderr="! [rejected] (stale info)"
+            )
+
+
+@dataclass
+class Pusher:
+    """Whether the identity running the push is an agent."""
+
+    agent: bool = True
+
+
+@pytest.fixture
+def pusher(monkeypatch: pytest.MonkeyPatch) -> Pusher:
+    who = Pusher()
+    monkeypatch.setattr(identity_mode, "any_agent_signal", lambda: who.agent)
+    return who
+
+
+@pytest.fixture
+def push(
+    monkeypatch: pytest.MonkeyPatch, clone: Path, gates: Gates, pusher: Pusher
+) -> Pushes:
+    """Run the push mode from *clone*, with its pushes recorded and nothing fetched."""
+    spy = Pushes()
+    monkeypatch.setattr(pr_path.git, "run", spy.run)
+    monkeypatch.setattr(finalize_watch, "_fetch_develop_for_gates", lambda _c, _h: "base-sha")
+    monkeypatch.chdir(clone)
+    return spy
+
+
+def test_push_mode_refuses_head_failing_gates(
+    fake: FakeGitHub, gates: Gates, push: Pushes, clone: Path
+) -> None:
+    gates.ok = False
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result == PushResult(
+        pushed=False,
+        pr_url=PR,
+        detail=(
+            f"the gates refused the head {OTHER_HEAD[:12]}: merge review: no record covers it; "
+            "it was not pushed"
+        ),
+    )
+    assert push.calls == []
+    assert gates.calls == [(clone.resolve(), OTHER_HEAD, "o/r")]
+
+
+def test_push_mode_pushes_passing_head(
+    fake: FakeGitHub, gates: Gates, push: Pushes, clone: Path
+) -> None:
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result.pushed
+    assert result.pr_url == PR
+    assert push.calls == [("push", "origin", f"{OTHER_HEAD}:refs/heads/{BRANCH}")]
+    assert gates.calls == [(clone.resolve(), OTHER_HEAD, "o/r")]
+
+
+def test_push_mode_rebased_head_uses_lease(fake: FakeGitHub, gates: Gates, push: Pushes) -> None:
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=HEAD)
+
+    assert result.pushed
+    assert push.calls == [
+        (
+            "push",
+            f"--force-with-lease={BRANCH}:{HEAD}",
+            "origin",
+            f"{OTHER_HEAD}:refs/heads/{BRANCH}",
+        )
+    ]
+
+
+@pytest.mark.parametrize(("name", "value"), [("base", "main"), ("state", "CLOSED")])
+def test_push_mode_refuses_branch_with_no_open_develop_pr(
+    fake: FakeGitHub, gates: Gates, push: Pushes, name: str, value: str
+) -> None:
+    setattr(fake, name, value)
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result == PushResult(
+        pushed=False,
+        pr_url="",
+        detail=f"{BRANCH} has no open PR into develop; push mode pushes only to an open PR's branch",
+    )
+    assert push.calls == []
+    assert gates.calls == []
+
+
+@pytest.mark.parametrize("passes", [True, False])
+def test_push_mode_leaves_auto_merge_on(
+    fake: FakeGitHub, gates: Gates, push: Pushes, *, passes: bool
+) -> None:
+    fake.auto_merge = {"mergeMethod": "SQUASH"}
+    gates.ok = passes
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result.pushed is passes
+    assert fake.mutations == []  # neither an enable nor a disable
+    assert fake.auto_merge == {"mergeMethod": "SQUASH"}
+
+
+def test_push_mode_gates_a_human_pr_an_agent_pushes_to(
+    fake: FakeGitHub, gates: Gates, push: Pushes, pusher: Pusher
+) -> None:
+    _human_pr(fake)
+    pusher.agent = True
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result.pushed
+    assert [head for _repo, head, _origin in gates.calls] == [OTHER_HEAD]
+
+
+def test_push_mode_human_push_to_a_human_pr_is_not_gated(
+    fake: FakeGitHub, gates: Gates, push: Pushes, pusher: Pusher
+) -> None:
+    _human_pr(fake)
+    pusher.agent = False
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result.pushed
+    assert gates.calls == []
+
+
+def test_push_mode_refuses_a_provenance_violation(
+    fake: FakeGitHub, gates: Gates, push: Pushes
+) -> None:
+    fake.timeline = [{"event": "renamed", "actor": {"login": AGENT, "type": "Bot"}}]
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert not result.pushed
+    assert result.detail.startswith("provenance violations found")
+    assert push.calls == []
+    assert gates.calls == []
+
+
+def test_push_mode_refuses_a_pr_the_path_does_not_accept(
+    fake: FakeGitHub, gates: Gates, push: Pushes
+) -> None:
+    fake.draft = True
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert not result.pushed
+    assert result.detail == "the one PR path does not accept it: it is a draft"
+    assert push.calls == []
+
+
+def test_push_mode_failed_push_raises_naming_the_pr(
+    fake: FakeGitHub, gates: Gates, push: Pushes
+) -> None:
+    push.fail = True
+
+    with pytest.raises(PRPathError, match=f"(?s){PR}: pushing {OTHER_HEAD[:12]} to {BRANCH}.*stale"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=HEAD)
+
+
+def test_push_mode_retries_brief_404(
+    fake: FakeGitHub, gates: Gates, push: Pushes, no_wait: list[float]
+) -> None:
+    fake.not_found_reads = 2
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert result.pushed
+    assert no_wait[0] > 0
+
+
+def test_push_mode_gates_judge_the_local_head_without_fetching_it(
+    fake: FakeGitHub, gates: Gates, push: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_fetch(*_args: object) -> str:
+        raise AssertionError("a head not yet pushed is never fetched")
+
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", no_fetch)
+
+    assert push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None).pushed

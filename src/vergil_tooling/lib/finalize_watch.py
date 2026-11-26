@@ -588,6 +588,45 @@ def _fetch_for_gates(clone: Path, head: str) -> str:
     return _git(clone, "rev-parse", "--verify", f"{tracking}^{{commit}}")
 
 
+def _fetch_develop_for_gates(clone: Path, head: str) -> str:
+    """Fetch ``develop`` into *clone*, which must already hold *head*; the fetched develop's SHA.
+
+    For a head not yet pushed (:func:`gates_before_push`): only
+    ``origin/develop`` moves, and a head missing from *clone* raises.
+    """
+    tracking = f"refs/remotes/origin/{_DEVELOP}"
+    _git(clone, "fetch", "--no-write-fetch-head", "origin", f"+refs/heads/{_DEVELOP}:{tracking}")
+    _git(clone, "cat-file", "-e", f"{head}^{{commit}}")
+    return _git(clone, "rev-parse", "--verify", f"{tracking}^{{commit}}")
+
+
+def _gates_at(
+    snap: Snapshot, branch: str, clone: Path, *, head: str, pushed: bool, pusher_is_agent: bool
+) -> str:
+    """Why *head* of *snap*'s PR does not pass the gates, ``""`` when it does.
+
+    *pushed* says whether *head* is on origin (fetched by its SHA) or only in
+    *clone*. *pusher_is_agent* makes the PR agent-involved whatever its
+    GitHub actors and ready state say.
+    """
+    repo, number = _pr_repo_and_number(snap)
+    require_clone_of(clone, repo, snap.url)
+    try:
+        authors = load_trusted_authors()
+        ready = ready_state(clone, repo, branch)
+        if not pusher_is_agent and not agent_involvement(snap.url, ready, authors):
+            return ""
+        refs = task_issue_refs(repo, number, ready)
+        if pushed:
+            base = _fetch_for_gates(clone, head)
+        else:
+            base = _fetch_develop_for_gates(clone, head)
+        result = agent_gates.evaluate(clone, base=base, head=head, issue_refs=refs, authors=authors)
+    except _RECHECK_ERRORS as exc:
+        return f"the gates could not be re-checked at {head[:12]}: {error_text(exc)}"
+    return "" if result.ok else "; ".join(result.reasons)
+
+
 def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
     """Why *snap*'s head does not pass the gates, or ``""`` when it does.
 
@@ -596,21 +635,22 @@ def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
     A PR that is not agent-involved passes. Any read, fetch or parse
     failure is returned as the reason, never a pass.
     """
-    repo, number = _pr_repo_and_number(snap)
-    require_clone_of(clone, repo, snap.url)
-    try:
-        authors = load_trusted_authors()
-        ready = ready_state(clone, repo, branch)
-        if not agent_involvement(snap.url, ready, authors):
-            return ""
-        refs = task_issue_refs(repo, number, ready)
-        base = _fetch_for_gates(clone, snap.head)
-        result = agent_gates.evaluate(
-            clone, base=base, head=snap.head, issue_refs=refs, authors=authors
-        )
-    except _RECHECK_ERRORS as exc:
-        return f"the gates could not be re-checked at {snap.head[:12]}: {error_text(exc)}"
-    return "" if result.ok else "; ".join(result.reasons)
+    return _gates_at(snap, branch, clone, head=snap.head, pushed=True, pusher_is_agent=False)
+
+
+def gates_before_push(
+    snap: Snapshot, branch: str, clone: Path, *, head: str, pusher_is_agent: bool
+) -> str:
+    """Why *head*, a commit in *clone* about to be pushed to *snap*'s PR, does not pass the gates.
+
+    The one PR path's push mode
+    (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`) judges a new head
+    before it pushes it, so *head* is read from *clone*, never fetched. The
+    rules are :func:`recheck_gates`', with one addition: when
+    *pusher_is_agent*, the push itself makes the PR agent-involved, so a PR
+    no agent has acted on yet is gated too. ``""`` when it passes.
+    """
+    return _gates_at(snap, branch, clone, head=head, pushed=False, pusher_is_agent=pusher_is_agent)
 
 
 @dataclass(frozen=True)

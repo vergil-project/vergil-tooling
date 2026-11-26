@@ -1846,3 +1846,82 @@ def test_ready_state_malformed_payload_raises(
 
     with pytest.raises(TypeError, match="carries no JSON object"):
         REAL_READY_STATE(gated.clone, "o/r", "feature/1-thing")
+
+
+# --- the gates before a push (the one PR path's push mode) ----------------------------
+
+
+def _open_snapshot(head: str) -> finalize_watch.Snapshot:
+    return finalize_watch.Snapshot(
+        node_id="PR_1",
+        url=url(1),
+        title="fix: a fix",
+        state="OPEN",
+        base="develop",
+        head_ref="feature",
+        head=head,
+        auto_merge_on=True,
+        merge_state="BLOCKED",
+        rollup=(),
+        merge_commit="",
+        labels=(),
+    )
+
+
+def test_gates_before_push_judge_a_head_only_in_the_clone(
+    gated: Gated, remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A head not yet on origin is judged from the clone; only develop is fetched."""
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", REAL_FETCH)
+    pushed = _sh(gated.clone, "rev-parse", "HEAD")
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.records.append(gated.fingerprint())
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(pushed), "feature", gated.clone, head=head, pusher_is_agent=False
+    )
+
+    assert reason == ""
+    assert gated.evaluations == [(gated.develop(), head, [TASK])]
+    tracking = _sh(gated.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    assert tracking.splitlines() == ["refs/remotes/origin/develop"]
+
+
+def test_gates_before_push_refuse_a_head_with_no_merge_review(gated: Gated, remote: Path) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(head), "feature", gated.clone, head=head, pusher_is_agent=False
+    )
+
+    assert "merge review" in reason
+
+
+def test_gates_before_push_a_missing_head_is_a_reason(gated: Gated, remote: Path) -> None:
+    missing = "0" * 40
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(missing), "feature", gated.clone, head=missing, pusher_is_agent=False
+    )
+
+    assert reason.startswith(f"the gates could not be re-checked at {missing[:12]}")
+    assert gated.evaluations == []
+
+
+@pytest.mark.parametrize("pusher_is_agent", [True, False])
+def test_gates_before_push_an_agent_pusher_makes_the_pr_agent_involved(
+    gated: Gated, remote: Path, *, pusher_is_agent: bool
+) -> None:
+    gated.actors = (HUMAN_ID,)
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(head), "feature", gated.clone, head=head, pusher_is_agent=pusher_is_agent
+    )
+
+    if pusher_is_agent:
+        assert "merge review" in reason
+        assert len(gated.evaluations) == 1
+    else:
+        assert reason == ""
+        assert gated.evaluations == []
