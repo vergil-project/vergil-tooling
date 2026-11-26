@@ -3043,7 +3043,9 @@ specific commit: a branch such as `develop` (to work around a tooling bug),
 another tag, or a full 40-character commit SHA. A branch or tag is resolved
 with one `git ls-remote` among the vergil-tooling remote's branches and tags
 only (a name that is both is refused: name `refs/heads/<name>` or
-`refs/tags/<name>`), and a SHA names itself. The commit it resolves to is
+`refs/tags/<name>`), and a SHA names itself, once a fetch of the commit
+history of the remote's branches and tags shows one of them reaches it (any
+other SHA is refused). The commit it resolves to is
 fetched by its SHA and installed the same way, locked to that commit's own
 `uv.lock`, and reported with the ref as given. The argument is a ref name
 only: anything starting with `-`, a URL, a refspec or anything else git's

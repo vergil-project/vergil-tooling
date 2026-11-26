@@ -472,6 +472,34 @@ def git_ls_refs(url: str, patterns: tuple[str, ...]) -> str:
     return result.stdout
 
 
+def git_reachable(url: str, sha: str) -> bool:
+    """Whether commit *sha* is reachable from a branch or tag of *url*; raises on failure.
+
+    In a temporary bare repository it fetches the commit history only
+    (``--filter=tree:0``) of every branch and tag of *url*, nothing else, and
+    lists every commit those refs reach. With lazy fetching off, a commit no
+    branch or tag reaches is never fetched, so it is never listed.
+    """
+    env = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_TERMINAL_PROMPT": "0"}
+    with tempfile.TemporaryDirectory(prefix="vrg-tooling-reach-") as tmp:
+        repo = str(Path(tmp) / "refs.git")
+        _run_step(("git", "init", "-q", "--bare", repo), env=env, what="creating a git repository")
+        _run_step(
+            (
+                *("git", "-C", repo, "fetch", "-q", "--no-tags", "--filter=tree:0", url),
+                *("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"),
+            ),
+            env=env,
+            what=f"fetching the branches and tags of {url}",
+        )
+        listing = _run_step(
+            ("git", "-C", repo, "rev-list", "--all"),
+            env=env,
+            what=f"listing the commits the branches and tags of {url} reach",
+        )
+    return sha in listing.split()
+
+
 def _ref_shas(listing: str) -> dict[str, str]:
     """Map each ref in an ``ls-remote`` *listing* to its commit, peeling annotated tags."""
     direct: dict[str, str] = {}
@@ -488,10 +516,17 @@ def _ref_shas(listing: str) -> dict[str, str]:
     return {name: peeled.get(name, sha) for name, sha in direct.items()}
 
 
-def _resolve_any(ref: str, *, ls_refs: Callable[[str, tuple[str, ...]], str]) -> _Target:
+def _resolve_any(
+    ref: str,
+    *,
+    ls_refs: Callable[[str, tuple[str, ...]], str],
+    reachable: Callable[[str, str], bool],
+) -> _Target:
     """The commit a non-release *ref* names: a full SHA as itself, else its branch or tag.
 
-    A 40-character SHA names its commit and makes no call. Any other ref is
+    A 40-character SHA names its commit, which must be reachable from a
+    branch or tag of :data:`GIT_URL` (one *reachable* call): any other SHA
+    is refused, naming the URL and the SHA. Any other ref is
     looked up with one *ls_refs* call among the branches and tags of
     :data:`GIT_URL` (never its pull-request or other refs): it must name
     exactly one, else the resolution fails, naming the URL and the ref. Each
@@ -500,6 +535,17 @@ def _resolve_any(ref: str, *, ls_refs: Callable[[str, tuple[str, ...]], str]) ->
     not the tag object, is what is fetched and checked.
     """
     if _SHA.fullmatch(ref):
+        try:
+            found = reachable(GIT_URL, ref)
+        except (ToolingInstallError, OSError, subprocess.SubprocessError) as exc:
+            msg = f"could not check that commit {ref} is on a branch or tag of {GIT_URL}: {exc}"
+            raise ToolingInstallError(msg) from exc
+        if not found:
+            msg = (
+                f"commit {ref} is not reachable from any branch or tag of {GIT_URL}; "
+                "only a commit of vergil-tooling's own history installs"
+            )
+            raise ToolingInstallError(msg)
         return _Target(ref, f"commit {ref}", ref, ref, "ref names")
     names = (ref,) if ref.startswith(_REF_NAMESPACES) else tuple(p + ref for p in _REF_NAMESPACES)
     patterns = tuple(
@@ -537,12 +583,15 @@ def _target(
     *,
     ls_remote: Callable[[str, str], str] | None,
     ls_refs: Callable[[str, tuple[str, ...]], str] | None,
+    reachable: Callable[[str, str], bool] | None,
 ) -> _Target:
     """What :func:`install_ref` fetches for *ref*, resolved (but not fetched) here."""
     kind = classify_ref(ref)
     if kind == "dev":
         check_ref_name(ref)
-        return _resolve_any(ref, ls_refs=ls_refs or git_ls_refs)
+        return _resolve_any(
+            ref, ls_refs=ls_refs or git_ls_refs, reachable=reachable or git_reachable
+        )
     if kind == "line":
         tag, sha = _resolve_release(ref, kind, ls_remote=ls_remote or git_ls_remote)
         return _Target(tag, f"tag {tag}", f"refs/tags/{tag}", sha, "line's tag names")
@@ -555,6 +604,7 @@ def install_ref(
     environ: Mapping[str, str] | None = None,
     ls_remote: Callable[[str, str], str] | None = None,
     ls_refs: Callable[[str, tuple[str, ...]], str] | None = None,
+    reachable: Callable[[str, str], bool] | None = None,
 ) -> Installed:
     """Install the commit *ref* names with uv here, locked to that commit's ``uv.lock``.
 
@@ -568,8 +618,10 @@ def install_ref(
       line resolved to;
     - an exact ``vX.Y.Z`` is fetched as that tag;
     - any other ref is first checked by :func:`check_ref_name`, then
-      resolved: a full commit SHA as itself, a branch (``develop``) or any
-      other tag with one *ls_refs* call (default :func:`git_ls_refs`) to the
+      resolved: a full commit SHA as itself, once one *reachable* call
+      (default :func:`git_reachable`) shows a branch or tag of
+      :data:`GIT_URL` reaches it, and a branch (``develop``) or any other
+      tag with one *ls_refs* call (default :func:`git_ls_refs`) to the
       commit it names now. That commit is fetched by its SHA, and the fetched
       commit must be it. It is reported as *ref*, as given.
 
@@ -588,7 +640,7 @@ def install_ref(
 
     Every failure raises :class:`ToolingInstallError` naming the step that
     failed and its error output: a *ref* that is not a ref name, one that
-    does not resolve, a failed git or uv command, a fetch that names no
+    does not resolve, a commit SHA no branch or tag reaches, a failed git or uv command, a fetch that names no
     commit (or not the resolved one), an empty constraints export, or one
     that names a non-registry package. ``uv tool install``'s own output goes
     straight to this process's standard output and error.
@@ -596,7 +648,7 @@ def install_ref(
     The running ``vrg-tooling-install`` is itself an installed vergil-tooling,
     which the install replaces: nothing is imported after it.
     """
-    target = _target(ref, ls_remote=ls_remote, ls_refs=ls_refs)
+    target = _target(ref, ls_remote=ls_remote, ls_refs=ls_refs, reachable=reachable)
     name, label = target.ref, target.label
     source = os.environ if environ is None else environ
     env = {key: value for key, value in source.items() if key not in _UV_VARS}

@@ -11,7 +11,8 @@ reports that exact release.
 
 Any other git ref of vergil-tooling (vergil-tooling#4841) installs the same
 way: a branch such as ``develop``, another tag, or a full commit SHA. It is
-resolved against the fixed vergil-tooling remote to one commit, which is
+resolved against the fixed vergil-tooling remote to one commit (a SHA must be
+reachable from one of its branches or tags), which is
 installed under that commit's own ``uv.lock`` and reported with the ref. The
 argument is a ref name only, never a URL or another repository, and anything
 starting with ``-`` is refused. It is a convenience for a hand install: every

@@ -220,11 +220,125 @@ def test_a_lightweight_non_release_tag_installs_its_commit(stubs: Path) -> None:
     assert install_ref("rc-test", ls_refs=_like_ls_remote(refs)).sha == STUB_SHA
 
 
-def test_a_commit_sha_installs_itself_with_no_lookup(stubs: Path) -> None:
-    assert install_ref(STUB_SHA, ls_refs=_no_refs) == Installed(ref=STUB_SHA, sha=STUB_SHA)
+def _reachable(answer: bool, calls: list[tuple[str, str]] | None = None) -> Callable[..., bool]:  # noqa: FBT001
+    """A *reachable* answering *answer*, recording each call in *calls*."""
+
+    def reachable(url: str, sha: str) -> bool:
+        if calls is not None:
+            calls.append((url, sha))
+        return answer
+
+    return reachable
+
+
+def test_a_commit_sha_installs_itself_once_a_branch_or_tag_reaches_it(stubs: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    assert install_ref(STUB_SHA, ls_refs=_no_refs, reachable=_reachable(True, calls)) == Installed(
+        ref=STUB_SHA, sha=STUB_SHA
+    )
+    assert calls == [(GIT_URL, STUB_SHA)]
     git = _calls(stubs, "git")
     assert git[1][-1] == STUB_SHA
     assert not any("ls-remote" in call for call in git)
+
+
+def test_a_commit_sha_no_branch_or_tag_reaches_installs_nothing(stubs: Path) -> None:
+    with pytest.raises(
+        ToolingInstallError,
+        match=f"commit {STUB_SHA} is not reachable from any branch or tag of {GIT_URL}",
+    ):
+        install_ref(STUB_SHA, ls_refs=_no_refs, reachable=_reachable(False))
+    assert _calls(stubs, "git") == []
+    assert _calls(stubs, "uv") == []
+
+
+def test_a_failed_reachability_check_is_loud(stubs: Path) -> None:
+    def failing(_url: str, _sha: str) -> bool:
+        msg = "network down"
+        raise ToolingInstallError(msg)
+
+    with pytest.raises(ToolingInstallError, match=f"could not check that commit {STUB_SHA}.*down"):
+        install_ref(STUB_SHA, ls_refs=_no_refs, reachable=failing)
+    assert _calls(stubs, "git") == []
+
+
+def test_a_commit_sha_uses_git_reachable_by_default(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(tooling_install, "git_reachable", _reachable(True, calls))
+    assert install_ref(STUB_SHA).sha == STUB_SHA
+    assert calls == [(GIT_URL, STUB_SHA)]
+
+
+def test_a_branch_or_tag_makes_no_reachability_check(stubs: Path) -> None:
+    def never(_url: str, _sha: str) -> bool:
+        msg = "unexpected reachability check"
+        raise AssertionError(msg)
+
+    listing = f"{STUB_SHA}\trefs/heads/develop\n"
+    assert install_ref("develop", ls_refs=_refs(listing), reachable=never).sha == STUB_SHA
+    assert install_ref(_TAG, reachable=never).sha == STUB_SHA
+
+
+def _real_git(repo: Path, *args: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        ["git", "-c", "commit.gpgsign=false", *args],  # noqa: S607
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+@pytest.fixture
+def remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """A real repository with commits on a branch and a tag, and one no ref reaches.
+
+    Returns its ``file://`` URL and the SHAs: ``branch`` (on ``develop``),
+    ``tagged`` (only on an annotated tag) and ``loose`` (in the repository's
+    objects, on no branch or tag).
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "remote"
+    repo.mkdir()
+    _real_git(repo, "init", "-q", "-b", "develop")
+    for key, value in (
+        ("user.name", "Me"),
+        ("user.email", "me@here.com"),
+        ("uploadpack.allowFilter", "true"),
+        ("uploadpack.allowAnySHA1InWant", "true"),
+    ):
+        _real_git(repo, "config", key, value)
+    (repo / "a.txt").write_text("a\n")
+    _real_git(repo, "add", "a.txt")
+    _real_git(repo, "commit", "-q", "-m", "base")
+    branch = _real_git(repo, "rev-parse", "HEAD")
+    _real_git(repo, "switch", "-q", "-c", "side")
+    (repo / "b.txt").write_text("b\n")
+    _real_git(repo, "add", "b.txt")
+    _real_git(repo, "commit", "-q", "-m", "tagged")
+    tagged = _real_git(repo, "rev-parse", "HEAD")
+    _real_git(repo, "tag", "-a", "-m", "t", "rc-test")
+    _real_git(repo, "switch", "-q", "develop")
+    _real_git(repo, "branch", "-q", "-D", "side")
+    tree = _real_git(repo, "rev-parse", "HEAD^{tree}")
+    loose = _real_git(repo, "commit-tree", tree, "-p", branch, "-m", "loose")
+    return {"url": repo.as_uri(), "branch": branch, "tagged": tagged, "loose": loose}
+
+
+@pytest.mark.parametrize(("key", "expected"), [("branch", True), ("tagged", True), ("loose", False)])
+def test_git_reachable_counts_only_branch_and_tag_history(
+    remote: dict[str, str], key: str, expected: bool  # noqa: FBT001
+) -> None:
+    assert tooling_install.git_reachable(remote["url"], remote[key]) is expected
+
+
+def test_git_reachable_failure_is_loud(tmp_path: Path) -> None:
+    with pytest.raises(ToolingInstallError, match="fetching the branches and tags of .* failed"):
+        tooling_install.git_reachable((tmp_path / "missing").as_uri(), STUB_SHA)
 
 
 def test_a_ref_that_does_not_resolve_installs_nothing(stubs: Path) -> None:
