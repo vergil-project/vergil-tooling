@@ -244,11 +244,8 @@ def _run_stopping_audit(capsys: pytest.CaptureFixture[str]) -> tuple[int, str, s
     return rc, captured.out, captured.err
 
 
-def test_main_stopped_child_is_reported_and_exits_1(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_stopped_child_is_reported_and_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     # A batch run stops the child, not the audit (spec §5.3; #4971).
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     rc, out, err = _run_stopping_audit(capsys)
     assert rc == 1
     assert "- org/.github#115 — runnable: none; blocked: none; stopped: 1 (see stderr)" in out
@@ -1668,13 +1665,10 @@ def _run_close_with_an_outsider_close(
     return rc, captured.out, captured.err, run
 
 
-def test_close_stop_is_per_item_and_exits_nonzero(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_close_stop_is_per_item_and_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
     # An untrusted close stops its epic alone: the other epic is closed, every
     # later pass still runs, the stop is named on stderr (metadata only), and
     # the run exits 1 at the end (spec §5.3 of epic .github#1467).
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     rc, out, err, run = _run_close_with_an_outsider_close(capsys)
     assert rc == 1
     assert [c.args[:5] for c in run.call_args_list] == [

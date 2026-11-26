@@ -147,7 +147,6 @@ class OrgSpy:
 
 @pytest.fixture
 def issue(monkeypatch: pytest.MonkeyPatch) -> FakeIssue:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = FakeIssue()
     monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr(github, "post_json_once", fake.post_json_once)

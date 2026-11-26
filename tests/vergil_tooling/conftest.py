@@ -33,12 +33,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from vergil_tooling.lib import (
+    automation_identity,
     conan_token,
     github,
     host_pins,
     identity_mode,
     local_settings,
     tooling_release,
+    trusted_authors,
 )
 from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
@@ -61,8 +63,31 @@ def _hermetic_identity(
     monkeypatch.setattr(identity_mode, "_APP_KEY_FILE", str(absent / "app.pem"))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
-    # In an automation ops job this would make every resolution call GitHub.
-    monkeypatch.delenv("VRG_AUTOMATION_APP", raising=False)
+
+
+# Cleared for every test: the CI job's GitHub Actions environment, and the
+# trusted-authors variables an Actions job (or an automation ops job) carries.
+_ACTIONS_ENV_VARS = (
+    trusted_authors.GITHUB_ACTIONS_ENV,
+    trusted_authors.ACTIONS_ENV,
+    automation_identity.AUTOMATION_ENV,
+)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_actions_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test outside GitHub Actions unless it sets the variables itself.
+
+    Under ``GITHUB_ACTIONS=true`` the trust layer reports skipped items as
+    counts, not per-item lines, and reads the trusted authors from
+    ``$VRG_TRUSTED_AUTHORS``; with ``$VRG_AUTOMATION_APP`` set, every identity
+    resolution calls GitHub (#5087). The CI job sets ``GITHUB_ACTIONS``, so a
+    test that inherited it would pass on a developer box and fail in CI. A test
+    of the Actions behaviour sets the variables it needs with
+    ``monkeypatch.setenv``.
+    """
+    for name in _ACTIONS_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)

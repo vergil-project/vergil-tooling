@@ -44,7 +44,6 @@ class _Commits:
 @pytest.fixture(autouse=True)
 def commits(monkeypatch: pytest.MonkeyPatch) -> _Commits:
     """The layer's commit reads: each relay commit has a trusted author unless a test says."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     monkeypatch.setattr(github, "current_repo", lambda: _REPO)
     fake = _Commits()

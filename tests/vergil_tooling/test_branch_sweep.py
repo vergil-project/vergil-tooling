@@ -218,7 +218,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github, "read_json_paginated", gh.read_json_paginated)
     monkeypatch.setattr(github, "delete", gh.delete)
     monkeypatch.setattr(trust, "prs_for_branch", gh.prs_for_branch)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     return gh
 
 

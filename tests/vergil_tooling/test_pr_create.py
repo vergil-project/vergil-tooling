@@ -176,10 +176,9 @@ _FORK = trust.Skipped(
 
 
 def test_open_trusted_prs_reads_the_spec_repo_through_the_layer(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Only same-repo trusted PRs into the spec's base come back; a fork is reported."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     other_base = _open_pr(url="https://github.com/o/r/pull/23", number=23, base="main")
     spec = dataclasses.replace(_SPEC, repo="o/r")
     with (

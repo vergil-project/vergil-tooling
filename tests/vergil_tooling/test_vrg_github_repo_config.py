@@ -1646,10 +1646,9 @@ _WINDOW_ERROR = (
 
 @pytest.mark.parametrize("command", ["audit", "diff", "apply"])
 def test_version_window_error_in_audit_exits_two_on_one_line(
-    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    command: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A [ci].versions pin outside the window is one ERROR line and exit 2 (#3670)."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     config = _make_config()
     # Integration tests on: the desired CI-gates ruleset resolves the versions.
     config.ci.integration_tests = True
@@ -1675,11 +1674,10 @@ def test_version_window_error_in_audit_exits_two_on_one_line(
 
 
 def test_version_window_error_in_apply_exits_two_on_one_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The same failure raised while applying is reported the same way (#3670)."""
     command = "apply"
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
         patch(f"{_MODULE}._resolve_config", return_value=_make_config()),

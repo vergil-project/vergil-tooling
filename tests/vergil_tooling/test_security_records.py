@@ -487,7 +487,6 @@ class Issues:
         monkeypatch.setattr(github, "graphql", self.graphql)
         monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
         monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         monkeypatch.setattr(github, "list_org_repos", self.list_org_repos)
         monkeypatch.setattr(epics, "is_managed_repo", lambda _repo: True)
 
@@ -1407,7 +1406,6 @@ def _trusted_bodies(
     monkeypatch.setattr(github, "graphql", fake)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     monkeypatch.setattr(security_records, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     return fake
 
 
@@ -3236,7 +3234,6 @@ def test_records_pass_reports_an_untrusted_body_and_leaves_it(
     *,
     apply: bool,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     skip = trust.Skipped("org/tool", 12, "issue", "drive-by", "t", "body", "untrusted")
     issue_list = [
         SecurityIssue(C, False, (), "completed", skipped=skip),

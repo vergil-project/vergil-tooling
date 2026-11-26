@@ -474,11 +474,9 @@ _SPAM_TITLE = "feat: SPAM-MARKER-TEXT [here](https://example.invalid/a)"
 )
 def test_a_pr_the_layer_does_not_accept_is_an_untrusted_row(
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     node: dict[str, Any],
     field_cause: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     sha = _sha(1)
     commits = [_commit(sha, [_MAIN], "the commit subject")]
     result, _, _ = _gather(commits, {sha: _assoc(node)})
@@ -504,10 +502,7 @@ def test_untrusted_skips_are_counts_only_under_actions(
     assert capsys.readouterr().err == "skipped 1 untrusted item(s) (cross-repository: 1)\n"
 
 
-def test_an_untrusted_batch_pr_is_one_row_reported_once(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_an_untrusted_batch_pr_is_one_row_reported_once(capsys: pytest.CaptureFixture[str]) -> None:
     shas = [_sha(1), _sha(2)]
     nodes = {sha: _assoc(_pr(5, author=_OUTSIDER)) for sha in shas}
     result, _, _ = _gather(_linear(shas), nodes)
@@ -572,9 +567,8 @@ def test_pending_release_trusted_authors_failure_raises() -> None:
 
 
 def test_an_untrusted_feature_pr_adds_nothing_to_a_pinned_issue_list(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     s1 = _sha(1)
     commits = _linear([s1])
     fork = {**_feature_pr(1, 10), "isCrossRepository": True}
@@ -1091,9 +1085,8 @@ def test_issue_list_excludes_earlier_untrusted_edit(capsys: pytest.CaptureFixtur
 
 
 def test_issue_list_excludes_untrusted_or_deleted_author(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     s1, s2 = _sha(1), _sha(2)
     nodes = {
         s1: _assoc(_feature_pr(1, 10, author="mallory")),

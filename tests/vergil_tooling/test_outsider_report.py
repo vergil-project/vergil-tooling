@@ -205,7 +205,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGitHub]:
         yield
 
     monkeypatch.setattr(github, "target_org", target_org)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     yield backend
 
 

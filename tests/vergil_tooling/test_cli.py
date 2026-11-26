@@ -142,9 +142,8 @@ class TestCliMain:
         ids=["read-failure", "not-configured", "stop"],
     )
     def test_trust_error_is_a_clean_message(
-        self, exc: Exception, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, exc: Exception, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         assert _exit_message(exc, capsys) == f"{_PROG}: {exc}\n"
 
     def test_untrusted_stop_names_only_its_cause_under_actions(

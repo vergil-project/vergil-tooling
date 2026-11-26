@@ -684,7 +684,6 @@ _TITLE = "Fix failed dependency update for 2.1.243"
 
 def test_fix_task_by_outsider_not_adopted(monkeypatch, capsys) -> None:
     """An outsider's look-alike fix task is never adopted, and it is reported."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     rows = [_task(27, _TITLE, "update")]
     _BODIES[27] = None
     rows[0]["body"] = f"{_SPAM}\n\n## Failure: update\n"

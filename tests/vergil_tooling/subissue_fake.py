@@ -195,7 +195,6 @@ class FakeSubIssueGraph:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeSubIssueGraph:
         """Answer the ``github`` boundary and the trust layer's author list from this graph."""
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
         monkeypatch.setattr(github, "graphql", self.graphql)
         monkeypatch.setattr(github, "read_output", self.read_output)

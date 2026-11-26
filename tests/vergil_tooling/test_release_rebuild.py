@@ -342,9 +342,7 @@ def test_an_unexpected_answer_refuses(
 def test_a_fork_pr_on_the_release_branch_never_stands_in_for_it(
     facts: tuple[_Facts, dict[str, MagicMock]],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     found, _ = facts
     found.merged[f"release/{_OLD}"].insert(0, _pr("f" * 40, "g" * 40, 60, fork=True))
     assert _rebuild() == Rebuilt(issues=_OWN, main_commit=None, tag=f"v{_OLD}")
@@ -364,11 +362,9 @@ def test_a_fork_pr_on_the_release_branch_never_stands_in_for_it(
 def test_a_release_pr_the_layer_does_not_accept_is_not_merged(
     facts: tuple[_Facts, dict[str, MagicMock]],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     node: dict[str, Any],
     cause: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     found, mocks = facts
     found.merged[f"release/{_OLD}"] = [node]
     with pytest.raises(ReleaseError, match="nothing of it reached main"):
@@ -667,12 +663,10 @@ def test_breach_message_points_at_supersede() -> None:
 def test_a_closing_comment_the_layer_does_not_trust_does_not_count(
     facts: tuple[_Facts, dict[str, MagicMock]],
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     comment: dict[str, Any],
     cause: str,
 ) -> None:
     """Only the human's own, unedited-by-others closing comment names the superseded release."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     found, mocks = facts
     comment = {**comment, "body": f"{comment['body']}\n{trust_stubs.SPAM_TEXT}"}
     found.closed = [_prior_issue(comment)]

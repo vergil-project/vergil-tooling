@@ -19,12 +19,6 @@ PRIMARY = IssueRef("vergil-project", ".github", 1417)
 PRIMARY_KEY = ("vergil-project/.github", 1417)
 
 
-@pytest.fixture(autouse=True)
-def _no_actions(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The skip reports these tests check are the per-item lines, not Actions counts.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
 def _comment(actor: Any, body: str, *, editor: Any = None) -> dict[str, Any]:
     """An ``IssueComment`` node by *actor* (a GraphQL actor, ``None`` a deleted account)."""
     return trust_stubs.comment(1, body, actor, editor=editor)

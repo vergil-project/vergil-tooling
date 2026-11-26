@@ -308,13 +308,6 @@ def test_records_resume_posts_only_missing(fake: _FakeGitHub) -> None:
     assert (resumed.records_new, resumed.records_found) == (1, 1)
 
 
-@pytest.fixture
-def local(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Not under GitHub Actions, so the skip report lists each item, not counts."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
-@pytest.mark.usefixtures("local")
 def test_foreign_marker_ignored_with_warning(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -328,7 +321,6 @@ def test_foreign_marker_ignored_with_warning(
     assert "the task body" not in err
 
 
-@pytest.mark.usefixtures("local")
 def test_edited_by_agent_record_does_not_count(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -348,7 +340,6 @@ def test_record_last_editor_rule_kept(fake: _FakeGitHub) -> None:
     assert ctx.records_found == 1
 
 
-@pytest.mark.usefixtures("local")
 def test_record_from_user_named_like_app_or_outsider_does_not_count(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:

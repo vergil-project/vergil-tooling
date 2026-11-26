@@ -106,11 +106,8 @@ def test_check_pr_deleted_author_is_a_violation() -> None:
     assert [(v.login, v.action) for v in result.violations] == [("(deleted account)", "created")]
 
 
-def test_review_by_outsider_is_reported_not_a_violation(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_review_by_outsider_is_reported_not_a_violation(capsys: pytest.CaptureFixture[str]) -> None:
     """Anyone may review a public PR: an outsider's approval is reported, metadata only."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     reviews: list[dict[str, object]] = [
         {
             "id": 501,

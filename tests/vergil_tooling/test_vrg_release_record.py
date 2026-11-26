@@ -398,9 +398,8 @@ def test_check_two_versions_uses_newest_lists_other(
 
 
 def test_check_ignores_agent_record_with_warning(
-    origin: _Origin, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     merged = origin.commit("feat: the change (#7)")
     origin.tag("v2.1.2")
     origin.commit("more")
@@ -431,10 +430,9 @@ def test_check_ignores_agent_record_with_warning(
 
 
 def test_check_ignores_outsider_and_impostor_records(
-    origin: _Origin, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    origin: _Origin, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A record marker in an outsider's or a wrong-type account's comment is never read."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     impostor = {"__typename": "Bot", "login": _HUMAN}
     spam = f"{marker('x/y', '9.9.9')}\n{_record('2.1.2')}\nSPAM-MARKER-TEXT"
     fake = _FakeGitHub([_comment(spam, author="mallory"), _comment(_record("2.1.2"), impostor)])

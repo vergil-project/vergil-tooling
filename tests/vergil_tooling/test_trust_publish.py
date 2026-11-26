@@ -140,8 +140,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("VRG_TRUSTED_AUTHORS", raising=False)
 
 
 def _write_identities(tmp_path: Path) -> None:

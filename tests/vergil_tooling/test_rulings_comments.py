@@ -34,7 +34,6 @@ EDITED = trust_stubs.EDITED
 
 @pytest.fixture
 def items(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = trust_stubs.FakeItems(strict=True)
     monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fake)
     return fake
