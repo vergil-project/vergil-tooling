@@ -24,10 +24,17 @@ _URL = "https://github.com/org/repo/issues/123"
 
 
 @pytest.fixture(autouse=True)
-def label_gh() -> Iterator[MagicMock]:
-    """Stub the gh boundary under the real ensure_labels (#3373)."""
-    with patch("vergil_tooling.lib.labels.github.run") as mock_run:
-        yield mock_run
+def label_gh(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Stub the gh boundary under the real ensure_labels (#3373).
+
+    Set through ``monkeypatch``, as :func:`graph` re-sets it, so every change
+    to ``github.run`` is undone in reverse order and the real one comes back.
+    A ``patch`` here, undone before ``monkeypatch``, would leave ``monkeypatch``
+    restoring this stub for every later test in the process.
+    """
+    mock_run = MagicMock()
+    monkeypatch.setattr(github, "run", mock_run)
+    return mock_run
 
 
 @pytest.fixture(autouse=True)
