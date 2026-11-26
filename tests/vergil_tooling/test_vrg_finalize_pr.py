@@ -3349,6 +3349,42 @@ def test_every_removal_is_logged(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert _run_log_text(tmp_path).count(line) == 1
 
 
+def test_release_guard_reads_the_protection_once_per_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two release worktrees, one read: the protection is judged once per run."""
+    guard = ReleaseGuard()
+    with (
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".worktrees.release_protection", return_value=_RELEASE_OPEN) as read,
+    ):
+        first = guard.keeps("release/2.1.9", tmp_path / ".worktrees" / "release-2.1.9", tmp_path)
+        second = guard.keeps("release/post-2.1.9", Path("/elsewhere/post"), tmp_path)
+    assert first is True
+    assert second is True
+    read.assert_called_once_with("o/r")
+    out = capsys.readouterr().out
+    assert "kept /elsewhere/post: a release is running" in out
+
+
+def test_release_guard_treats_an_unresolvable_repo_as_protected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A repo that cannot be named on GitHub is a failed read: the worktree is kept."""
+    guard = ReleaseGuard()
+    failure = subprocess.CalledProcessError(1, ("gh", "repo", "view"))
+    with (
+        patch(_MOD + ".github.current_repo", side_effect=failure),
+        patch(_MOD + ".worktrees.release_protection") as read,
+    ):
+        kept = guard.keeps("release/2.1.9", tmp_path / ".worktrees" / "release-2.1.9", tmp_path)
+    assert kept is True
+    read.assert_not_called()
+    assert guard.error is not None
+    assert guard.error.startswith("could not resolve this repository on GitHub")
+    assert "kept .worktrees/release-2.1.9" in capsys.readouterr().err
+
+
 def test_clean_dirty_keeps_release_worktree_while_release_open(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
