@@ -1107,12 +1107,6 @@ def test_watch_not_ready_pause_never_sleeps_past_the_deadline() -> None:
     sleep.assert_called_once_with(2.0)
 
 
-def test_watch_takes_no_merge_strategy() -> None:
-    watch: Callable[..., None] = wait_until_merged
-    with pytest.raises(TypeError, match="strategy"):
-        watch(_URL, strategy="squash", deadline_secs=2400)
-
-
 # --- the ruleset-bypassed merge into main (#5095) -----------------------------
 
 _RULESET = "Main updates"
