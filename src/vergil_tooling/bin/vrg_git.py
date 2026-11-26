@@ -165,6 +165,11 @@ _CONFIG_GET_FLAGS: frozenset[str] = frozenset(
     {"--all", "--regexp", "--fixed-value", "--show-names"}
 )
 _CONFIG_GET_FLAG_PREFIXES: tuple[str, ...] = ("--value=", "--url=", "--default=")
+# Every git config subcommand name. In the action-flag form, a first
+# positional that names one is refused, whatever flags surround it.
+_CONFIG_SUBCOMMANDS: frozenset[str] = frozenset(
+    {"list", "get", "set", "unset", "rename-section", "remove-section", "edit"}
+)
 _CONFIG_READ_USAGE = (
     "config is denied except its read forms: config [<scope>] "
     "--get|--get-all|--get-regexp <name> [<value-pattern>], "
@@ -453,6 +458,8 @@ def _check_config_read(args: list[str]) -> str | None:
         if f not in _CONFIG_READ_FLAGS and not f.startswith(_CONFIG_READ_FLAG_PREFIXES)
     ]
     if len(actions) != 1 or bad_flags:
+        return _CONFIG_READ_USAGE
+    if positionals and positionals[0] in _CONFIG_SUBCOMMANDS:
         return _CONFIG_READ_USAGE
     low, high = _CONFIG_READ_ACTIONS[actions[0]]
     if not low <= len(positionals) <= high:
