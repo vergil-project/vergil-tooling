@@ -514,9 +514,7 @@ def _fetch_with_workflows_403(message: str) -> FetchResult:
 def test_fetch_actual_state_unreadable_workflows_is_not_checked() -> None:
     """A permission-gap 403 on the workflow listing is not checked, never clean."""
     result = _fetch_with_workflows_403("Resource not accessible by integration")
-    assert NotChecked(field="inactive_workflows", permission="actions=read") in (
-        result.not_checked
-    )
+    assert NotChecked(field="inactive_workflows", permission="actions=read") in (result.not_checked)
     assert result.state.inactive_workflows == []
 
 

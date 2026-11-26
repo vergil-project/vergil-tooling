@@ -132,7 +132,7 @@ to date.
 | Exit | Meaning |
 |---|---|
 | 0 | The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged |
-| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or a workflow [disabled for inactivity](#github-checks-workflows-disabled-for-inactivity), which must be re-enabled by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
+| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or a workflow GitHub disabled for inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
 | 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
 
 ## The `apply` command (deprecated)

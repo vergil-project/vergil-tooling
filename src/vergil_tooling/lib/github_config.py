@@ -2375,9 +2375,7 @@ def _diff_rolling_tag_branches(
             )
 
 
-def _diff_inactive_workflows(
-    desired: list[str], actual: list[str], items: list[DiffItem]
-) -> None:
+def _diff_inactive_workflows(desired: list[str], actual: list[str], items: list[DiffItem]) -> None:
     """Report each workflow disabled for inactivity as its own drift item.
 
     The item is ``inactive_workflows.<path>``, expected ``active``. ``apply``
