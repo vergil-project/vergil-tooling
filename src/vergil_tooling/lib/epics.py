@@ -2576,9 +2576,9 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     if not closed_at:
         return
     # A child in an archived repo is read-only, so GitHub refuses to move it
-    # (#5212): a retire archives the repo while the rollup runs its closes
-    # started are still queued. Leave it in place, before any archive is
-    # created for it.
+    # (#5212): a retire archives the repo while the rollup runs that its issue
+    # closes started are still queued. Leave the child in place, before any
+    # archive is created for it.
     if github.repo_is_archived(task.owner, task.repo):
         _report_left_in_archived_repo(task)
         return
