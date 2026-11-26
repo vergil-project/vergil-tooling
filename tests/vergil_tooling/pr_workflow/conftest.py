@@ -23,3 +23,14 @@ def _no_planning_close_preview() -> Iterator[None]:
     """
     with patch("vergil_tooling.bin.vrg_pr_workflow._planning_close_preview", return_value=None):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_open_pr_on_the_branch() -> Iterator[None]:
+    """Give report-ready's push a branch with no open PR into ``develop``.
+
+    The lookup reads GitHub; its refusal has its own tests in
+    ``tests/vergil_tooling/test_vrg_pr_workflow.py``.
+    """
+    with patch("vergil_tooling.bin.vrg_pr_workflow.pr_path.open_develop_pr_url", return_value=None):
+        yield

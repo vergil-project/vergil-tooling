@@ -931,3 +931,73 @@ def test_push_mode_gates_that_cannot_run_raise(
     with pytest.raises(PRPathError, match="the gates cannot be re-checked"):
         push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
     assert push.calls == []
+
+
+# --- the open-PR lookup behind the tooling's other pushes -------------------------
+
+
+def test_open_develop_pr_url_names_the_open_pr(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(clone)
+
+    assert pr_path.open_develop_pr_url(BRANCH) == PR
+
+
+@pytest.mark.parametrize(("name", "value"), [("base", "main"), ("state", "CLOSED")])
+def test_open_develop_pr_url_none_without_an_open_develop_pr(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    setattr(fake, name, value)
+    monkeypatch.chdir(clone)
+
+    assert pr_path.open_develop_pr_url(BRANCH) is None
+
+
+def test_open_develop_pr_url_lookup_failure_raises(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise trust.TrustReadError("prs_for_branch o/r feature/7-fix", "HTTP 502")
+
+    monkeypatch.setattr(trust, "prs_for_branch", fail)
+    monkeypatch.chdir(clone)
+
+    with pytest.raises(PRPathError, match=f"reading the open PRs on {BRANCH} failed: .*502"):
+        pr_path.open_develop_pr_url(BRANCH)
+
+
+def test_open_develop_pr_url_several_open_prs_raise(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def two(*_args: object, **_kwargs: object) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        refs = [
+            trust.PRRef(
+                number=n,
+                url=f"https://github.com/o/r/pull/{n}",
+                title="t",
+                head=BRANCH,
+                head_oid=HEAD,
+                base="develop",
+                author_role=trust.Role.AGENTS,
+                state="OPEN",
+            )
+            for n in (7, 8)
+        ]
+        return refs, []
+
+    monkeypatch.setattr(trust, "prs_for_branch", two)
+    monkeypatch.chdir(clone)
+
+    with pytest.raises(PRPathError, match=r"has 2 open PRs into develop \(#7, #8\)"):
+        pr_path.open_develop_pr_url(BRANCH)
+
+
+def test_open_develop_pr_url_outside_a_github_clone_raises(
+    fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = _repo_with_origin(tmp_path / "local", str(tmp_path / "bare.git"))
+    monkeypatch.chdir(local)
+
+    with pytest.raises(PRPathError, match="is not a GitHub repository"):
+        pr_path.open_develop_pr_url(BRANCH)

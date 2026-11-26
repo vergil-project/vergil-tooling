@@ -55,6 +55,9 @@ goes through it. It runs the same admission rule, the provenance check and
 the gates against the new head **before** pushing it
 (:func:`finalize_watch.gates_before_push`), and never pushes a head that
 fails them. It never touches auto-merge, so the PR stays armed throughout.
+:func:`open_develop_pr_url` is the lookup the tooling's other pushes make
+first: ``vrg-reword`` routes a push to an open PR's branch through
+:func:`push_to_open_pr`, and report-ready refuses one.
 """
 
 from __future__ import annotations
@@ -365,6 +368,26 @@ def _open_develop_pr(repo: str, branch: str) -> trust.PRRef | None | str:
         numbers = ", ".join(f"#{pr.number}" for pr in found)
         return f"{branch} has {len(found)} open PRs into {_DEVELOP} ({numbers})"
     return found[0] if found else None
+
+
+def open_develop_pr_url(branch: str) -> str | None:
+    """The URL of *branch*'s open PR into ``develop``, or ``None`` when it has none.
+
+    Spec §5.4: the tooling's own pushes (``vrg-reword``, report-ready) ask
+    this before they push, so a push to an open PR's branch goes through
+    :func:`push_to_open_pr` or is refused. The branch is looked up in the
+    current clone's ``origin``, as :func:`push_to_open_pr` looks it up. It
+    fails closed: when it cannot be told (the clone or its origin cannot be
+    read, the lookup fails, or the branch has several open PRs into
+    ``develop``) it raises :class:`PRPathError`, naming why, and the caller
+    refuses the push.
+    """
+    _clone, repo = _here()
+    found = _open_develop_pr(repo, branch)
+    if isinstance(found, str):
+        msg = f"cannot tell the one open PR into {_DEVELOP} on {branch}: {found}"
+        raise PRPathError(msg)
+    return None if found is None else found.url
 
 
 def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
