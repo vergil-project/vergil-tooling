@@ -164,7 +164,7 @@ def _deliver_main(ctx: ReleaseContext, run_id: str, names: Sequence[str]) -> lis
     if not still:
         return []
     print(f"Re-running the failed jobs of CD run {run_id} on main: {', '.join(still)}")
-    rerun_and_watch(ctx, run_id, rerun_args=("--failed",), check_status=False, phase=PHASE)
+    rerun_and_watch(ctx, run_id, rerun_args=("--failed",), phase=PHASE)
     jobs = _settled_run_jobs(ctx, run_id, (is_release_job,))
     # confirm-main's hard gate: the re-run must leave the release job succeeded.
     _verify_release_job(jobs)
@@ -187,7 +187,7 @@ def _deliver_develop(ctx: ReleaseContext, run_id: str, names: Sequence[str]) -> 
     for name in [name for name in still if name not in later]:
         job_id = _job_id(ctx, run_id, name)
         print(f"Re-running {name} in CD run {run_id} on develop...")
-        rerun_and_watch(ctx, run_id, rerun_args=("--job", job_id), check_status=False, phase=PHASE)
+        rerun_and_watch(ctx, run_id, rerun_args=("--job", job_id), phase=PHASE)
     return [
         name for name in still if name not in later and name in _still_failed(ctx, run_id, [name])
     ]

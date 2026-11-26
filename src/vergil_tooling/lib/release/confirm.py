@@ -1,10 +1,13 @@
 """Phase 3/5: Verify CD workflow and publish artifacts.
 
-Every read of the CD run (its URL, the watch, its jobs) and of the GitHub
-Release goes through :func:`retry.retry_known_resource`: the run ID was just
-returned by ``gh run list`` and the release was just published by the CD
-release job, so GitHub has established they exist and a 404 only means "not
-readable yet" (#3137).
+Every read of the CD run (its URL, its jobs) and of the GitHub Release goes
+through :func:`retry.retry_known_resource`: the run ID was just returned by
+``gh run list`` and the release was just published by the CD release job, so
+GitHub has established they exist and a 404 only means "not readable yet"
+(#3137). The wait for a run to complete is
+:func:`~vergil_tooling.lib.release.run_wait.wait_run_completed`, which reads
+the run until its attempt completes and never takes ``gh run watch``'s exit
+status as the run's result (#5174).
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from vergil_tooling.lib.cd_runs import (
 )
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.state import FailedJob
-from vergil_tooling.lib.release.subprocess import watch_workflow
+from vergil_tooling.lib.release.run_wait import wait_run_completed
 from vergil_tooling.lib.release.tracking import write_state
 
 if TYPE_CHECKING:
@@ -185,7 +188,7 @@ def _redispatch_main_cd(
     run_id = _poll_for_dispatched_run(
         ctx, head_sha, superseded_id=superseded_id, dispatched_at=dispatched_at
     )
-    run_url = _watch_run(ctx, run_id)
+    run_url = _watch_run(ctx, run_id, phase="confirm-main")
     return run_id, run_url
 
 
@@ -264,8 +267,8 @@ def judge_publish_jobs(
 
     A completed non-release job that did not succeed has failed
     (:func:`cd_runs.failed_job_names`). A job still non-terminal after the
-    settle budget has no conclusion to judge (#3352). ``gh run watch``
-    already saw the run finish, so when the run itself concluded ``success``
+    settle budget has no conclusion to judge (#3352). The wait already saw
+    the run complete, so when the run itself concluded ``success``
     GitHub is asserting every job succeeded or skipped: the job's record is
     stale, returned second and never as a failure. Under any other run
     conclusion it may genuinely have failed, so it is returned as failed.
@@ -370,18 +373,18 @@ def _watch_cd(
     head_sha = _cd_head_sha(ctx, branch)
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
-    return run_id, _watch_run(ctx, run_id)
+    return run_id, _watch_run(ctx, run_id, phase=f"confirm-{branch}")
 
 
-def _watch_run(ctx: ReleaseContext, run_id: str, *, check_status: bool = False) -> str:
-    """Print run *run_id*'s URL, watch it to completion, and return the URL.
+def _watch_run(ctx: ReleaseContext, run_id: str, *, phase: str, attempt: int | None = None) -> str:
+    """Print run *run_id*'s URL, wait for it to complete, and return the URL.
 
-    With *check_status* the watch is ``gh run watch --exit-status``, so a run
-    that did not succeed raises ``CalledProcessError``. Without it, the caller
-    judges the run's jobs itself.
+    The wait reads the run until *attempt* (with none, its latest attempt)
+    is ``completed`` (:func:`wait_run_completed`); ``gh run watch``'s exit
+    status is never taken as the run's result (#5174). The caller judges the
+    run's jobs itself. A persistent read failure, or an attempt still going
+    at the deadline, raises :class:`ReleaseError` in *phase*, naming which.
     """
-    resource = _run_resource(run_id)
-
     run_url = retry.retry_known_resource(
         lambda: github.read_output(
             "run",
@@ -394,16 +397,13 @@ def _watch_run(ctx: ReleaseContext, run_id: str, *, check_status: bool = False) 
             "--jq",
             ".url",
         ),
-        resource=resource,
+        resource=_run_resource(run_id),
     )
     print(f"  Workflow run: {run_url}")
 
-    retry.retry_known_resource(
-        lambda: watch_workflow(ctx.repo, run_id, check_status=check_status),
-        resource=resource,
-    )
+    view = wait_run_completed(ctx.repo, run_id, phase=phase, attempt=attempt)
 
-    print(f"  CD workflow completed: {run_url}")
+    print(f"  CD workflow completed (attempt {view.attempt}, {view.conclusion}): {run_url}")
     return run_url
 
 
@@ -427,22 +427,21 @@ def rerun_and_watch(
     run_id: str,
     *,
     rerun_args: Sequence[str] = (),
-    check_status: bool,
     phase: str,
 ) -> str:
-    """``gh run rerun <run_id> <rerun_args>``, then watch the new attempt; return its URL.
+    """``gh run rerun <run_id> <rerun_args>``, then wait for the new attempt; return its URL.
 
     The attempt number is read before the re-run and polled until it moves
-    on, so the watch never returns on the attempt that already finished. An
-    attempt that never registers fails loudly. With *check_status* the watch
-    is ``--exit-status`` and a run that did not succeed raises
-    ``CalledProcessError``; without it the caller judges the jobs.
+    on, and the wait is for that new attempt to complete, so it never
+    returns on the attempt that already finished. An attempt that never
+    registers fails loudly. The caller judges the jobs.
     """
     before = _run_attempt(ctx, run_id)
     github.run("run", "rerun", run_id, "--repo", ctx.repo, *rerun_args)
     for _ in range(_CD_POLL_ATTEMPTS):
-        if _run_attempt(ctx, run_id) > before:
-            return _watch_run(ctx, run_id, check_status=check_status)
+        current = _run_attempt(ctx, run_id)
+        if current > before:
+            return _watch_run(ctx, run_id, phase=phase, attempt=current)
         time.sleep(_CD_POLL_INTERVAL)
     command = " ".join(("gh", "run", "rerun", run_id, *rerun_args))
     raise ReleaseError(
@@ -677,7 +676,7 @@ def _recover_failed_release_run(ctx: ReleaseContext) -> None:
         )
     _check_release_ci(ctx)
     print(f"Re-running the failed CD release run {run_id} on main...")
-    rerun_and_watch(ctx, run_id, check_status=False, phase="confirm-main")
+    rerun_and_watch(ctx, run_id, phase="confirm-main")
 
 
 def _check_release_ci(ctx: ReleaseContext) -> ci_evidence.PassedAttempt:
