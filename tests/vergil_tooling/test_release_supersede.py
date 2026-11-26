@@ -580,7 +580,9 @@ def _close(tmp_path: Path, *, untagged: bool, number: int | None = 40) -> dict[s
 
 def test_supersede_untagged_removes_worktree_and_branch(tmp_path: Path) -> None:
     mocks = _close(tmp_path, untagged=True)
-    mocks["remove"].assert_called_once_with(mocks["worktree"])
+    mocks["remove"].assert_called_once_with(
+        mocks["worktree"], branch=f"release/{_OLD}", reason="superseded by a new release"
+    )
     git_calls = [c.args for c in mocks["git"].call_args_list]
     branch = f"release/{_OLD}"
     assert git_calls == [

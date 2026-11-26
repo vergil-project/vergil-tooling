@@ -606,31 +606,38 @@ def _settle(
     purpose = "vrg-finalize-pr settle" if merged_prs else "vrg-finalize-pr --cleanup-only"
     ctx = FinalizeContext(args=args, root=root, merged_prs=merged_prs, lock_purpose=purpose)
     results: list[StageResult] = []
-    with contextlib.ExitStack() as log_stack, ctx.lock_stack:
+    with contextlib.ExitStack() as log_stack:
         if log is None:
             log = _run_log(root)
             log_stack.callback(log.close)
-        rc = progress.run_pipeline(
-            ctx,
-            build_stages(close_refs=bool(merged_prs)),
-            command=_COMMAND,
-            label=_COMMAND,
-            args=args,
-            repo_root=root,
-            results_sink=results,
-            log=log,
-            # A failed settle exits 1, 4 or 130, depending on which stage
-            # failed (see _settle_exit). One status given before any stage
-            # runs cannot say which, so the summary names none (#4712).
-            failure_exit=None,
-        )
+        with ctx.lock_stack:
+            rc = progress.run_pipeline(
+                ctx,
+                build_stages(close_refs=bool(merged_prs)),
+                command=_COMMAND,
+                label=_COMMAND,
+                args=args,
+                repo_root=root,
+                results_sink=results,
+                log=log,
+                # A failed settle exits 1, 4 or 130, depending on which stage
+                # failed (see _settle_exit). One status given before any stage
+                # runs cannot say which, so the summary names none (#4712).
+                failure_exit=None,
+            )
 
-    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
-    # worktrees the sweep could not remove (issue #2348). Runs after the
-    # pipeline has torn down its live display so the report (and the
-    # confirmation prompt) reaches the human on real stdio, and regardless of
-    # rc so a stuck worktree is never hidden behind a failed later stage.
-    _handle_stuck_worktrees(ctx)
+        # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
+        # worktrees the sweep could not remove (issue #2348). Runs after the
+        # pipeline has torn down its live display so the report (and the
+        # confirmation prompt) reaches the human on real stdio, and regardless of
+        # rc so a stuck worktree is never hidden behind a failed later stage.
+        # The run log is still attached, so a removal here is logged (#5187).
+        with progress.attach_log(log):
+            _handle_stuck_worktrees(ctx)
+    if ctx.release_guard.error is not None and rc == EXIT_OK:
+        # The clear could not tell whether a release is running: it kept
+        # every release/* worktree, and the run fails (#5187).
+        rc = EXIT_ERROR
     return SettleOutcome(ctx=ctx, results=tuple(results), rc=rc)
 
 
@@ -754,6 +761,49 @@ class CDUnreadableError(FinalizeError):
 
 
 @dataclass
+class ReleaseGuard:
+    """Keeps every ``release/*`` worktree while a release is running (#5187).
+
+    Spec §5.8 of epic vergil-project/.github#1664: cleanup that judges what
+    is removable removes no ``release/*`` worktree while an open, trusted
+    release tracking issue exists. The protection is read once per run, and
+    only when a ``release/*`` worktree is up for removal. A read that fails
+    counts as protected: the error is printed and kept in ``error``, and the
+    run exits non-zero.
+    """
+
+    protection: worktrees.ReleaseProtection | None = None
+    error: str | None = None
+
+    def keeps(self, branch: str, wt: Path, root: Path) -> bool:
+        """Whether worktree *wt* of *branch* must be kept; says why when it is."""
+        if not branch.startswith(worktrees.RELEASE_BRANCH_PREFIX):
+            return False
+        shown = wt.relative_to(root) if wt.is_relative_to(root) else wt
+        if self.protection is None and self.error is None:
+            self._read()
+        if self.error is not None:
+            print(
+                f"  ERROR: kept {shown}: could not tell whether a release is running "
+                f"({self.error})",
+                file=sys.stderr,
+            )
+            return True
+        if self.protection is not None and self.protection.active:
+            print(f"  kept {shown}: a release is running ({self.protection.reason})")
+            return True
+        return False
+
+    def _read(self) -> None:
+        try:
+            self.protection = worktrees.release_protection(github.current_repo())
+        except worktrees.ProtectionReadError as exc:
+            self.error = str(exc)
+        except worktrees.PROTECTION_READ_ERRORS as exc:
+            self.error = f"could not resolve this repository on GitHub: {error_text(exc)}"
+
+
+@dataclass
 class FinalizeContext:
     """State threaded through the settle phase's stages."""
 
@@ -790,6 +840,9 @@ class FinalizeContext:
     # after the pipeline; cd-check closes it first, so the lock never covers
     # a wait on CD (spec §6.4).
     lock_stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
+    # Keeps every release/* worktree while a release is running (#5187), read
+    # once per run; a failed read is in its error and fails the run.
+    release_guard: ReleaseGuard = field(default_factory=ReleaseGuard)
 
 
 def _run(args: list[str], *, dry_run: bool) -> None:
@@ -928,8 +981,14 @@ def _prune_orphan_branch_images(*, dry_run: bool) -> None:
     _warn_image_failures(failures)
 
 
-def _delete_branch_and_worktree(
-    branch: str, root: Path, *, dry_run: bool, force: bool = False
+def _delete_branch_and_worktree(  # noqa: PLR0913 - the branch, its repo and how to remove it
+    branch: str,
+    root: Path,
+    *,
+    dry_run: bool,
+    reason: str,
+    guard: ReleaseGuard,
+    force: bool = False,
 ) -> bool:
     """Remove *branch* and its canonical worktree; True if the branch was deleted.
 
@@ -957,15 +1016,23 @@ def _delete_branch_and_worktree(
     must have already vetted that the dirt is untracked-only and the PR
     merged/closed — the default (``force=False``) still refuses any dirty
     worktree, so the standing guards are unweakened.
+
+    *guard* keeps a ``release/*`` worktree, and its branch, while a release
+    is running (#5187). Every worktree removal is logged with *reason*, the
+    reason it was judged removable (``worktrees.log_removal``).
     """
     wt = worktrees.worktree_for_branch(branch, root)
     if wt is not None:
+        if guard.keeps(branch, wt, root):
+            return False
         if not force and _worktree_is_dirty(wt):
             print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")
             return False
         remove_cmd = ["worktree", "remove", *(["--force"] if force else []), str(wt)]
         print(f"  Removing worktree: {wt}")
         _run(remove_cmd, dry_run=dry_run)
+        if not dry_run:
+            worktrees.log_removal(wt, branch, reason)
     print(f"  Deleting merged branch: {branch}")
     _run(["branch", "-D", branch], dry_run=dry_run)
     if not dry_run:
@@ -1009,7 +1076,12 @@ _CLEARABLE_STATES = (worktrees.WorktreeState.MERGED, worktrees.WorktreeState.CLO
 
 
 def _clean_dirty_worktrees(
-    stuck: list[worktrees.WorktreeStatus], root: Path, *, dry_run: bool, assume_yes: bool
+    stuck: list[worktrees.WorktreeStatus],
+    root: Path,
+    *,
+    dry_run: bool,
+    assume_yes: bool,
+    guard: ReleaseGuard,
 ) -> list[worktrees.WorktreeStatus]:
     """Guarded opt-in clear of untracked-only dirt (issue #2348).
 
@@ -1037,6 +1109,9 @@ def _clean_dirty_worktrees(
             )
             remaining.append(status)
             continue
+        if guard.keeps(branch, status.worktree.path, root):
+            remaining.append(status)
+            continue
         porcelain = _worktree_porcelain(status.worktree.path)
         if not _dirt_is_untracked_only(porcelain):
             print(
@@ -1060,7 +1135,14 @@ def _clean_dirty_worktrees(
             print(f"  --clean-dirty: left {branch} in place.")
             remaining.append(status)
             continue
-        _delete_branch_and_worktree(branch, root, dry_run=dry_run, force=True)
+        _delete_branch_and_worktree(
+            branch,
+            root,
+            dry_run=dry_run,
+            reason=f"PR {status.state.value}, its dirt untracked only (--clean-dirty)",
+            guard=guard,
+            force=True,
+        )
     return remaining
 
 
@@ -1096,7 +1178,11 @@ def _handle_stuck_worktrees(ctx: FinalizeContext) -> None:
         return
     if ctx.args.clean_dirty:
         stuck = _clean_dirty_worktrees(
-            stuck, ctx.root, dry_run=ctx.args.dry_run, assume_yes=ctx.args.yes
+            stuck,
+            ctx.root,
+            dry_run=ctx.args.dry_run,
+            assume_yes=ctx.args.yes,
+            guard=ctx.release_guard,
         )
     _report_stuck_worktrees(stuck, clean_dirty=ctx.args.clean_dirty)
 
@@ -1673,7 +1759,9 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
             continue
         if git.read_output("branch", "--list", branch):
             print(f"Cleaning up merged PR branch {branch}...")
-            if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+            if _delete_branch_and_worktree(
+                branch, root, dry_run=args.dry_run, reason="PR merged", guard=ctx.release_guard
+            ):
                 deleted.append(branch)
         else:
             print(f"  Merged PR branch {branch} has no local branch — skipping.")
@@ -1706,7 +1794,13 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
                 ctx.stuck.append(status)
             print(f"  Skipping {branch}: {status.state.value} (not removable)")
             continue
-        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+        if _delete_branch_and_worktree(
+            branch,
+            root,
+            dry_run=args.dry_run,
+            reason=f"PR {status.state.value}",
+            guard=ctx.release_guard,
+        ):
             deleted.append(branch)
 
     # Ancestry arm. Catches branches with no canonical worktree (worktree
@@ -1737,7 +1831,13 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         if worktrees.closed_pr_for_branch(branch) is None:
             print(f"  Skipping {branch}: no closed or merged PR for this branch")
             continue
-        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+        if _delete_branch_and_worktree(
+            branch,
+            root,
+            dry_run=args.dry_run,
+            reason="its tip is merged and its PR is closed or merged",
+            guard=ctx.release_guard,
+        ):
             deleted.append(branch)
 
     print("Checking for orphaned pr-workflow relay refs...")
@@ -1767,6 +1867,15 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
                 "clean up these files before starting the next issue"
             )
             raise FinalizeError(msg)
+
+    # A failed release-protection read kept every release/* worktree; it
+    # still fails the run, once the rest of the cleanup is done (#5187).
+    if ctx.release_guard.error is not None:
+        msg = (
+            f"release worktrees kept: could not tell whether a release is running "
+            f"({ctx.release_guard.error})"
+        )
+        raise FinalizeError(msg)
 
     # Replaces the old end-of-main summary block: the framework owns the
     # run footer, so the branch/deleted/pruned details live here where

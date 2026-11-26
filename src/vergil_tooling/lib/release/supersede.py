@@ -292,7 +292,7 @@ def remove_release_branch(repo_root: Path, branch: str, *, phase: str) -> None:
     if path.exists():
         print(f"Removing the superseded release worktree {path}.")
         try:
-            remove_worktree(path)
+            remove_worktree(path, branch=branch, reason="superseded by a new release")
         except subprocess.CalledProcessError as exc:
             raise ReleaseError(
                 phase=phase,
