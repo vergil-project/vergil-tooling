@@ -22,8 +22,32 @@ AUTHORS = TrustedAuthors(
 )
 _AT = "2026-11-22T00:00:00Z"
 _SPAM = "SPAM-MARKER-TEXT see https://example.invalid/x"
-# The ``gh pr view --json author`` answer for a PR the human opened.
-_ALICE_VIEW = json.dumps({"author": {"login": "alice", "is_bot": False}})
+# The fields ``check_pr`` reads with ``gh pr view``: the author, and what
+# ``trust.is_same_repo`` needs to tell a same-repo PR from a fork's.
+_VIEW_JSON = "author,isCrossRepository,headRepositoryOwner,headRepository"
+
+
+def _view(author: dict[str, object] | None, *, repo: str = "o/r", cross: bool = False) -> str:
+    """The ``gh pr view --json`` answer for a PR of *repo* that *author* opened.
+
+    A same-repo PR's head is *repo* itself; a fork PR's (*cross*) is a fork's.
+    """
+    owner, name = repo.split("/")
+    return json.dumps(
+        {
+            "author": author,
+            "isCrossRepository": cross,
+            "headRepositoryOwner": {"login": "forker" if cross else owner},
+            "headRepository": {"name": name},
+        }
+    )
+
+
+# The view of a same-repo PR the human opened.
+_ALICE_VIEW = _view({"login": "alice", "is_bot": False})
+# Every pure ``evaluate`` call that judges a PR off the one PR path passes
+# ``same_repo=False, branch_trusted=False``, as every call meant before the
+# path's relaxation (spec §5.1).
 
 
 @pytest.fixture(autouse=True)
@@ -75,17 +99,19 @@ def test_provenance_stranger_is_untrusted() -> None:
     "action", ["created", "edited", "closed", "reopened", "merged", "auto_merge_enabled"]
 )
 def test_evaluate_untrusted_forbidden_actions(action: str) -> None:
-    result = pr_provenance.evaluate([Action("stranger", Role.UNTRUSTED, action)])
+    result = pr_provenance.evaluate(
+        [Action("stranger", Role.UNTRUSTED, action)], same_repo=False, branch_trusted=False
+    )
     assert [v.action for v in result.violations] == [action]
 
 
 def test_evaluate_automation_is_never_forbidden() -> None:
     actions = [Action("o-automation", Role.AUTOMATION, a) for a in ("created", "merged")]
-    assert pr_provenance.evaluate(actions).ok
+    assert pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False).ok
 
 
 def test_check_pr_stranger_author_is_a_violation() -> None:
-    view = json.dumps({"author": {"login": "stranger", "is_bot": False}})
+    view = _view({"login": "stranger", "is_bot": False})
     with patch(
         "vergil_tooling.lib.pr_provenance.github.read_output",
         side_effect=_paged_fake([[]], [[]], [], author_view=view),
@@ -97,7 +123,7 @@ def test_check_pr_stranger_author_is_a_violation() -> None:
 
 
 def test_check_pr_deleted_author_is_a_violation() -> None:
-    view = json.dumps({"author": None})
+    view = _view(None)
     with patch(
         "vergil_tooling.lib.pr_provenance.github.read_output",
         side_effect=_paged_fake([[]], [[]], [], author_view=view),
@@ -135,7 +161,7 @@ def test_review_by_outsider_is_reported_not_a_violation(capsys: pytest.CaptureFi
 
 def test_evaluate_human_actions_ignored() -> None:
     actions = [Action("alice", Role.HUMAN, "created"), Action("alice", Role.HUMAN, "merged")]
-    result = pr_provenance.evaluate(actions)
+    result = pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)
     assert result.ok
     assert not result.violations
 
@@ -143,7 +169,7 @@ def test_evaluate_human_actions_ignored() -> None:
 def test_evaluate_audit_approval_is_allowed() -> None:
     # Two outcomes only (#4695): the audit identity's approval is allowed.
     actions = [Action("a-vergil-audit", Role.AUDIT, "approved")]
-    result = pr_provenance.evaluate(actions)
+    result = pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)
     assert result.ok
     assert not result.violations
 
@@ -153,20 +179,22 @@ def test_evaluate_audit_approval_is_allowed() -> None:
 )
 def test_evaluate_audit_forbidden_actions_are_kept(action: str) -> None:
     # The audit identity is unused, but its forbidden actions stay enforced.
-    result = pr_provenance.evaluate([Action("a-vergil-audit", Role.AUDIT, action)])
+    result = pr_provenance.evaluate(
+        [Action("a-vergil-audit", Role.AUDIT, action)], same_repo=False, branch_trusted=False
+    )
     assert [v.action for v in result.violations] == [action]
 
 
 def test_evaluate_audit_close_is_violation() -> None:
     actions = [Action("a-vergil-audit", Role.AUDIT, "closed")]
-    result = pr_provenance.evaluate(actions)
+    result = pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)
     assert not result.ok
     assert len(result.violations) == 1
 
 
 def test_evaluate_user_approval_is_violation() -> None:
     actions = [Action("a-vergil-user", Role.USER, "approved")]
-    result = pr_provenance.evaluate(actions)
+    result = pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)
     assert not result.ok
     assert len(result.violations) == 1
 
@@ -174,7 +202,7 @@ def test_evaluate_user_approval_is_violation() -> None:
 def test_evaluate_agent_neutral_action_ignored() -> None:
     # An agent action its role does not forbid is allowed.
     actions = [Action("a-vergil-user", Role.USER, "commented")]
-    result = pr_provenance.evaluate(actions)
+    result = pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)
     assert result.ok
     assert not result.violations
 
@@ -201,7 +229,7 @@ def test_check_pr_collects_reviews_and_skips_unmapped() -> None:
             return timeline
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(7)
-        if args[:2] == ("pr", "view") and "author" in args:
+        if args[:2] == ("pr", "view") and _VIEW_JSON in args:
             return _ALICE_VIEW
         raise AssertionError(f"unexpected call: {args}")
 
@@ -231,7 +259,7 @@ def test_check_pr_flags_audit_close() -> None:
             return timeline
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(42)
-        if args[:2] == ("pr", "view") and "author" in args:
+        if args[:2] == ("pr", "view") and _VIEW_JSON in args:
             return _ALICE_VIEW  # human author
         raise AssertionError(f"unexpected call: {args}")
 
@@ -268,7 +296,7 @@ def _paged_fake(
             return "".join(json.dumps(page) for page in timeline_pages)
         if args[:2] == ("pr", "view") and "number,url" in args:
             return _pr_view(9)
-        if args[:2] == ("pr", "view") and "author" in args:
+        if args[:2] == ("pr", "view") and _VIEW_JSON in args:
             return author_view
         raise AssertionError(f"unexpected call: {args}")
 
@@ -363,7 +391,7 @@ def _cross_repo_fake(pr_view: str, calls: list[tuple[str, ...]]) -> object:
         if args[:2] == ("pr", "view") and "number,url" in args:
             return pr_view
         if args[:2] == ("pr", "view"):
-            return _ALICE_VIEW
+            return _view({"login": "alice", "is_bot": False}, repo="acme/repo")
         if args[:2] == ("repo", "view"):
             return "cwd-org/cwd-repo"
         raise AssertionError(f"unexpected call: {args}")
@@ -437,10 +465,14 @@ def _as_agent(
 
 
 def _check_timeline(timeline: list[dict[str, Any]]) -> pr_provenance.ProvenanceResult:
-    """Run ``check_pr`` against *timeline*, with a human author and no reviews."""
+    """Run ``check_pr`` against *timeline*, with a human author and no reviews.
+
+    The PR is a fork's, so the one PR path's relaxation (spec §5.1) never
+    allows an agent's enable here: these tests judge the event names alone.
+    """
     with patch(
         "vergil_tooling.lib.pr_provenance.github.read_output",
-        side_effect=_paged_fake([[]], [timeline], []),
+        side_effect=_paged_fake([[]], [timeline], [], author_view=_ALICE_FORK),
     ):
         return pr_provenance.check_pr("9")
 
@@ -486,8 +518,9 @@ def test_human_auto_merge_enabled_allowed(name: str) -> None:
 # The user agent's own PR (epic vergil-project/.github#1384, spec §4.3): it may
 # open it, turn auto-merge on and merge it; on anyone else's PR every action
 # forbidden before stays a violation, and its approval is one on every PR.
-_USER_VIEW = json.dumps({"author": {"login": "app/a-vergil-user", "is_bot": True}})
-_OTHER_AGENT_VIEW = json.dumps({"author": {"login": "app/the-agent", "is_bot": True}})
+_USER_VIEW = _view({"login": "app/a-vergil-user", "is_bot": True})
+# The human's PR from a fork: never on the one PR path.
+_ALICE_FORK = _view({"login": "alice", "is_bot": False}, cross=True)
 
 
 def _check_actions(
@@ -542,7 +575,9 @@ def test_user_other_actions_on_own_pr_forbidden(event: str, action: str) -> None
     ],
 )
 def test_user_action_on_human_pr_forbidden(event: str, action: str) -> None:
-    result = _check_actions([{"event": event, "actor": _bot(_AGENT)}], author_view=_ALICE_VIEW)
+    # Off the one PR path (a fork PR), every forbidden action on the human's PR
+    # stays a violation.
+    result = _check_actions([{"event": event, "actor": _bot(_AGENT)}], author_view=_ALICE_FORK)
     assert _violations(result) == [(_AGENT, action)]
 
 
@@ -550,7 +585,8 @@ def test_user_action_on_another_agents_pr_forbidden() -> None:
     # "Its own" is the same identity, not merely the same role: the other
     # agent's opening of its own PR is allowed, this agent's merge of it is not.
     result = _check_actions(
-        [{"event": "merged", "actor": _bot(_AGENT)}], author_view=_OTHER_AGENT_VIEW
+        [{"event": "merged", "actor": _bot(_AGENT)}],
+        author_view=_view({"login": "app/the-agent", "is_bot": True}, cross=True),
     )
     assert _violations(result) == [(_AGENT, "merged")]
 
@@ -558,8 +594,8 @@ def test_user_action_on_another_agents_pr_forbidden() -> None:
 @pytest.mark.parametrize(
     "view",
     [
-        json.dumps({"author": {"login": "a-vergil-user", "is_bot": False}}),
-        json.dumps({"author": None}),
+        _view({"login": "a-vergil-user", "is_bot": False}),
+        _view(None),
     ],
 )
 def test_user_action_on_untrusted_or_deleted_authors_pr_forbidden(view: str) -> None:
@@ -578,14 +614,23 @@ def test_evaluate_without_author_grants_no_own_pr() -> None:
     # No author named: nothing is the user agent's own PR (fails closed).
     actor = trust.Identity("a-vergil-user[bot]", "Bot")
     actions = [Action("a-vergil-user", Role.USER, "merged", actor)]
-    assert _violations(pr_provenance.evaluate(actions)) == [(_AGENT, "merged")]
-    assert pr_provenance.evaluate(actions, author=trust.Identity("app/a-vergil-user", "Bot")).ok
+    assert _violations(pr_provenance.evaluate(actions, same_repo=False, branch_trusted=False)) == [
+        (_AGENT, "merged")
+    ]
+    assert pr_provenance.evaluate(
+        actions,
+        author=trust.Identity("app/a-vergil-user", "Bot"),
+        same_repo=False,
+        branch_trusted=False,
+    ).ok
 
 
 def test_evaluate_action_without_identity_grants_no_own_pr() -> None:
     actions = [Action("a-vergil-user", Role.USER, "merged")]
     author = trust.Identity("app/a-vergil-user", "Bot")
-    assert _violations(pr_provenance.evaluate(actions, author=author)) == [(_AGENT, "merged")]
+    assert _violations(
+        pr_provenance.evaluate(actions, author=author, same_repo=False, branch_trusted=False)
+    ) == [(_AGENT, "merged")]
 
 
 @pytest.mark.parametrize(
@@ -596,11 +641,14 @@ def test_audit_rules_unchanged(action: str) -> None:
     actor = trust.Identity("a-vergil-audit[bot]", "Bot")
     author = trust.Identity("app/a-vergil-audit", "Bot")
     result = pr_provenance.evaluate(
-        [Action("a-vergil-audit", Role.AUDIT, action, actor)], author=author
+        [Action("a-vergil-audit", Role.AUDIT, action, actor)],
+        author=author,
+        same_repo=False,
+        branch_trusted=False,
     )
     assert [v.action for v in result.violations] == [action]
     approval = [Action("a-vergil-audit", Role.AUDIT, "approved", actor)]
-    assert pr_provenance.evaluate(approval, author=author).ok
+    assert pr_provenance.evaluate(approval, author=author, same_repo=False, branch_trusted=False).ok
 
 
 @pytest.mark.parametrize(
@@ -610,7 +658,10 @@ def test_untrusted_rules_unchanged(action: str) -> None:
     # An untrusted identity's "own" PR grants it nothing either.
     actor = trust.Identity("stranger", "User")
     result = pr_provenance.evaluate(
-        [Action("stranger", Role.UNTRUSTED, action, actor)], author=actor
+        [Action("stranger", Role.UNTRUSTED, action, actor)],
+        author=actor,
+        same_repo=False,
+        branch_trusted=False,
     )
     assert [v.action for v in result.violations] == [action]
 
@@ -659,7 +710,7 @@ def test_recorded_own_pr_merge_close_is_allowed(fixture: str, seconds: int) -> N
     merged_at = datetime.fromisoformat(timeline[merge]["created_at"])
     closed_at = datetime.fromisoformat(timeline[merge + 1]["created_at"])
     assert closed_at - merged_at == timedelta(seconds=seconds)
-    view = json.dumps({"author": {"login": f"app/{_RECORDED_AGENT}", "is_bot": True}})
+    view = _view({"login": f"app/{_RECORDED_AGENT}", "is_bot": True})
     with (
         patch(
             "vergil_tooling.lib.pr_provenance.load_trusted_authors",
@@ -749,12 +800,14 @@ def test_merge_close_without_timeline_positions_is_violation() -> None:
         Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT),
         Action(_AGENT, Role.USER, "closed", actor, at=_MERGED_AT),
     ]
-    assert _violations(pr_provenance.evaluate(actions, author=author)) == [(_AGENT, "closed")]
+    assert _violations(
+        pr_provenance.evaluate(actions, author=author, same_repo=False, branch_trusted=False)
+    ) == [(_AGENT, "closed")]
     adjacent = [
         Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT, position=3),
         Action(_AGENT, Role.USER, "closed", actor, at=_MERGED_AT, position=4),
     ]
-    assert pr_provenance.evaluate(adjacent, author=author).ok
+    assert pr_provenance.evaluate(adjacent, author=author, same_repo=False, branch_trusted=False).ok
 
 
 def test_close_before_the_merge_in_timeline_order_is_violation() -> None:
@@ -783,13 +836,18 @@ def test_merge_close_without_an_actor_is_violation() -> None:
         Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT, position=0),
         Action(_AGENT, Role.USER, "closed", None, at=_MERGED_AT, position=1),
     ]
-    result = pr_provenance.evaluate(actions, author=trust.Identity("app/a-vergil-user", "Bot"))
+    result = pr_provenance.evaluate(
+        actions,
+        author=trust.Identity("app/a-vergil-user", "Bot"),
+        same_repo=False,
+        branch_trusted=False,
+    )
     assert _violations(result) == [(_AGENT, "closed")]
 
 
 def test_merge_close_on_another_identitys_pr_is_violation() -> None:
     timeline = [_event("merged"), _event("closed")]
-    result = _check_actions(timeline, author_view=_ALICE_VIEW)
+    result = _check_actions(timeline, author_view=_ALICE_FORK)
     assert _violations(result) == [(_AGENT, "merged"), (_AGENT, "closed")]
 
 
@@ -808,8 +866,153 @@ def test_merge_close_by_a_role_other_than_the_user_identity_is_violation(
         Action(login, role, "merged", actor, at=_MERGED_AT),
         Action(login, role, "closed", actor, at=_MERGED_AT),
     ]
-    result = pr_provenance.evaluate(actions, author=trust.Identity(author, "Bot"))
+    result = pr_provenance.evaluate(
+        actions, author=trust.Identity(author, "Bot"), same_repo=False, branch_trusted=False
+    )
     assert [v.action for v in result.violations] == ["merged", "closed"]
+
+
+# --- the one PR path's relaxation (epic .github#1664, spec §5.1) -----------------------
+#
+# Any trusted identity may arm, or merge at clean status, a same-repo PR whose
+# branch has a trusted author, whoever authored it. The two timelines below are
+# built in the shape of the recorded ones above: the user agent arming a PR the
+# automation App opened (``others_pr_auto_merge_enable.json``), and merging one
+# directly, with the ``closed`` GitHub records with the merge
+# (``others_pr_clean_merge.json``).
+
+_APP_VIEW = _view({"login": "app/o-automation", "is_bot": True})
+_APP_FORK = _view({"login": "app/o-automation", "is_bot": True}, cross=True)
+_STRANGER_VIEW = _view({"login": "stranger", "is_bot": False})
+
+
+def test_user_agent_enable_on_others_trusted_pr_allowed() -> None:
+    timeline = _recorded_timeline("others_pr_auto_merge_enable")
+    assert [e["actor"]["login"] for e in timeline if e.get("event") == "auto_squash_enabled"] == [
+        "a-vergil-user[bot]"
+    ]
+    result = _check_actions(timeline, author_view=_APP_VIEW)
+    assert result.ok, _violations(result)
+
+
+def test_user_agent_clean_merge_on_others_trusted_pr_allowed() -> None:
+    timeline = _recorded_timeline("others_pr_clean_merge")
+    names = [event.get("event") for event in timeline]
+    assert names[names.index("merged") + 1] == "closed"
+    result = _check_actions(timeline, author_view=_APP_VIEW)
+    assert result.ok, _violations(result)
+
+
+@pytest.mark.parametrize("view", [_ALICE_VIEW, _APP_VIEW])
+def test_user_agent_arm_and_merge_on_human_or_app_pr_allowed(view: str) -> None:
+    timeline = [_event("auto_squash_enabled"), _event("merged"), _event("closed")]
+    result = _check_actions(timeline, author_view=view)
+    assert result.ok, _violations(result)
+
+
+@pytest.mark.parametrize("fixture", ["others_pr_auto_merge_enable", "others_pr_clean_merge"])
+def test_enable_on_fork_pr_still_violation(fixture: str) -> None:
+    result = _check_actions(_recorded_timeline(fixture), author_view=_APP_FORK)
+    expected = {
+        "others_pr_auto_merge_enable": [(_AGENT, "auto_merge_enabled")],
+        "others_pr_clean_merge": [(_AGENT, "merged"), (_AGENT, "closed")],
+    }[fixture]
+    assert _violations(result) == expected
+
+
+@pytest.mark.parametrize("fixture", ["others_pr_auto_merge_enable", "others_pr_clean_merge"])
+def test_enable_on_untrusted_branch_still_violation(fixture: str) -> None:
+    # A same-repo branch whose PR an untrusted identity opened is not on the path.
+    result = _check_actions(_recorded_timeline(fixture), author_view=_STRANGER_VIEW)
+    expected = {
+        "others_pr_auto_merge_enable": [("stranger", "created"), (_AGENT, "auto_merge_enabled")],
+        "others_pr_clean_merge": [("stranger", "created"), (_AGENT, "merged"), (_AGENT, "closed")],
+    }[fixture]
+    assert _violations(result) == expected
+
+
+@pytest.mark.parametrize("view", [_ALICE_VIEW, _APP_VIEW])
+@pytest.mark.parametrize(
+    ("event", "action"), [("renamed", "edited"), ("closed", "closed"), ("reopened", "reopened")]
+)
+def test_other_forbidden_actions_unchanged(view: str, event: str, action: str) -> None:
+    # On a PR the path accepts, the user agent's other forbidden actions stay
+    # violations: only the arm, the merge and the merge's own close are relaxed.
+    result = _check_actions([_event(event)], author_view=view)
+    assert _violations(result) == [(_AGENT, action)]
+
+
+@pytest.mark.parametrize("view", [_ALICE_VIEW, _APP_VIEW])
+def test_approval_on_path_pr_still_violation(view: str) -> None:
+    result = _check_actions(
+        [], reviews=[{"state": "APPROVED", "user": _bot(_AGENT)}], author_view=view
+    )
+    assert _violations(result) == [(_AGENT, "approved")]
+
+
+def test_close_after_path_merge_by_another_actor_still_violation() -> None:
+    # The human merged the App's PR; the agent's close beside it is no part of it.
+    timeline = [
+        {"event": "merged", "actor": _user("alice"), "created_at": _MERGED_AT},
+        _event("closed"),
+    ]
+    assert _violations(_check_actions(timeline, author_view=_APP_VIEW)) == [(_AGENT, "closed")]
+
+
+@pytest.mark.parametrize(
+    ("same_repo", "branch_trusted"), [(False, True), (True, False), (False, False)]
+)
+def test_evaluate_relaxes_only_a_same_repo_trusted_branch(
+    same_repo: bool, branch_trusted: bool
+) -> None:
+    actor = trust.Identity("a-vergil-user[bot]", "Bot")
+    author = trust.Identity("alice", "User")
+    actions = [
+        Action(_AGENT, Role.USER, "auto_merge_enabled", actor),
+        Action(_AGENT, Role.USER, "merged", actor, at=_MERGED_AT, position=1),
+        Action(_AGENT, Role.USER, "closed", actor, at=_MERGED_AT, position=2),
+    ]
+    result = pr_provenance.evaluate(
+        actions, author=author, same_repo=same_repo, branch_trusted=branch_trusted
+    )
+    assert [v.action for v in result.violations] == ["auto_merge_enabled", "merged", "closed"]
+    assert pr_provenance.evaluate(actions, author=author, same_repo=True, branch_trusted=True).ok
+
+
+@pytest.mark.parametrize("role", [Role.AUDIT, Role.UNTRUSTED])
+def test_relaxation_is_for_trusted_writers_only(role: Role) -> None:
+    # The audit identity holds no write access, and an untrusted one is no
+    # trusted identity: neither may arm or merge a PR the path accepts.
+    actor = trust.Identity("x[bot]", "Bot")
+    actions = [
+        Action("x", role, "auto_merge_enabled", actor),
+        Action("x", role, "merged", actor, at=_MERGED_AT, position=1),
+        Action("x", role, "closed", actor, at=_MERGED_AT, position=2),
+    ]
+    result = pr_provenance.evaluate(
+        actions, author=trust.Identity("alice", "User"), same_repo=True, branch_trusted=True
+    )
+    assert [v.action for v in result.violations] == ["auto_merge_enabled", "merged", "closed"]
+
+
+def test_check_pr_unreadable_head_repo_fails_loud() -> None:
+    # A same-repo flag GitHub's head repository contradicts is never guessed.
+    view = json.dumps(
+        {
+            "author": {"login": "alice", "is_bot": False},
+            "isCrossRepository": False,
+            "headRepositoryOwner": {"login": "someone-else"},
+            "headRepository": {"name": "r"},
+        }
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.pr_provenance.github.read_output",
+            side_effect=_paged_fake([[]], [[]], [], author_view=view),
+        ),
+        pytest.raises(github.GitHubAPIError, match="provenance"),
+    ):
+        pr_provenance.check_pr("9")
 
 
 # --- pr_actors: the agent-involvement evidence (epic .github#1384, Task 11) ------------
@@ -874,3 +1077,52 @@ def test_pr_actors_malformed_page_fails_closed() -> None:
         pytest.raises(ValueError, match="not a list"),
     ):
         pr_provenance.pr_actors("9")
+
+
+# Turning auto-merge on or off is not involvement, nor is the path's direct
+# merge at clean status (spec §5.1): their actors are left out.
+
+
+def _actors(timeline: list[dict[str, Any]], *, view: str = _ALICE_VIEW) -> tuple[Any, ...]:
+    with patch(
+        "vergil_tooling.lib.pr_provenance.github.read_output",
+        side_effect=_paged_fake([[]], [timeline], [], author_view=view),
+    ):
+        return pr_provenance.pr_actors("9")
+
+
+_AGENT_IDENTITY = trust.Identity("a-vergil-user[bot]", "Bot")
+
+
+@pytest.mark.parametrize("view", [_ALICE_VIEW, _ALICE_FORK])
+def test_pr_actors_leaves_out_arming_events(view: str) -> None:
+    timeline: list[dict[str, object]] = [
+        _event("auto_squash_enabled"),
+        _event("auto_merge_disabled"),
+        _event("auto_rebase_enabled"),
+        {"event": "labeled", "actor": _user("alice")},
+    ]
+    assert _actors(timeline, view=view) == (
+        trust.Identity("alice", "User"),
+        trust.Identity("alice", "User"),
+    )
+
+
+def test_pr_actors_leaves_out_path_direct_merge() -> None:
+    timeline = [_event("merged"), _event("closed")]
+    assert _AGENT_IDENTITY not in _actors(timeline)
+    # On a fork PR, or one whose branch has no trusted author, the path never
+    # merges it: the merge and its close still count.
+    assert _actors(timeline, view=_ALICE_FORK).count(_AGENT_IDENTITY) == 2
+    assert _actors(timeline, view=_STRANGER_VIEW).count(_AGENT_IDENTITY) == 2
+
+
+def test_pr_actors_counts_a_close_that_is_not_the_merges() -> None:
+    # Only the close GitHub records with the merge is left out with it.
+    timeline = [
+        _event("merged"),
+        {"event": "commented", "user": _user("alice")},
+        _event("closed"),
+    ]
+    assert _actors(timeline).count(_AGENT_IDENTITY) == 1
+    assert _actors([_event("closed")]) == (trust.Identity("alice", "User"), _AGENT_IDENTITY)
