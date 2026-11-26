@@ -164,7 +164,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_ready.add_argument("--title", required=True)
     p_ready.add_argument("--summary", required=True)
     p_ready.add_argument("--notes", required=True)
-    p_ready.add_argument("--linkage", default="Ref")
+    p_ready.add_argument(
+        "--linkage",
+        default="Ref",
+        help=(
+            "The PR-body linkage keyword to record (default: Ref). vrg-submit-pr "
+            "upgrades it to Closes for a managed task (an issue with an epic "
+            "parent), so the PR closes the task on merge; any other issue keeps it."
+        ),
+    )
     p_ready.set_defaults(func=cmd_report_ready)
 
     p_unfreeze = sub.add_parser(
