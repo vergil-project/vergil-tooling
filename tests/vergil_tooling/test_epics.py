@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -16,7 +17,7 @@ from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 from vergil_tooling.lib.labels import load_labels
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from tests.vergil_tooling.trust_stubs import FakeItems
 
@@ -53,6 +54,14 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
     fake = trust_stubs.FakeItems()
     monkeypatch.setattr(github, "graphql", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def archived_repos(monkeypatch: pytest.MonkeyPatch) -> set[tuple[str, str]]:
+    """The repos ``github.repo_is_archived`` reports archived: none unless a test adds one."""
+    archived: set[tuple[str, str]] = set()
+    monkeypatch.setattr(github, "repo_is_archived", lambda owner, name: (owner, name) in archived)
+    return archived
 
 
 def _with_layer(layer: FakeItems, answer: object) -> Callable[..., object]:
@@ -1250,6 +1259,94 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=live),
         patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
+    ):
+        epics.rollup(TASK)
+    mock_reparent.assert_not_called()
+
+
+@contextlib.contextmanager
+def _adhoc_drain() -> Iterator[None]:
+    """Patch the reads of an ad-hoc drain of TASK, whose live epic is org/.github#40."""
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): repo-a"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-11-22T17:01:58Z"),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+    ):
+        yield
+
+
+_ARCHIVED_REFUSAL = github.GitHubAPIError(
+    1,
+    ["gh", "api", "graphql"],
+    output='{"data":{"addSubIssue":null},"errors":[{"type":"UNPROCESSABLE",'
+    '"message":"Repository was archived so is read-only"}]}',
+    stderr="gh: Repository was archived so is read-only",
+)
+
+
+def test_rollup_leaves_a_child_in_an_archived_repo_in_place(
+    archived_repos: set[tuple[str, str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A retire archives the repo while its closes' rollup runs are queued; the
+    # child is read-only, so the run reports it and succeeds, creating no
+    # archive for it (#5212).
+    archived_repos.add(("org", "repo-a"))
+    with (
+        _adhoc_drain(),
+        patch("vergil_tooling.lib.epics.ensure_writable_standing_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
+    ):
+        epics.rollup(TASK)
+    mock_ens.assert_not_called()
+    mock_reparent.assert_not_called()
+    out = capsys.readouterr().out
+    assert "left org/repo-a#101 in place: its repo org/repo-a is archived" in out
+
+
+def test_rollup_leaves_a_child_whose_repo_is_archived_during_the_move(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The repo is archived between the check and the move: GitHub's read-only
+    # refusal of the move is reported, and the run succeeds.
+    arch = IssueRef("org", ".github", 88)
+    with (
+        _adhoc_drain(),
+        patch("vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch),
+        patch(
+            "vergil_tooling.lib.epics._reparent_child", side_effect=_ARCHIVED_REFUSAL
+        ) as mock_reparent,
+    ):
+        epics.rollup(TASK)
+    mock_reparent.assert_called_once_with(arch, TASK)
+    assert "left org/repo-a#101 in place" in capsys.readouterr().out
+
+
+def test_rollup_fails_on_any_other_failure_to_move_a_child() -> None:
+    arch = IssueRef("org", ".github", 88)
+    other = github.GitHubAPIError(
+        1, ["gh", "api", "graphql"], stderr="gh: Sub issue may only have one parent"
+    )
+    with (
+        _adhoc_drain(),
+        patch("vergil_tooling.lib.epics.ensure_writable_standing_archive", return_value=arch),
+        patch("vergil_tooling.lib.epics._reparent_child", side_effect=other),
+        pytest.raises(github.GitHubAPIError, match="Sub issue may only have one parent"),
+    ):
+        epics.rollup(TASK)
+
+
+def test_rollup_fails_when_the_archived_check_fails() -> None:
+    # The archived-state read is fail-loud: its error is never taken as "not archived".
+    failure = github.GitHubAPIError(1, ["gh", "repo", "view"], stderr="HTTP 502: Bad Gateway")
+    with (
+        _adhoc_drain(),
+        patch("vergil_tooling.lib.github.repo_is_archived", side_effect=failure),
+        patch("vergil_tooling.lib.epics._reparent_child") as mock_reparent,
+        pytest.raises(github.GitHubAPIError, match="Bad Gateway"),
     ):
         epics.rollup(TASK)
     mock_reparent.assert_not_called()

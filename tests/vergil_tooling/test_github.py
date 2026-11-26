@@ -3699,6 +3699,53 @@ def test_repo_exists_does_not_memoize_a_missing_repo() -> None:
         assert github.repo_exists("org", "new") is True
 
 
+# -- repo_is_archived / is_archived_repo_refusal (issue #5212) ---------------
+@pytest.mark.parametrize("archived", [True, False])
+def test_repo_is_archived_reads_the_repo_state_on_every_call(archived: bool) -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json", return_value={"isArchived": archived}
+    ) as rj:
+        assert github.repo_is_archived("org", "repo") is archived
+        assert github.repo_is_archived("org", "repo") is archived
+    rj.assert_called_with("repo", "view", "org/repo", "--json", "isArchived")
+    assert rj.call_count == 2  # never memoized: a retire archives the repo mid-run
+
+
+@pytest.mark.parametrize("data", [{}, {"isArchived": None}, {"isArchived": "false"}, [True]])
+def test_repo_is_archived_fails_loud_on_a_missing_answer(data: object) -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=data),
+        pytest.raises(github.GitHubAPIError, match="missing or non-boolean isArchived"),
+    ):
+        github.repo_is_archived("org", "repo")
+
+
+def test_repo_is_archived_propagates_a_read_failure() -> None:
+    failure = github.GitHubAPIError(1, ["gh", "repo", "view"], stderr="HTTP 401: Bad credentials")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=failure),
+        pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        github.repo_is_archived("org", "repo")
+
+
+@pytest.mark.parametrize(
+    ("stderr", "stdout", "expected"),
+    [
+        ("gh: Repository was archived so is read-only", "", True),
+        ("", '{"errors":[{"message":"Repository was archived so is read-only"}]}', True),
+        ("gh: Sub issue may only have one parent", "", False),
+        ("HTTP 403: Resource not accessible by integration", "", False),
+        ("", "", False),
+    ],
+)
+def test_is_archived_repo_refusal_matches_only_that_refusal(
+    stderr: str, stdout: str, expected: bool
+) -> None:
+    exc = github.GitHubAPIError(1, ["gh", "api", "graphql"], output=stdout, stderr=stderr)
+    assert github.is_archived_repo_refusal(exc) is expected
+
+
 @pytest.mark.parametrize("data", [{}, {"nameWithOwner": ""}, ["org/repo"]])
 def test_repo_exists_fails_loud_on_empty(data: object) -> None:
     github._repo_probe.cache_clear()

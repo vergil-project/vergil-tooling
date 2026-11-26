@@ -2531,7 +2531,9 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     The single-child ``on: issues.closed`` path of :func:`rollup`. *task* is
     re-parented into the *kind* archive for its close-quarter, rolling to the next
     segment when the head is full. A no-op when *parent* is not the live
-    canonical epic of *kind* or *task* has no ``closedAt``:
+    canonical epic of *kind* or *task* has no ``closedAt``. A *task* whose repo
+    is archived is read-only, so it is left where it is and reported, and the
+    run succeeds (#5212); any other failure to move it fails the run:
 
     - **ad-hoc**: the name is the bare repo in the title (``Epic (ad hoc):
       <bare>``), which must be a real repo; its home is ``<org>/.github``.
@@ -2573,6 +2575,13 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     closed_at = _issue_closed_at(task)
     if not closed_at:
         return
+    # A child in an archived repo is read-only, so GitHub refuses to move it
+    # (#5212): a retire archives the repo while the rollup runs its closes
+    # started are still queued. Leave it in place, before any archive is
+    # created for it.
+    if github.repo_is_archived(task.owner, task.repo):
+        _report_left_in_archived_repo(task)
+        return
     # An ad-hoc archive homes where the repo's epics home (<org>/.github); a queue
     # archive is the sibling of its queue epic, in the queue epic's own repo.
     home = (
@@ -2585,7 +2594,22 @@ def drain_standing_child(kind: StandingKind, parent: IssueRef, task: IssueRef) -
     # they roll, make the matching change there too. See apply_standing_drain().
     archive = ensure_writable_standing_archive(kind, home, name, quarter_of(closed_at))
     if archive != parent:
-        _reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
+        try:
+            _reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
+        except github.GitHubAPIError as exc:
+            # The repo was archived after the check above. Only that refusal
+            # is a no-op: every other failure to move the child fails the run.
+            if not github.is_archived_repo_refusal(exc):
+                raise
+            _report_left_in_archived_repo(task)
+
+
+def _report_left_in_archived_repo(task: IssueRef) -> None:
+    """Report that the drain left *task* where it is, its repo being archived."""
+    print(
+        f"left {task.slug} in place: its repo {task.owner}/{task.repo} is archived, "
+        "so it is read-only and cannot be moved into an archive"
+    )
 
 
 @dataclass(frozen=True)

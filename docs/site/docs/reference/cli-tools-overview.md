@@ -1255,7 +1255,10 @@ head of the chain the task is linked in, it closes only when every item
 across the chain is closed, and it then closes the head first, then each
 continuation. Before judging it adopts each orphaned continuation of the
 head, and it refuses to close the epic while one it cannot adopt exists. A
-continuation closing rolls nothing up. Run by the `epic-rollup` workflow on
+continuation closing rolls nothing up. A closed child of a standing epic
+moves into its close-quarter archive, unless its repo is archived: a
+read-only child is left where it is and reported, and the run succeeds. Any
+other failure to move it is an error. Run by the `epic-rollup` workflow on
 `issues.closed`.
 
 | Attribute | Value |
