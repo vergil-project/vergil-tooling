@@ -19920,7 +19920,7 @@ stages not recorded done.</p>
 <tr>
 <td><code>back-merge-bump</code></td>
 <td>fail-fast</td>
-<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, refreshes the lockfile (<code>uv lock</code> for Python and <code>cargo update --workspace</code> for Rust, in the dev container; for TypeScript, a direct edit of <code>package-lock.json</code>'s root version fields that runs no npm), and merges it to <code>develop</code>. Records the back-merge's merge commit</td>
+<td>Creates <code>release/post-&lt;version&gt;</code> from <code>main</code>, bumps the version, refreshes the lockfile (<code>uv lock</code> for Python and <code>cargo update --workspace</code> for Rust, in the dev container; for TypeScript, a direct edit of <code>package-lock.json</code>'s root version fields that runs no npm), opens a PR to <code>develop</code>, arms it through the one PR path (a merge commit) and waits until it merges. Records the back-merge's merge commit</td>
 </tr>
 <tr>
 <td><code>teardown-worktree</code></td>
@@ -20291,8 +20291,8 @@ nothing is reset, discarded or pushed over: a branch that does not contain
 <code>origin/main</code>, other or extra commits, a bump to another version,
 uncommitted changes that are not a partial bump, or a local branch whose
 tip differs from <code>origin</code>'s. Remove or reconcile the branch, then resume.</p>
-<p>An open back-merge PR from the earlier run is adopted and merged, and a
-merged one is skipped. A PR closed without merging is not adopted: the
+<p>An open back-merge PR from the earlier run is adopted, armed again
+through the one PR path and waited for, and a merged one is skipped. A PR closed without merging is not adopted: the
 resume opens a new PR from the reused branch. Here, and when <code>prepare</code>
 adopts the release PR, only a same-repo PR with a trusted author is
 adopted: a fork PR on the branch's name is reported on stderr and never
