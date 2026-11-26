@@ -211,7 +211,7 @@ def test_watch_failure_naming_an_unregistered_uploaded_check_names_its_job() -> 
         patch(_MOD + ".github", gh),
         pytest.raises(MergeAbortError, match=r"producing job security / semgrep \(failed\)"),
     ):
-        wait_until_merged("99", strategy="squash", deadline_secs=600)
+        wait_until_merged("99", deadline_secs=600)
     gh.merge.assert_not_called()
 
 
@@ -856,23 +856,72 @@ def _clock(*values: float) -> Callable[[], float]:
     return tick
 
 
+def _merges_after(gh: MagicMock, reads: int) -> MagicMock:
+    """*gh* with the PR read ``OPEN`` *reads* times, then ``MERGED``: GitHub's auto-merge."""
+    gh.pr_state.side_effect = [*(["OPEN"] * reads), "MERGED"]
+    return gh
+
+
 def _watch(
     gh: MagicMock, *, deadline: int = 2400, clock: Callable[[], float] | None = None
-) -> None:
+) -> MagicMock:
+    """Run the watch on *gh*; return the ``time.sleep`` mock."""
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch(_MOD + ".github", gh))
-        stack.enter_context(patch(_MOD + ".time.sleep"))
+        sleep = stack.enter_context(patch(_MOD + ".time.sleep"))
         if clock is not None:
             stack.enter_context(patch(_MOD + ".time.monotonic", side_effect=clock))
-        wait_until_merged(_URL, strategy="squash", deadline_secs=deadline)
+        wait_until_merged(_URL, deadline_secs=deadline)
+    return sleep
 
 
-def test_watch_ready_pr_is_merged_at_once() -> None:
-    gh = _gh()
-    _watch(gh)
-    gh.wait_for_checks.assert_called_once_with(_URL, poll_timeout=2400, required=frozenset())
-    gh.merge.assert_called_once_with(_URL, strategy="squash")
+def _ticking(step: float) -> Callable[[], float]:
+    """A ``time.monotonic`` stand-in that moves on *step* seconds on every read."""
+    now = [-step]
+
+    def tick() -> float:
+        now[0] += step
+        return now[0]
+
+    return tick
+
+
+@pytest.mark.parametrize("auto_merge_on", [True, False], ids=["auto-merge-on", "auto-merge-off"])
+def test_wait_until_merged_never_calls_merge(auto_merge_on: bool) -> None:  # noqa: FBT001
+    """Watch-only (epic vergil-project/.github#1664, Task 7): GitHub merges, the watch never does.
+
+    A ready PR with auto-merge on is merged by GitHub while the watch polls. One
+    with auto-merge off stays open: the watch waits for it, never merging it
+    itself, until the deadline.
+    """
+    gh = _gh(merge_states=["CLEAN"] * 1000)
+    gh.format_wait.side_effect = lambda secs: f"{int(secs)}s"
+    if auto_merge_on:
+        _merges_after(gh, 2)
+        _watch(gh)
+        gh.wait_for_checks.assert_called_once()
+    else:
+        with pytest.raises(MergeDeadlineError, match=r"pull/9 did not merge within the 2400s"):
+            _watch(gh, clock=_ticking(100.0))
+        assert gh.wait_for_checks.call_count > 1
+    gh.merge.assert_not_called()
     gh.update_branch.assert_not_called()
+
+
+def test_watch_ready_pr_polls_until_github_merges_it() -> None:
+    gh = _merges_after(_gh(merge_states=["CLEAN"] * 10), 4)
+    sleep = _watch(gh)
+    assert gh.wait_for_checks.call_count == 2
+    gh.wait_for_checks.assert_called_with(_URL, poll_timeout=2400, required=frozenset())
+    assert sleep.call_args_list == [((30,), {})] * 2
+    gh.merge.assert_not_called()
+
+
+def test_watch_ready_pr_poll_never_sleeps_past_the_deadline() -> None:
+    # start 0; loop top 2390; after the checks the poll sees 2390 (10s left).
+    gh = _merges_after(_gh(merge_states=["CLEAN"] * 10), 2)
+    sleep = _watch(gh, clock=_clock(0.0, 2390.0))
+    sleep.assert_called_once_with(10.0)
 
 
 def test_watch_already_merged_pr_is_success_without_waiting() -> None:
@@ -883,22 +932,23 @@ def test_watch_already_merged_pr_is_success_without_waiting() -> None:
 
 
 def test_watch_pr_behind_once_is_updated_then_merged() -> None:
-    # iteration 1: BEHIND -> update; iteration 2: CLEAN pre-wait, CLEAN post-wait -> merge
-    gh = _gh(merge_states=["BEHIND", "CLEAN", "CLEAN"])
+    # iteration 1: BEHIND -> update; iteration 2: CLEAN pre-wait, CLEAN post-wait
+    # -> poll; iteration 3: merged.
+    gh = _merges_after(_gh(merge_states=["BEHIND", "CLEAN", "CLEAN"]), 3)
     _watch(gh)
     gh.update_branch.assert_called_once_with(_URL)
     gh.wait_for_checks.assert_called_once()
-    gh.merge.assert_called_once_with(_URL, strategy="squash")
+    gh.merge.assert_not_called()
 
 
 def test_watch_pr_that_falls_behind_during_the_wait_is_updated_then_merged() -> None:
     # iteration 1: CLEAN pre-wait, BEHIND after the wait -> loop;
-    # iteration 2: BEHIND -> update; iteration 3: CLEAN, CLEAN -> merge
-    gh = _gh(merge_states=["CLEAN", "BEHIND", "BEHIND", "CLEAN", "CLEAN"])
+    # iteration 2: BEHIND -> update; iteration 3: CLEAN, CLEAN -> poll; then merged
+    gh = _merges_after(_gh(merge_states=["CLEAN", "BEHIND", "BEHIND", "CLEAN", "CLEAN"]), 5)
     _watch(gh)
     gh.update_branch.assert_called_once_with(_URL)
     assert gh.wait_for_checks.call_count == 2
-    gh.merge.assert_called_once()
+    gh.merge.assert_not_called()
 
 
 def test_watch_merged_by_auto_merge_during_the_wait_is_success() -> None:
@@ -907,14 +957,6 @@ def test_watch_merged_by_auto_merge_during_the_wait_is_success() -> None:
     _watch(gh)
     gh.merge.assert_not_called()
     gh.failed_check_names.assert_not_called()
-
-
-def test_watch_merge_refused_because_auto_merge_won_the_race_is_success() -> None:
-    gh = _gh()
-    gh.pr_state.side_effect = ["OPEN", "OPEN", "MERGED"]
-    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr="Pull request is not open")
-    _watch(gh)
-    gh.merge.assert_called_once()
 
 
 def test_watch_failed_ci_stops_naming_the_checks() -> None:
@@ -927,11 +969,11 @@ def test_watch_failed_ci_stops_naming_the_checks() -> None:
 
 def test_watch_stale_failed_ci_on_a_behind_branch_updates_and_merges() -> None:
     # #2914: red checks on a BEHIND branch are stale; update rather than stop.
-    gh = _gh(merge_states=["CLEAN", "BEHIND", "CLEAN", "CLEAN"])
+    gh = _merges_after(_gh(merge_states=["CLEAN", "BEHIND", "CLEAN", "CLEAN"]), 4)
     gh.failed_check_names.side_effect = [["quality / common"], []]
     _watch(gh)
     gh.update_branch.assert_called_once_with(_URL)
-    gh.merge.assert_called_once()
+    gh.merge.assert_not_called()
 
 
 def test_watch_closed_pr_stops() -> None:
@@ -944,6 +986,14 @@ def test_watch_closed_pr_stops() -> None:
 def test_watch_pr_closed_during_the_wait_stops() -> None:
     gh = _gh()
     gh.pr_state.side_effect = ["OPEN", "CLOSED"]
+    with pytest.raises(MergeAbortError, match="was closed without merging"):
+        _watch(gh)
+    gh.merge.assert_not_called()
+
+
+def test_watch_pr_closed_while_polling_for_the_merge_stops() -> None:
+    gh = _gh(merge_states=["CLEAN"] * 10)
+    gh.pr_state.side_effect = ["OPEN", "OPEN", "CLOSED"]
     with pytest.raises(MergeAbortError, match="was closed without merging"):
         _watch(gh)
     gh.merge.assert_not_called()
@@ -964,43 +1014,18 @@ def test_watch_update_cap_stops() -> None:
     gh.merge.assert_not_called()
 
 
-def test_watch_merge_refused_as_behind_updates_and_retries() -> None:
-    gh = _gh(merge_states=["CLEAN"] * 10)
-    gh.merge.side_effect = [
-        GitHubAPIError(1, "gh pr merge", stderr="the head branch is not up to date"),
-        None,
-    ]
-    _watch(gh)
-    gh.update_branch.assert_called_once_with(_URL)
-    assert gh.merge.call_count == 2
-
-
-def test_watch_merge_refused_by_policy_waits_a_poll_then_merges() -> None:
-    gh = _gh(merge_states=["CLEAN"] * 10)
-    gh.merge.side_effect = [
-        GitHubAPIError(1, "gh pr merge", stderr="the base branch policy prohibits the merge"),
-        None,
-    ]
-    _watch(gh)
-    assert gh.merge.call_count == 2
-
-
-def test_watch_unknown_merge_failure_propagates() -> None:
-    gh = _gh(merge_states=["CLEAN"] * 10)
-    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr="HTTP 500")
-    with pytest.raises(GitHubAPIError):
-        _watch(gh)
-
-
 def test_watch_required_check_outstanding_waits_then_merges() -> None:
-    gh = _gh(
-        merge_states=["CLEAN"] * 10,
-        required=_EVIDENCE,
-        outstanding=[{"test / evidence": "not registered"}],
+    gh = _merges_after(
+        _gh(
+            merge_states=["CLEAN"] * 10,
+            required=_EVIDENCE,
+            outstanding=[{"test / evidence": "not registered"}],
+        ),
+        4,
     )
     _watch(gh)
     assert gh.wait_for_checks.call_count == 2
-    gh.merge.assert_called_once()
+    gh.merge.assert_not_called()
 
 
 def test_watch_deadline_reached_stops_before_waiting_again() -> None:
@@ -1015,7 +1040,7 @@ def test_watch_deadline_reached_stops_before_waiting_again() -> None:
 
 
 def test_watch_check_wait_is_clamped_to_what_is_left_of_the_deadline() -> None:
-    gh = _gh()
+    gh = _merges_after(_gh(), 2)
     _watch(gh, clock=_clock(0.0, 2000.5))
     gh.wait_for_checks.assert_called_once_with(_URL, poll_timeout=400, required=frozenset())
 
@@ -1024,7 +1049,7 @@ def test_watch_check_wait_never_exceeds_the_checks_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("VRG_CHECKS_TIMEOUT", "120")
-    gh = _gh()
+    gh = _merges_after(_gh(), 2)
     _watch(gh)
     gh.wait_for_checks.assert_called_once_with(_URL, poll_timeout=120, required=frozenset())
 
@@ -1078,8 +1103,14 @@ def test_watch_not_ready_pause_never_sleeps_past_the_deadline() -> None:
         patch(_MOD + ".time.monotonic", side_effect=_clock(0.0, 2398.0, 2398.0, 2400.0)),
         pytest.raises(MergeDeadlineError),
     ):
-        wait_until_merged(_URL, strategy="squash", deadline_secs=2400)
+        wait_until_merged(_URL, deadline_secs=2400)
     sleep.assert_called_once_with(2.0)
+
+
+def test_watch_takes_no_merge_strategy() -> None:
+    watch: Callable[..., None] = wait_until_merged
+    with pytest.raises(TypeError, match="strategy"):
+        watch(_URL, strategy="squash", deadline_secs=2400)
 
 
 # --- the ruleset-bypassed merge into main (#5095) -----------------------------

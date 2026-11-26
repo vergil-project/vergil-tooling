@@ -170,7 +170,7 @@ def arm_and_wait(ctx: UpdateDepsContext) -> None:
         return
     if result.outcome == "armed":
         try:
-            pr_merge.wait_until_merged(pr_url, strategy="merge", deadline_secs=deadline)
+            pr_merge.wait_until_merged(pr_url, deadline_secs=deadline)
         except pr_merge.MergeAbortError as exc:
             record_merge_failure(ctx, str(exc))
             return

@@ -307,7 +307,7 @@ def test_deps_pr_armed_with_merge_method(monkeypatch) -> None:
     waits: list[str] = []
     monkeypatch.setattr(
         _MOD + ".pr_merge.wait_until_merged",
-        lambda url, *, strategy, deadline_secs: waits.append(url),  # noqa: ARG005
+        lambda url, *, deadline_secs: waits.append(url),  # noqa: ARG005
     )
     ctx = _arm_ctx(monkeypatch)
     pr.arm_and_wait(ctx)
@@ -324,7 +324,7 @@ def test_deps_pr_waits_and_never_merges(monkeypatch) -> None:
     waits: list[tuple[str, int]] = []
     monkeypatch.setattr(
         _MOD + ".pr_merge.wait_until_merged",
-        lambda url, *, strategy, deadline_secs: waits.append((url, deadline_secs)),  # noqa: ARG005
+        lambda url, *, deadline_secs: waits.append((url, deadline_secs)),
     )
     ctx = _arm_ctx(monkeypatch)
     pr.arm_and_wait(ctx)
@@ -507,7 +507,7 @@ def test_arm_and_wait_raises_without_pr_url() -> None:
 
 
 def test_arm_and_wait_records_a_failed_wait_instead_of_raising(monkeypatch) -> None:
-    def _abort(url, *, strategy, deadline_secs):  # noqa: ARG001
+    def _abort(url, *, deadline_secs):  # noqa: ARG001
         msg = "nope"
         raise pr_merge.MergeAbortError(msg)
 

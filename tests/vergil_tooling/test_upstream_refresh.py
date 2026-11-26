@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import develop_clone, github, pr_merge, upstream_refresh
+from vergil_tooling.lib import develop_clone, github, pr_merge, pr_path, upstream_refresh
 from vergil_tooling.lib.config import ConfigError, PathRule, UpstreamRefreshConfig
 from vergil_tooling.lib.mechanized_pr import SyncResult
 from vergil_tooling.lib.upstream_refresh import (
@@ -421,9 +421,10 @@ def test_read_prepared_rejects_missing_or_bad_json(tmp_path: Path) -> None:
 # -- PR body -------------------------------------------------------------------
 
 
-def test_body_says_the_job_merges_and_lists_notes() -> None:
+def test_body_says_auto_merge_merges_and_lists_notes() -> None:
     body = render_body(["bumped x"], ["a.txt"])
-    assert body.startswith("Automated upstream refresh. The upstream-refresh job merges this PR")
+    assert body.startswith("Automated upstream refresh. GitHub's auto-merge merges this PR")
+    assert "the upstream-refresh job watches it until it merges" in body
     assert "once CI passes" in body
     assert "human" not in body
     assert "## Changed files\n\n- `a.txt`" in body
@@ -1423,10 +1424,6 @@ class _Hub:
                     "headRepositoryOwner": {"login": "o"},
                 }
             ]
-        if args[:2] == ("pr", "view"):
-            if args[args.index("--json") + 1] == "id":
-                return {"id": "PR_1"}
-            return {"autoMergeRequest": {"mergeMethod": "SQUASH"}}
         raise AssertionError(args)
 
     def read_json_paginated(self, endpoint: str) -> list[object]:
@@ -1448,12 +1445,15 @@ class _Hub:
         self.created.append(Path(kwargs["body_file"]).read_text())
         return f"https://github.com/{_REPO}/pull/500"
 
-    def graphql(self, query: str, **_variables: object) -> dict[str, object]:
-        assert "enablePullRequestAutoMerge" in query
-        return {}
+    def arm(
+        self, pr_url: str, *, clone: Path | None = None, head: str | None = None
+    ) -> pr_path.ArmResult:
+        self.calls.append(("arm", pr_url))
+        assert clone is not None
+        assert head
+        return pr_path.ArmResult(outcome="armed", pr_url=pr_url, head=head, method="SQUASH")
 
-    def wait_until_merged(self, _pr: str, *, strategy: str, deadline_secs: int) -> None:
-        assert strategy == "squash"
+    def wait_until_merged(self, _pr: str, *, deadline_secs: int) -> None:
         self.waits.append(deadline_secs)
 
 
@@ -1464,7 +1464,7 @@ def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Hub:
     api = _Hub(tmp_path / "origin.git")
     for name in ("read_json", "read_json_paginated", "run", "delete_if_exists", "create_pr"):
         monkeypatch.setattr(github, name, getattr(api, name))
-    monkeypatch.setattr(github, "graphql", api.graphql)
+    monkeypatch.setattr(pr_path, "arm", api.arm)
     monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
     return api
 
