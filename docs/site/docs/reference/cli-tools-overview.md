@@ -2565,8 +2565,11 @@ spec §4.8). It checks every merge into `develop` and `main` since the
 audit's markers, the `vergil/agent-audit/develop` and
 `vergil/agent-audit/main` branches. For every PR, whoever merged it or
 turned auto-merge on must be the human, or the user agent or the
-automation App on its own PR (into `main`, the human only), and its
-provenance must be clean. For an agent-involved PR merged into `develop`,
+automation App on its own PR or on any same-repo PR whose branch has a
+trusted author, the PRs the one PR path accepts (into `main`, the human
+only), and its provenance must be clean. Turning auto-merge on or off,
+and on such a PR its merge, are not involvement. For an agent-involved
+PR merged into `develop`,
 its change must be covered by a merge-review record or an approved
 merge-review exemption. It then moves each
 marker to where its audit reached; a read failure stops there, so the next

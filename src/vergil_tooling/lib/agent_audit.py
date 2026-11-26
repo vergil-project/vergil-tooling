@@ -37,7 +37,9 @@ PR's is a ``no-pr`` finding. For each landing:
    must be in the expected set, judged by
    :func:`~vergil_tooling.lib.pr_provenance.classify` with account types. On
    ``develop`` that is the human, or the user agent or the automation App on
-   a PR it authored itself. On ``main`` it is the human alone (and the
+   a PR it authored itself or on any PR the one PR path accepts, a same-repo
+   PR whose branch has a trusted author (epic vergil-project/.github#1664,
+   spec §5.1 and §5.9). On ``main`` it is the human alone (and the
    automation App if the release flow merged as it, which it does not:
    :data:`~vergil_tooling.lib.github_config.APP_MERGES_RELEASES`). An
    ``UNTRUSTED`` actor, a deleted account and a merge with no recorded actor
@@ -45,7 +47,10 @@ PR's is a ``no-pr`` finding. For each landing:
    (:func:`~vergil_tooling.lib.pr_provenance.check_pr`) is checked too.
 2. **The gates**, on an agent-involved PR merged into ``develop``
    (:func:`~vergil_tooling.lib.agent_gates.agent_involved`, from the PR's
-   author and every actor GitHub records on its timeline): the merge-review
+   author and every actor GitHub records on its timeline, bar the events
+   :func:`~vergil_tooling.lib.pr_provenance.not_involvement` leaves out:
+   arming, and on a PR the path accepts its merge and the merge's closing,
+   the rule the finalize watch uses): the merge-review
    coverage of :func:`~vergil_tooling.lib.agent_gates.evaluate`, on the
    change from the branch tip before the landing to the PR's head,
    ``refs/pull/<n>/head`` (merged branches are deleted). The task issues are
@@ -412,17 +417,29 @@ def _merged_prs_of(repo: str, branch: str, commit: str) -> dict[int, str]:
 
 @dataclass(frozen=True)
 class _PullRequest:
+    """A merged PR. *same_repo* is whether its head was in the audited repo itself."""
+
     number: int
     url: str
     author: trust.Identity
     merged_by: trust.Identity | None
     merge_commit: str
+    same_repo: bool
+
+
+# The REST pull's head projected to the fields :func:`trust.is_same_repo`
+# reads. A head whose repository is gone (a deleted fork) is a fork's.
+_SAME_REPO = (
+    "isCrossRepository: (.head.repo == null or .head.repo.full_name != .base.repo.full_name),"
+    " headRepositoryOwner: {login: .head.repo.owner.login},"
+    " headRepository: {name: .head.repo.name}"
+)
 
 
 def _read_pull(repo: str, number: int) -> _PullRequest:
     jq = (
         "{number, html_url, merged, merge_commit_sha,"
-        f" user: (.user | {_ACCOUNT}), merged_by: (.merged_by | {_ACCOUNT})}}"
+        f" user: (.user | {_ACCOUNT}), merged_by: (.merged_by | {_ACCOUNT}), {_SAME_REPO}}}"
     )
     data = _read(
         f"{repo} PR #{number}",
@@ -436,6 +453,11 @@ def _read_pull(repo: str, number: int) -> _PullRequest:
     if not isinstance(url, str) or not isinstance(merge, str):
         msg = f"cannot read {repo} PR #{number}: it has no URL or merge commit"
         raise AuditError(msg)
+    try:
+        same_repo = trust.is_same_repo(repo, data)
+    except trust.TrustReadError as exc:
+        msg = f"cannot read {repo} PR #{number}: {exc}"
+        raise AuditError(msg) from exc
     merged_by = data.get("merged_by")
     return _PullRequest(
         number=number,
@@ -443,6 +465,7 @@ def _read_pull(repo: str, number: int) -> _PullRequest:
         author=_identity(data.get("user")),
         merged_by=None if merged_by is None else _identity(merged_by),
         merge_commit=merge,
+        same_repo=same_repo,
     )
 
 
@@ -454,15 +477,19 @@ class _Timeline:
     mergers: tuple[trust.Identity, ...]
 
 
-def _read_timeline(repo: str, number: int) -> _Timeline:
+def _read_timeline(repo: str, number: int, *, on_path: bool) -> _Timeline:
     """Every actor GitHub records on PR *number*'s timeline.
 
     An event's ``actor``, and a review's ``user``. A ``null`` account is a
     deleted one, which counts as an actor. The events whose named account did
-    not act on the PR (:data:`_NOT_AN_ACTION`) are left out.
+    not act on the PR (:data:`_NOT_AN_ACTION`) are left out of the actors,
+    and so are those that are not involvement
+    (:func:`~vergil_tooling.lib.pr_provenance.not_involvement`, *on_path*
+    being whether the one PR path accepts the PR). The mergers keep every
+    merge and auto-merge enable: the actor check judges each one.
     """
     jq = (
-        "[.[] | {event}"
+        "[.[] | {event, created_at}"
         f' + (if has("actor") then {{actor: (.actor | {_ACCOUNT}), has_actor: true}} else {{}} end)'
         f' + (if has("user") then {{user: (.user | {_ACCOUNT}), has_user: true}} else {{}} end)]'
     )
@@ -470,10 +497,11 @@ def _read_timeline(repo: str, number: int) -> _Timeline:
         f"the timeline of {repo} PR #{number}",
         lambda: github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline", jq=jq),
     )
+    events = [cast("Mapping[str, object]", r) if isinstance(r, dict) else {} for r in rows]
+    uninvolved = pr_provenance.not_involvement(events, on_path=on_path)
     actors: list[trust.Identity] = []
     mergers: list[trust.Identity] = []
-    for row in cast("list[object]", rows):
-        data = cast("Mapping[str, object]", row) if isinstance(row, dict) else {}
+    for position, data in enumerate(events):
         event = data.get("event")
         if not isinstance(event, str):
             msg = f"cannot read the timeline of {repo} PR #{number}: an event has no name"
@@ -485,7 +513,8 @@ def _read_timeline(repo: str, number: int) -> _Timeline:
             who.append(_identity(data.get("actor")))
         if data.get("has_user") is True:
             who.append(_identity(data.get("user")))
-        actors += who
+        if position not in uninvolved:
+            actors += who
         if (event == "merged" or _AUTO_MERGE_ENABLED.fullmatch(event)) and who:
             mergers.append(who[0])
     return _Timeline(actors=tuple(actors), mergers=tuple(mergers))
@@ -572,8 +601,14 @@ def _actor_findings(
     pr: _PullRequest,
     timeline: _Timeline,
     authors: TrustedAuthors,
+    *,
+    on_path: bool,
 ) -> list[Finding]:
-    """The merge and auto-merge actors of *pr* outside the expected set."""
+    """The merge and auto-merge actors of *pr* outside the expected set.
+
+    On ``develop``, *on_path* (the one PR path accepts *pr*) lets the user
+    agent and the automation App arm or merge it whoever authored it.
+    """
     org = repo.split("/", 1)[0]
     subject = f"PR #{pr.number}"
     mergers = list(timeline.mergers)
@@ -606,7 +641,7 @@ def _actor_findings(
                 )
             continue
         ok = role is pr_provenance.Role.HUMAN or (
-            own and role in (pr_provenance.Role.USER, pr_provenance.Role.AUTOMATION)
+            (own or on_path) and role in (pr_provenance.Role.USER, pr_provenance.Role.AUTOMATION)
         )
         if ok:
             continue
@@ -625,6 +660,11 @@ def _actor_findings(
 
 
 def _provenance_findings(repo: str, branch: str, pr: _PullRequest) -> list[Finding]:
+    """The violations :func:`~vergil_tooling.lib.pr_provenance.check_pr` finds on *pr*.
+
+    The check reads for itself whether the one PR path accepts *pr*, and
+    relaxes its arm and merge as the actor check does.
+    """
     try:
         result = pr_provenance.check_pr(pr.url)
     except (subprocess.CalledProcessError, ValueError, trust.TrustReadError) as exc:
@@ -681,8 +721,14 @@ def _check_landing(
             f"{repo} PR #{landing.pr} reads with merge commit {pr.merge_commit}, not {landing.end}"
         )
         raise AuditError(msg)
-    timeline = _read_timeline(repo, landing.pr)
-    found = _actor_findings(repo, branch, pr, timeline, authors)
+    org = repo.split("/", 1)[0]
+    branch_trusted = (
+        pr_provenance.classify(pr.author, org=org, authors=authors)
+        is not pr_provenance.Role.UNTRUSTED
+    )
+    on_path = pr.same_repo and branch_trusted
+    timeline = _read_timeline(repo, landing.pr, on_path=on_path)
+    found = _actor_findings(repo, branch, pr, timeline, authors, on_path=on_path)
     found += _provenance_findings(repo, branch, pr)
     if branch != "develop":
         return found

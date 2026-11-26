@@ -41,6 +41,12 @@ AGENT = {"login": "human-vergil-user[bot]", "type": "Bot"}
 AUTOMATION = {"login": "o-automation[bot]", "type": "Bot"}
 OUTSIDER = {"login": "drive-by", "type": "User"}
 WORKFLOW = ".github/workflows/ci.yml"
+# The REST head of a fork PR, as the audit projects it for ``trust.is_same_repo``.
+_FORK: dict[str, object] = {
+    "isCrossRepository": True,
+    "headRepositoryOwner": {"login": "forker"},
+    "headRepository": {"name": "r"},
+}
 
 
 # --- git ----------------------------------------------------------------------------
@@ -244,6 +250,11 @@ class FakeGitHub:
             "merge_commit_sha": pr.merge_commit,
             "user": pr.author,
             "merged_by": pr.merged_by,
+            # A same-repo PR unless the test says otherwise: the projection
+            # of the REST head that ``trust.is_same_repo`` reads.
+            "isCrossRepository": False,
+            "headRepositoryOwner": {"login": REPO.split("/")[0]},
+            "headRepository": {"name": REPO.split("/")[1]},
             **pr.pull,
         }
 
@@ -633,9 +644,10 @@ def test_unexpected_actor_reported(
     origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
 ) -> None:
     _mark(gh, origin)
-    # The user agent merging the human's PR, and the automation App merging the agent's.
-    _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=AGENT)
-    _squash_pr(gh, origin, 12, {"c.txt": "c\n"}, author=AGENT, merger=AUTOMATION)
+    # The user agent merging the human's PR, and the automation App merging the
+    # agent's, each from a fork: the one PR path accepts neither.
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=AGENT).pull = _FORK
+    _squash_pr(gh, origin, 12, {"c.txt": "c\n"}, author=AGENT, merger=AUTOMATION).pull = _FORK
     results = agent_audit.audit(clone, REPO, AUTHORS)
     assert [(f.kind, f.subject) for f in results[0].findings] == [
         ("unexpected-actor", "PR #11"),
@@ -701,6 +713,130 @@ def test_provenance_violation_reported(
     )
     results = agent_audit.audit(clone, REPO, AUTHORS)
     assert _kinds(results) == ["provenance"]
+
+
+# --- the one PR path's relaxation (epic .github#1664, spec §5.1 and §5.9) ------------
+#
+# Any trusted identity may arm, or merge at clean status, a same-repo PR whose
+# branch has a trusted author, whoever authored it; arming and that merge are
+# not involvement, so they do not make the PR gated.
+
+_MERGED_AT = "2026-11-22T10:00:00Z"
+
+
+def _arm(actor: dict[str, str]) -> dict[str, object]:
+    return {"event": "auto_squash_enabled", "actor": actor, "has_actor": True}
+
+
+def _direct_merge(gh: FakeGitHub, pr: PR, actor: dict[str, str]) -> None:
+    """Record *pr* as merged directly by *actor*, with the close GitHub writes beside it."""
+    pr.merged_by = actor
+    pr.events = [
+        {"event": "merged", "actor": actor, "has_actor": True, "created_at": _MERGED_AT},
+        {"event": "closed", "actor": actor, "has_actor": True, "created_at": _MERGED_AT},
+    ]
+    gh.prs[pr.number] = pr
+
+
+def test_audit_actor_accepts_trusted_enable_on_others_pr(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    # The user agent arms the human's PR; the App arms and merges the agent's.
+    human_pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
+    human_pr.events.insert(0, _arm(AGENT))
+    agent_pr = _squash_pr(gh, origin, 12, {"c.txt": "c\n"}, author=AGENT, merger=AUTOMATION)
+    agent_pr.events.insert(0, _arm(AUTOMATION))
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+
+
+def test_audit_actor_flags_enable_on_fork_pr(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
+    pr.events.insert(0, _arm(AGENT))
+    pr.pull = _FORK
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert [(f.kind, f.subject) for f in results[0].findings] == [("unexpected-actor", "PR #11")]
+
+
+def test_audit_actor_flags_enable_on_untrusted_authors_pr(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=OUTSIDER, merger=AGENT)
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert ("unexpected-actor", "PR #11") in [(f.kind, f.subject) for f in results[0].findings]
+
+
+def test_audit_agent_armed_human_pr_not_gated(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {WORKFLOW: "on: pull_request\n"}, author=HUMAN, merger=HUMAN)
+    pr.events[:0] = [
+        _arm(AGENT),
+        {"event": "auto_merge_disabled", "actor": AGENT, "has_actor": True},
+        _arm(AGENT),
+    ]
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gates.calls == []
+
+
+def test_audit_agent_direct_merged_human_pr_not_gated(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {WORKFLOW: "on: pull_request\n"}, author=HUMAN, merger=HUMAN)
+    _direct_merge(gh, pr, AGENT)
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gates.calls == []
+
+
+def test_audit_agent_direct_merged_fork_pr_is_gated_and_flagged(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates
+) -> None:
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {"b.txt": "b\n"}, author=HUMAN, merger=HUMAN)
+    _direct_merge(gh, pr, AGENT)
+    pr.pull = _FORK
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == ["unexpected-actor"]
+    assert len(gates.calls) == 1
+
+
+def test_read_pull_contradictory_head_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = {
+        "number": 11,
+        "merged": True,
+        "html_url": "u",
+        "merge_commit_sha": "c" * 40,
+        "isCrossRepository": False,
+        "headRepositoryOwner": {"login": "someone-else"},
+        "headRepository": {"name": "r"},
+    }
+    monkeypatch.setattr(github, "read_json", lambda *args: answer)
+    with pytest.raises(agent_audit.AuditError, match="cannot read o/r PR #11"):
+        agent_audit._read_pull(REPO, 11)
+
+
+def test_timeline_leaves_out_arming_and_the_path_merge(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows: list[object] = [
+        _arm(AGENT),
+        {"event": "merged", "actor": AGENT, "has_actor": True, "created_at": _MERGED_AT},
+        {"event": "closed", "actor": AGENT, "has_actor": True, "created_at": _MERGED_AT},
+    ]
+    _rows(monkeypatch, rows)
+    agent = trust.Identity("human-vergil-user[bot]", "Bot")
+    on_path = agent_audit._read_timeline(REPO, 11, on_path=True)
+    assert on_path.actors == ()
+    assert on_path.mergers == (agent, agent)
+    off_path = agent_audit._read_timeline(REPO, 11, on_path=False)
+    assert off_path.actors == (agent, agent)
 
 
 # --- agent involvement and the gates -------------------------------------------------
@@ -1077,12 +1213,12 @@ def test_prs_of_a_commit_malformed_raises(monkeypatch: pytest.MonkeyPatch, row: 
 def test_timeline_event_without_a_name_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _rows(monkeypatch, [{"actor": HUMAN, "has_actor": True}])
     with pytest.raises(agent_audit.AuditError, match="an event has no name"):
-        agent_audit._read_timeline(REPO, 11)
+        agent_audit._read_timeline(REPO, 11, on_path=False)
 
 
 def test_timeline_reads_a_reviews_user(monkeypatch: pytest.MonkeyPatch) -> None:
     _rows(monkeypatch, [{"event": "reviewed", "user": AGENT, "has_user": True}])
-    timeline = agent_audit._read_timeline(REPO, 11)
+    timeline = agent_audit._read_timeline(REPO, 11, on_path=False)
     assert timeline.actors == (trust.Identity("human-vergil-user[bot]", "Bot"),)
     assert timeline.mergers == ()
 

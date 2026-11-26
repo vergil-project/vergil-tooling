@@ -81,7 +81,9 @@ of an open PR, :func:`recheck_gates`:
 - asks whether the PR is **agent-involved**: an agent login opened it or
   GitHub attributes an action on it to one
   (:func:`~vergil_tooling.lib.pr_provenance.pr_actors`,
-  :func:`~vergil_tooling.lib.agent_gates.agent_involved`), or its ready
+  :func:`~vergil_tooling.lib.agent_gates.agent_involved`; arming the PR,
+  and on a PR the one PR path accepts its merge, are not involvement:
+  :func:`~vergil_tooling.lib.pr_provenance.not_involvement`), or its ready
   state, on the relay ref ``refs/vergil/pr-workflow/<branch>``
   (:func:`ready_state`), says so. A ready state counts as agent-involved
   unless its commit's author is trusted and its ``recorded_by`` is an
