@@ -41,6 +41,19 @@ reset() {
   rm -rf "$R/repodata"
   cp -a /srv/repodata.orig "$R/repodata"
 }
+keyring() {
+  # The keys dnf checks the repo's repomd.xml.asc against: its per-repo keyring,
+  # a gpg keybox on RHEL 9 and one <keyid>.pub file per key on RHEL 10.
+  local d
+  for d in /var/cache/dnf/vergil-*/pubring; do
+    echo "--- dnf repo keyring: $({
+      gpg --batch --homedir "$d" --with-colons --with-subkey-fingerprints --list-keys
+      for f in "$d"/*.pub; do
+        [ -e "$f" ] && gpg --batch --homedir /tmp/g --with-colons --with-subkey-fingerprints --show-keys "$f"
+      done
+    } 2>/dev/null | awk -F: '$1 == "fpr" { printf "%s ", $10 }')"
+  done
+}
 verify() {
   gpg --batch -q --homedir /tmp/g --import /etc/pki/rpm-gpg/RPM-GPG-KEY-vergil-test 2>/dev/null
   local got
@@ -63,6 +76,7 @@ run control-plain "untouched repo, no -y (key already imported)" \
 reset
 printf '<!-- another publish -->\n' >>"$R/repodata/repomd.xml"
 verify
+keyring
 run mismatch-makecache "repomd.xml from another publish than its .asc" \
   dnf -y makecache --refresh --repo vergil
 run mismatch-makecache-plain "same mismatch, no -y (key already imported)" \
