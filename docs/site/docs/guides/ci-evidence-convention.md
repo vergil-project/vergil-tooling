@@ -341,11 +341,15 @@ a tool has no evidence file, or when a file is neither a transcript of the
 gate nor named by one of the gate's commands. They also fail when a
 language's report files and its tools' evidence differ.
 
-The transcripts reach the bundle only once vergil-actions' report table
+From vergil-tooling v2.1.349, vergil-actions' evidence actions
 ([`ci/evidence/reports`](https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/))
-stages them, names `ty` among the Python typecheck tools and has the
-`quality / build` job upload `quality-build.log`. Until then the bundle
-lacks them, as it did before.
+stage the transcripts into the bundle like any other report:
+`quality-ty.log` for the Python typecheck gate, `quality-rustfmt.log` for
+the Rust lint gate, `quality-prettier.log` for the TypeScript lint gate and
+`quality-build.log` for the Rust and TypeScript `build` gate. The expect
+check requires each one. A run on an earlier vergil-tooling release, which
+writes no transcripts, passes without them, with a notice naming each one
+left out.
 
 Producers emit these files today: the check registry runs `pytest --cov …
 --cov-report=xml --junitxml=…`, `pip-audit` / license checks write `--output`
