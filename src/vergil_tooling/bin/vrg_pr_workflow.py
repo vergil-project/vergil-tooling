@@ -60,6 +60,15 @@ this clone's (or this clone's repo cannot be told), so a wrong clone is never
 read as "no marker". ``batch-show`` exits 0 with the marker, 1 when there is
 none, and 2 on any other failure.
 
+``batch-extract --issue <N> [--issue <M> ...] [--check]`` takes a set out of its
+batch in one marker rewrite (epic vergil-project/.github#1672, spec §5.5). The
+set is refused, naming the group, when it would split a release group: a group
+with a member leaving the batch and another staying in it. A group member
+outside the batch does not stay in it. ``--check`` makes the same judgment
+without writing anything and prints ``{"ok", "split", "remaining"}``, exiting 0
+when ok and 1 otherwise; a group that cannot be read fails the judgment, and
+``batch-extract`` refuses on it too.
+
 ``batch-check --pr <url> [--head <sha>]`` checks a submitted batch PR before
 a push to it (epic vergil-project/.github#1218, spec §6.8): its body's
 ``Closes`` refs against GitHub's closing references, and one commit per issue
@@ -77,6 +86,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -103,6 +113,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release_groups import record
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -202,15 +213,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p_bextract = sub.add_parser(
         "batch-extract",
-        help="Take an issue out of its batch and remove its whole state directory",
+        help="Take issues out of their batch and remove their whole state directories",
         description=(
-            "Rewrite every other member's batch marker without the issue (removing "
-            "the last one's when fewer than two remain) and remove the issue's "
-            "issue-implement/<N>/ state directory. Refused while any security-*.md "
-            "details file is under it."
+            "Take the issues out of their batch in one rewrite: every remaining "
+            "member's batch marker is rewritten without them (the last one's is "
+            "removed when fewer than two remain), then each issue's "
+            "issue-implement/<N>/ state directory is removed. Refused while any "
+            "security-*.md details file is under one of them. Refused, naming the "
+            "group, when the set would split a release group (a member leaving and "
+            "another staying); nothing is changed then. --check makes the same "
+            'judgment, writes nothing, and prints {"ok", "split", "remaining"} '
+            "as JSON, exiting 0 when ok and 1 otherwise."
         ),
     )
-    p_bextract.add_argument("--issue", required=True, help=issue_help)
+    p_bextract.add_argument(
+        "--issue",
+        action="append",
+        required=True,
+        help=issue_help + "; repeat for a set",
+    )
+    p_bextract.add_argument(
+        "--check",
+        action="store_true",
+        help="Judge the group split and print it as JSON; write nothing",
+    )
     p_bextract.set_defaults(func=cmd_batch_extract)
 
     p_bshow = sub.add_parser(
@@ -862,14 +888,97 @@ def cmd_batch_start(args: argparse.Namespace, _transport: LocalFileTransport) ->
     return 0
 
 
+@dataclass(frozen=True)
+class _Split:
+    """A release group that a set would split: its ID and its members on each side."""
+
+    group: str
+    leaving: list[str]
+    staying: list[str]
+
+    def as_json(self) -> dict[str, object]:
+        return {"group": self.group, "leaving": self.leaving, "staying": self.staying}
+
+
+def _judge_extract(root: Path, issues: list[str]) -> tuple[list[_Split], list[str]]:
+    """The group split a set would make in its batch, and the issues that remain.
+
+    Spec §5.5, read-only: a release group splits when it has a member of the
+    set and another member of the batch that stays. A group member outside the
+    batch does not stay in it. Raises :class:`WorkflowError` when the set is not
+    one batch's or a group cannot be read, so nothing is judged from a guess.
+    """
+    marker = batch_marker.batch_of(root, issues)
+    leaving_set = set(issues)
+    remaining = [issue for issue in marker.issues if issue not in leaving_set]
+    repo = _clone_repo()
+    refs = {issue: epics.parse_issue_ref(issue, default_repo=repo) for issue in marker.issues}
+    groups: dict[tuple[str, str], record.Group] = {}
+    try:
+        for issue in marker.issues:
+            for group in record.groups_of(refs[issue]):
+                groups.setdefault((group.epic.slug, group.group), group)
+    except record.GroupRecordError as exc:
+        msg = (
+            f"batch-extract: cannot tell whether the set {', '.join(issues)} splits a"
+            f" release group ({exc}); nothing was changed"
+        )
+        raise WorkflowError(msg) from exc
+
+    split: list[_Split] = []
+    for group in sorted(groups.values(), key=lambda g: (g.epic.slug, int(g.group[1:]))):
+        keys = {_ref_key(member) for member in group.members}
+        members = [issue for issue in marker.issues if _ref_key(refs[issue]) in keys]
+        leaving = [issue for issue in members if issue in leaving_set]
+        staying = [issue for issue in members if issue not in leaving_set]
+        if leaving and staying:
+            split.append(_Split(group.group, leaving, staying))
+    return split, remaining
+
+
+def _ref_key(ref: epics.IssueRef) -> tuple[str, str, int]:
+    """An issue's identity, the repo compared without case."""
+    return (ref.owner.lower(), ref.repo.lower(), ref.number)
+
+
+def _split_refusal(split: list[_Split]) -> str:
+    """The refusal naming each group the set would split."""
+    lines = "; ".join(
+        f"release group {entry.group} (leaving {', '.join(entry.leaving)}, staying"
+        f" {', '.join(entry.staying)})"
+        for entry in split
+    )
+    return (
+        f"batch-extract refused: the set would split {lines}. A group leaves a batch"
+        " whole: take all its members out together, or record a group change with the"
+        " human first. Nothing was changed."
+    )
+
+
 def cmd_batch_extract(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
-    """Take one issue out of its batch."""
-    issue = _batch_ref(str(args.issue))
-    remaining = batch_marker.extract(git.main_worktree_root(), issue)
+    """Take a set of issues out of their batch, refusing a group split first.
+
+    The judgment runs before anything is changed, and ``--check`` stops after it.
+    """
+    issues = [_batch_ref(str(raw)) for raw in args.issue]
+    root = git.main_worktree_root()
+    split, judged_remaining = _judge_extract(root, issues)
+    if args.check:
+        _emit(
+            {
+                "ok": not split,
+                "split": [entry.as_json() for entry in split],
+                "remaining": judged_remaining,
+            }
+        )
+        return 0 if not split else 1
+    if split:
+        raise WorkflowError(_split_refusal(split))
+    remaining = batch_marker.extract(root, issues)
     _emit(
         {
             "ok": True,
-            "extracted": issue,
+            "extracted": issues,
             "remaining": remaining,
             "batch": batch_rules.is_batch(remaining),
         }

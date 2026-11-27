@@ -331,11 +331,19 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
 - `batch-show --issue <N>` prints the issue's batch as one JSON object,
   `{"issues": ["#10", "#11"], "base_sha": "<sha>"}`, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.
-- `batch-extract --issue <N>` rewrites every other member's marker without
-  the issue (removing the last one's when fewer than two remain) and removes
-  the issue's whole `issue-implement/<N>/` directory, its `merge-review/`
-  state included. It refuses while a `security-*.md` details file is under
-  that directory.
+- `batch-extract --issue <N> [--issue <M> …] [--check]` takes the set out of
+  its batch in one rewrite: every other member's marker is rewritten without
+  the set (the last one's is removed when fewer than two remain), and each
+  issue's whole `issue-implement/<N>/` directory is removed, its
+  `merge-review/` state included. It refuses while a `security-*.md` details
+  file is under any of those directories. It also refuses, naming the group,
+  when the set would split a release group (a member leaving the batch while
+  another member of the group stays in it); a group member outside the batch
+  does not count as staying. The judgment runs before anything is changed.
+  `--check` makes the same judgment without writing anything, printing
+  `{"ok": <bool>, "split": [{"group", "leaving", "staying"}], "remaining": […]}`
+  and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
+  the extraction and fails `--check` too.
 
 `batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
@@ -356,7 +364,7 @@ otherwise.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract` (`--issue` repeatable, `--check`), `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
