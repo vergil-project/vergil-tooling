@@ -1268,10 +1268,9 @@ def _wait_for_cd_run(
     except CDRunReadError as exc:
         # A read failure is not a run still in progress: the stage fails as a
         # tool error naming the cause (vergil-tooling#5174).
-        msg = f"CD workflow run {run_id} for {head_sha[:7]} could not be read: {exc}"
+        where = f" ({url})" if url else ""
+        msg = f"CD workflow run {run_id}{where} for {head_sha[:7]} could not be read: {exc}"
         print(f"ERROR: {msg}", file=sys.stderr)
-        if url:
-            print(f"  {url}", file=sys.stderr)
         raise CDUnreadableError(msg) from exc
     if view is None:
         return CDRunProblem(run_id, target_branch, head_sha, url, None, int(watch_timeout))

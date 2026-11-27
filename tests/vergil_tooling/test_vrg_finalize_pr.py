@@ -623,9 +623,7 @@ def _cd_view_resp(
     return CompletedProcess(
         args=(),
         returncode=0,
-        stdout=json.dumps(
-            {"status": status, "conclusion": conclusion, "attempt": 1, "url": url}
-        ),
+        stdout=json.dumps({"status": status, "conclusion": conclusion, "attempt": 1, "url": url}),
     )
 
 
@@ -815,7 +813,9 @@ def test_wait_a_non_transient_view_error_is_a_read_failure_at_once(
         _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
     assert "still in progress" not in str(raised.value)
     sleep.assert_not_called()
-    assert "ERROR: CD workflow run 12345 for abc123d could not be read" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "ERROR: CD workflow run 12345 (" in err
+    assert "actions/runs/12345) for abc123d could not be read" in err
 
 
 def test_wait_a_view_still_failing_at_the_deadline_is_a_read_failure() -> None:

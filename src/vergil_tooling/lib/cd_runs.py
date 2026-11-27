@@ -417,7 +417,8 @@ def watch_run(run_id: str, *, timeout: float, repo: str | None = None) -> RunSta
 
     *repo* names the run's repository; without it ``gh`` uses the current
     one. A run that could not be read raises :class:`CDRunReadError`
-    (:func:`wait_completed`), never reads as ``timed_out``. A cancel that cannot be checked for a supersede raises the lookup's error
+    (:func:`wait_completed`), never reads as ``timed_out``. A cancel that
+    cannot be checked for a supersede raises the lookup's error
     (``subprocess.CalledProcessError`` or ``ValueError``) rather than reading
     as either answer.
     """

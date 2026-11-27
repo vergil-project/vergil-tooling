@@ -161,7 +161,12 @@ def test_a_read_still_failing_at_the_deadline_is_a_read_failure() -> None:
         pytest.raises(ReleaseError, match="persistent read failure") as e,
     ):
         wait_run_completed(
-            "o/r", "5", phase="confirm-main", timeout=150, sleep=MagicMock(), clock=lambda: next(clock)
+            "o/r",
+            "5",
+            phase="confirm-main",
+            timeout=150,
+            sleep=MagicMock(),
+            clock=lambda: next(clock),
         )
     assert e.value.detail is not None
     assert "503" in e.value.detail
