@@ -13,13 +13,16 @@ import ast
 import inspect
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
+from tests.vergil_tooling.watch_lock_stubs import FakeLock, broken, record
 from vergil_tooling.lib import finalize_watch, github, pr_await
 from vergil_tooling.lib.finalize_watch import DEADLINE_ENV, FinalizeWatchError
 from vergil_tooling.lib.pr_await import PrAwaitError, wait_for_merge
+from vergil_tooling.lib.release_lock.model import BROKEN_WATCH_POLL_SECS
+from vergil_tooling.lib.release_lock.watch import LockWatch
 
 PR = "https://github.com/o/r/pull/1"
 HEAD_A = "a" * 40
@@ -83,6 +86,7 @@ class FakeGitHub:
     orphan_probes: int = 0
     required_reads: int = 0
     last: dict[str, Any] = field(default_factory=dict)
+    lock: FakeLock = field(default_factory=FakeLock)
 
     def script(self, *states: dict[str, Any]) -> None:
         self.states = list(states)
@@ -136,6 +140,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     ):
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(pr_await, "time", SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep))
+    api.lock.install(monkeypatch)
     return api
 
 
@@ -145,7 +150,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
 def test_merged_before_the_wait_starts(fake: FakeGitHub) -> None:
     fake.script(merged())
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.merged
     assert result.merge_commit == MERGE_SHA
@@ -167,7 +172,7 @@ def test_merged_before_the_wait_starts(fake: FakeGitHub) -> None:
 def test_waits_until_merged(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(), merged())
 
-    result = wait_for_merge(PR, poll_interval=15)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
 
     assert result.merged
     assert result.merge_commit == MERGE_SHA
@@ -178,14 +183,14 @@ def test_merged_with_no_merge_commit_is_an_error(fake: FakeGitHub) -> None:
     fake.script(merged(mergeCommit=None))
 
     with pytest.raises(PrAwaitError, match="names no merge commit"):
-        wait_for_merge(PR)
+        wait_for_merge(PR, lock=LockWatch())
 
 
 def test_malformed_merge_commit_is_an_error(fake: FakeGitHub) -> None:
     fake.script(merged(mergeCommit={"oid": ""}))
 
     with pytest.raises(FinalizeWatchError, match="mergeCommit"):
-        wait_for_merge(PR)
+        wait_for_merge(PR, lock=LockWatch())
 
 
 # --- reviews and commits never end the wait ----------------------------------------
@@ -194,7 +199,7 @@ def test_malformed_merge_commit_is_an_error(fake: FakeGitHub) -> None:
 def test_new_commit_does_not_end_the_wait(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(headRefOid=HEAD_B), merged(headRefOid=HEAD_B))
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.merged
     assert result.head_sha == HEAD_B
@@ -212,7 +217,7 @@ def test_all_checks_green_but_not_yet_merged_keeps_waiting(fake: FakeGitHub) -> 
     green = [check_run("test / unit", "SUCCESS"), check_run("CodeQL", "SUCCESS", 2)]
     fake.script(pr_state(statusCheckRollup=green, mergeStateStatus="CLEAN"), merged())
 
-    assert wait_for_merge(PR).merged
+    assert wait_for_merge(PR, lock=LockWatch()).merged
 
 
 # --- cannot merge: exit 1 ------------------------------------------------------------
@@ -221,29 +226,79 @@ def test_all_checks_green_but_not_yet_merged_keeps_waiting(fake: FakeGitHub) -> 
 def test_closed_without_merging(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(state="CLOSED", autoMergeRequest=None))
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.reason == "closed"
     assert result.to_output()["outcome"] == "cannot_merge"
     assert result.to_output()["merge_commit"] is None
 
 
-def test_auto_merge_off_at_start(fake: FakeGitHub) -> None:
+# --- the wait under the release lock (epic vergil-project/.github#1664, Task 26) ----
+
+
+def test_pr_await_auto_merge_off_reason_retired() -> None:
+    reasons = set(get_args(pr_await.Reason))
+    assert "auto_merge_off" not in reasons
+    assert {"refused", "held_by_release"} <= reasons
+
+
+def test_pr_await_rearm_through_path(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
+    """Open, unarmed and no lock held: the wait re-arms the PR through the one PR path."""
+    fake.script(pr_state(), pr_state(headRefOid=HEAD_B, autoMergeRequest=None), merged())
+
+    result = wait_for_merge(PR, lock=LockWatch())
+
+    assert result.merged
+    assert fake.lock.arms == [PR]
+    assert "auto-merge was off with no release lock held: re-armed" in capsys.readouterr().err
+
+
+def test_pr_await_held_exits_6_never_auto_merge_off(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unarmed under a held lock, the wait waits, and ends held by release at the deadline."""
+    monkeypatch.setenv(DEADLINE_ENV, "40")
+    fake.lock.states = [record()]
     fake.script(pr_state(autoMergeRequest=None))
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
 
-    assert result.reason == "auto_merge_off"
+    assert result.reason == "held_by_release"
+    assert not result.merged
+    assert result.detail == (
+        "still held by release 2.1.400 (stage cut, running) at the 40s deadline "
+        f"({DEADLINE_ENV}); run the wait again"
+    )
+    assert result.to_output()["outcome"] == "held_by_release"
+    assert fake.sleeps == [15, 15, 10]
+    assert fake.lock.arms == []
+    assert "held by release 2.1.400 (stage cut, running)" in capsys.readouterr().err
+
+
+def test_pr_await_broken_release_slows_poll(fake: FakeGitHub) -> None:
+    fake.lock.states = [broken()]
+    fake.script(pr_state(autoMergeRequest=None), pr_state(autoMergeRequest=None), merged())
+
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
+
+    assert result.merged
+    assert fake.sleeps == [BROKEN_WATCH_POLL_SECS] * 2
+    assert fake.lock.reclaims == []
+
+
+def test_pr_await_refused_rearm_exits_1_reason_refused(fake: FakeGitHub) -> None:
+    fake.lock.arm_outcome = "refused"
+    fake.lock.arm_detail = "the one PR path does not accept it: it is a draft"
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = wait_for_merge(PR, lock=LockWatch())
+
+    assert result.reason == "refused"
+    assert result.detail == (
+        "the one PR path refused to re-arm it: the one PR path does not accept it: it is a draft"
+    )
+    assert result.to_output()["outcome"] == "cannot_merge"
     assert fake.sleeps == []
-
-
-def test_push_that_turns_auto_merge_off(fake: FakeGitHub) -> None:
-    fake.script(pr_state(), pr_state(headRefOid=HEAD_B, autoMergeRequest=None))
-
-    result = wait_for_merge(PR)
-
-    assert result.reason == "auto_merge_off"
-    assert result.head_sha == HEAD_B
 
 
 def test_required_check_failed_is_named(fake: FakeGitHub) -> None:
@@ -251,7 +306,7 @@ def test_required_check_failed_is_named(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(statusCheckRollup=failing))
     fake.failed = ["test / unit"]
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.reason == "check_failed"
     assert result.failed_checks == ("test / unit",)
@@ -294,7 +349,7 @@ def test_issue_1324_superseded_cancel_keeps_waiting_until_merged(fake: FakeGitHu
         merged(),
     )
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.merged
     assert fake.sleeps == [15, 15]
@@ -309,7 +364,7 @@ def test_cancelled_check_with_no_newer_run_after_the_grace(fake: FakeGitHub) -> 
         )
     )
 
-    result = wait_for_merge(PR, cancel_grace=30)
+    result = wait_for_merge(PR, lock=LockWatch(), cancel_grace=30)
 
     assert result.reason == "check_cancelled"
     assert result.failed_checks == ("test / unit",)
@@ -353,13 +408,13 @@ def test_non_required_failure_keeps_waiting(fake: FakeGitHub) -> None:
     fake.script(pr_state(statusCheckRollup=failing), merged())
     fake.failed = ["lint / optional"]
 
-    assert wait_for_merge(PR).merged
+    assert wait_for_merge(PR, lock=LockWatch()).merged
 
 
 def test_conflict_once_it_settles(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
     fake.script(pr_state(), pr_state(mergeStateStatus="DIRTY"))
 
-    result = wait_for_merge(PR)
+    result = wait_for_merge(PR, lock=LockWatch())
 
     assert result.reason == "conflict"
     assert result.merge_state_status == "DIRTY"
@@ -382,7 +437,7 @@ def test_a_conflict_that_clears_before_it_settles_keeps_waiting(fake: FakeGitHub
     dirty = pr_state(mergeStateStatus="DIRTY")
     fake.script(dirty, dirty, pr_state(mergeStateStatus="CLEAN"), merged())
 
-    result = wait_for_merge(PR, conflict_settle=60)
+    result = wait_for_merge(PR, lock=LockWatch(), conflict_settle=60)
 
     assert result.merged
     assert fake.sleeps == [15, 15, 15]
@@ -392,7 +447,7 @@ def test_a_cleared_conflict_settles_afresh_when_it_returns(fake: FakeGitHub) -> 
     dirty = pr_state(mergeStateStatus="DIRTY")
     fake.script(dirty, dirty, pr_state(), dirty)
 
-    result = wait_for_merge(PR, conflict_settle=30)
+    result = wait_for_merge(PR, lock=LockWatch(), conflict_settle=30)
 
     assert result.reason == "conflict"
     # Cleared at 30s and back at 45s, so it settles at 75s, not 30s.
@@ -406,7 +461,7 @@ def test_a_new_head_starts_the_conflict_settle_again(
     dirty_b = pr_state(mergeStateStatus="DIRTY", headRefOid=HEAD_B)
     fake.script(dirty_a, dirty_a, dirty_b)
 
-    result = wait_for_merge(PR, conflict_settle=30)
+    result = wait_for_merge(PR, lock=LockWatch(), conflict_settle=30)
 
     assert result.reason == "conflict"
     assert result.head_sha == HEAD_B
@@ -430,7 +485,7 @@ def test_deadline_passes_with_pr_pending(fake: FakeGitHub, monkeypatch: pytest.M
     monkeypatch.setenv(DEADLINE_ENV, "40")
     fake.script(pr_state())
 
-    result = wait_for_merge(PR, poll_interval=15)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
 
     assert result.reason == "timed_out"
     assert "40s" in result.detail
@@ -443,7 +498,7 @@ def test_orphaned_check_after_grace(fake: FakeGitHub, capsys: pytest.CaptureFixt
     fake.script(pr_state())
     fake.orphans = ["test / unit"]
 
-    result = wait_for_merge(PR, poll_interval=15, orphan_grace=300)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15, orphan_grace=300)
 
     assert result.reason == "orphaned_check"
     assert result.orphaned_checks == ("test / unit",)
@@ -458,7 +513,7 @@ def test_orphan_grace_defaults_from_env(fake: FakeGitHub, monkeypatch: pytest.Mo
     fake.script(pr_state())
     fake.orphans = ["test / unit"]
 
-    result = wait_for_merge(PR, poll_interval=15)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
 
     assert result.reason == "orphaned_check"
     assert fake.clock == 30
@@ -468,7 +523,7 @@ def test_late_result_within_grace_merges(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(), merged())
     fake.orphans = ["test / unit"]
 
-    assert wait_for_merge(PR, poll_interval=15, orphan_grace=300).merged
+    assert wait_for_merge(PR, lock=LockWatch(), poll_interval=15, orphan_grace=300).merged
 
 
 def test_grace_restarts_when_the_orphan_set_changes(fake: FakeGitHub) -> None:
@@ -476,7 +531,7 @@ def test_grace_restarts_when_the_orphan_set_changes(fake: FakeGitHub) -> None:
     fake.script(pr_state(), pr_state(), pr_state(statusCheckRollup=two))
     fake.orphans = ["test / unit", "CodeQL"]
 
-    result = wait_for_merge(PR, poll_interval=15, orphan_grace=60)
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15, orphan_grace=60)
 
     assert result.reason == "orphaned_check"
     assert result.orphaned_checks == ("test / unit", "CodeQL")
@@ -490,7 +545,7 @@ def test_pending_check_not_orphaned_keeps_waiting(fake: FakeGitHub) -> None:
     fake.script(pr_state(statusCheckRollup=rollup), pr_state(statusCheckRollup=rollup), merged())
     fake.orphans = ["test / unit"]  # the app status has no backing run
 
-    assert wait_for_merge(PR, poll_interval=15, orphan_grace=1).merged
+    assert wait_for_merge(PR, lock=LockWatch(), poll_interval=15, orphan_grace=1).merged
 
 
 def test_blocked_with_nothing_pending_keeps_waiting_without_a_probe(fake: FakeGitHub) -> None:
@@ -499,7 +554,7 @@ def test_blocked_with_nothing_pending_keeps_waiting_without_a_probe(fake: FakeGi
     fake.script(pr_state(statusCheckRollup=green), merged())
     fake.orphans = ["test / unit"]
 
-    assert wait_for_merge(PR).merged
+    assert wait_for_merge(PR, lock=LockWatch()).merged
     assert fake.orphan_probes == 0
 
 
@@ -507,7 +562,7 @@ def test_orphan_probe_only_when_blocked(fake: FakeGitHub) -> None:
     fake.script(pr_state(mergeStateStatus="UNSTABLE"), merged())
     fake.orphans = ["test / unit"]
 
-    assert wait_for_merge(PR).merged
+    assert wait_for_merge(PR, lock=LockWatch()).merged
     assert fake.orphan_probes == 0
 
 
@@ -541,13 +596,12 @@ def test_standing_block_conflict(fake: FakeGitHub) -> None:
     assert fake.required_reads == 0
 
 
-def test_standing_block_auto_merge_off(fake: FakeGitHub) -> None:
+def test_standing_block_auto_merge_off_is_not_a_block(fake: FakeGitHub) -> None:
+    """An unarmed PR is held or re-armed by the watch, so one read does not call it blocked."""
     fake.script(pr_state(autoMergeRequest=None))
 
-    result = pr_await.standing_block(PR)
-
-    assert result is not None
-    assert result.reason == "auto_merge_off"
+    assert pr_await.standing_block(PR) is None
+    assert fake.lock.reads == []
 
 
 def test_standing_block_required_check_failed(fake: FakeGitHub) -> None:
@@ -602,7 +656,7 @@ def test_malformed_deadline_fails_before_any_read(
     fake.script(merged())
 
     with pytest.raises(ValueError, match=DEADLINE_ENV):
-        wait_for_merge(PR)
+        wait_for_merge(PR, lock=LockWatch())
     assert fake.views == []
 
 
@@ -613,7 +667,7 @@ def test_malformed_grace_fails_before_any_read(
     fake.script(merged())
 
     with pytest.raises(ValueError, match=github.ORPHAN_GRACE_ENV):
-        wait_for_merge(PR)
+        wait_for_merge(PR, lock=LockWatch())
     assert fake.views == []
 
 
@@ -621,7 +675,7 @@ def test_non_positive_poll_interval_fails_before_any_read(fake: FakeGitHub) -> N
     fake.script(merged())
 
     with pytest.raises(ValueError, match="poll_interval"):
-        wait_for_merge(PR, poll_interval=0)
+        wait_for_merge(PR, lock=LockWatch(), poll_interval=0)
     assert fake.views == []
 
 
@@ -629,4 +683,4 @@ def test_unreadable_pr_raises(fake: FakeGitHub) -> None:
     fake.script(pr_state(state="WEIRD"))
 
     with pytest.raises(FinalizeWatchError, match="unknown state"):
-        wait_for_merge(PR)
+        wait_for_merge(PR, lock=LockWatch())

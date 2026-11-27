@@ -128,11 +128,12 @@ Submit always finishes: it returns only once each PR has merged or cannot
 merge (spec §4.8 of epic vergil-project/.github#1440).
 
 **Exit status.** Submit returns finalize's exit status (0 full success, 3
-not every PR merged, 4 develop did not validate, 5 the release failed), with
-two adjustments: when any PR failed to submit it returns at least 3, and a
-tool error from finalize (1, or any code finalize does not define) always
-wins. When no PR opened, a failed submit exits 3. A usage error, or a
-refusal before anything opened, exits 1.
+not every PR merged, 4 develop did not validate, 5 the release failed, 6
+every PR that did not merge is held by release: run ``vrg-finalize-pr``
+again), with two adjustments: when any PR failed to submit it returns at
+least 3 (and 3 in place of a 6), and a tool error from finalize (1, or any
+code finalize does not define) always wins. When no PR opened, a failed
+submit exits 3. A usage error, or a refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
 (submit always finalizes), ``--no-finalize`` (submit returns once each PR
@@ -717,7 +718,8 @@ def _create_or_adopt(sub: _Submission) -> str:
 # unchanged: a tool error always wins.
 EXIT_OK = 0
 EXIT_NOT_ALL_MERGED = 3
-_FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5})
+EXIT_HELD_BY_RELEASE = finalize_watch.EXIT_HELD_BY_RELEASE
+_FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5, EXIT_HELD_BY_RELEASE})
 
 # What progress.run_pipeline returns when the rollup is interrupted.
 _INTERRUPTED = 130
@@ -761,11 +763,16 @@ def _submit_exit(finalize_rc: int, *, any_failed: bool) -> int:
 
     A code finalize does not define as an outcome (1, a tool error, above
     all) always wins. Otherwise a failed submit makes it at least 3 ("not
-    every PR merged"), and a higher code from finalize (4 or 5) wins.
+    every PR merged"), and a higher code from finalize (4 or 5) wins. Held
+    by release (6) means every PR finalize watched that did not merge is
+    held, which a failed submit makes untrue, so it becomes 3: ``max`` alone
+    would keep 6.
     """
     if finalize_rc not in _FINALIZE_OUTCOMES:
         return finalize_rc
     if any_failed:
+        if finalize_rc == EXIT_HELD_BY_RELEASE:
+            return EXIT_NOT_ALL_MERGED
         return max(finalize_rc, EXIT_NOT_ALL_MERGED)
     return finalize_rc
 

@@ -60,6 +60,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 from vergil_tooling.lib import (
     agent_gates,
     epics,
+    finalize_watch,
     github,
     identity_mode,
     pr_path,
@@ -1719,7 +1720,24 @@ class TestFinalizeByDefault:
             rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: finalize_rc)
         assert rc == finalize_rc
 
-    @pytest.mark.parametrize("finalize_rc", [0, 3, 4, 5])
+    def test_submit_failed_and_held_exits_not_all_merged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failed submit wins over finalize's held-by-release 6: max alone would keep 6."""
+        a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
+            rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: 6)
+        assert rc == 3
+        assert "vrg-finalize-pr exited 6" not in capsys.readouterr().err
+
+    def test_submit_all_held_exits_held_by_release(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        rc, _run = _cli_main([], finalize_rc=6)
+        assert rc == finalize_watch.EXIT_HELD_BY_RELEASE == 6
+        assert "vrg-finalize-pr exited 6" not in capsys.readouterr().err
+
+    @pytest.mark.parametrize("finalize_rc", [0, 3, 4, 5, 6])
     def test_exit_is_finalize_code_when_every_submit_succeeded(self, finalize_rc: int) -> None:
         rc, _run = _cli_main([], finalize_rc=finalize_rc)
         assert rc == finalize_rc

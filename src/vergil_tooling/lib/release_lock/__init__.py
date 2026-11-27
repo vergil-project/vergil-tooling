@@ -14,6 +14,8 @@ every push under ``refs/vergil/release-lock``):
 - :mod:`.sweeps`: the quiesce (the arming-ref wait and the disarm sweep,
   the only code that turns auto-merge off) and the re-arm sweep.
 - :mod:`.reclaim`: reclaiming a stale lock, and ``vrg-release-lock break``.
+- :mod:`.watch`: the merge watch's lock rule, which reports a held PR, reclaims
+  a stale lock and re-arms an unarmed PR when no lock is held.
 
 A transport failure raises a :class:`ReleaseLockError` (:class:`RefWriteError`
 or :class:`RefReadError`); a lease mismatch is a ``None`` or ``False`` return.
