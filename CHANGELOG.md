@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.352] - 2026-11-27
+
+### Bug fixes
+
+- wait for a CD run by reading it, and classify a failed read, in every release and finalize wait (#5302)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- refuse an agent's server-side update of an open develop PR's branch (#5296)
+- refuse a plain push to an open develop PR's branch and every push to the lock refs (#5303)
+
 ## [2.1.351] - 2026-11-27
 
 ### Bug fixes
