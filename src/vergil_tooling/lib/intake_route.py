@@ -174,6 +174,7 @@ from vergil_tooling.lib.queue_view import (
     PLANNING_MARKER,
     parse_epic_markers,
 )
+from vergil_tooling.lib.release_groups import guard
 from vergil_tooling.lib.shell_ref import quoted_slug
 from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
@@ -325,6 +326,11 @@ def _route(ref: IssueRef, action: RouteAction, today: date) -> RouteResult:
         # would create the hoshin epic.
         raise RouteRefusedError(HOSHIN_REFUSAL.format(epic=f"--epic {action.epic}"))
     _refuse_outsider_opened(ref)
+    # A grouped task stays where its group is (spec §5.1): refused before any write,
+    # including the stale-listing clear a one-off re-run may make below.
+    reason = guard.refusal(ref, doing="route")
+    if reason is not None:
+        raise RouteRefusedError(reason)
     parent = epics.parent_of(ref)
     try:
         kind = _check_eligible(ref, action, parent)
