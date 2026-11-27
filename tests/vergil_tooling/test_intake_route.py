@@ -26,6 +26,7 @@ from vergil_tooling.lib.intake_route import (
     ToPlanning,
     route,
 )
+from vergil_tooling.lib.release_groups import record
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -130,6 +131,9 @@ class Env:
         # The item's own labels, as a 'labels' read of it gives them; None is
         # the labels of *issue_view*, which every other issue's read gives.
         self.labels: list[str] | None = None
+        # The live release groups that hold the routed item, and a read failure of them.
+        self.groups: list[record.Group] = []
+        self.groups_error: Exception | None = None
         self.comments: list[str] = []
         # The item's comment nodes as the trust layer reads them; by default
         # one per entry of *comments*, by a trusted human.
@@ -379,6 +383,11 @@ class Env:
         fake = trust_stubs.FakeItems(items)
         return fake(query, **variables)
 
+    def groups_of(self, task: IssueRef) -> list[record.Group]:
+        if self.groups_error is not None:
+            raise self.groups_error
+        return list(self.groups)
+
     def _read_output(self, *args: str) -> str:
         if args[:2] == ("issue", "transfer"):
             if isinstance(self.transfer, BaseException):
@@ -413,6 +422,7 @@ def env() -> Iterator[Env]:
         patch(f"{_MOD}.epics.ensure_intake_epic", state.ensure_intake_epic),
         patch(f"{_MOD}.epics.ensure_deferred_epic", state.ensure_deferred_epic),
         patch(f"{_MOD}.epics.resolve_epic_ref", state.resolve_epic_ref),
+        patch("vergil_tooling.lib.release_groups.record.groups_of", side_effect=state.groups_of),
         # The never-creating lookups a one-off re-run uses (#4291): all of them
         # home in org/.github.
         patch(f"{_MOD}.epics.resolve_epic_home", side_effect=lambda owner, bare: "org/.github"),
@@ -647,6 +657,35 @@ _EVERY_ROUTE: list[RouteAction] = [
     Split(into=(IssueRef("org", "tool", 10), IssueRef("org", "lib", 11)), reason="two fixes"),
     SizeItem(Sizing(14, "med", "One sentence.")),
 ]
+
+
+# -- A grouped task stays where its group is (epic vergil-project/.github#1672, spec §5.1) --
+
+GROUP = record.Group(
+    epic=DEV_EPIC, group="G1", rev=1, members=(ITEM,), dissolved=False, comment_id="901"
+)
+
+
+@pytest.mark.parametrize("action", _EVERY_ROUTE, ids=lambda a: type(a).__name__)
+def test_route_grouped_task_refused(env: Env, action: RouteAction) -> None:
+    env.groups = [GROUP]
+    with pytest.raises(RouteRefusedError, match=r"refusing to route org/\.github#352") as exc:
+        route(ITEM, action, today=TODAY)
+    message = str(exc.value)
+    assert "G1" in message
+    assert "org/.github#400" in message
+    assert "vrg-release-group set" in message
+    assert "dissolve" in message
+    _assert_nothing_resolved_or_written(env)
+
+
+@pytest.mark.parametrize("action", _EVERY_ROUTE, ids=lambda a: type(a).__name__)
+def test_route_group_read_failure_refused(env: Env, action: RouteAction) -> None:
+    env.groups_error = record.GroupRecordError("org/.github cannot be read")
+    with pytest.raises(RouteRefusedError, match=r"refusing to route org/\.github#352") as exc:
+        route(ITEM, action, today=TODAY)
+    assert "org/.github cannot be read" in str(exc.value)
+    _assert_nothing_resolved_or_written(env)
 
 
 def _assert_nothing_resolved_or_written(env: Env) -> None:

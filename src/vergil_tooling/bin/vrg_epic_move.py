@@ -35,6 +35,7 @@ import sys
 
 from vergil_tooling.lib import epic_chain, epics, github
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.release_groups import guard
 
 
 @cli_main
@@ -103,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
             if epic_chain.chain_contains(epic, task):
                 print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
                 return 0
+            # A grouped task stays where its group is (spec §5.1): refused before the write.
+            reason = guard.refusal(task, doing="move")
+            if reason is not None:
+                print(f"vrg-epic-move: {reason}", file=sys.stderr)
+                return 1
             try:
                 if current is None:
                     container = epic_chain.link_into(epic, task)

@@ -15,7 +15,9 @@ import pytest
 
 from tests.vergil_tooling.subissue_fake import FakeSubIssueGraph
 from vergil_tooling.bin.vrg_epic_move import main, parse_args
-from vergil_tooling.lib import epic_chain, epics, github
+from vergil_tooling.lib import epic_chain, epics, github, trust
+from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.trust import CommentStream, Role, StreamComment
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,12 +30,26 @@ TASK = epics.IssueRef("org", "repo", 42)
 
 _LINK_MUTATIONS = (epics._ADD_SUBISSUE, epics._REPARENT_SUBISSUE, epics._REMOVE_SUBISSUE)
 
+# TASK is a live member of G1 of OLD (epic vergil-project/.github#1672, spec §5.1).
+GROUP = record.Group(
+    epic=OLD, group="G1", rev=1, members=(TASK,), dissolved=False, comment_id="901"
+)
+_GROUPS = "vergil_tooling.lib.release_groups.record.groups_of"
+
 
 @pytest.fixture(autouse=True)
 def queue_kind() -> Iterator[MagicMock]:
     """Every epic is a non-deferred epic unless a test says otherwise (#3673)."""
     with patch(f"{_MOD}.epics.queue_kind", return_value=None) as mock_kind:
         yield mock_kind
+
+
+@pytest.fixture(autouse=True)
+def no_release_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TASK is in no epic, so its release-group read finds no group; a test may stub it."""
+    monkeypatch.setattr(
+        epics, "task_epic", lambda task: epics.TaskEpic(task, None, epics.NO_PARENT_KIND, None)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -319,7 +335,9 @@ def test_main_scopes_token_to_task_owner(graph: FakeSubIssueGraph) -> None:
     ):
         rc = main(["--task", "other-org/repo#42", "--epic", "other-org/repo#200"])
     assert rc == 0
-    mock_scope.assert_called_once_with("other-org")
+    # The release-group read (#5344) also runs under the task's owner: every scope is that owner.
+    assert mock_scope.call_count >= 1
+    assert {c.args[0] for c in mock_scope.call_args_list} == {"other-org"}
     assert graph.parent_of(task) == NEW
 
 
@@ -552,5 +570,73 @@ def test_epic_move_moves_task_out_of_intake(
     ):
         rc = main(["--task", "#42", "--epic", "org/repo#200"])
     assert rc == 0
+    assert graph.mutations == [("reparent", NEW, TASK)]
+    assert graph.parent_of(TASK) == NEW
+
+
+# -- A grouped task stays where its group is (epic vergil-project/.github#1672, spec §5.1) --
+
+
+def test_move_grouped_task_refused(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _under(graph, OLD, TASK)
+    with patch(_GROUPS, return_value=[GROUP]):
+        rc = _run_move()
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "refusing to move org/repo#42" in err
+    assert "G1" in err
+    assert "org/repo#100" in err
+    assert "vrg-release-group set" in err
+    assert "dissolve" in err
+    assert graph.mutations == []
+    assert graph.parent_of(TASK) == OLD
+
+
+def test_move_group_read_failure_refused(
+    graph: FakeSubIssueGraph, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _under(graph, OLD, TASK)
+    with patch(_GROUPS, side_effect=record.GroupRecordError("org/repo cannot be read")):
+        rc = _run_move()
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "refusing to move org/repo#42" in err
+    assert "org/repo cannot be read" in err
+    assert graph.mutations == []
+    assert graph.parent_of(TASK) == OLD
+
+
+def test_move_after_dissolve_allowed(
+    graph: FakeSubIssueGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group recorded at rev 1 and dissolved at rev 2 is not live: the move goes ahead."""
+    _under(graph, OLD, TASK)
+
+    def comment(cid: str, body: str) -> StreamComment:
+        return StreamComment(
+            id=cid,
+            login="human",
+            body=body,
+            role=Role.HUMAN,
+            at="2026-11-01T09:30:00Z",
+            edited=False,
+        )
+
+    stream = CommentStream(
+        comments=(
+            comment("900", "release-group G1 rev 1: org/repo#42"),
+            comment("901", "release-group G1 rev 2: dissolved"),
+        ),
+        ids=frozenset({"900", "901"}),
+        skipped=(),
+    )
+    monkeypatch.setattr(trust, "read_comment_stream", lambda repo, number, **_: stream)
+    monkeypatch.setattr(epics, "epic_kind", lambda epic: (epic, epics.DEVELOPMENT_KIND))
+    monkeypatch.setattr(
+        epics, "task_epic", lambda task: epics.TaskEpic(task, OLD, epics.DEVELOPMENT_KIND, OLD)
+    )
+    assert _run_move() == 0
     assert graph.mutations == [("reparent", NEW, TASK)]
     assert graph.parent_of(TASK) == NEW

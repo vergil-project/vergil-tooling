@@ -23,6 +23,7 @@ from vergil_tooling.lib import (
     trust,
 )
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.release_groups import guard
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -303,6 +304,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-gh: issue close is refused. {refused}", file=sys.stderr)
             return 1
 
+    if top == "issue" and sub == "transfer":
+        refused = _transfer_refusal(argv[2:])
+        if refused is not None:
+            print(f"vrg-gh: issue transfer is refused. {refused}", file=sys.stderr)
+            return 1
+
     if top == "pr" and sub == "update-branch" and identity_mode.is_agent():
         refused = _update_branch_refusal(argv[2:])
         if refused is not None:
@@ -544,23 +551,63 @@ def _raw_subissue_flag(args: list[str]) -> str | None:
     return None
 
 
+def _transfer_refusal(args: list[str]) -> str | None:
+    """Why an ``issue transfer`` of *args* must not run, or ``None`` when it may.
+
+    A grouped task stays where its group is (spec §5.1), so a transfer of a task in a live
+    release group is refused, and so is a read of its group that fails. A target this
+    cannot resolve refuses the transfer too, rather than letting it through unchecked
+    (#5344). ``--help`` is not gated.
+    """
+    if any(arg in ("-h", "--help") for arg in args):
+        return None
+    parsed = _parse_args(args, _VALUE_FLAGS[("issue", "transfer")])
+    try:
+        ref = _transfer_target(parsed)
+        return guard.refusal(ref, doing="transfer")
+    except (
+        subprocess.CalledProcessError,
+        trust.TrustReadError,
+        TrustedAuthorsNotConfiguredError,
+        ValueError,
+        github.NoInstallationError,
+        github.AppAuthError,
+    ) as exc:
+        return (
+            "vrg-gh could not check whether the issue is in a release group, so it does not "
+            f"transfer it: {exc}"
+        )
+
+
+def _transfer_target(parsed: _ParsedArgs) -> epics.IssueRef:
+    """The issue an ``issue transfer`` names: its first positional, then the destination."""
+    if len(parsed.positionals) != 2:  # noqa: PLR2004
+        msg = "issue transfer takes an issue number or URL and a destination repo"
+        raise ValueError(msg)
+    return _issue_ref(parsed, parsed.positionals[0], "issue transfer")
+
+
 def _close_target(parsed: _ParsedArgs) -> epics.IssueRef:
     """The issue an ``issue close`` names: a URL, or a number in ``--repo`` or the cwd repo."""
     if len(parsed.positionals) != 1:
         msg = "issue close takes exactly one issue number or URL"
         raise ValueError(msg)
-    target = parsed.positionals[0]
+    return _issue_ref(parsed, parsed.positionals[0], "issue close")
+
+
+def _issue_ref(parsed: _ParsedArgs, target: str, command: str) -> epics.IssueRef:
+    """The issue *target* names for *command*: a URL, or a number in ``--repo`` or the cwd repo."""
     url = _ISSUE_URL_RE.fullmatch(target)
     if url is not None:
         return epics.IssueRef(owner=url[1], repo=url[2], number=int(url[3]))
     number = _ISSUE_NUMBER_RE.fullmatch(target)
     if number is None:
-        msg = "the issue close target is not an issue number or URL"
+        msg = f"the {command} target is not an issue number or URL"
         raise ValueError(msg)
     if parsed.repo_values:
         slug = _parse_repo_slug(parsed.repo_values[-1])
         if slug is None:
-            msg = "the issue close --repo value is not OWNER/REPO"
+            msg = f"the {command} --repo value is not OWNER/REPO"
             raise ValueError(msg)
     else:
         slug = github.current_repo()

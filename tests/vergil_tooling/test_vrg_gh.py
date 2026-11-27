@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_gh import main
 from vergil_tooling.lib import epics, gh_version, github, identity_mode, trust
+from vergil_tooling.lib.release_groups import record
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -20,6 +21,19 @@ if TYPE_CHECKING:
 def _gh_is_new_enough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pass the minimum-gh check; tests/vergil_tooling/test_gh_version.py covers it."""
     monkeypatch.setattr("vergil_tooling.bin.vrg_gh.gh_version.require_minimum", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_release_group_read() -> Iterator[None]:
+    """A transfer's group read finds no group, and the cwd repo is org/repo (#5344).
+
+    A test of the transfer gate itself patches the read again.
+    """
+    with (
+        patch(_GROUPS, return_value=[]),
+        patch("vergil_tooling.bin.vrg_gh.github.current_repo", return_value="org/repo"),
+    ):
+        yield
 
 
 def _completed(
@@ -63,7 +77,6 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("issue", "edit"),
     ("issue", "list"),
     ("issue", "comment"),
-    ("issue", "transfer"),
     ("pr", "view"),
     ("pr", "checks"),
     ("pr", "list"),
@@ -1046,7 +1059,7 @@ class TestAgentDenials:
         # Allowed for USER: transferring a finite epic's issues into a
         # relocation target is a mechanical repository move, and the
         # audit identity stays barred because `issue` is absent from its
-        # allowlist (issue #2270).
+        # allowlist (issue #2270). An ungrouped task is not refused (#5344).
         with (
             patch(
                 "vergil_tooling.bin.vrg_gh.github.get_installation_token",
@@ -1301,6 +1314,91 @@ class TestOperationalCloseGate:
         with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
             assert main(["issue", "close", "42", "--repo", "org/repo"]) == 0
         gate.assert_not_called()
+
+
+_GROUPS = "vergil_tooling.lib.release_groups.record.groups_of"
+# TASK 42 of org/repo is a live member of G1 of the epic org/repo#100 (epic .github#1672).
+_GROUP = record.Group(
+    epic=epics.IssueRef("org", "repo", 100),
+    group="G1",
+    rev=1,
+    members=(epics.IssueRef("org", "repo", 42),),
+    dissolved=False,
+    comment_id="901",
+)
+
+
+class TestTransferGate:
+    """A grouped task stays where its group is: `issue transfer` refuses it (spec §5.1, #5344)."""
+
+    @pytest.fixture(autouse=True)
+    def user_identity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+
+    @pytest.fixture
+    def gh(self) -> Iterator[MagicMock]:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            yield mock_run
+
+    def test_grouped_task_refused(self, gh: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch(_GROUPS, return_value=[_GROUP]) as groups:
+            rc = main(["issue", "transfer", "42", "vergil-project/other", "--repo", "org/repo"])
+        assert rc == 1
+        groups.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "issue transfer is refused. refusing to transfer org/repo#42" in err
+        assert "G1" in err
+        assert "org/repo#100" in err
+        assert "vrg-release-group set" in err
+        assert "dissolve" in err
+
+    def test_group_read_failure_refused(
+        self, gh: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(_GROUPS, side_effect=record.GroupRecordError("org/repo cannot be read")):
+            rc = main(["issue", "transfer", "42", "vergil-project/other", "--repo", "org/repo"])
+        assert rc == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "issue transfer is refused. refusing to transfer org/repo#42" in err
+        assert "org/repo cannot be read" in err
+
+    def test_help_is_not_gated(self, gh: MagicMock) -> None:
+        with patch(_GROUPS) as groups:
+            assert main(["issue", "transfer", "--help"]) == 0
+        groups.assert_not_called()
+        assert gh.call_args[0][0][:3] == ["gh", "issue", "transfer"]
+
+    def test_ungrouped_task_transfers(self, gh: MagicMock) -> None:
+        with patch(_GROUPS, return_value=[]):
+            rc = main(["issue", "transfer", "42", "vergil-project/other", "--repo", "org/repo"])
+        assert rc == 0
+        assert gh.call_args[0][0][:3] == ["gh", "issue", "transfer"]
+
+    @pytest.mark.parametrize(
+        ("args", "detail"),
+        [
+            (["42"], "takes an issue number or URL and a destination repo"),
+            (["my-branch", "vergil-project/other"], "not an issue number or URL"),
+            (["42", "vergil-project/other", "--repo", "justone"], "--repo value is not OWNER/REPO"),
+        ],
+    )
+    def test_unresolvable_target_refused(
+        self, gh: MagicMock, args: list[str], detail: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["issue", "transfer", *args]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "does not transfer it" in err
+        assert detail in err
 
 
 class TestUpdateBranchGate:
