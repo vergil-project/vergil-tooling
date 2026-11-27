@@ -391,6 +391,19 @@ can take it.
 
     With no `branching_model`, finalize warns and protects `develop`,
     `main` and `gh-pages`.
+
+    A running release's worktrees are kept, here and in steps 3 and
+    `--clean-dirty`: the worktree the release lock
+    (`refs/vergil/release-lock`) names, whatever its branch, and every
+    `release/*` worktree while the lock is held, while it cannot be read,
+    or while a trusted `release: X.Y.Z` tracking issue is open. The
+    tracking-issue key keeps a broken release's worktree after
+    `vrg-release-lock break` deletes its lock, until its issue closes. A
+    kept worktree is named on the output with the reason. A lock or issue
+    read that fails keeps the worktrees it covers and fails the run. The
+    release's own removals (its `teardown-worktree` stage and
+    `--supersede`) are not judged here. Every removal is logged, naming
+    the worktree, its branch and the reason.
 5. **Prune.** Any relay ref whose branch no longer exists on origin is
    pruned, as a safety net for a branch deleted outside finalize. Cached
    container images whose branch is live in no repo of the platform repo

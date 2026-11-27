@@ -763,45 +763,59 @@ class CDUnreadableError(FinalizeError):
 
 @dataclass
 class ReleaseGuard:
-    """Keeps every ``release/*`` worktree while a release is running (#5187).
+    """Keeps the release lock's worktree, and every ``release/*`` worktree while a
+    release is running (#5187).
 
     Spec §5.8 of epic vergil-project/.github#1664: cleanup that judges what
-    is removable removes no ``release/*`` worktree while an open, trusted
-    release tracking issue exists. The protection is read once per run, and
-    only when a ``release/*`` worktree is up for removal. A read that fails
-    counts as protected: the error is printed and kept in ``error``, and the
-    run exits non-zero.
+    is removable skips the worktree the release lock names, whatever its
+    branch, and removes no ``release/*`` worktree while the lock is held,
+    while it cannot be read, or while an open, trusted release tracking
+    issue exists. Each read is made once per run, and only when needed: the
+    lock for any worktree up for removal, the tracking issues only for a
+    ``release/*`` worktree, and only while the lock is not held. A read that
+    fails counts as protected: the error is printed and kept in ``error``,
+    and the run exits non-zero. A failed tracking-issue read keeps only the
+    ``release/*`` worktrees, since the lock it follows was read.
     """
 
+    lock: worktrees.ReleaseProtection | None = None
     protection: worktrees.ReleaseProtection | None = None
     error: str | None = None
 
     def keeps(self, branch: str, wt: Path, root: Path) -> bool:
         """Whether worktree *wt* of *branch* must be kept; says why when it is."""
-        if not branch.startswith(worktrees.RELEASE_BRANCH_PREFIX):
-            return False
+        release = branch.startswith(worktrees.RELEASE_BRANCH_PREFIX)
         shown = wt.relative_to(root) if wt.is_relative_to(root) else wt
-        if self.protection is None and self.error is None:
-            self._read()
-        if self.error is not None:
+        if self.error is None and (self.lock is None or (release and self.protection is None)):
+            self._read(release=release)
+        if self.lock is not None and self.lock.names(wt, root):
+            print(f"  kept {shown}: the release lock names it ({self.lock.reason})")
+            return True
+        if self.error is not None and (release or self.lock is None):
             print(
                 f"  ERROR: kept {shown}: could not tell whether a release is running "
                 f"({self.error})",
                 file=sys.stderr,
             )
             return True
-        if self.protection is not None and self.protection.active:
+        if release and self.protection is not None and self.protection.active:
             print(f"  kept {shown}: a release is running ({self.protection.reason})")
             return True
         return False
 
-    def _read(self) -> None:
+    def _read(self, *, release: bool) -> None:
         try:
-            self.protection = worktrees.release_protection(github.current_repo())
-        except worktrees.ProtectionReadError as exc:
-            self.error = str(exc)
+            repo = github.current_repo()
         except worktrees.PROTECTION_READ_ERRORS as exc:
             self.error = f"could not resolve this repository on GitHub: {error_text(exc)}"
+            return
+        try:
+            if self.lock is None:
+                self.lock = worktrees.lock_protection(repo)
+            if release:
+                self.protection = worktrees.release_protection(repo, lock=self.lock)
+        except worktrees.ProtectionReadError as exc:
+            self.error = str(exc)
 
 
 @dataclass
