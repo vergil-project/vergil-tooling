@@ -1010,7 +1010,7 @@ def epic_kind(epic: IssueRef) -> tuple[IssueRef, str]:
 
 
 class EpicRefusalError(Exception):
-    """The base of every refusal to write to an epic (epic vergil-project/.github#1609)."
+    """The base of every refusal to write to an epic (epic vergil-project/.github#1609).
 
     Carries a complete one-line, user-facing message; :func:`cli.cli_main`
     prints it as ``<prog>: <message>`` and exits 1, with no traceback.
