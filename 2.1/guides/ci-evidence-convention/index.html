@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19596,11 +19626,15 @@ every tool the gate runs and that tool's evidence files. Its tests fail when
 a tool has no evidence file, or when a file is neither a transcript of the
 gate nor named by one of the gate's commands. They also fail when a
 language's report files and its tools' evidence differ.</p>
-<p>The transcripts reach the bundle only once vergil-actions' report table
+<p>From vergil-tooling v2.1.349, vergil-actions' evidence actions
 (<a href="https://vergil-project.github.io/vergil-actions/latest/actions/ci-evidence-reports/"><code>ci/evidence/reports</code></a>)
-stages them, names <code>ty</code> among the Python typecheck tools and has the
-<code>quality / build</code> job upload <code>quality-build.log</code>. Until then the bundle
-lacks them, as it did before.</p>
+stage the transcripts into the bundle like any other report:
+<code>quality-ty.log</code> for the Python typecheck gate, <code>quality-rustfmt.log</code> for
+the Rust lint gate, <code>quality-prettier.log</code> for the TypeScript lint gate and
+<code>quality-build.log</code> for the Rust and TypeScript <code>build</code> gate. The expect
+check requires each one. A run on an earlier vergil-tooling release, which
+writes no transcripts, passes without them, with a notice naming each one
+left out.</p>
 <p>Producers emit these files today: the check registry runs <code>pytest --cov …
 --cov-report=xml --junitxml=…</code>, <code>pip-audit</code> / license checks write <code>--output</code>
 JSON, and ruff / mypy write their machine-readable reports — each per Python

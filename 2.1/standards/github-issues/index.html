@@ -1500,6 +1500,8 @@
       
         
       
+        
+      
     
     
     
@@ -1552,6 +1554,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20226,9 +20256,12 @@ ad-hoc epic ends up holding only its still-open children.</p>
   <code>Archive (intake): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code>,
   <code>Archive (planning): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> and
   <code>Archive (deferred): &lt;name&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> buckets (labels <code>archive</code> +
-  <code>intake</code> / <code>planning</code> / <code>deferred</code>), so only open items count against GitHub's
-  100-sub-issue cap. An archive bucket holds at most 95 children; a full one
-  rolls over to a new segment.</li>
+  <code>intake</code> / <code>planning</code> / <code>deferred</code>), so a queue's
+  <a href="#chained-epics">chain</a> holds only its open items and the slots its closed
+  items free are reused before it grows. An archive bucket holds at most 95
+  children; a full one rolls over to a new segment. Archives are not chained:
+  a segment is a new top-level archive of its own, not a continuation, and no
+  reader reads a quarter's segments as one list.</li>
 </ul>
 <h4 id="running-the-drain">Running the drain<a class="headerlink" href="#running-the-drain" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>
@@ -20832,8 +20865,9 @@ planning item's <code>in-progress</code> label) and posts the record:</p>
 prose — a date, an event ("<code>&lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> merges", "Zensical 1.0
 ships"), or both — written so a later review can actually check it. <code>--date
 YYYY-MM-DD</code> stamps an original deferral date instead of today. Running <code>defer</code>
-on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record,
-no move, no <code>Deferred from:</code> line.</p>
+on an item already in the deferred queue is a <strong>refresh</strong>: a new dated record
+and no move, carrying forward the <code>Deferred from:</code> line of the latest record
+that has one (or saying it has none to carry).</p>
 <p><strong>Bringing it back.</strong> <code>epic-review deferred</code> lists the queue with
 <code>vrg-queue deferred</code> (least recently deferred first), checks each item's
 conditions against their real sources, and recommends one outcome:</p>

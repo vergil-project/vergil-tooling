@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19745,8 +19775,10 @@ vrg-git sets for every rebase (<code>GIT_SEQUENCE_EDITOR=true</code>,
 </ul>
 <h3 id="escape-hatch">Escape Hatch<a class="headerlink" href="#escape-hatch" title="Permanent link">&para;</a></h3>
 <p>None in the wrapper. If the agent genuinely needs a denied
-operation, it explains the situation to the human, who runs the
-raw command via <code>! git &lt;command&gt;</code> in the Claude Code prompt.</p>
+operation, it explains the situation to the human and hands over
+the raw command as a separate copy-paste block, with no <code>!</code>
+prefix. The human runs it in their own terminal, not through <code>!</code>
+in the agent session.</p>
 <h2 id="vrg-gh-wrapper"><code>vrg-gh</code> Wrapper<a class="headerlink" href="#vrg-gh-wrapper" title="Permanent link">&para;</a></h2>
 <p>Same architecture as <code>vrg-git</code>. Validates the top-level and
 second-level subcommands as a pair.</p>

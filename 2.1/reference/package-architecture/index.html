@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18800,7 +18830,9 @@ which is the complete list of entry points. The
   or comment is trusted when its author and its editors hold a role; a
   close or reopen when its actor does. Readers return the trusted items
   and report each untrusted one as metadata only, or, where the content
-  is load-bearing, stop. A read it cannot complete fails loudly, never
+  is load-bearing, stop. An item from a trusted role the reader does not
+  accept (<code>not-accepted</code>) is reported as ignored, never as untrusted.
+  A read it cannot complete fails loudly, never
   as "trusted" or "nothing found", and a batch run stops the one item,
   not the run. <code>trusted_authors.py</code> loads the configuration,
   <code>trust_publish.py</code> publishes and checks its GitHub Actions copies, and
@@ -18825,6 +18857,14 @@ which is the complete list of entry points. The
   and the parent-based check that <code>vrg-pr-workflow report-ready</code> and
   <code>vrg-submit-pr</code> use to refuse intake, planning and deferred items and the
   ops issues under an operations epic.</li>
+<li><strong><code>epic_chain.py</code></strong>: an epic's
+  <a href="../../standards/github-issues/#chained-epics">chain</a> of containers past
+  GitHub's 100-sub-issue limit: walking it to its head, first-fit linking,
+  moving and unlinking with rollover, the capacity and depth checks,
+  orphaned continuations, the race heals and closing a whole chain. Every
+  caller outside <code>epics.py</code> and <code>epic_chain.py</code> links, moves and unlinks
+  through it; the raw per-container reads and writes are private to the two
+  modules.</li>
 <li><strong><code>proxies.py</code></strong>: the proxy epic's link to its primary, read from the
   proxy's <code>Primary:</code> body line (from a body the trust layer trusts) and the
   primary's trusted <code>Proxy:</code> comments (<code>epics.is_proxy</code> is the label test every development-epic check skips).</li>

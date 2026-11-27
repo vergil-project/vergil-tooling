@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19413,16 +19443,19 @@ order:</p>
    markers, for example) is reported and does not stop the others.</li>
 <li><strong>One sync PR.</strong> Whatever the fixers changed is committed on a new
    <code>automation/repo-config-sync/&lt;run-id&gt;</code> branch and opened as one PR
-   against <code>develop</code>, with squash auto-merge turned on and read back.
+   against <code>develop</code>, then armed through the one PR path, which turns
+   squash auto-merge on, pinned to the pushed commit, and reads it back.
+   When GitHub refuses auto-merge because the PR can already merge, the
+   path merges it directly and <code>update</code> does not wait. A PR the path
+   refuses to arm fails the run, naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.</li>
 <li><strong>Wait until merged.</strong> <code>update</code> then watches the PR until it has
-   merged. Auto-merge only speeds this up; the watch never depends on
-   it. When GitHub refuses auto-merge because the PR can already
-   merge, <code>update</code> merges it directly and does not wait. <code>develop</code>
-   does not require a branch to be up to date, so a PR whose checks
-   are green is merged by the watch itself, if auto-merge has not
-   merged it first. Only where <code>develop</code> still requires an up-to-date
+   merged. The watch never merges the PR itself: GitHub's auto-merge
+   merges it once its checks are green, and a PR whose auto-merge is
+   off is waited for until the deadline. <code>develop</code> does not require a
+   branch to be up to date, so a PR merges from its base once its own
+   checks pass. Only where <code>develop</code> still requires an up-to-date
    branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
    the deadline ends the watch, naming the PR and the reason. The

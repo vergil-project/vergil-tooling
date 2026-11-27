@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.351/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.351
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19090,9 +19120,17 @@ the next develop CD run. With no run for the head, the latest completed
 run on an ancestor must be green. Lookup failures refuse the release.
 See <a href="../../../guides/releasing/#the-develop-cd-gate">The develop-CD gate</a>.</p>
 <h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
-<p>The <code>merge-release</code> and <code>back-merge-bump</code> stages, and <code>vrg-update-deps</code>'s
-<code>merge</code> stage, wait for their PR's checks and merge it once everything is
-green and current. The wait is <strong>bounded</strong> by a deadline: it never blocks
+<p>The <code>merge-release</code> stage waits for the release PR's checks and merges it
+into <code>main</code> once everything is green and current; it refuses a PR whose
+base is not <code>main</code>. A PR into <code>develop</code> merges only through the one PR
+path: the <code>back-merge-bump</code> stage arms its back-merge PR through it (with
+a merge commit, pinned to the pushed head) and waits the same way until
+GitHub merges it, never merging it itself, within 7200 seconds, a deadline
+fixed in the stage. A PR the path does not arm stops the stage, naming
+the outcome and why. <code>vrg-update-deps</code>'s <code>merge</code> stage (and so the
+release's <code>update-deps</code> stage) arms its PR through the path too, and
+waits within <code>$VRG_FINALIZE_DEADLINE</code> seconds (7200 by default). The
+wait is <strong>bounded</strong> by a deadline: it never blocks
 forever, and it never merges past a non-terminal check. Doomed outcomes
 abort immediately rather than after the wait: a draft PR, merge conflicts,
 a failed check (named in the error), or a branch still behind after five
