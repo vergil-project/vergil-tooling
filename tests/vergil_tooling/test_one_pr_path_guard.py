@@ -10,6 +10,8 @@ reports each
 
 - call to ``github.merge`` (and any import of ``merge`` from ``github``);
 - string holding ``enablePullRequestAutoMerge`` (docstrings aside);
+- string holding ``disablePullRequestAutoMerge`` (docstrings aside): only the
+  release lock's disarm sweep turns auto-merge off (spec §5.1, plan Task 20);
 - ``"pr", "merge"`` argument list (a list, tuple or call's arguments with the
   two strings side by side);
 - call to ``wait_and_merge``.
@@ -42,6 +44,7 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "vergil_tooling"
 
 _GITHUB_MERGE = "github.merge call"
 _ENABLE = "enablePullRequestAutoMerge string"
+_DISABLE = "disablePullRequestAutoMerge string"
 _PR_MERGE_ARGS = '"pr", "merge" argument list'
 _WAIT_AND_MERGE = "wait_and_merge call"
 
@@ -62,6 +65,9 @@ _ALLOWED: dict[tuple[str, str, str], str] = {
     ),
     ("lib/auto_merge.py", _ANY, _GITHUB_MERGE): (
         "the direct merge of a clean-status PR, private to the path"
+    ),
+    ("lib/release_lock/sweeps.py", _ANY, _DISABLE): (
+        "the release lock's disarm sweep, the one code that turns auto-merge off"
     ),
     ("lib/pr_merge.py", "wait_and_merge", _GITHUB_MERGE): (
         "the merge engine of the release PR into main, behind a base-is-main assertion"
@@ -166,12 +172,12 @@ class _Scanner(ast.NodeVisitor):
     visit_Set = _sequence  # noqa: N815
 
     def visit_Constant(self, node: ast.Constant) -> None:  # noqa: N802
-        if (
-            isinstance(node.value, str)
-            and "enablePullRequestAutoMerge" in node.value
-            and id(node) not in self.docstrings
-        ):
+        if not isinstance(node.value, str) or id(node) in self.docstrings:
+            return
+        if "enablePullRequestAutoMerge" in node.value:
             self._hit(node, _ENABLE)
+        if "disablePullRequestAutoMerge" in node.value:
+            self._hit(node, _DISABLE)
 
 
 def _scan_source(path: str, source: str) -> list[_Hit]:
@@ -198,6 +204,16 @@ def test_no_module_outside_pr_path_arms_or_merges_develop() -> None:
     )
 
 
+def test_only_disarm_sweep_turns_auto_merge_off() -> None:
+    """Spec §5.1: only the release lock's disarm sweep turns auto-merge off."""
+    hits = [h for h in _scan() if h.kind == _DISABLE]
+    assert hits, "the disarm sweep's disablePullRequestAutoMerge was not found"
+    stray = [h for h in hits if h.path != "lib/release_lock/sweeps.py"]
+    assert not stray, "auto-merge is turned off outside the disarm sweep (spec §5.1):\n" + "\n".join(
+        f"  src/vergil_tooling/{h.path}:{h.line} ({h.scope}): {h.kind}" for h in stray
+    )
+
+
 def test_every_named_site_is_still_there() -> None:
     """An allowed site that no longer holds its hit is removed from the list."""
     used = {h.allowed_by() for h in _scan()}
@@ -214,6 +230,7 @@ def test_every_named_site_is_still_there() -> None:
         ),
         ("from vergil_tooling.lib.github import merge\n", _GITHUB_MERGE),
         ("Q = 'mutation { enablePullRequestAutoMerge(input: {}) }'\n", _ENABLE),
+        ("Q = 'mutation { disablePullRequestAutoMerge(input: {}) }'\n", _DISABLE),
         ("def f(run):\n    run('pr', 'merge', '--auto', '1')\n", _PR_MERGE_ARGS),
         ("ARGS = ['gh', 'pr', 'merge', '--squash']\n", _PR_MERGE_ARGS),
         ("def f(m):\n    m.wait_and_merge('1', strategy='merge')\n", _WAIT_AND_MERGE),

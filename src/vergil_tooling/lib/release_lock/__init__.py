@@ -11,6 +11,8 @@ every push under ``refs/vergil/release-lock``):
 - :mod:`.stale`: whether a held lock is stale (spec §5.6).
 - :mod:`.status`: the lock as ``vrg-release-lock status`` and
   ``vrg-repo-status`` show it, with the PRs it holds unarmed.
+- :mod:`.sweeps`: the quiesce (the arming-ref wait and the disarm sweep,
+  the only code that turns auto-merge off) and the re-arm sweep.
 
 A transport failure raises a :class:`ReleaseLockError` (:class:`RefWriteError`
 or :class:`RefReadError`); a lease mismatch is a ``None`` or ``False`` return.

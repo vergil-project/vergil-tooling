@@ -4,9 +4,13 @@ Spec §5.1 and §5.4 of the release-lock epic. Every PR into ``develop`` that
 the tooling opens or arms is armed here, by :func:`arm`, and nothing else
 turns auto-merge on or merges a PR into ``develop``. ``vrg-submit-pr``, the
 mechanized automation (:func:`vergil_tooling.lib.mechanized_pr.open_sync_pr`),
-update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`) and the
+update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`), the
 release's back-merge (:func:`vergil_tooling.lib.release.bump.back_merge_and_bump`)
-are its callers; the re-arm sweeps converge on it in a later task. The release
+and the release lock's re-arm sweep
+(:func:`vergil_tooling.lib.release_lock.sweeps.rearm_all`) are its callers.
+Only the release lock's disarm sweep
+(:func:`vergil_tooling.lib.release_lock.sweeps.disarm_all`) turns auto-merge
+off. The release
 PR into ``main`` is the one direct merge outside it
 (:func:`vergil_tooling.lib.release.merge.wait_and_merge`, which refuses any
 other base), and ``tests/vergil_tooling/test_one_pr_path_guard.py`` holds every
