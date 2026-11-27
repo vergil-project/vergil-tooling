@@ -478,6 +478,9 @@ def test_loss_with_history_entry_names_cause(
     assert verb in str(lost)
     assert "user-agent" in str(lost)
     assert "the heartbeat went stale" in str(lost)
+    # A superseded release has nothing to resume; a broken or reclaimed one does.
+    assert ("--resume" in str(lost)) == (action != "takeover")
+    assert ("superseded" in str(lost)) == (action == "takeover")
 
 
 def test_loss_without_history_entry_reported_as_outside_change(

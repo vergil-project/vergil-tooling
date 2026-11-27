@@ -111,11 +111,18 @@ def _loss(repo: str, *, now: str | None, tokens: frozenset[str], phase: str) -> 
     where = "absent" if now is None else f"at {now}"
     cause, unreadable = _find_cause(repo, tokens)
     if cause is not None:
+        if cause.action == "takeover":
+            # A supersede moved the lock to the release replacing this one: nothing to resume.
+            advice = "this release was superseded and needs nothing further."
+        else:
+            advice = (
+                "finish it with `vrg-release --resume` or replace it with"
+                " `vrg-release --supersede`."
+            )
         message = (
             f"the release lock on {repo} was {_CAUSES[cause.action]} by {cause.actor}"
             f" at {cause.at}: {cause.reason or 'no reason given'}. This release has"
-            " stopped and does not re-take the lock: finish it with `vrg-release --resume`"
-            " or replace it with `vrg-release --supersede`."
+            f" stopped and does not re-take the lock: {advice}"
         )
         return LockLost(message, phase=phase, cause=cause, outside_change=False)
     if unreadable:
