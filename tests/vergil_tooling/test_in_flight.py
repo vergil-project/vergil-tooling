@@ -25,6 +25,7 @@ from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
     TrustedAuthorsNotConfiguredError,
 )
+from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -753,3 +754,84 @@ def test_in_flight_unreadable_state_path_raises(tmp_path: Path) -> None:
         pytest.raises(InFlightError, match=r"org/tool: cannot check .*merge-review: denied"),
     ):
         in_flight.marks_for(7, signals)
+
+
+# -- the public helpers the group rules read (epic vergil-project/.github#1672, Task 10) ----
+
+
+def test_open_pr_marks_names_the_prs_that_mark_each_issue() -> None:
+    remote = _FakeRemote(
+        prs=[_pr(90, closes=(7,)), _pr(91, head="feature/7-x"), _pr(92, closes=(8,))]
+    )
+    with (
+        patch(f"{_MOD}.load_trusted_authors", return_value=_TRUSTED),
+        patch(f"{_MOD}.github.graphql", side_effect=remote.graphql),
+    ):
+        marks = in_flight.open_pr_marks(_REPO)
+    assert marks == {7: frozenset({90, 91}), 8: frozenset({92})}
+
+
+def test_open_pr_marks_read_failure_raises() -> None:
+    with (
+        patch(f"{_MOD}.load_trusted_authors", return_value=_TRUSTED),
+        patch(f"{_MOD}.github.graphql", side_effect=RuntimeError("graphql down")),
+        pytest.raises(InFlightError, match=r"org/tool: cannot read its open PRs"),
+    ):
+        in_flight.open_pr_marks(_REPO)
+
+
+def test_ready_relays_names_each_ready_branch_and_its_issues(tmp_path: Path) -> None:
+    remote = _FakeRemote(
+        relays={
+            "feature/1-a": _payload("1", "ready", ["1", "2"]),
+            "feature/3-c": _payload("3", "implementing"),
+        }
+    )
+    with (
+        patch(f"{_MOD}.github.read_json", side_effect=remote.gh),
+        patch(f"{_MOD}.git.read_output", side_effect=remote.git),
+    ):
+        ready = in_flight.ready_relays(_REPO, tmp_path)
+    assert ready == {"feature/1-a": frozenset({1, 2})}
+
+
+def _local_worktree(root: Path, name: str, payload: Any) -> Path:
+    """A worktree directory under *root*, with *payload* as its state file (none when None)."""
+    path = root / name
+    (path / ".vergil").mkdir(parents=True)
+    if payload is not None:
+        text = payload if isinstance(payload, str) else json.dumps(payload)
+        (path / ".vergil" / "pr-workflow.json").write_text(text)
+    return path
+
+
+def test_ready_local_branches_names_each_ready_worktree(tmp_path: Path) -> None:
+    ready = _local_worktree(tmp_path, "issue-1-batch", _payload("1", "ready", ["1", "2"]))
+    draft = _local_worktree(tmp_path, "issue-3", _payload("3", "implementing"))
+    bare = _local_worktree(tmp_path, "issue-4", None)
+    listed = [
+        Worktree(path=ready, branch="feature/1-batch"),
+        Worktree(path=draft, branch="feature/3-c"),
+        Worktree(path=bare, branch="feature/4-d"),
+    ]
+    with patch(f"{_MOD}.worktrees.list_worktrees", return_value=listed):
+        found = in_flight.ready_local_branches(_REPO, tmp_path)
+    assert found == {"feature/1-batch": frozenset({1, 2})}
+
+
+def test_ready_local_branches_malformed_state_raises(tmp_path: Path) -> None:
+    broken = _local_worktree(tmp_path, "issue-5", "{not json")
+    with (
+        patch(f"{_MOD}.worktrees.list_worktrees", return_value=[Worktree(broken, "feature/5-e")]),
+        pytest.raises(InFlightError, match=r"org/tool: cannot read the local ready-state"),
+    ):
+        in_flight.ready_local_branches(_REPO, tmp_path)
+
+
+def test_ready_local_branches_listing_failure_raises(tmp_path: Path) -> None:
+    failure = subprocess.CalledProcessError(1, "git worktree list")
+    with (
+        patch(f"{_MOD}.worktrees.list_worktrees", side_effect=failure),
+        pytest.raises(InFlightError, match=r"org/tool: cannot read the local ready-state"),
+    ):
+        in_flight.ready_local_branches(_REPO, tmp_path)
