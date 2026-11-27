@@ -890,6 +890,9 @@ def test_resume_at_unlock_refuses_other_holder() -> None:
     assert "release 2.4.0" in message
     assert "other-maintainer" in message
     assert "vrg-release-lock break" in message
+    # Unchanged by issue #5352: a readable lock of another release is named as such.
+    assert "It is not release 2.3.0's own" in message
+    assert "a resume deletes only its own release's lock" in message
 
 
 def test_resume_at_unlock_refuses_a_lock_changed_meanwhile() -> None:

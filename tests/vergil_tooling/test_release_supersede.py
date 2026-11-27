@@ -971,6 +971,46 @@ def test_supersede_takeover_exit_before_tracking_issue_runs_unlock_path(
     assert takeover.names()[-2:] == ["release", "rearm"]
 
 
+def test_supersede_takeover_then_preflight_failure_leaves_no_false_lock_claim(
+    takeover: _Takeover,
+) -> None:
+    # Issue #5352: a preflight that fails after the takeover releases the lock,
+    # so the comment on the superseded release's tracking issue must not say
+    # develop is still locked.
+    failure = ReleaseError(phase="preflight", command="worktree", message="no worktree")
+    with (
+        patch(_PREFLIGHT + "._check_host_prerequisites"),
+        patch(_PREFLIGHT + ".check_gh_auth", return_value=_REPO),
+        patch(_PREFLIGHT + "._read_and_validate_config"),
+        patch(_PREFLIGHT + "._check_branch_and_tree"),
+        patch(_PREFLIGHT + ".version.show", return_value=_OLD),
+        patch(_PREFLIGHT + ".load_superseded", return_value=_superseded(untagged=False)),
+        patch(_PREFLIGHT + "._check_no_open_release"),
+        patch(_PREFLIGHT + "._head_gates"),
+        patch(_PREFLIGHT + ".pending_deps_prs", return_value=[]),
+        patch(_PREFLIGHT + "._develop_cd_gate"),
+        patch(_PREFLIGHT + "._develop_head", return_value="d" * 40),
+        patch(_PREFLIGHT + "._rejudge_moved_head"),
+        patch(_PREFLIGHT + "._acquire_release_worktree", side_effect=failure),
+        pytest.raises(ReleaseError, match="no worktree"),
+    ):
+        preflight(version_override=None, repo_root=_ROOT, stages=list(_TRACKED), supersede=_OLD)
+    # The takeover commented, then the early exit released the lock and re-armed.
+    assert takeover.names() == ["takeover", "history", "comment", "release", "rearm"]
+    [(number, body)] = takeover.comments
+    assert number == 40
+    lowered = body.lower()
+    assert "stays locked" not in lowered
+    assert "still locked" not in lowered
+    # Nor does it promise the unlock, which can itself fail or never run: it
+    # states what was known when it was posted and points at the live state.
+    assert "the lock is released" not in lowered
+    assert f"now names release {takeover.records[0].version}" in body
+    assert "no tracking issue of its own recorded yet" in body
+    assert "`vrg-release-lock status`" in body
+    assert "is meant to release the lock" in body
+
+
 def test_supersede_refuses_running_fresh_lock(takeover: _Takeover) -> None:
     takeover.found = _superseded_lock(health="running", broken_stage="", heartbeat_at=_ago(20))
     with pytest.raises(ReleaseError) as info:

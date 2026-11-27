@@ -54,10 +54,16 @@ def test_no_owner_and_an_unreadable_lock_refuses_naming_it() -> None:
     held = LockState(sha="a" * 40, record=None, error="lock.json is not JSON")
     with (
         patch(_MOD + ".lock_refs.read_lock", return_value=held),
-        pytest.raises(ReleaseError, match="cannot be read \\(lock.json is not JSON\\)") as info,
+        pytest.raises(ReleaseError, match="could not be read \\(lock.json is not JSON\\)") as info,
     ):
         release_lock(_ctx(None), phase="unlock", remedy="retry")
-    assert "vrg-release --resume 2.1.0" in str(info.value)
+    message = str(info.value)
+    assert "vrg-release --resume 2.1.0" in message
+    # Issue #5352: whose an unreadable lock is cannot be known, so the refusal
+    # never calls it another release's; it names the read error and the escape hatch.
+    assert "not release 2.1.0's own" not in message
+    assert "`unlock` will not delete it" in message
+    assert 'vrg-release-lock break --reason "<why>"' in message
 
 
 def test_no_owner_and_a_failed_lock_read_raises() -> None:
