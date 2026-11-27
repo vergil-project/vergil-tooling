@@ -76,11 +76,36 @@ as held and arms nothing; the final check reports any it sees
 (:attr:`QuiesceResult.arming_at_check`) and disarms any PR armed all the
 same.
 
-Anything else that deletes an arming ref (an arming-side clean-up of a
-stale ref outside a release, say) must keep that guarantee: it must never
-delete, while a lock is held, a ref whose value this rule has not expired,
-and never delete a value whose arm call could still land unseen by the
-quiesce's disarm sweeps.
+Anything else that deletes an arming ref must keep that guarantee: it must
+never delete, while a lock is held, a ref whose value this rule has not
+expired, and never delete a value whose arm call could still land unseen by
+the quiesce's disarm sweeps.
+
+The arming side's take-over of a stale ref
+------------------------------------------
+
+Outside a release nothing runs the wait, so a ref left by a crashed arming
+side, or by an arm call stopped at its bound, would make every later arm of
+that PR collide. :func:`pr_path.arm` therefore takes such a ref over itself,
+under the same rule measured on its own clock: after a create collision it
+reads the PR and the ref on each poll, and only a value it has seen
+unchanged for :data:`ARMING_EXPIRY_SECS`, with the PR open and unarmed at
+every poll, is stale. It then reads the lock, and only with the lock free
+replaces the value by compare-and-swap against it (:func:`arming.renew`),
+then goes on through the handshake (read the lock, renew, arm) as if it had
+created the ref. With the lock held it replaces nothing and reports the PR
+``held``: the ref is this wait's to expire. This keeps the guarantee:
+
+- The value it replaces is either one written before its writer's renewal,
+  whose renewal then fails and arms nothing, or a renewed value unchanged
+  for the full expiry, whose arm call (bounded by
+  :data:`ARM_CALL_BOUND_SECS`) ended before the replacement.
+- A release that takes the lock between that lock read and the replacement
+  sees the replacing value as a new one and measures it afresh, and the
+  replacing caller's handshake runs as for a ref it created: it reads the
+  lock after its write, so at least one side sees the other. The release's
+  disarm sweeps run after its wait, so after the replacement, and see
+  whatever the replaced value's ended call armed.
 """
 
 from __future__ import annotations

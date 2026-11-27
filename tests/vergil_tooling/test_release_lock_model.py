@@ -39,6 +39,10 @@ def test_timing_constants() -> None:
     assert model.ARMING_WAIT_BOUND_SECS == 900
     assert model.ARMING_POLL_SECS == 5
     assert model.ARMING_POLL_SECS < model.ARMING_EXPIRY_SECS
+    assert model.ARMING_COLLISION_WAIT_SECS == 360
+    assert model.ARMING_COLLISION_WAIT_SECS > model.ARMING_EXPIRY_SECS
+    assert model.ARMING_COLLISION_POLL_SECS == 10
+    assert model.ARMING_COLLISION_POLL_SECS < model.ARMING_EXPIRY_SECS
     assert model.BROKEN_WATCH_POLL_SECS == 300
 
 

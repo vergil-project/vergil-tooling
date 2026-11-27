@@ -120,3 +120,18 @@ def test_arming_transport_failure_raises(
         arming.create(REPO, 7)
     with pytest.raises(RefReadError):
         arming.list_arming(REPO)
+    with pytest.raises(RefReadError):
+        arming.current(REPO, 7)
+
+
+def test_current_reads_one_pr_ref(origin: Origin) -> None:
+    assert arming.current(REPO, 7) is None
+    created = arming.create(REPO, 7)
+    other = arming.create(REPO, 71)
+    assert arming.current(REPO, 7) == created
+    assert arming.current(REPO, 71) == other
+    # ls-remote matches by tail: a ref merely ending like PR 7's is not read as it.
+    origin.set_ref("refs/heads/x/refs/vergil/release-lock-arming/7", str(other))
+    assert arming.current(REPO, 7) == created
+    assert arming.delete(REPO, 7, expected=str(created)) is True
+    assert arming.current(REPO, 7) is None
