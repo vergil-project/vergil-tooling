@@ -2702,7 +2702,8 @@ It then runs the release lock's backstop
 spec §5.9) on the repo as it stands. An open PR into `develop` that the
 one PR path accepts, with auto-merge off while no release lock is held,
 is an `invariant-breach`; while a lock is held the audit is quiet on it.
-Every open draft PR into `develop` is a `draft-pr`, a stale lock a
+A lock free at the first read is read again once the PRs are listed, so
+a release that takes the lock in between raises no breach. Every open draft PR into `develop` is a `draft-pr`, a stale lock a
 `stale-lock` and a lock that cannot be read or parsed an
 `unreadable-lock`, naming its read error; the audit never deletes it. An
 open PR the path does not accept (a fork's or an outsider's) is reported

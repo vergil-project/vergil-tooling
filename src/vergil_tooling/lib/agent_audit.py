@@ -75,7 +75,9 @@ stands, the open PRs into ``develop`` and the lock, apart from any landing:
 - ``invariant-breach``: an open, non-draft PR the one PR path accepts
   (:func:`~vergil_tooling.lib.pr_path.accepts`) with auto-merge off while no
   lock is held. While a lock is held, readable or not, stale or not, it holds
-  such PRs, and the audit is quiet on them.
+  such PRs, and the audit is quiet on them. A lock free at the first read is
+  read again once the PRs are listed, so a release that took the lock and
+  disarmed its PRs in between is not reported as a breach.
 - ``draft-pr``: every open draft PR into ``develop``; drafts are not used in
   this workflow, and the path is not asked about them.
 - ``stale-lock``: a held lock that :func:`~.release_lock.stale.judge` finds
@@ -1014,6 +1016,21 @@ def _lock_findings(repo: str, *, now: datetime) -> tuple[bool | None, list[Findi
     return True, [finding(STALE_LOCK, detail)]
 
 
+def _lock_held_again(repo: str) -> tuple[bool | None, list[Finding]]:
+    """Whether *repo*'s release lock is held at a second read (``None`` when unknown).
+
+    Only whether it is held counts here: a lock taken since the first read,
+    readable or not, holds the PRs listed, and its own findings are left to
+    the next run.
+    """
+    try:
+        state = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        detail = f"cannot read the release lock again after listing the open PRs: {exc}"
+        return None, [Finding(READ_FAILURE, repo, _LOCKED_BRANCH, _LOCK_SUBJECT, detail)]
+    return state.held, []
+
+
 def backstop(repo: str, *, now: datetime | None = None) -> Backstop:
     """Check the release lock's invariant on *repo* as it stands (see the module docstring).
 
@@ -1030,6 +1047,11 @@ def backstop(repo: str, *, now: datetime | None = None) -> Backstop:
             Finding(READ_FAILURE, repo, _LOCKED_BRANCH, "the open PRs", f"cannot list them: {exc}")
         )
         return result
+    if held is False:
+        # A release may have taken the lock and disarmed its PRs after the
+        # first read: read it again, so a PR it holds is not judged a breach.
+        held, late = _lock_held_again(repo)
+        result.findings.extend(late)
     for item in prs:
         number, url = int(str(item["number"])), str(item["url"])
         subject = f"PR #{number}"
