@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.353] - 2026-11-27
+
+### Bug fixes
+
+- run the apt step and build-command noninteractively (#5308)
+
+### Refactoring
+
+- reduce the watch to watching; never turn auto-merge off (#5313)
+
 ## [2.1.352] - 2026-11-27
 
 ### Bug fixes
