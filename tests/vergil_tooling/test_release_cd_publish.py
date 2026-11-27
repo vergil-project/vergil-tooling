@@ -105,9 +105,7 @@ def test_cd_publish_resume_reruns_main() -> None:
         patch(_MOD + ".rerun_and_watch") as rerun,
     ):
         deliver_failed_jobs(ctx)
-    rerun.assert_called_once_with(
-        ctx, "100", rerun_args=("--failed",), check_status=False, phase="cd-publish"
-    )
+    rerun.assert_called_once_with(ctx, "100", rerun_args=("--failed",), phase="cd-publish")
     assert ctx.state is not None
     assert ctx.state.failed_jobs == ()
     assert ctx.deferred_publish_failures == []
@@ -207,9 +205,7 @@ def test_cd_publish_resume_develop_reruns_only_the_job_no_later_run_delivered() 
         patch(_MOD + ".rerun_and_watch") as rerun,
     ):
         deliver_failed_jobs(ctx)
-    rerun.assert_called_once_with(
-        ctx, "200", rerun_args=("--job", "2"), check_status=False, phase="cd-publish"
-    )
+    rerun.assert_called_once_with(ctx, "200", rerun_args=("--job", "2"), phase="cd-publish")
     assert ctx.state is not None
     assert ctx.state.failed_jobs == ()
 
@@ -258,9 +254,7 @@ def test_cd_publish_second_resume_reruns_only_remaining() -> None:
         patch(_MOD + ".rerun_and_watch") as rerun,
     ):
         deliver_failed_jobs(ctx)
-    rerun.assert_called_once_with(
-        ctx, "200", rerun_args=("--job", "7"), check_status=False, phase="cd-publish"
-    )
+    rerun.assert_called_once_with(ctx, "200", rerun_args=("--job", "7"), phase="cd-publish")
     assert ctx.state.failed_jobs == ()
 
 

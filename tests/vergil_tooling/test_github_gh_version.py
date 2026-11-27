@@ -100,10 +100,10 @@ def test_cd_run_list_refuses_an_old_gh(bin_dir: Path) -> None:
     assert _calls(bin_dir) == ["--version"]
 
 
-def test_cd_run_view_raises_an_old_gh_rather_than_returning_none(bin_dir: Path) -> None:
+def test_cd_run_view_raises_an_old_gh_rather_than_a_failed_read(bin_dir: Path) -> None:
     _fake_gh(bin_dir, _OLD)
     with pytest.raises(gh_version.GhVersionError):
-        cd_runs._view_cd_run(42)
+        cd_runs._read_run_view(42)
     assert _calls(bin_dir) == ["--version"]
 
 

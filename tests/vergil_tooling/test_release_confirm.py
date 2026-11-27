@@ -20,11 +20,14 @@ from vergil_tooling.lib.release.confirm import (
     confirm_main,
 )
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.run_wait import RunView
 from vergil_tooling.lib.release.state import FailedJob, StateBlock, initial_state
 from vergil_tooling.lib.retry import KnownResourceNotFoundError
 
 _MOD = "vergil_tooling.lib.release.confirm"
 _SHA = "abc123def456"
+# What the wait returns for a run whose attempt completed.
+_DONE = RunView(status="completed", conclusion="success", attempt=1, url="https://run")
 
 
 def _job(
@@ -75,7 +78,7 @@ def test_watch_cd_reports_completed(
             _MOD + ".github.read_output",
             side_effect=["12345", "https://github.com/o/r/actions/runs/12345"],
         ),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
     ):
@@ -98,7 +101,7 @@ def test_confirm_main_success() -> None:
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_MOD + ".git.ref_exists", return_value=True),
@@ -125,7 +128,7 @@ def test_confirm_main_polls_until_run_appears() -> None:
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_MOD + ".git.ref_exists", return_value=True),
@@ -187,7 +190,7 @@ def test_confirm_main_fails_tag_missing() -> None:
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_MOD + ".git.ref_exists", return_value=False),
@@ -209,7 +212,7 @@ def test_confirm_main_does_not_require_develop_tag() -> None:
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_MOD + ".git.ref_exists", side_effect=lambda ref: ref == "v2.1.0") as ref_exists,
@@ -231,7 +234,7 @@ def test_confirm_develop_success() -> None:
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
     ):
@@ -313,8 +316,9 @@ def test_confirm_main_prints_run_url_before_watching(
     ctx = _ctx()
     watch_output: list[str] = []
 
-    def fake_watch(*_args: object, **_kwargs: object) -> None:
+    def fake_watch(*_args: object, **_kwargs: object) -> RunView:
         watch_output.append(capsys.readouterr().out)
+        return _DONE
 
     with (
         patch(
@@ -326,7 +330,7 @@ def test_confirm_main_prints_run_url_before_watching(
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
-        patch(_MOD + ".watch_workflow", side_effect=fake_watch),
+        patch(_MOD + ".wait_run_completed", side_effect=fake_watch),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_MOD + ".git.ref_exists", return_value=True),
@@ -342,8 +346,9 @@ def test_confirm_develop_prints_run_url_before_watching(
     ctx = _ctx()
     watch_output: list[str] = []
 
-    def fake_watch(*_args: object, **_kwargs: object) -> None:
+    def fake_watch(*_args: object, **_kwargs: object) -> RunView:
         watch_output.append(capsys.readouterr().out)
+        return _DONE
 
     with (
         patch(
@@ -354,7 +359,7 @@ def test_confirm_develop_prints_run_url_before_watching(
             ],
         ),
         patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
-        patch(_MOD + ".watch_workflow", side_effect=fake_watch),
+        patch(_MOD + ".wait_run_completed", side_effect=fake_watch),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
     ):
@@ -656,7 +661,7 @@ def test_watch_cd_retries_404_on_just_listed_run_url() -> None:
             _MOD + ".github.read_output",
             side_effect=["37784562892", _not_found(), url],
         ),
-        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".wait_run_completed", return_value=_DONE),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_RETRY_SLEEP) as sleep,
@@ -675,7 +680,7 @@ def test_watch_cd_persistent_404_fails_with_clear_error() -> None:
 
     with (
         patch(_MOD + ".github.read_output", side_effect=read_output),
-        patch(_MOD + ".watch_workflow") as watch,
+        patch(_MOD + ".wait_run_completed", return_value=_DONE) as watch,
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
         patch(_RETRY_SLEEP),
@@ -690,19 +695,33 @@ def test_watch_cd_persistent_404_fails_with_clear_error() -> None:
     watch.assert_not_called()
 
 
-def test_watch_cd_retries_404_on_run_watch() -> None:
+def test_watch_cd_waits_on_the_run_in_its_phase() -> None:
+    """The wait is the run-reading one, never ``gh run watch`` (#5174)."""
     from vergil_tooling.lib.release.confirm import _watch_cd
 
     with (
         patch(_MOD + ".github.read_output", side_effect=["12345", "https://run/12345"]),
-        patch(_MOD + ".watch_workflow", side_effect=[_not_found(), None]) as watch,
+        patch(_MOD + ".wait_run_completed", return_value=_DONE) as watch,
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
-        patch(_RETRY_SLEEP),
     ):
         _watch_cd(_ctx(), branch="main")
-    assert watch.call_count == 2
-    watch.assert_called_with("owner/repo", "12345", check_status=False)
+    watch.assert_called_once_with("owner/repo", "12345", phase="confirm-main", attempt=None)
+
+
+def test_watch_cd_read_failure_is_not_a_run_failure() -> None:
+    """A wait that cannot read the run raises its own error, unchanged."""
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    err = ReleaseError(phase="confirm-main", command="gh run view", message="persistent read")
+    with (
+        patch(_MOD + ".github.read_output", side_effect=["12345", "https://run/12345"]),
+        patch(_MOD + ".wait_run_completed", side_effect=err),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        pytest.raises(ReleaseError, match="persistent read"),
+    ):
+        _watch_cd(_ctx(), branch="main")
 
 
 def test_watch_cd_non_404_error_is_not_retried() -> None:
@@ -777,7 +796,7 @@ def test_confirm_develop_on_resume_verifies_back_merge_not_moved_tip() -> None:
             side_effect=["555", "https://github.com/o/r/actions/runs/555"],
         ) as read,
         patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
-        patch(_MOD + ".watch_workflow") as watch,
+        patch(_MOD + ".wait_run_completed", return_value=_DONE) as watch,
         patch(_MOD + ".git.run") as git_run,
         patch(_MOD + ".git.read_output", return_value=_MOVED_TIP_SHA) as git_read,
     ):
@@ -788,7 +807,7 @@ def test_confirm_develop_on_resume_verifies_back_merge_not_moved_tip() -> None:
     assert _MOVED_TIP_SHA not in run_list_jq
     git_read.assert_not_called()
     git_run.assert_not_called()
-    watch.assert_called_once_with("owner/repo", "555", check_status=False)
+    watch.assert_called_once_with("owner/repo", "555", phase="confirm-develop", attempt=None)
     assert ctx.develop_cd_run_id == "555"
 
 
@@ -1039,8 +1058,8 @@ def test_confirm_main_resume_after_the_merge_reruns_only_cd(
     """The release PR's CI is judged before the merge and never re-run after it (#5153)."""
     ctx = _resumed_ctx()
     rerun = _recover(ctx, _MAIN_JOBS_OK)
-    assert [(c.args[1], c.kwargs["check_status"]) for c in rerun.call_args_list] == [
-        ("222", False),
+    assert [(c.args[1], c.kwargs["phase"]) for c in rerun.call_args_list] == [
+        ("222", "confirm-main"),
     ]
     assert rerun.call_args.kwargs.get("rerun_args", ()) == ()
     assert ctx.cd_run_id == "222"
@@ -1167,11 +1186,10 @@ def test_rerun_and_watch_waits_for_the_new_attempt() -> None:
         patch(_MOD + "._watch_run", return_value="https://run/5") as watch,
         patch(_MOD + ".time.sleep"),
     ):
-        url = rerun_and_watch(
-            ctx, "5", rerun_args=("--failed",), check_status=True, phase="cd-publish"
-        )
+        url = rerun_and_watch(ctx, "5", rerun_args=("--failed",), phase="cd-publish")
     run.assert_called_once_with("run", "rerun", "5", "--repo", "owner/repo", "--failed")
-    watch.assert_called_once_with(ctx, "5", check_status=True)
+    # The wait is for the new attempt, never the one that already finished.
+    watch.assert_called_once_with(ctx, "5", phase="cd-publish", attempt=2)
     assert url == "https://run/5"
 
 
@@ -1186,7 +1204,7 @@ def test_rerun_and_watch_attempt_never_registers_fails() -> None:
         patch(_MOD + ".time.sleep"),
         pytest.raises(ReleaseError, match="no attempt after attempt 1 registered"),
     ):
-        rerun_and_watch(ctx, "5", check_status=False, phase="cd-publish")
+        rerun_and_watch(ctx, "5", phase="cd-publish")
     watch.assert_not_called()
 
 
@@ -1199,7 +1217,7 @@ def test_rerun_and_watch_unreadable_attempt_fails_loudly() -> None:
         patch(_MOD + ".github.run") as run,
         pytest.raises(ValueError, match="returned 'null', not an attempt number"),
     ):
-        rerun_and_watch(ctx, "5", check_status=False, phase="cd-publish")
+        rerun_and_watch(ctx, "5", phase="cd-publish")
     run.assert_not_called()
 
 
@@ -1279,7 +1297,7 @@ def test_confirm_main_redispatches_superseded_once(capsys: pytest.CaptureFixture
         "workflow", "run", "cd.yml", "--repo", "owner/repo", "--ref", "main"
     )
     group.assert_called_once_with("100", _RUN1)
-    watch.assert_called_once_with(ctx, "200")
+    watch.assert_called_once_with(ctx, "200", phase="confirm-main")
     assert [c.args[1] for c in settle.call_args_list] == ["100", "200"]
     assert ctx.cd_run_id == "200"
     assert ctx.cd_run_url == _RUN2
@@ -1330,7 +1348,7 @@ def test_redispatch_ignores_cancelled_run() -> None:
         confirm_main(ctx)
     assert sleep.call_count == 2
     group.assert_called_once_with("100", _RUN1)
-    watch.assert_called_once_with(ctx, "200")
+    watch.assert_called_once_with(ctx, "200", phase="confirm-main")
     assert ctx.cd_run_id == "200"
 
 

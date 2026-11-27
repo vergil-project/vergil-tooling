@@ -580,6 +580,29 @@ opened; an adopted dependency-update PR gets its `dependency-update` label
 again. Any other such PR fails the stage, naming the PR. With none open, a
 transient error is retried with backoff.
 
+### Waiting for a CD run
+
+`confirm-main`, `confirm-develop` and `cd-publish` wait for a CD run by
+reading it with `gh run view` until the attempt they are waiting for is
+`completed`, and then judge its jobs. After a re-run, that is the new
+attempt the re-run started, never the one that already finished. They
+never take `gh run watch`'s exit status as the run's result: it can
+fail while the run is still going.
+
+A read that fails is classified first. A transient GitHub error, a 404
+on the just-listed run, or a reply that cannot be parsed is retried with
+back-off. Any other error stops the stage at once. The stage fails, and
+says which, only on one of these:
+
+- **The run's result:** the attempt completed and its jobs did not pass,
+  judged as each stage describes.
+- **A read failure:** the run could not be read, either for a
+  non-transient error, for seven failed reads in a row, or for a read
+  still failing when the wait ran out. This is not the run's result:
+  check the run, then resume.
+- **Result unknown:** the attempt was still not complete after
+  `$VRG_CD_TIMEOUT` seconds (default 5400). Once it finishes, resume.
+
 ### Stale job records
 
 The confirm stages wait a bounded time for every CD job to reach
@@ -1117,7 +1140,10 @@ by its commit, the way `vrg-finalize-pr` finds the synced head's run:
 - **Queued, pending or in progress.** The gate waits for it, up to
   `$VRG_CD_TIMEOUT` seconds (default 5400). A run still not complete at
   the deadline refuses, as "result unknown": re-run `vrg-release` once
-  it finishes.
+  it finishes. The wait reads the run as the confirm stages do
+  ([waiting for a CD run](#waiting-for-a-cd-run)): a run that cannot be
+  read refuses as a read failure naming its cause, never as a run still
+  in progress.
 - **Succeeded.** The release goes ahead.
 - **Failed.** The release refuses, naming the failed jobs and linking the
   run. A failure only in a docs job is the exception: `confirm-develop`
@@ -1158,7 +1184,8 @@ succeed, with a direct link to the log. The wait is bounded by
 `VRG_CD_TIMEOUT` (seconds, default 90 minutes). A run still going at the
 deadline is reported as "still in progress; result unknown", with the
 run URL and how to re-check it, not as a failed run. It still fails the
-wait (issue #3316).
+wait (issue #3316). A run that cannot be read while finalize waits is
+an error naming its cause, never a run still in progress (issue #5174).
 
 For deeper investigation, view recent runs directly:
 

@@ -57,6 +57,7 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.cache_space import CacheSpaceError
 from vergil_tooling.lib.cd_runs import (
+    MAX_READ_FAILURES,
     CDRunProblem,
     CDRunSuperseded,
     _supersede_group,
@@ -623,7 +624,7 @@ def _cd_view_resp(
     return CompletedProcess(
         args=(),
         returncode=0,
-        stdout=json.dumps({"status": status, "conclusion": conclusion, "url": url}),
+        stdout=json.dumps({"status": status, "conclusion": conclusion, "attempt": 1, "url": url}),
     )
 
 
@@ -775,26 +776,52 @@ def test_wait_times_out_watching_run() -> None:
     assert "did not succeed" not in msg
 
 
-def test_wait_tolerates_view_errors_until_timeout() -> None:
-    # A gh error while viewing the run (rc != 0) is transient — the watcher
-    # keeps trying rather than crashing — and times out cleanly if it persists.
+def _view_error(stderr: str) -> subprocess.CalledProcessError:
+    """A failed ``gh run view``, as ``subprocess.run(check=True)`` raises it."""
+    return subprocess.CalledProcessError(1, ["gh", "run", "view"], output="", stderr=stderr)
+
+
+def test_wait_retries_a_transient_view_error() -> None:
+    # A transient gh error while viewing the run is retried, with back-off.
     with (
         patch(_MOD + ".time.sleep"),
         patch(
             _MOD + ".subprocess.run",
             side_effect=[
                 _cd_list_resp([_cd_run()]),
-                CompletedProcess(args=(), returncode=1, stdout="", stderr="boom"),
+                _view_error("HTTP 404: Not Found"),
+                CompletedProcess(args=(), returncode=0, stdout="not json"),
+                _cd_view_resp("completed", "success"),
             ],
         ),
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
-    assert isinstance(problem, CDRunProblem)
-    assert problem.timed_out is True
+        assert _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT) is None
 
 
-def test_wait_tolerates_malformed_view_json() -> None:
-    # A malformed gh run view payload is treated as "unknown yet", not a crash.
+def test_wait_a_non_transient_view_error_is_a_read_failure_at_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A 403 is never retried to the deadline and reported as a run still in
+    # progress: it is a read failure, naming the cause (#5174).
+    with (
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[_cd_list_resp([_cd_run()]), _view_error("HTTP 403: Forbidden")],
+        ),
+        pytest.raises(CDUnreadableError, match=r"(?s)could not be read.*403") as raised,
+    ):
+        _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
+    assert "still in progress" not in str(raised.value)
+    sleep.assert_not_called()
+    err = capsys.readouterr().err
+    assert "ERROR: CD workflow run 12345 (" in err
+    assert "actions/runs/12345) for abc123d could not be read" in err
+
+
+def test_wait_a_view_still_failing_at_the_deadline_is_a_read_failure() -> None:
+    # A view that cannot be read when the wait runs out is a persistent read
+    # failure, not a timeout (#5174).
     with (
         patch(_MOD + ".time.sleep"),
         patch(
@@ -804,10 +831,40 @@ def test_wait_tolerates_malformed_view_json() -> None:
                 CompletedProcess(args=(), returncode=0, stdout="not json"),
             ],
         ),
+        pytest.raises(CDUnreadableError, match="persistent read failure") as raised,
     ):
-        problem = _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
-    assert isinstance(problem, CDRunProblem)
-    assert problem.timed_out is True
+        _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT, watch_timeout=0.0)
+    assert "still in progress" not in str(raised.value)
+
+
+def test_wait_a_persistent_view_failure_is_a_read_failure() -> None:
+    # More than MAX_READ_FAILURES failed reads in a row fail as a read
+    # failure, well before the 90-minute deadline.
+    bad = CompletedProcess(args=(), returncode=0, stdout="[]")
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[_cd_list_resp([_cd_run()]), *[bad] * (MAX_READ_FAILURES + 1)],
+        ),
+        pytest.raises(CDUnreadableError, match=r"read \d+ times in a row"),
+    ):
+        _wait_for_cd_run("develop", _HEAD_SHA, root=_NO_WORKFLOWS_ROOT)
+
+
+def test_stage_cd_check_wait_cd_read_failure_is_a_tool_error(tmp_path: Path) -> None:
+    # The stage fails as a tool error (exit 1, not develop broken), and the
+    # final report repeats the cause.
+    ctx = _stage_ctx(["--wait-cd"], root=tmp_path)
+    ctx.synced_to = _HEAD_SHA
+    error = CDUnreadableError("CD workflow run 12345 for abc123d could not be read: 403")
+    with (
+        patch(_MOD + "._wait_for_cd_run", side_effect=error),
+        pytest.raises(CDUnreadableError),
+    ):
+        _stage_cd_check(ctx)
+    assert ctx.cd_unreadable is True
+    assert ctx.cd_line == f"CD: error ({error})"
 
 
 def test_wait_handles_run_without_url() -> None:
@@ -822,7 +879,9 @@ def test_wait_handles_run_without_url() -> None:
                 CompletedProcess(
                     args=(),
                     returncode=0,
-                    stdout=json.dumps({"status": "completed", "conclusion": "success", "url": ""}),
+                    stdout=json.dumps(
+                        {"status": "completed", "conclusion": "success", "attempt": 1}
+                    ),
                 ),
             ],
         ),

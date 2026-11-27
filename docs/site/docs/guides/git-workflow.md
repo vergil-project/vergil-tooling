@@ -235,7 +235,9 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     `clean`, a pathspec `checkout`, `rebase -i --autosquash`) are refused
     on a frozen branch too. The freeze lifts when the agent's own
     `vrg-submit-pr` opens the PR, so its `pr-watch` can then push
-    fixes and rebase the open PR. See the tool's entry in the
+    fixes and rebase the open PR, each new head through
+    `vrg-submit-pr --push` (`vrg-git` refuses a plain push to an open
+    PR's branch). See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
 !!! note "Batch PRs: several small issues, one PR"
