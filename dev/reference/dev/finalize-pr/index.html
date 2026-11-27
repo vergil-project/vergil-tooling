@@ -15845,17 +15845,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-gates-re-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The gates' re-check
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#status-table" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19136,17 +19125,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-gates-re-check" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The gates' re-check
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#status-table" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19367,8 +19345,9 @@
 <p>Watches a batch of pull requests until each one has merged, then settles
 <code>develop</code> once. <a href="../submit-pr/"><code>vrg-submit-pr</code></a> opens every PR with GitHub
 auto-merge on, and GitHub merges each one once its required checks pass.
-<code>vrg-finalize-pr</code> <strong>never merges a PR</strong> and never turns auto-merge on
-(epic vergil-project/.github#1218). A run has five phases:</p>
+<code>vrg-finalize-pr</code> <strong>never merges a PR</strong> and never turns auto-merge on or
+off (epic vergil-project/.github#1218; epic vergil-project/.github#1664,
+spec §5, phase 1). A run has five phases:</p>
 <ol>
 <li><strong>Watch.</strong> It follows every listed PR, holding no lock, until each one
    has merged, has failed, or the batch deadline has passed.</li>
@@ -19521,8 +19500,6 @@ names what replaced it:</p>
 <li><strong>Merged.</strong> The PR ends as <em>merged</em>. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.</li>
 <li><strong>Closed</strong> without merging: <em>failed: closed</em>.</li>
-<li><strong>Provenance.</strong> See <a href="#provenance">Provenance</a> below.</li>
-<li><strong>The gates.</strong> See <a href="#the-gates-re-check">The gates' re-check</a> below.</li>
 <li><strong>Auto-merge off</strong>, at the start or mid-watch: <em>failed: auto-merge off</em>.
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.</li>
@@ -19549,23 +19526,29 @@ run: while a newer run of the same workflow, for the same event, is on the
 PR's head, the check is not a failure and the PR stays pending.
 <code>vrg-pr-await</code> and <code>vrg-repo-status</code> judge checks the same way.</p>
 <p>A PR that ended <em>failed: CI</em> or <em>failed: cancelled</em> is read again on every
-later poll while the watch goes on. If GitHub has merged it, it is reported
-as <em>merged</em>. Its auto-merge is still on, so a new head pushed to it
-meanwhile gets the provenance check and the gates' re-check like any open
-PR's: a failure turns its auto-merge off and reports it <em>failed: provenance</em>
-or <em>failed: gates</em> instead.</p>
+later poll while the watch goes on. Its auto-merge is still on, so a fix
+pushed to it merges by itself once its checks pass. If GitHub has merged
+it, it is reported as <em>merged</em>.</p>
+<p><strong>The watch judges no head of an open PR.</strong> Every head the tooling arms or
+pushes to an open PR into <code>develop</code> goes through the one PR path, which
+runs the provenance check and the merge-review gates on it <strong>before</strong> it
+is armed or pushed: <code>vrg-submit-pr</code> when it opens the PR, and
+<a href="../submit-pr/#push-mode-a-new-head-for-an-open-pr"><code>vrg-submit-pr --push</code></a>
+for a fix or a rebase after that (<code>vrg-git</code> refuses a plain push to such a
+branch). So the watch never turns auto-merge off, and has no <em>failed:
+provenance</em> or <em>failed: gates</em> outcome (epic vergil-project/.github#1664,
+spec §3.3 and §5).</p>
 <p>A PR still pending when the batch deadline passes ends as <em>timed out</em>,
 and its auto-merge stays on, so it may still merge later. The deadline
 covers the whole watch: <code>$VRG_FINALIZE_DEADLINE</code> seconds, 7200 by default.
 A value that is not a positive whole number is an error before any
-waiting. Any failure to read a PR, to run the provenance check or to turn
-auto-merge off stops the run with exit 1; none is read as a pending or a
-clean PR.</p>
+waiting. Any failure to read a PR or to run the provenance check stops
+the run with exit 1; none is read as a pending or a clean PR.</p>
 <h4 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h4>
-<p>The watch runs the provenance check on every PR when it starts, and
-again each time a PR's head changes. <code>vrg-submit-pr</code> ran the same check
-before it turned auto-merge on. A violation always fails, and there is
-no override (issue #4695): it is either a real problem to investigate or
+<p>The watch runs the provenance check on each PR that has merged, the one
+check it still makes. <code>vrg-submit-pr</code> ran the same check before it turned
+auto-merge on, and the one PR path runs it on every head pushed after
+that. A violation always fails, and there is no override (issue #4695): it is either a real problem to investigate or
 a bug in the classifier to fix. Each identity's role comes from the
 trusted-authors configuration, never from its name alone: the human may
 do anything, an agent may not author, edit, close, reopen or merge the
@@ -19589,53 +19572,12 @@ records with that merge, on anyone's such PR. On a fork PR, or one an
 untrusted identity opened, those stay violations, and so does every other
 forbidden action. An untrusted
 approval counts for nothing: it is
-reported on stderr, metadata only, and is no violation. What it does
-depends on whether the PR has merged:</p>
-<ul>
-<li><strong>Open PR.</strong> Finalize turns the PR's auto-merge off and reports it
-  <em>failed: provenance</em>.</li>
-<li><strong>Merged PR</strong>, one that merged before finalize started included.
-  Nothing can be disabled. The PR is reported as merged with a loud
-  provenance-violation flag, and the run cannot reach full success: it
-  exits 3 (or 4, if develop did not validate) and no chained release
-  runs. A human must look at it before any release (issue #4662).</li>
-</ul>
-<h4 id="the-gates-re-check">The gates' re-check<a class="headerlink" href="#the-gates-re-check" title="Permanent link">&para;</a></h4>
-<p>GitHub keeps a PR's auto-merge on when a new head is pushed to it, so a
-fix or a rebase pushed after submit merges by itself once its checks are
-green, and nothing turns auto-merge on again for it. The watch is where
-that head is judged (epic vergil-project/.github#1384). Right after the
-provenance check, at the start and on each new head of an open PR, it
-re-runs the gates <code>vrg-submit-pr</code> ran before it opened the PR:</p>
-<ul>
-<li><strong>It refuses another repo's clone.</strong> The gates are judged on local git
-  objects, so a run from a clone whose <code>origin</code> is not the PR's repository
-  stops with exit 1 before anything is read.</li>
-<li><strong>It asks whether the PR is agent-involved.</strong> It is when an agent login
-  opened it, reviewed it, or is the actor of any event on it, or when its
-  ready state, on the relay ref <code>refs/vergil/pr-workflow/&lt;branch&gt;</code>, says
-  so. Turning auto-merge on or off is not involvement, and nor, on a PR
-  the one PR path accepts, is its merge and the closing GitHub records
-  with it: the actors of those events are not counted. GitHub does not record who pushed a commit, so a ready state counts
-  as agent-involved unless its commit's author is trusted and its
-  <code>recorded_by</code> names an identity that is not an agent; a ready state with
-  no <code>recorded_by</code>, or a value finalize does not recognise, counts. The
-  value is written by whoever ran <code>report-ready</code>, so it only ever adds
-  involvement: <code>human</code> never makes a PR an agent acted on count as
-  human-only. A PR with no ready state is judged from its GitHub actors
-  alone, and a PR that is not agent-involved skips the gates.</li>
-<li><strong>It fetches, then evaluates.</strong> It fetches <code>develop</code> and the PR's head
-  commit (which may have been pushed from elsewhere), moving no feature
-  branch's remote-tracking ref, and checks the change from the fetched
-  <code>origin/develop</code> to the head: the change needs a merge-review record or
-  an approved merge-review exemption with its fingerprint. The task issues are the linkage lines of
-  the PR's trusted body, or, when it has none, its trusted ready state's.</li>
-</ul>
-<p>A head that does not pass, and any read or fetch the re-check cannot
-complete, turns the PR's auto-merge off and ends it <em>failed: gates</em>, with
-the reasons; it is never left armed. A clean rebase keeps the change's
-fingerprint, so it passes and its auto-merge stays on. A merged PR is not
-re-checked: nothing can be disabled, and the daily agent audit judges it.</p>
+reported on stderr, metadata only, and is no violation.</p>
+<p>A merged PR with a violation, one that merged before finalize started
+included, cannot be undone. It is reported as merged with a loud
+provenance-violation flag, and the run cannot reach full success: it
+exits 3 (or 4, if develop did not validate) and no chained release runs.
+A human must look at it before any release (issue #4662).</p>
 <h4 id="status-table">Status table<a class="headerlink" href="#status-table" title="Permanent link">&para;</a></h4>
 <p>The watch builds a status table once at start-up and again after every
 poll, about every 15 seconds (issue #4677). It has one row for each PR in
@@ -19969,12 +19911,8 @@ step, and a provenance violation is named loudly:</p>
 <td>Re-run its cancelled checks, then re-run <code>vrg-finalize-pr &lt;pr&gt;</code></td>
 </tr>
 <tr>
-<td><em>failed: auto-merge off</em>, <em>failed: provenance</em></td>
+<td><em>failed: auto-merge off</em></td>
 <td>Investigate before turning auto-merge back on</td>
-</tr>
-<tr>
-<td><em>failed: gates</em></td>
-<td>Get the missing merge review for its head, then turn auto-merge back on</td>
 </tr>
 <tr>
 <td><em>failed: not a develop PR</em></td>
