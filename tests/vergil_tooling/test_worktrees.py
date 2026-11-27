@@ -12,7 +12,10 @@ import pytest
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
-from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.finalize import teardown_worktree
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import (
@@ -38,6 +41,7 @@ from vergil_tooling.lib.worktrees import (
     gone_branches,
     is_canonical_worktree,
     list_worktrees,
+    lock_protection,
     log_removal,
     match_worktrees,
     release_protection,
@@ -1287,11 +1291,14 @@ def test_gone_branches_propagates_remote_failure() -> None:
 
 _RESUME = _MOD + "._open_release_issues"
 _PREFLIGHT = _MOD + "._trusted_release_issues"
+_READ_LOCK = _MOD + ".refs.read_lock"
+_NO_LOCK = LockState(sha=None, record=None, error="")
 
 
 def test_release_protection_active_while_a_trusted_release_issue_is_open() -> None:
     listed = [("2.1.9", 77, "listed body")]
     with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
         patch(_RESUME, return_value=listed) as listing,
         patch(_PREFLIGHT, return_value=[("2.1.9", 77, "trusted body")]) as trusted,
     ):
@@ -1306,19 +1313,24 @@ def test_release_protection_active_while_a_trusted_release_issue_is_open() -> No
 def test_release_protection_inactive_with_no_trusted_release_issue() -> None:
     """An open release issue whose body is untrusted is no release running."""
     with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
         patch(_RESUME, return_value=[("2.1.9", 77, "outsider body")]),
         patch(_PREFLIGHT, return_value=[]),
     ):
         protection = release_protection("o/r")
     assert protection.active is False
-    assert protection.reason == "no release tracking issue is open"
+    assert protection.reason == "no release lock is held and no release tracking issue is open"
 
 
 def test_release_protection_raises_on_a_refused_listing() -> None:
     refusal = ReleaseError(
         phase="cleanup", command="gh issue list", message="search returned str", detail="raw"
     )
-    with patch(_RESUME, side_effect=refusal), pytest.raises(ProtectionReadError) as info:
+    with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
+        patch(_RESUME, side_effect=refusal),
+        pytest.raises(ProtectionReadError) as info,
+    ):
         release_protection("o/r")
     assert "search returned str" in str(info.value)
     assert "raw" in str(info.value)
@@ -1326,13 +1338,18 @@ def test_release_protection_raises_on_a_refused_listing() -> None:
 
 def test_release_protection_raises_on_a_failed_gh_call() -> None:
     failure = subprocess.CalledProcessError(1, ("gh", "issue", "list"))
-    with patch(_RESUME, side_effect=failure), pytest.raises(ProtectionReadError, match="o/r"):
+    with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
+        patch(_RESUME, side_effect=failure),
+        pytest.raises(ProtectionReadError, match="o/r"),
+    ):
         release_protection("o/r")
 
 
 def test_release_protection_raises_on_a_failed_trust_read() -> None:
     refusal = ReleaseError(phase="preflight", command="read_issue", message="refusing blind")
     with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
         patch(_RESUME, return_value=[("2.1.9", 77, "body")]),
         patch(_PREFLIGHT, side_effect=refusal),
         pytest.raises(ProtectionReadError, match="refusing blind"),
@@ -1379,3 +1396,139 @@ def test_log_removal_with_an_attached_log_reaches_it(
     line = "removed worktree /r/.worktrees/issue-1-x (branch feature/1-x): PR closed"
     assert log.path.read_text(encoding="utf-8").count(line) == 1
     assert line in capsys.readouterr().err
+
+
+# -- the release lock's key (Task 27 of epic vergil-project/.github#1664) ----
+
+_LOCK_SHA = "b" * 40
+
+
+def _lock_record(**changes: str) -> LockRecord:
+    fields = {
+        "holder_identity": "human",
+        "holder_host": "mac.local",
+        "version": "2.1.9",
+        "worktree": "/r/.worktrees/release-2.1.9",
+        "tracking_issue": "o/r#77",
+        "stage": "cut",
+        "health": "running",
+        "broken_stage": "",
+        "started_at": "2026-11-27T10:00:00Z",
+        "heartbeat_at": "2026-11-27T10:05:00Z",
+        "token": "a1b2c3",
+    }
+    fields.update(changes)
+    return LockRecord(**fields)  # type: ignore[arg-type]
+
+
+def test_release_protection_active_while_the_lock_is_held() -> None:
+    """A held lock protects, names its worktree, and needs no tracking-issue read."""
+    held = LockState(sha=_LOCK_SHA, record=_lock_record(), error="")
+    with (
+        patch(_READ_LOCK, return_value=held) as read,
+        patch(_RESUME) as listing,
+    ):
+        protection = release_protection("o/r")
+    assert protection.active is True
+    assert protection.worktree == "/r/.worktrees/release-2.1.9"
+    assert "release lock held: release 2.1.9" in protection.reason
+    read.assert_called_once_with("o/r")
+    listing.assert_not_called()
+
+
+def test_release_protection_unreadable_lock_is_held() -> None:
+    """A lock that is present but cannot be read protects: it is held, never absent."""
+    unreadable = LockState(
+        sha=_LOCK_SHA, record=None, error="refs/vergil/release-lock is unreadable"
+    )
+    with patch(_READ_LOCK, return_value=unreadable), patch(_RESUME) as listing:
+        protection = release_protection("o/r")
+    assert protection.active is True
+    assert protection.worktree == ""
+    assert "the release lock cannot be read" in protection.reason
+    assert "is unreadable" in protection.reason
+    listing.assert_not_called()
+
+
+def test_release_protection_after_break_keeps_the_tracking_issue_key() -> None:
+    """With no lock (a break deleted it), an open trusted tracking issue still protects."""
+    with (
+        patch(_READ_LOCK, return_value=_NO_LOCK),
+        patch(_RESUME, return_value=[("2.1.9", 77, "body")]),
+        patch(_PREFLIGHT, return_value=[("2.1.9", 77, "body")]),
+    ):
+        protection = release_protection("o/r")
+    assert protection == ReleaseProtection(
+        active=True, reason="open tracking issue: release 2.1.9 (#77)"
+    )
+
+
+def test_release_protection_raises_when_the_lock_cannot_be_read() -> None:
+    """Whether the lock is held cannot be told: a read error, never no lock."""
+    with (
+        patch(_READ_LOCK, side_effect=RefReadError("reading refs/vergil/release-lock failed")),
+        patch(_RESUME) as listing,
+        pytest.raises(ProtectionReadError, match="could not read the release lock of o/r"),
+    ):
+        release_protection("o/r")
+    listing.assert_not_called()
+
+
+def test_release_protection_reuses_a_lock_already_read() -> None:
+    """A caller that has the lock's protection passes it; the lock is not read again."""
+    absent = ReleaseProtection(active=False, reason="no release lock is held")
+    with (
+        patch(_READ_LOCK) as read,
+        patch(_RESUME, return_value=[]),
+        patch(_PREFLIGHT, return_value=[]),
+    ):
+        protection = release_protection("o/r", lock=absent)
+    read.assert_not_called()
+    assert protection.active is False
+
+
+def test_lock_protection_inactive_with_no_lock() -> None:
+    with patch(_READ_LOCK, return_value=_NO_LOCK):
+        protection = lock_protection("o/r")
+    assert protection == ReleaseProtection(active=False, reason="no release lock is held")
+
+
+def test_lock_protection_names_its_worktree(tmp_path: Path) -> None:
+    """The named worktree matches by resolved path; a relative name is under the root."""
+    wt = tmp_path / ".worktrees" / "release-2.1.9"
+    absolute = ReleaseProtection(active=True, reason="held", worktree=str(wt))
+    relative = ReleaseProtection(active=True, reason="held", worktree=".worktrees/release-2.1.9")
+    unnamed = ReleaseProtection(active=True, reason="held")
+    assert absolute.names(wt, tmp_path) is True
+    assert relative.names(wt, tmp_path) is True
+    assert absolute.names(tmp_path / ".worktrees" / "issue-1-x", tmp_path) is False
+    assert unnamed.names(wt, tmp_path) is False
+
+
+def test_release_own_teardown_not_blocked(tmp_path: Path) -> None:
+    """The release's teardown-worktree stage removes the worktree the held lock
+    names: it is a sanctioned removal, never judged by the protection."""
+    wt = tmp_path / ".worktrees" / "release-2.1.9"
+    wt.mkdir(parents=True)
+    ctx = ReleaseContext(repo="o/r", version="2.1.9", repo_root=tmp_path, version_override=None)
+    ctx.worktree_path = wt
+    ctx.release_branch = "release/2.1.9"
+    held = LockState(sha=_LOCK_SHA, record=_lock_record(worktree=str(wt)), error="")
+    calls: list[tuple[str, ...]] = []
+    cwd = Path.cwd()
+    try:
+        with (
+            patch(_READ_LOCK, return_value=held) as read,
+            patch(_RESUME) as listing,
+            patch(
+                "vergil_tooling.lib.managed_worktree.git.run",
+                side_effect=lambda *a: calls.append(a),
+            ),
+        ):
+            teardown_worktree(ctx)
+    finally:
+        os.chdir(cwd)
+    assert calls == [("worktree", "remove", "--force", str(wt))]
+    assert ctx.worktree_path is None
+    read.assert_not_called()
+    listing.assert_not_called()

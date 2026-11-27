@@ -28,6 +28,8 @@ from vergil_tooling.lib.process_errors import error_text, failure_message
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import _trusted_release_issues
 from vergil_tooling.lib.release.resume import _open_release_issues
+from vergil_tooling.lib.release_lock import refs
+from vergil_tooling.lib.release_lock.model import ReleaseLockError
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
@@ -790,16 +792,35 @@ RELEASE_BRANCH_PREFIX = "release/"
 class ReleaseProtection:
     """Whether cleanup must keep every ``release/*`` worktree, and why.
 
-    ``active`` while an open release tracking issue with a trusted body exists
-    (spec §5.8 of epic vergil-project/.github#1664, the fix for issue #5187).
+    Spec §5.8 of epic vergil-project/.github#1664 (the fix for issue #5187,
+    then the lock's key from Task 27). ``active`` while the release lock is
+    held, while it cannot be read (an unreadable lock is held, never absent),
+    or while an open release tracking issue with a trusted body exists. The
+    tracking-issue key keeps a broken release's worktree protected after a
+    ``break`` has deleted its lock, until its tracking issue closes.
+
+    ``worktree`` is the path the lock names (``""`` when no lock is held, the
+    lock names none yet, or it cannot be read): cleanup keeps that worktree,
+    whatever its branch. An unreadable lock names no path, but the worktree
+    a release runs in is a ``release/*`` worktree, which ``active`` keeps.
     """
 
     active: bool
     reason: str
+    worktree: str = ""
+
+    def names(self, path: Path, root: Path) -> bool:
+        """Whether *path* is the worktree the lock names; a relative name is under *root*."""
+        if not self.worktree:
+            return False
+        named = Path(self.worktree)
+        if not named.is_absolute():
+            named = root / named
+        return named.resolve() == path.resolve()
 
 
 class ProtectionReadError(Exception):
-    """The open release tracking issues could not be read.
+    """The release lock or the open release tracking issues could not be read.
 
     Cleanup treats it as protected: a release worktree is never removed on a
     read that did not complete.
@@ -821,13 +842,47 @@ PROTECTION_READ_ERRORS = (
 )
 
 
-def release_protection(repo: str) -> ReleaseProtection:
-    """Whether a release is running in *repo*: any open, trusted release tracking issue.
+def lock_protection(repo: str) -> ReleaseProtection:
+    """The protection the release lock of *repo* alone gives.
 
-    Only a ``release: X.Y.Z`` issue with a trusted body counts, by the rule a
-    fresh ``vrg-release`` start uses (``preflight._trusted_release_issues``).
-    A read that cannot complete raises :class:`ProtectionReadError`.
+    Active while the lock is held, readable or not, and naming the worktree a
+    readable lock records. The lock is read with no trusted-author check
+    (spec §5.10). When whether the lock is held cannot be told, it raises
+    :class:`ProtectionReadError`.
     """
+    try:
+        state = refs.read_lock(repo)
+    except (ReleaseLockError, ValueError) as exc:
+        msg = f"could not read the release lock of {repo}: {error_text(exc)}"
+        raise ProtectionReadError(msg) from exc
+    if not state.held:
+        return ReleaseProtection(active=False, reason="no release lock is held")
+    if state.record is None:
+        return ReleaseProtection(
+            active=True, reason=f"the release lock cannot be read ({state.error})"
+        )
+    rec = state.record
+    return ReleaseProtection(
+        active=True,
+        reason=f"release lock held: release {rec.version} ({rec.health}, stage {rec.stage})",
+        worktree=rec.worktree,
+    )
+
+
+def release_protection(repo: str, *, lock: ReleaseProtection | None = None) -> ReleaseProtection:
+    """Whether a release is running in *repo*: the lock is held, or a tracking issue is open.
+
+    *lock* is :func:`lock_protection`'s result when the caller already has
+    it; otherwise the lock is read here. A held lock, readable or not, is
+    enough, and the tracking issues are then not read. Otherwise only a
+    ``release: X.Y.Z`` issue with a trusted body counts, by the rule a fresh
+    ``vrg-release`` start uses (``preflight._trusted_release_issues``). A
+    read that cannot complete raises :class:`ProtectionReadError`.
+    """
+    if lock is None:
+        lock = lock_protection(repo)
+    if lock.active:
+        return lock
     try:
         issues = _trusted_release_issues(_open_release_issues(repo, phase="cleanup"), repo)
     except ReleaseError as exc:
@@ -838,7 +893,9 @@ def release_protection(repo: str) -> ReleaseProtection:
         msg = f"could not read the open release tracking issues of {repo}: {error_text(exc)}"
         raise ProtectionReadError(msg) from exc
     if not issues:
-        return ReleaseProtection(active=False, reason="no release tracking issue is open")
+        return ReleaseProtection(
+            active=False, reason="no release lock is held and no release tracking issue is open"
+        )
     names = ", ".join(f"release {ver} (#{number})" for ver, number, _ in issues)
     return ReleaseProtection(active=True, reason=f"open tracking issue: {names}")
 

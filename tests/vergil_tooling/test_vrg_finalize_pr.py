@@ -70,10 +70,13 @@ from vergil_tooling.lib.finalize_watch import FinalizeWatchError, Outcome, PRRes
 from vergil_tooling.lib.github import ClosingIssue, GitHubAPIError
 from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
+from vergil_tooling.lib.worktrees import lock_protection as _real_lock_protection
 
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 _PROJECTS = Path("/vergil/projects")
@@ -93,6 +96,21 @@ def _no_cwd_org(monkeypatch: pytest.MonkeyPatch) -> None:
     answer ``gh`` only. :func:`fake_app` sets its own.
     """
     monkeypatch.setattr(github, "detect_org", lambda *, cwd=None: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_release_lock() -> Iterator[None]:
+    """Default every test to a repo whose release lock is not held.
+
+    Cleanup reads the lock for every worktree it would remove (Task 27 of epic
+    vergil-project/.github#1664). The tests of the lock's key re-patch these,
+    or patch the lock read beneath them — the innermost patch wins.
+    """
+    with (
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".worktrees.lock_protection", return_value=_NO_LOCK),
+    ):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -3286,6 +3304,7 @@ _RELEASE_OPEN = worktrees.ReleaseProtection(
     active=True, reason="open tracking issue: release 2.1.9 (#77)"
 )
 _NO_RELEASE = worktrees.ReleaseProtection(active=False, reason="no release tracking issue is open")
+_NO_LOCK = worktrees.ReleaseProtection(active=False, reason="no release lock is held")
 
 
 @contextmanager
@@ -3381,17 +3400,19 @@ def test_cleanup_treats_failed_protection_read_as_protected(
     assert "kept .worktrees/release-2.1.9" in out
 
 
-def test_cleanup_reads_protection_only_for_a_release_worktree(tmp_path: Path) -> None:
-    """A feature worktree's removal never asks whether a release is running."""
+def test_cleanup_reads_only_the_lock_for_a_feature_worktree(tmp_path: Path) -> None:
+    """A feature worktree's removal reads the lock, never the tracking issues."""
     _make_profile(tmp_path, "library-release")
     wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
     with (
         _sweep_one_worktree(tmp_path, wt, protection=_RELEASE_OPEN) as calls,
         patch(_MOD + ".worktrees.release_protection") as read,
+        patch(_MOD + ".worktrees.lock_protection", return_value=_NO_LOCK) as lock,
     ):
         rc = main(["--cleanup-only"])
     assert rc == 0
     read.assert_not_called()
+    lock.assert_called_once_with("o/r")
     assert ("worktree", "remove", str(wt.path)) in calls
 
 
@@ -3421,7 +3442,7 @@ def test_release_guard_reads_the_protection_once_per_run(
         second = guard.keeps("release/post-2.1.9", Path("/elsewhere/post"), tmp_path)
     assert first is True
     assert second is True
-    read.assert_called_once_with("o/r")
+    read.assert_called_once_with("o/r", lock=_NO_LOCK)
     out = capsys.readouterr().out
     assert "kept /elsewhere/post: a release is running" in out
 
@@ -5266,3 +5287,201 @@ def test_watch_keeps_close_refs_cd_and_advisory_stages(tmp_path: Path) -> None:
         "validation:True",
         "cd-check:False",
     ]
+
+
+# -- cleanup safety on the release lock (Task 27 of epic .github#1664) ------
+
+_LOCK_SHA = "b" * 40
+_LOCK_MOD = "vergil_tooling.lib.worktrees"
+
+
+def _lock_record(worktree: str) -> LockRecord:
+    return LockRecord(
+        holder_identity="human",
+        holder_host="mac.local",
+        version="2.1.9",
+        worktree=worktree,
+        tracking_issue="o/r#77",
+        stage="cut",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T10:00:00Z",
+        heartbeat_at="2026-11-27T10:05:00Z",
+        token="a1b2c3",
+    )
+
+
+@contextmanager
+def _sweep_under_lock(
+    tmp_path: Path,
+    wt: Worktree,
+    *,
+    lock: LockState | BaseException,
+    issues: list[tuple[str, int, str]],
+) -> Generator[list[tuple[str, ...]]]:
+    """A cleanup-only run of one merged worktree, *wt*, judged by the real protection.
+
+    The lock read beneath ``worktrees.lock_protection`` returns (or raises)
+    *lock*; the open trusted release tracking issues are *issues*.
+    """
+    removable = WorktreeStatus(
+        worktree=wt, state=WorktreeState.MERGED, pr_number=1, ahead=2, dirty=False
+    )
+    calls: list[tuple[str, ...]] = []
+    if isinstance(lock, BaseException):
+        read_lock = patch(_LOCK_MOD + ".refs.read_lock", side_effect=lock)
+    else:
+        read_lock = patch(_LOCK_MOD + ".refs.read_lock", return_value=lock)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=lambda *a: calls.append(a)),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
+        patch(_MOD + "._worktree_is_dirty", return_value=False),
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + "._report_cd_run"),
+        patch(_MOD + ".worktrees.lock_protection", wraps=_real_lock_protection),
+        read_lock,
+        patch(_LOCK_MOD + "._open_release_issues", return_value=issues),
+        patch(_LOCK_MOD + "._trusted_release_issues", return_value=issues),
+    ):
+        yield calls
+
+
+def _removed(calls: list[tuple[str, ...]], wt: Worktree) -> bool:
+    return any(c[:1] == ("worktree",) for c in calls) or ("branch", "-D", wt.branch) in calls
+
+
+def test_cleanup_skips_worktree_lock_names(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The worktree the lock names is kept whatever its branch, not only release/*."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    held = LockState(sha=_LOCK_SHA, record=_lock_record(str(wt.path)), error="")
+    with _sweep_under_lock(tmp_path, wt, lock=held, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert not _removed(calls, wt)
+    out = capsys.readouterr().out
+    assert "kept .worktrees/issue-1-x: the release lock names it" in out
+
+
+def test_cleanup_removes_a_feature_worktree_the_held_lock_does_not_name(tmp_path: Path) -> None:
+    """A held lock keeps only its own worktree and every release/* worktree."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    named = str(tmp_path / ".worktrees" / "release-2.1.9")
+    held = LockState(sha=_LOCK_SHA, record=_lock_record(named), error="")
+    with _sweep_under_lock(tmp_path, wt, lock=held, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert ("worktree", "remove", str(wt.path)) in calls
+
+
+def test_cleanup_skips_release_worktrees_while_lock_held(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A held lock keeps every release/* worktree, the ones it does not name too,
+    with no tracking issue open."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "release-post-2.1.8", branch="release/post-2.1.8")
+    named = str(tmp_path / ".worktrees" / "release-2.1.9")
+    held = LockState(sha=_LOCK_SHA, record=_lock_record(named), error="")
+    with _sweep_under_lock(tmp_path, wt, lock=held, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert not _removed(calls, wt)
+    out = capsys.readouterr().out
+    assert "kept .worktrees/release-post-2.1.8: a release is running" in out
+    assert "release lock held: release 2.1.9" in out
+
+
+def test_cleanup_unreadable_lock_protects(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A lock that is present but unreadable is held: release/* worktrees are kept."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "release-2.1.9", branch="release/2.1.9")
+    unreadable = LockState(
+        sha=_LOCK_SHA, record=None, error="refs/vergil/release-lock is unreadable: bad json"
+    )
+    with _sweep_under_lock(tmp_path, wt, lock=unreadable, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert not _removed(calls, wt)
+    out = capsys.readouterr().out
+    assert "kept .worktrees/release-2.1.9: a release is running" in out
+    assert "the release lock cannot be read" in out
+
+
+def test_cleanup_failed_lock_read_keeps_the_worktree_and_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When whether the lock is held cannot be told, no worktree is removed, the
+    error is printed, and the run exits non-zero."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    failure = RefReadError("reading refs/vergil/release-lock from origin failed: no network")
+    with _sweep_under_lock(tmp_path, wt, lock=failure, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc != 0
+    assert not _removed(calls, wt)
+    out = capsys.readouterr().out
+    assert "kept .worktrees/issue-1-x" in out
+    assert "could not read the release lock of o/r" in out
+
+
+def test_cleanup_removes_release_worktree_with_no_lock_and_no_open_issue(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No lock and no open tracking issue: a merged release/* worktree is removed and logged."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "release-2.1.9", branch="release/2.1.9")
+    absent = LockState(sha=None, record=None, error="")
+    with _sweep_under_lock(tmp_path, wt, lock=absent, issues=[]) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert ("worktree", "remove", str(wt.path)) in calls
+    assert ("branch", "-D", "release/2.1.9") in calls
+    assert f"removed worktree {wt.path} (branch release/2.1.9): PR merged" in (
+        capsys.readouterr().out
+    )
+
+
+def test_cleanup_skips_release_worktree_after_break_while_issue_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A break deleted the lock; the broken release's tracking issue is still open,
+    so its worktree stays protected until that issue closes."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "release-2.1.9", branch="release/2.1.9")
+    absent = LockState(sha=None, record=None, error="")
+    issues = [("2.1.9", 77, "trusted body")]
+    with _sweep_under_lock(tmp_path, wt, lock=absent, issues=issues) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    assert not _removed(calls, wt)
+    out = capsys.readouterr().out
+    assert "kept .worktrees/release-2.1.9: a release is running" in out
+    assert "release 2.1.9 (#77)" in out
+
+
+def test_release_guard_reads_the_lock_once_for_a_feature_then_a_release_worktree(
+    tmp_path: Path,
+) -> None:
+    """A feature worktree reads the lock; a release worktree after it reuses that
+    read and adds only the tracking issues."""
+    guard = ReleaseGuard()
+    with (
+        patch(_MOD + ".worktrees.lock_protection", return_value=_NO_LOCK) as lock,
+        patch(_MOD + ".worktrees.release_protection", return_value=_RELEASE_OPEN) as read,
+    ):
+        feature = guard.keeps("feature/1-x", tmp_path / ".worktrees" / "issue-1-x", tmp_path)
+        release = guard.keeps("release/2.1.9", tmp_path / ".worktrees" / "release-2.1.9", tmp_path)
+    assert feature is False
+    assert release is True
+    lock.assert_called_once_with("o/r")
+    read.assert_called_once_with("o/r", lock=_NO_LOCK)
