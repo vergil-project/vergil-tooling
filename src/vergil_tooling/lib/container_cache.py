@@ -346,6 +346,26 @@ def _report_warmup_skip(captured: str) -> None:
             print(f"NOTICE: {line.removeprefix(WARMUP_SKIPPED_MARKER).strip()}")
 
 
+# Exported ahead of every apt step and every ``[container].build-command`` the
+# cache build or CI runs (#5225). The build has no tty, so a package whose
+# postinst asks a debconf question (``tzdata``'s time zone,
+# ``keyboard-configuration``) would otherwise wait forever on debconf's Teletype
+# frontend: a silent hang with no error. ``noninteractive`` takes each
+# question's default, and ``TZ`` gives ``tzdata`` a zone.
+NONINTERACTIVE_EXPORT = "export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC"
+
+
+def build_command_script(command: str) -> str:
+    """Return the shell step that runs a ``[container].build-command``.
+
+    *command* runs after :data:`NONINTERACTIVE_EXPORT`, so an ``apt-get
+    install`` in it cannot hang on a debconf prompt (#5225). This is the single
+    speller shared by the local cache build (:func:`_compose_setup`) and the CI
+    setup step (``vrg-container-build-command --script``).
+    """
+    return f"{NONINTERACTIVE_EXPORT} && {command}"
+
+
 def apt_install_command(packages: list[str], platform_label: str) -> str:
     """Return a shell snippet installing *packages* fail-closed, or ``""``.
 
@@ -354,11 +374,12 @@ def apt_install_command(packages: list[str], platform_label: str) -> str:
     and exits non-zero (no silent skip). Debian ``apt`` names, from the base
     image's existing sources, ``--no-install-recommends``. This is the single
     speller shared by the local cache build and the CI setup step (epic
-    vergil-project/.github#272).
+    vergil-project/.github#272). It starts with :data:`NONINTERACTIVE_EXPORT`,
+    so a package with a debconf question cannot hang the install (#5225).
     """
     if not packages:
         return ""
-    parts = ["apt-get update"]
+    parts = [NONINTERACTIVE_EXPORT, "apt-get update"]
     for pkg in packages:
         q = shlex.quote(pkg)
         parts.append(
@@ -837,8 +858,10 @@ def _compose_setup(
       then runs after apt and before warmup, the same relative slot.
     * **build-command** — the repo's declared ``[container].build-command`` (epic
       vergil-project/.github#291), run after the install so its environment matches
-      CI. Absent (``None``) ⇒ no fragment, and the result is byte-identical to the
-      pre-existing apt/install/warmup composition. A non-zero build-command aborts
+      CI, spelled by :func:`build_command_script` (after the noninteractive apt
+      export, #5225). Absent (``None``) ⇒ no fragment, and the result is
+      byte-identical to the pre-existing apt/install/warmup composition. A
+      non-zero build-command aborts
       the ``&&`` chain, failing the build fail-closed via the setup-step path.
     * **warmup** — the language dependency warmup.
 
@@ -856,7 +879,8 @@ def _compose_setup(
     # The post-install tail: build-command then warmup, each included only when
     # present. Keeping the tail separate reproduces the old install/warmup joining
     # exactly, so an absent build-command yields a byte-identical setup string.
-    tail = " && ".join(part for part in (build, warmup) if part)
+    build_step = build_command_script(build) if build else None
+    tail = " && ".join(part for part in (build_step, warmup) if part)
 
     if is_self_repo(repo_root):
         setup = tail or "true"
