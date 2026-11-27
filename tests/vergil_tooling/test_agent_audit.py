@@ -403,15 +403,20 @@ class FakeLock:
     prs: list[dict[str, object]] | Exception = field(default_factory=list)
     accept_errors: dict[int, Exception] = field(default_factory=dict)
     accepted: list[str] = field(default_factory=list)
+    #: What the lock's later reads give, in turn, in place of ``state``.
+    later: list[LockState | Exception] = field(default_factory=list)
+    reads: int = 0
 
     def hold(self, **changes: str) -> None:
         self.state = LockState(sha=_LOCK_SHA, record=_lock_record(**changes), error="")
 
     def read_lock(self, repo: str) -> LockState:
         assert repo == REPO
-        if isinstance(self.state, Exception):
-            raise self.state
-        return self.state
+        self.reads += 1
+        state = self.later.pop(0) if self.reads > 1 and self.later else self.state
+        if isinstance(state, Exception):
+            raise state
+        return state
 
     def judge(self, repo: str, state: LockState, *, now: datetime) -> Staleness:
         assert repo == REPO
@@ -1651,6 +1656,48 @@ def test_backstop_path_read_failure_is_a_read_failure_for_that_pr(lock: FakeLock
     result = agent_audit.backstop(REPO, now=_NOW)
     assert _backstop_kinds(result) == [("read-failure", "PR #21"), ("invariant-breach", "PR #22")]
     assert "HTTP 502" in result.findings[0].detail
+
+
+def test_backstop_lock_taken_between_reads_no_breach(lock: FakeLock) -> None:
+    # A release takes the lock and disarms its PRs between the first read and
+    # the listing: the second read sees the lock held, so no breach.
+    lock.later = [LockState(sha=_LOCK_SHA, record=_lock_record(), error="")]
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("draft-pr", "PR #23")]
+    assert lock.reads == 2
+
+
+def test_backstop_unreadable_lock_taken_between_reads_no_breach(lock: FakeLock) -> None:
+    lock.later = [LockState(sha=_LOCK_SHA, record=None, error="the lock is not JSON")]
+    lock.prs = [_open_pr(21)]
+    assert agent_audit.backstop(REPO, now=_NOW).findings == []
+
+
+def test_backstop_lock_free_at_both_reads_reports_breach(lock: FakeLock) -> None:
+    lock.prs = [_open_pr(21), _open_pr(22, armed=True)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("invariant-breach", "PR #21")]
+    assert lock.reads == 2
+
+
+def test_backstop_second_lock_read_fails(lock: FakeLock) -> None:
+    lock.later = [RefReadError("git ls-remote failed: HTTP 502")]
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True), _open_pr(25, refusal="a fork's head")]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    # With the lock unknown at the second read, no breach is judged; a draft
+    # and an outsider still are.
+    assert _backstop_kinds(result) == [("read-failure", "the release lock"), ("draft-pr", "PR #23")]
+    assert "HTTP 502" in result.findings[0].detail
+    assert "again" in result.findings[0].detail
+    assert [o.number for o in result.outsiders] == [25]
+
+
+def test_backstop_held_at_first_read_reads_lock_once(lock: FakeLock) -> None:
+    lock.hold()
+    lock.prs = [_open_pr(21)]
+    assert agent_audit.backstop(REPO, now=_NOW).findings == []
+    assert lock.reads == 1
 
 
 def test_cli_reports_backstop_findings_and_exits_1(
