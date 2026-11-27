@@ -1502,6 +1502,8 @@
       
         
       
+        
+      
     
     
     
@@ -1554,6 +1556,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.353/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.353
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15270,6 +15300,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#noninteractive-apt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Noninteractive apt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cache-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -15335,6 +15376,17 @@
     <span class="md-ellipsis">
       
         NODE_PATH for baked npm libraries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#noninteractive-apt-in-the-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Noninteractive apt in the command
       
     </span>
   </a>
@@ -19066,6 +19118,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#noninteractive-apt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Noninteractive apt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cache-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19131,6 +19194,17 @@
     <span class="md-ellipsis">
       
         NODE_PATH for baked npm libraries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#noninteractive-apt-in-the-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Noninteractive apt in the command
       
     </span>
   </a>
@@ -19474,6 +19548,14 @@ naming the package and the architecture:</p>
 </code></pre></div>
 <p>There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.</p>
+<h3 id="noninteractive-apt">Noninteractive apt<a class="headerlink" href="#noninteractive-apt" title="Permanent link">&para;</a></h3>
+<p>The build has no tty, so a package whose install asks a debconf question
+(<code>tzdata</code>'s time zone, <code>keyboard-configuration</code>) would wait forever on a prompt
+nothing answers. The apt snippet therefore starts with
+<code>export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC</code>, locally and in CI: each
+question takes its default, and <code>tzdata</code> takes UTC. No repo needs to set either
+variable itself. A <code>build-command</code> runs after the same export (see
+<a href="#build-command"><code>build-command</code></a>).</p>
 <h3 id="cache-key">Cache key<a class="headerlink" href="#cache-key" title="Permanent link">&para;</a></h3>
 <p><code>vergil.toml</code> is already part of the cache-sensitive file set, so editing
 <code>system-packages</code> changes the per-branch image's cache hash and forces a rebuild.
@@ -19548,6 +19630,11 @@ environment is byte-for-byte unchanged.</p>
 image with <code>commit --change ENV</code>, because the <code>nerdctl</code> runtime's <code>commit --change</code>
 supports only <code>CMD</code>/<code>ENTRYPOINT</code> directives (not <code>ENV</code>); setting it on the run
 path works identically across the <code>docker</code> and <code>nerdctl</code> runtimes.</p>
+<h3 id="noninteractive-apt-in-the-command">Noninteractive apt in the command<a class="headerlink" href="#noninteractive-apt-in-the-command" title="Permanent link">&para;</a></h3>
+<p>The command runs after <code>export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC</code>, in the
+local image build and in CI alike, so an <code>apt-get install</code> in it cannot hang on a
+debconf prompt (a package such as <code>npm</code> pulls in <code>tzdata</code>, which asks for a time
+zone). The command need not set either variable itself.</p>
 <h3 id="cache-key_1">Cache key<a class="headerlink" href="#cache-key_1" title="Permanent link">&para;</a></h3>
 <p>Like <code>system-packages</code>, editing <code>build-command</code> changes <code>vergil.toml</code>, which is in
 the cache-sensitive file set, so a change forces an image rebuild. When the command
@@ -19587,10 +19674,11 @@ express), and it is what makes it a larger grant.</p>
 local bake and CI both use (<code>container_build_command</code> in
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py"><code>config.py</code></a>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-container-build-command<span class="w">            </span><span class="c1"># the declared command (nothing if unset)</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the same command, emitted for CI to run</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-container-build-command<span class="w"> </span>--script<span class="w">   </span><span class="c1"># the shell step CI runs</span>
 </code></pre></div>
-<p>Both modes print the command verbatim; a repo that declares no <code>build-command</code>
-prints nothing. <code>--script</code> is the CI-consumption entry point — the CI test jobs
+<p>The plain mode prints the command verbatim. <code>--script</code> prints the step the local
+image build and CI both run: the command after the noninteractive export above.
+A repo that declares no <code>build-command</code> prints nothing in either mode. <code>--script</code> is the CI-consumption entry point — the CI test jobs
 call it to obtain the exact command to run per job (see
 <a href="../../guides/ci-architecture/#repo-specific-build-steps">CI Architecture → Repo-specific build steps</a>),
 mirroring how <code>vrg-container-system-packages --install-script</code> feeds the apt step.</p>

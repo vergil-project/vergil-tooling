@@ -1502,6 +1502,8 @@
       
         
       
+        
+      
     
     
     
@@ -1554,6 +1556,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.353/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.353
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21938,10 +21968,12 @@ validation or a release. See the
 </table>
 <h3 id="vrg-finalize-pr">vrg-finalize-pr<a class="headerlink" href="#vrg-finalize-pr" title="Permanent link">&para;</a></h3>
 <p>Watch a batch of auto-merging pull requests, then settle <code>develop</code> once
-(epic vergil-project/.github#1218). It never merges a PR: <code>vrg-submit-pr</code>
-turned auto-merge on, and GitHub merges each PR once its required checks
-pass. The watch follows every listed PR until it has merged or failed (CI,
-a conflict, closed, auto-merge off, provenance, not a develop PR), or the
+(epic vergil-project/.github#1218). It never merges a PR and never turns
+auto-merge on or off: <code>vrg-submit-pr</code> turned auto-merge on, and GitHub
+merges each PR once its required checks pass. The watch judges no head of
+an open PR (the one PR path judges each before it is pushed), and follows
+every listed PR until it has merged or failed (CI, cancelled, a conflict,
+closed, auto-merge off, not a develop PR), or the
 batch deadline (<code>$VRG_FINALIZE_DEADLINE</code>, default 7200s) passes. If any PR
 merged, the settle phase closes any issue GitHub left open and syncs the
 security advisories that the closed <code>security</code> issues name (a broken pair or
@@ -24835,7 +24867,7 @@ after a restart.</p>
 </tbody>
 </table>
 <h3 id="vrg-container-build-command">vrg-container-build-command<a class="headerlink" href="#vrg-container-build-command" title="Permanent link">&para;</a></h3>
-<p>Print a repo's declared <code>[container].build-command</code> verbatim, for CI
+<p>Print a repo's declared <code>[container].build-command</code>, for CI
 consumption. The CI test jobs call <code>--script</code> to obtain the exact
 provisioning command to run per job — the same command the local cache
 build bakes into the per-branch image — so the two paths run one
@@ -24855,7 +24887,7 @@ See <a href="../container-config/#build-command">Container Config Reference → 
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--script</code> (explicit CI intent; identical output), <code>--repo-root</code> (default: CWD)</td>
+<td><code>--script</code> (the step CI runs: the command after <code>export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC</code>), <code>--repo-root</code> (default: CWD)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
