@@ -266,7 +266,7 @@ def superseded_issue(repo: str, version: str) -> int | None:
     return numbers[0] if numbers else None
 
 
-def _git(phase: str, *args: str) -> str:
+def _git(phase: str, label: str, *args: str) -> str:
     """Run git *args*, turning a failure into a :class:`ReleaseError` of *phase*."""
     try:
         return git.read_output(*args)
@@ -275,39 +275,50 @@ def _git(phase: str, *args: str) -> str:
             phase=phase,
             command=command_text(exc.cmd),
             message=(
-                "A git command failed while removing the superseded release's branch. Fix "
+                f"A git command failed while removing the {label}'s branch. Fix "
                 "the cause git reports below, then resume the release."
             ),
             detail=error_text(exc),
         ) from exc
 
 
-def remove_release_branch(repo_root: Path, branch: str, *, phase: str) -> None:
+def remove_release_branch(
+    repo_root: Path,
+    branch: str,
+    *,
+    phase: str,
+    reason: str = "superseded by a new release",
+    label: str = "superseded release",
+) -> None:
     """Remove *branch*'s release worktree, its local branch and its branch on origin.
 
     Each is removed only when it is there, so a re-run after a partial
-    removal finishes it. A git failure raises :class:`ReleaseError`.
+    removal finishes it. The worktree's removal is logged with *reason*
+    (spec §5.8 of epic vergil-project/.github#1664); *label* names the
+    release in the output. Supersede and the abandon step of a stray merge
+    both remove a release this way. A git failure raises
+    :class:`ReleaseError`.
     """
     path = worktree_path(repo_root, branch)
     if path.exists():
-        print(f"Removing the superseded release worktree {path}.")
+        print(f"Removing the {label} worktree {path}.")
         try:
-            remove_worktree(path, branch=branch, reason="superseded by a new release")
+            remove_worktree(path, branch=branch, reason=reason)
         except subprocess.CalledProcessError as exc:
             raise ReleaseError(
                 phase=phase,
                 command=command_text(exc.cmd),
-                message=f"The superseded release worktree {path} could not be removed.",
+                message=f"The {label} worktree {path} could not be removed.",
                 detail=error_text(exc),
             ) from exc
     if git.ref_exists(f"refs/heads/{branch}"):
-        print(f"Deleting the superseded release branch '{branch}'.")
-        _git(phase, "branch", "-D", branch)
-    if _git(phase, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
+        print(f"Deleting the {label} branch '{branch}'.")
+        _git(phase, label, "branch", "-D", branch)
+    if _git(phase, label, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
         print(f"Deleting '{branch}' on origin.")
-        _git(phase, "push", "origin", "--delete", branch)
+        _git(phase, label, "push", "origin", "--delete", branch)
     if git.ref_exists(f"refs/remotes/origin/{branch}"):
-        _git(phase, "branch", "-dr", f"origin/{branch}")
+        _git(phase, label, "branch", "-dr", f"origin/{branch}")
 
 
 def close_superseded(  # noqa: PLR0913 - the superseded and superseding releases, each named

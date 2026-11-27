@@ -13,6 +13,7 @@ from tests.vergil_tooling.release_stubs import FakeLockOwner, defer_publish
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release import state as release_state
+from vergil_tooling.lib.release.abandon import ReleaseAbandoned
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.lock_guard import UnlockGuard
@@ -25,11 +26,13 @@ from vergil_tooling.lib.release.orchestrator import (
     _preflight_stage,
     _publish_status_stage,
     _tracked,
+    _unlock_phase,
     build_stages,
 )
 from vergil_tooling.lib.release_lock import sweeps
 from vergil_tooling.lib.release_lock.holder import LockLost
 from vergil_tooling.lib.release_lock.model import RefWriteError
+from vergil_tooling.lib.release_lock.refs import LockState
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -57,6 +60,13 @@ def write_state() -> Iterator[MagicMock]:
 
     with patch(_MOD + ".write_state", side_effect=fake) as m_write:
         yield m_write
+
+
+@pytest.fixture(autouse=True)
+def no_stray_merge() -> Iterator[MagicMock]:
+    """The stray-merge check (it reads git and GitHub) finds nothing unless a test says so."""
+    with patch(_MOD + ".stray_merges", return_value=[]) as m_stray:
+        yield m_stray
 
 
 def _ctx() -> ReleaseContext:
@@ -90,6 +100,8 @@ def test_stage_order_matches_spec() -> None:
         "update-deps",
         "install",
         "release-records",
+        "unlock",
+        "rearm",
         "close-tracking",
         "publish-status",
     ]
@@ -669,13 +681,20 @@ def _run_tail(  # noqa: PLR0913
     promote_error: Exception | None = None,
     deps_fail: bool = False,
     line: str = _LINE_ON_RELEASE,
+    owner: FakeLockOwner | None = None,
+    no_lock: bool = False,
+    strays: list[str] | None = None,
+    rearm_error: Exception | None = None,
 ) -> tuple[int, ReleaseContext, dict[str, MagicMock]]:
     """Run the real stages in *names* through the pipeline, with GitHub stubbed.
 
     A CD publish job in *cd_deferred* is recorded as failed and cd-publish
     fails on it, as on a fresh run; *index_times_out* fails package-index;
     *promote_error* fails the tag move; *deps_fail* fails update-deps. The
-    returned mocks are the ones each stage acts through, by name.
+    run holds *owner*'s lock (a new :class:`FakeLockOwner` by default); the
+    stray-merge check before ``unlock`` finds *strays*, and *rearm_error*
+    fails the re-arm sweep. The returned mocks are the ones each stage acts
+    through, by name.
     """
     state = _state()
     ctx = state.ctx
@@ -683,6 +702,8 @@ def _run_tail(  # noqa: PLR0913
     ctx.issue_number = 42
     ctx.tag = "v2.1.2"
     ctx.tag_commit = "t" * 40
+    # A resume holds no lock owner (*no_lock*).
+    ctx.lock = None if no_lock else (owner or FakeLockOwner())  # ty: ignore[invalid-assignment]
     defer_publish(ctx, *cd_deferred)
     timeout = ReleaseError(phase="package-index", command="poll package index", message="slow")
     args = argparse.Namespace(output_format="plain", output_window=None)
@@ -703,6 +724,10 @@ def _run_tail(  # noqa: PLR0913
         patch(_INSTALL + ".config.read_config") as m_config,
         patch(_INSTALL + ".git.read_output", return_value=line),
         patch(_INSTALL + ".run_install", return_value=(0, "")) as m_install,
+        patch(_MOD + ".stray_merges", return_value=strays or []) as m_stray,
+        patch(
+            _REARM, side_effect=rearm_error, return_value=sweeps.RearmResult([], [], [], [])
+        ) as m_rearm,
     ):
         m_config.return_value.publish.install = "uv tool install pkg@v<VERSION>"
         stages = [s for s in build_stages() if s.name in names]
@@ -718,6 +743,8 @@ def _run_tail(  # noqa: PLR0913
         "finalize": m_progress.run,
         "promote": m_promote,
         "install": m_install,
+        "stray": m_stray,
+        "rearm": m_rearm,
     }
     return rc, ctx, mocks
 
@@ -730,9 +757,195 @@ _FULL_TAIL = (
     "update-deps",
     "install",
     "release-records",
+    "unlock",
+    "rearm",
     "close-tracking",
     "publish-status",
 )
+
+
+# --- unlock and rearm (spec §5.3 step 2 of epic vergil-project/.github#1664) -------
+
+
+def test_unlock_and_rearm_run_after_records_before_close(tmp_path: Path) -> None:
+    owner = FakeLockOwner()
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL, owner=owner)
+    assert rc == 0
+    mocks["rearm"].assert_called_once_with("o/r")
+    # The stray check runs before the unlock; the lock is released, then the
+    # PRs re-armed, and only then is the tracking issue closed.
+    mocks["stray"].assert_called_once()
+    names = _stage_list()
+    assert names.index("release-records") < names.index("unlock") < names.index("rearm")
+    assert names.index("rearm") < names.index("close-tracking")
+    mocks["close"].assert_called_once()
+    assert ctx.lock is None
+    assert ctx.state is not None
+    for name in ("unlock", "rearm", "close-tracking"):
+        assert name in ctx.state.done
+    # Neither stage writes the lock after the unlock: the last write is the release.
+    assert owner.events[-1] == ("release",)
+    assert ("update", {"stage": "rearm"}) not in owner.events
+
+
+def _stage_list() -> list[str]:
+    return [stage.name for stage in build_stages()]
+
+
+def test_unlock_and_rearm_are_tracked_deferred_stages() -> None:
+    stages = {stage.name: stage for stage in build_stages()}
+    assert stages["unlock"].mode == "fail_defer"
+    assert stages["rearm"].mode == "fail_defer"
+
+
+@pytest.mark.parametrize("deps_fail", [True, False])
+def test_unlock_held_back_by_earlier_failure(tmp_path: Path, deps_fail: bool) -> None:
+    """Any earlier failure, a deferred one included, leaves the lock held for --resume."""
+    owner = FakeLockOwner()
+    rc, ctx, mocks = _run_tail(
+        tmp_path,
+        names=_FULL_TAIL,
+        owner=owner,
+        deps_fail=deps_fail,
+        cd_deferred=() if deps_fail else ("docker-publish",),
+    )
+    assert rc == 1
+    assert ("release",) not in owner.events
+    mocks["rearm"].assert_not_called()
+    mocks["close"].assert_not_called()
+    assert ctx.lock is owner
+    assert ctx.state is not None
+    assert "unlock" not in ctx.state.done
+    assert "rearm" not in ctx.state.done
+    # The lock records the first failure as broken.
+    assert owner.record.health == "broken"
+
+
+def test_rearm_failure_keeps_tracking_issue_open(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    owner = FakeLockOwner()
+    rc, ctx, mocks = _run_tail(
+        tmp_path,
+        names=_FULL_TAIL,
+        owner=owner,
+        rearm_error=sweeps.SweepError("listing the PRs into develop failed"),
+    )
+    assert rc == 1
+    assert ctx.deferred_failures == ["rearm"]
+    mocks["close"].assert_not_called()
+    assert ctx.state is not None
+    assert "unlock" in ctx.state.done
+    assert "rearm" not in ctx.state.done
+    # The lock is gone: the failure is never written into it.
+    assert owner.events[-1] == ("release",)
+    assert "listing the PRs into develop failed" in capsys.readouterr().out
+    assert "vrg-release --resume 2.1.2" in str(mocks["failed"].call_args)
+
+
+def test_rearm_lists_prs_left_unarmed_on_the_tracking_issue() -> None:
+    ctx = _ctx()
+    ctx.rearm_result = sweeps.RearmResult(
+        armed=["https://github.com/owner/repo/pull/1"],
+        merged=["https://github.com/owner/repo/pull/2"],
+        held=["https://github.com/owner/repo/pull/3"],
+        refused=[("https://github.com/owner/repo/pull/4", "a draft")],
+    )
+    details = _phase_details(ctx, "rearm")
+    assert "Re-armed 1 PR(s): https://github.com/owner/repo/pull/1" in details
+    assert "Merged by the one PR path: https://github.com/owner/repo/pull/2" in details
+    assert "Not re-armed (held): https://github.com/owner/repo/pull/3" in details
+    assert (
+        "Not re-armed (refused by the one PR path): https://github.com/owner/repo/pull/4: a draft"
+        in details
+    )
+
+
+def test_rearm_details_without_a_result_are_empty() -> None:
+    assert _phase_details(_ctx(), "rearm") == ""
+
+
+def test_an_abandoned_release_is_not_commented_or_marked_broken() -> None:
+    """The abandon step closed the issue and released the lock: nothing is left to record."""
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+
+    def abandoned(ctx: ReleaseContext) -> None:
+        ctx.lock = None
+        raise ReleaseAbandoned("2.1.0", "merged into develop after the release was cut: #77")
+
+    state.ctx.lock = FakeLockOwner()  # ty: ignore[invalid-assignment]
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseAbandoned, match="fresh `vrg-release`"),
+    ):
+        _tracked("merge-release", abandoned)(state)
+    m_failed.assert_not_called()
+    assert state.ctx.deferred_failures == []
+    assert state.ctx.state is not None
+    assert "merge-release" not in state.ctx.state.done
+
+
+def test_stray_merge_before_unlock_reported_and_continues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stray = "https://github.com/owner/repo/pull/77"
+    owner = FakeLockOwner()
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL, owner=owner, strays=[stray])
+    # Reported, not a failure: the release goes on and finishes.
+    assert rc == 0
+    assert ("release",) in owner.events
+    mocks["rearm"].assert_called_once()
+    mocks["close"].assert_called_once()
+    assert stray in capsys.readouterr().out
+    unlock_comments = [
+        call.args[2] for call in mocks["complete"].call_args_list if call.args[1] == "unlock"
+    ]
+    assert len(unlock_comments) == 1
+    assert stray in unlock_comments[0]
+    assert "next release" in unlock_comments[0]
+
+
+def test_unlock_on_a_resume_with_no_lock_held_is_done(tmp_path: Path) -> None:
+    """A resume holds no lock owner; with no lock left on the repo there is nothing to release."""
+    free = LockState(sha=None, record=None, error="")
+    with patch("vergil_tooling.lib.release.lock_guard.lock_refs.read_lock", return_value=free):
+        rc, ctx, _ = _run_tail(tmp_path, names=("unlock",), no_lock=True)
+    assert rc == 0
+    assert ctx.lock is None
+    assert ctx.state is not None
+    assert "unlock" in ctx.state.done
+
+
+def test_unlock_on_a_resume_with_a_lock_held_refuses() -> None:
+    held = LockState(sha="a" * 40, record=FakeLockOwner().record, error="")
+    state = _state()
+    ctx = state.ctx
+    assert ctx is not None
+    ctx.issue_number = 42
+    with (
+        patch("vergil_tooling.lib.release.lock_guard.lock_refs.read_lock", return_value=held),
+        patch(_MOD + ".stray_merges", return_value=[]),
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseError) as info,
+    ):
+        _tracked("unlock", _unlock_phase)(state)
+    message = str(info.value)
+    assert "vrg-release-lock break" in message
+    assert "2.1.0" in message
+    m_failed.assert_called_once()
+    assert ctx.deferred_failures == ["unlock"]
+
+
+def test_failed_lock_release_fails_unlock_and_keeps_the_owner(tmp_path: Path) -> None:
+    owner = FakeLockOwner()
+    owner.release_error = RefWriteError("push rejected")
+    rc, ctx, mocks = _run_tail(tmp_path, names=_FULL_TAIL, owner=owner)
+    assert rc == 1
+    assert ctx.deferred_failures == ["unlock"]
+    mocks["rearm"].assert_not_called()
+    mocks["close"].assert_not_called()
+    assert ctx.lock is owner
 
 
 def test_install_runs_after_promote(tmp_path: Path) -> None:
@@ -1272,11 +1485,13 @@ def test_publish_status_is_the_last_stage_and_fail_defer() -> None:
 def test_update_deps_stage_between_finalize_and_install() -> None:
     stages = build_stages()
     names = [s.name for s in stages]
-    assert names[-6:] == [
+    assert names[-8:] == [
         "finalize",
         "update-deps",
         "install",
         "release-records",
+        "unlock",
+        "rearm",
         "close-tracking",
         "publish-status",
     ]

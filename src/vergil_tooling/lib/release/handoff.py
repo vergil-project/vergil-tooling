@@ -9,7 +9,10 @@ No stage is optional, and a deferred publish holds back only what needs it
   failed one, it would find nothing recorded, be recorded done, and never
   deliver a job a resumed ``confirm-develop`` records;
 - ``install`` needs those and ``promote``;
-- ``release-records`` and ``close-tracking`` need every stage before them;
+- ``release-records``, ``unlock``, ``rearm`` and ``close-tracking`` need every
+  stage before them, so any failure leaves the release lock held until
+  ``vrg-release --resume`` finishes the release (spec §5.3 step 2 of epic
+  vergil-project/.github#1664);
 - ``cd-publish``, ``package-index`` and ``update-deps`` hold back none of
   ``promote``, ``finalize`` and ``install``, and nothing holds
   ``package-index`` or ``update-deps`` back.
@@ -45,7 +48,7 @@ _NEEDS: dict[str, frozenset[str]] = {
     "install": frozenset({*THROUGH_CONFIRM_DEVELOP, "promote"}),
 }
 # The stages that need every stage before them.
-_NEEDS_ALL = frozenset({"release-records", "close-tracking"})
+_NEEDS_ALL = frozenset({"release-records", "unlock", "rearm", "close-tracking"})
 
 
 def holds(stage: str, failed: Sequence[str]) -> list[str]:

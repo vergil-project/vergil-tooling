@@ -37,7 +37,7 @@ def test_install_needs_those_and_promote() -> None:
     assert holds("install", ["cd-publish", "package-index", "finalize", "update-deps"]) == []
 
 
-@pytest.mark.parametrize("stage", ["release-records", "close-tracking"])
+@pytest.mark.parametrize("stage", ["release-records", "unlock", "rearm", "close-tracking"])
 def test_records_and_close_need_every_stage_before_them(stage: str) -> None:
     assert holds(stage, _EVERY_FAILURE) == _EVERY_FAILURE
     assert holds(stage, ["update-deps"]) == ["update-deps"]

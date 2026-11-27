@@ -64,8 +64,14 @@ def update_deps(ctx: ReleaseContext) -> None:
         git.run("fetch", "origin", "develop")
         git.run("merge", "--ff-only", "origin/develop")
     # A merge can land between this sync and update-deps' own preflight fetch,
-    # so that preflight fast-forwards too, under the lock (spec §6.6).
-    deps = run_update(repo_root=ctx.repo_root, fast_forward=True)
+    # so that preflight fast-forwards too, under the lock (spec §6.6). The
+    # update is the holder's, so it arms under the release lock with its
+    # token (spec §5.3 of epic vergil-project/.github#1664).
+    deps = run_update(
+        repo_root=ctx.repo_root,
+        fast_forward=True,
+        holder_pass=ctx.lock.token if ctx.lock is not None else None,
+    )
     if deps.landed_pr_url is not None:
         # A re-run (e.g. --resume) after the update for this develop version
         # already merged: done, not a failure (#3330).

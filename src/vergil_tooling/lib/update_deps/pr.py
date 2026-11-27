@@ -123,11 +123,15 @@ def _require_pr_url(ctx: UpdateDepsContext, phase: str) -> str:
     return ctx.pr_url
 
 
-def arm_and_wait(ctx: UpdateDepsContext) -> None:
+def arm_and_wait(ctx: UpdateDepsContext, *, holder_pass: str | None = None) -> None:
     """Arm the PR through the one PR path, then wait for GitHub to merge it (spec §5.4).
 
     :func:`pr_path.arm` works the merge method out itself (``MERGE``, from the
-    ``dependency-update`` label) and pins it to the head this run pushed. Then:
+    ``dependency-update`` label) and pins it to the head this run pushed.
+    *holder_pass* is the release lock's token when vrg-release's own
+    ``update-deps`` stage runs the update: the release holds the lock, and
+    its update is the holder's, so the path arms it under the lock.
+    Standalone ``vrg-update-deps`` passes none. Then:
 
     - ``armed``: auto-merge is on, and :func:`pr_merge.wait_until_merged`
       watches the PR until it merges.
@@ -162,7 +166,7 @@ def arm_and_wait(ctx: UpdateDepsContext) -> None:
         raise UpdateDepsError(phase="merge", command="arm_and_wait", message=str(exc)) from exc
     head = git.read_output("rev-parse", ctx.branch)
     try:
-        result = pr_path.arm(pr_url, clone=ctx.repo_root, head=head)
+        result = pr_path.arm(pr_url, clone=ctx.repo_root, head=head, holder_pass=holder_pass)
     except pr_path.PRPathError as exc:
         raise UpdateDepsError(
             phase="merge",
