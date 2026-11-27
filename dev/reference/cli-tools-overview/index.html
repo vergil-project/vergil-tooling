@@ -21387,6 +21387,16 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
   the extraction and fails <code>--check</code> too.</li>
 </ul>
+<p><code>batch-gates [--json]</code> judges a batch's merge-review gate before handoff, run in
+the batch's worktree before <code>report-ready</code>. It reads the batch's issues from the
+clone's batch markers, fetches <code>origin/develop</code>, and evaluates the submit gate's
+merge-review rule commit by commit, as <code>vrg-submit-pr</code> would. It writes nothing:
+no state, no marker, and no git write but that fetch. It prints one line per
+commit (issue, short SHA, <code>covered</code> or <code>UNCOVERED</code>, and the reason), or with
+<code>--json</code> the object <code>{"branch", "head", "commits": [{"issue", "sha", "covered",
+"reason"}]}</code>. It exits 0 when every commit is covered, and 1 when one is not, or
+on a read failure (the failure is on stderr). Report-ready removes the markers,
+so after it the probe refuses with exit 1.</p>
 <p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
 about to push). It reads the PR's base and head, and its body only through the
@@ -21416,7 +21426,7 @@ otherwise.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code> (<code>--issue</code> repeatable, <code>--check</code>), <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code> (<code>--issue</code> repeatable, <code>--check</code>), <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>), <code>batch-gates</code> (<code>--json</code>); global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -23868,9 +23878,11 @@ line (or the branch line). The command computes the head and the
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py">change fingerprint</a>
 itself; it takes neither as an argument. For an issue of a batch before
 handoff (it has a batch marker), the change is that issue's own, from the
-previous issue's commit to <code>HEAD</code>, which must hold only the issue's first
-commit and its <code>fixup!</code> commits; folded, its fingerprint is the issue's
-commit's. Otherwise, a fix to an open PR included, it is the change since
+issue's own commit, the one non-fixup commit of <code>origin/develop..HEAD</code> whose
+subject ends in <code>(#N)</code>, with the <code>fixup!</code> commits directly after it folded in,
+from that commit's parent (the marker's <code>base_sha</code> is not used); later
+commits are excluded, and a <code>fixup!</code> of it after another commit is refused,
+since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with <code>origin/develop</code>. Submit, the watch and the audit read
 the records back from the trust layer's comment stream, agent role only,
 skipping an edited comment. A re-run that finds the same comment already
