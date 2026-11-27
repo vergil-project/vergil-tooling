@@ -51,6 +51,10 @@ ALLOWED_SITES: dict[str, str] = {
     "lib/pr_workflow/github_transport.py": (
         "relay refs and the one-file-commit builder, never refs/heads/*"
     ),
+    "lib/release_lock/": (
+        "the release-lock, history and arming refs under refs/vergil/release-lock*,"
+        " never refs/heads/*"
+    ),
 }
 
 #: The ``lib.git`` functions that run a git command.
