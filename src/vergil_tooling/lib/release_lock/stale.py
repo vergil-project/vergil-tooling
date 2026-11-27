@@ -26,17 +26,21 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.resume import _open_release_issues, _trusted_release_issues
-from vergil_tooling.lib.release_lock.model import STALE_AFTER_SECS, ReleaseLockError
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    ReleaseLockError,
+    heartbeat_age_secs,
+)
 
 if TYPE_CHECKING:
-    from vergil_tooling.lib.release_lock.model import LockRecord
+    from datetime import datetime
+
     from vergil_tooling.lib.release_lock.refs import LockState
 
 _ISSUE_REF = re.compile(r"(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>[1-9][0-9]*)")
@@ -77,13 +81,6 @@ class Staleness:
     live: bool
     reason: str
     tracking_issue: str
-
-
-def heartbeat_age_secs(rec: LockRecord, *, now: datetime) -> int:
-    """Whole seconds since *rec*'s heartbeat; a heartbeat ahead of *now* is 0."""
-    _require_aware(now)
-    beat = datetime.fromisoformat(rec.heartbeat_at)
-    return max(0, int((now - beat).total_seconds()))
 
 
 def _require_aware(now: datetime) -> None:

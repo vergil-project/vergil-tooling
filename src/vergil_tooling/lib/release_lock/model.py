@@ -142,6 +142,25 @@ def from_json(text: str) -> LockRecord:
         raise LockParseError(msg) from None
 
 
+def heartbeat_age_secs(rec: LockRecord, *, now: datetime) -> int:
+    """Whole seconds since *rec*'s heartbeat; a heartbeat ahead of *now* is 0."""
+    if now.utcoffset() is None:
+        msg = "now must be a timezone-aware datetime"
+        raise ValueError(msg)
+    beat = datetime.fromisoformat(rec.heartbeat_at)
+    return max(0, int((now - beat).total_seconds()))
+
+
+def heartbeat_fresh(rec: LockRecord, *, now: datetime) -> bool:
+    """Whether *rec* is ``running`` with a heartbeat younger than :data:`STALE_AFTER_SECS`.
+
+    Such a lock's holder may still be alive: a resume does not adopt it and
+    a supersede does not take it over (spec §5.3 of epic
+    vergil-project/.github#1664).
+    """
+    return rec.health == "running" and heartbeat_age_secs(rec, now=now) < STALE_AFTER_SECS
+
+
 def new_token() -> str:
     """A fresh random token for a lock record."""
     return secrets.token_hex(16)

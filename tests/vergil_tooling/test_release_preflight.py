@@ -141,11 +141,13 @@ def release_lock() -> Iterator[MagicMock]:
     """Stub the lock and quiesce, and the develop head read, out of every preflight run.
 
     Yields the ``_lock_and_quiesce`` stand-in; its return value is the lock
-    owner the context carries. The head reads as unmoved. The lock's own
-    tests below patch the release-lock modules instead.
+    owner the context carries. The head reads as unmoved. A resume's lock
+    step is stubbed too; its tests are in test_release_resume.py. The lock's
+    own tests below patch the release-lock modules instead.
     """
     with (
         patch(_MOD + "._lock_and_quiesce") as lock,
+        patch(_MOD + "._resume_lock"),
         patch(_MOD + "._develop_head", return_value=_JUDGED),
     ):
         yield lock

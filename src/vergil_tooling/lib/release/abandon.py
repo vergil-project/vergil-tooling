@@ -6,7 +6,9 @@ is a hard error: nothing is tagged or published yet, so the release is
 abandoned and a fresh ``vrg-release`` cuts again with the PR included.
 :func:`abandon_release` undoes everything ``prepare`` made, in this order:
 
-1. closes the release PR into ``main``;
+1. closes the release PR into ``main``: the one recorded, or, on a resume
+   at ``prepare`` that records none yet, the release branch's open PR, if
+   prepare opened one;
 2. removes the ``release/X.Y.Z`` branch (local, and on origin) and the
    release worktree. This removal is sanctioned, and logged as every
    worktree removal is (spec §5.8);
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release.branch_pr import branch_prs
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.lock_guard import rearm, rearm_lines, release_lock
 from vergil_tooling.lib.release.merge import known_pr_state
@@ -72,14 +75,40 @@ def _gh_failed(command: str, message: str, exc: subprocess.CalledProcessError) -
     return ReleaseError(phase=_PHASE, command=command, message=message, detail=error_text(exc))
 
 
-def _close_release_pr(ctx: ReleaseContext, reason: str) -> None:
-    pr_url = ctx.release_pr_url
-    if pr_url is None:
+def _release_pr(ctx: ReleaseContext) -> str | None:
+    """The release PR to close: the one recorded, or else the release branch's.
+
+    A resume at ``prepare`` that re-took the lock (spec §5.3 of epic
+    vergil-project/.github#1664) runs before the state block records the
+    release PR, so it is found by the branch, through the trust layer. A
+    merged one there means the release is published: refused. ``None`` when
+    the branch has no open PR: prepare stopped before it opened one.
+    """
+    if ctx.release_pr_url is not None:
+        return ctx.release_pr_url
+    branch = ctx.release_branch or f"release/{ctx.version}"
+    prs = branch_prs(ctx.repo, branch, phase=_PHASE)
+    if prs.open_pr is not None:
+        ctx.release_pr_url = prs.open_pr.url
+        return ctx.release_pr_url
+    merged = prs.latest_closed
+    if merged is not None and merged.state == "MERGED":
         raise ReleaseError(
             phase=_PHASE,
-            command="abandon_release",
-            message="The release has no release PR recorded, so it cannot be abandoned.",
+            command=f"prs_for_branch {ctx.repo} {branch}",
+            message=(
+                f"The release PR {merged.url} is already merged into main, so the release is"
+                " published and cannot be abandoned."
+            ),
         )
+    print(f"No release PR is open on '{branch}': there is none to close.")
+    return None
+
+
+def _close_release_pr(ctx: ReleaseContext, reason: str) -> None:
+    pr_url = _release_pr(ctx)
+    if pr_url is None:
+        return
     state = known_pr_state(pr_url)
     if state == "MERGED":
         raise ReleaseError(

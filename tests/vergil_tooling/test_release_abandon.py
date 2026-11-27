@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.vergil_tooling.release_stubs import FakeLockOwner
+from tests.vergil_tooling.release_stubs import FakeLockOwner, branch_lookup, branch_pr
 from vergil_tooling.lib.release import abandon
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.orchestrator import merge_release
@@ -209,12 +209,42 @@ def test_abandon_removal_logged(
     ) in err
 
 
-def test_abandon_without_a_release_pr_refuses(
+def test_abandon_without_a_recorded_release_pr_closes_the_branchs_open_pr(
+    tmp_path: Path, owner: FakeLockOwner, recorder: _Recorder
+) -> None:
+    # A resume at prepare (Task 25): the state block records no release PR yet,
+    # so the PR is found by the release branch.
+    ctx = _ctx(tmp_path, owner)
+    ctx.release_pr_url = None
+    with branch_lookup(branch_pr(12, "OPEN")):
+        abandon.abandon_release(ctx, reason="stray")
+    assert recorder.events[0][:4] == ("gh", "pr", "close", _PR)
+    assert ctx.release_pr_url == _PR
+
+
+def test_abandon_with_no_release_pr_opened_closes_none(
+    tmp_path: Path, owner: FakeLockOwner, recorder: _Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # prepare stopped before it opened the release PR: there is none to close.
+    ctx = _ctx(tmp_path, owner)
+    ctx.release_pr_url = None
+    with branch_lookup():
+        abandon.abandon_release(ctx, reason="stray")
+    names = _names(recorder.events)
+    assert "gh pr close" not in names
+    assert names[:2] == ["remove", "gh issue close"]
+    assert "No release PR is open" in capsys.readouterr().out
+
+
+def test_abandon_refuses_a_merged_release_pr_found_by_branch(
     tmp_path: Path, owner: FakeLockOwner, recorder: _Recorder
 ) -> None:
     ctx = _ctx(tmp_path, owner)
     ctx.release_pr_url = None
-    with pytest.raises(ReleaseError, match="no release PR"):
+    with (
+        branch_lookup(branch_pr(12, "MERGED")),
+        pytest.raises(ReleaseError, match="already merged"),
+    ):
         abandon.abandon_release(ctx, reason="stray")
     assert recorder.events == []
 

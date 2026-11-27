@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import changelog, git, github, pr_create, version
 from vergil_tooling.lib.release.branch_pr import branch_prs
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.supersede import close_superseded, superseded_issue
+from vergil_tooling.lib.release.supersede import (
+    close_superseded,
+    comment_lock_takeover,
+    superseded_issue,
+)
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
@@ -44,6 +48,7 @@ def prepare(ctx: ReleaseContext) -> None:
     if ctx.issue_number is None:
         create_tracking_issue(ctx)
         print(f"Tracking issue created: {ctx.issue_url}")
+    _record_lock_takeover(ctx)
     _prepare_branch(ctx)
     _close_superseded(ctx)
 
@@ -135,6 +140,19 @@ def _refuse_pending_bump(ctx: ReleaseContext, branch: str, url: str) -> None:
             "PR carries another version. Inspect the PR and the branch before resuming."
         ),
     )
+
+
+def _record_lock_takeover(ctx: ReleaseContext) -> None:
+    """Record on the new tracking issue that this run took over the superseded release's lock.
+
+    The superseded release's issue had its comment when the lock was taken
+    over (spec §5.3 of epic vergil-project/.github#1664); this one waits
+    until the new issue exists, which is now in the lock.
+    """
+    if not ctx.lock_takeover or ctx.issue_number is None:
+        return
+    comment_lock_takeover(ctx.repo, ctx.issue_number, ctx.lock_takeover, phase="prepare")
+    ctx.lock_takeover = ""
 
 
 def _close_superseded(ctx: ReleaseContext) -> None:

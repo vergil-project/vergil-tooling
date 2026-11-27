@@ -11,7 +11,12 @@ import pytest
 
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release_lock import stale
-from vergil_tooling.lib.release_lock.model import STALE_AFTER_SECS, LockRecord
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    LockRecord,
+    heartbeat_age_secs,
+    heartbeat_fresh,
+)
 from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.release_lock.stale import IssueReadError, Staleness, judge
 
@@ -233,9 +238,22 @@ def test_issue_in_another_repo_is_read_there() -> None:
 
 
 def test_heartbeat_age() -> None:
-    assert stale.heartbeat_age_secs(_record(heartbeat_at=_OLD), now=_NOW) == STALE_AFTER_SECS + 1
+    assert heartbeat_age_secs(_record(heartbeat_at=_OLD), now=_NOW) == STALE_AFTER_SECS + 1
     future = (_NOW + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    assert stale.heartbeat_age_secs(_record(heartbeat_at=future), now=_NOW) == 0
+    assert heartbeat_age_secs(_record(heartbeat_at=future), now=_NOW) == 0
+
+
+def test_heartbeat_age_refuses_a_naive_now() -> None:
+    with pytest.raises(ValueError, match="aware"):
+        heartbeat_age_secs(_record(), now=datetime(2026, 11, 27, 12, 0, 0))  # noqa: DTZ001
+
+
+def test_heartbeat_fresh_only_while_running_and_young() -> None:
+    young = (_NOW - timedelta(seconds=STALE_AFTER_SECS - 1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert heartbeat_fresh(_record(heartbeat_at=young), now=_NOW)
+    assert not heartbeat_fresh(_record(heartbeat_at=_OLD), now=_NOW)
+    broken = _record(heartbeat_at=young, health="broken", broken_stage="install")
+    assert not heartbeat_fresh(broken, now=_NOW)
 
 
 def test_heartbeat_exactly_at_threshold_is_not_fresh() -> None:

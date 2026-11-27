@@ -925,6 +925,7 @@ def test_unlock_on_a_resume_with_a_lock_held_refuses() -> None:
     ctx.issue_number = 42
     with (
         patch("vergil_tooling.lib.release.lock_guard.lock_refs.read_lock", return_value=held),
+        patch("vergil_tooling.lib.release.lock_guard.holder_identity", return_value="maintainer"),
         patch(_MOD + ".stray_merges", return_value=[]),
         patch(_MOD + ".comment_phase_failed") as m_failed,
         pytest.raises(ReleaseError) as info,
@@ -1791,6 +1792,8 @@ def test_resume_after_finalize_skips_branch_stages(write_state: MagicMock) -> No
         patch(_PREFLIGHT + ".verify_facts"),
         patch(_PREFLIGHT + "._acquire_release_worktree") as m_worktree,
         patch(_PREFLIGHT + ".os.chdir") as m_chdir,
+        # The resume's lock step has tests of its own (test_release_resume.py).
+        patch(_PREFLIGHT + "._resume_lock"),
     ):
         _preflight_stage(state)
     m_worktree.assert_not_called()

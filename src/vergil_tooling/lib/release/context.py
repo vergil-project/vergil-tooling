@@ -64,10 +64,16 @@ class ReleaseContext:
     release_pr_url: str | None = None
 
     # The release lock this run holds (spec §5.2 of epic
-    # vergil-project/.github#1664): taken by a fresh start's preflight before
-    # the cut, and the one writer of its stage, health, tracking issue and
-    # worktree. None on a resume, and before preflight takes it.
+    # vergil-project/.github#1664), and the one writer of its stage, health,
+    # tracking issue and worktree: taken by a fresh start's preflight before
+    # the cut, taken over from the superseded release by --supersede, and
+    # adopted or re-taken by a resume before unlock (spec §5.3). None on a
+    # resume at unlock or later, and before preflight takes it.
     lock: LockOwner | None = None
+    # A --supersede run that took over the superseded release's lock: the
+    # comment that records it on the new tracking issue, posted once prepare
+    # creates that issue (spec §5.3). Empty otherwise, and once posted.
+    lock_takeover: str = ""
 
     # The PRs the stray-merge check before unlock found merged into develop
     # after the cut, other than the holder's own (spec §5.4 of epic
