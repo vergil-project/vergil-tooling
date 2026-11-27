@@ -21373,11 +21373,19 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 <li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object,
   <code>{"issues": ["#10", "#11"], "base_sha": "&lt;sha&gt;"}</code>, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.</li>
-<li><code>batch-extract --issue &lt;N&gt;</code> rewrites every other member's marker without
-  the issue (removing the last one's when fewer than two remain) and removes
-  the issue's whole <code>issue-implement/&lt;N&gt;/</code> directory, its <code>merge-review/</code>
-  state included. It refuses while a <code>security-*.md</code> details file is under
-  that directory.</li>
+<li><code>batch-extract --issue &lt;N&gt; [--issue &lt;M&gt; …] [--check]</code> takes the set out of
+  its batch in one rewrite: every other member's marker is rewritten without
+  the set (the last one's is removed when fewer than two remain), and each
+  issue's whole <code>issue-implement/&lt;N&gt;/</code> directory is removed, its
+  <code>merge-review/</code> state included. It refuses while a <code>security-*.md</code> details
+  file is under any of those directories. It also refuses, naming the group,
+  when the set would split a release group (a member leaving the batch while
+  another member of the group stays in it); a group member outside the batch
+  does not count as staying. The judgment runs before anything is changed.
+  <code>--check</code> makes the same judgment without writing anything, printing
+  <code>{"ok": &lt;bool&gt;, "split": [{"group", "leaving", "staying"}], "remaining": […]}</code>
+  and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
+  the extraction and fails <code>--check</code> too.</li>
 </ul>
 <p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
@@ -21408,7 +21416,7 @@ otherwise.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code> (<code>--issue</code> repeatable, <code>--check</code>), <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
