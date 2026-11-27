@@ -510,6 +510,54 @@ and the [Releasing guide](../guides/releasing.md).
 | Exit codes | 0 success, 1 any failure or refusal, 2 usage error (such as `--supersede` with `--resume`), 130 interrupted |
 | Status | Active |
 
+### vrg-release-lock
+
+Read the release lock of a repository: the ref
+`refs/vergil/release-lock` on its origin, which a running `vrg-release`
+holds so that nothing but the release's own PR merges into `develop`
+(epic vergil-project/.github#1664). `status` prints the lock's holder,
+version, tracking issue, stage, health, start, heartbeat and worktree,
+whether it is stale and why, and the PRs it holds unarmed: the open,
+non-draft PRs into `develop` with auto-merge off that the one PR path
+accepts. Any identity may run it; it only reads. The lock is read as
+written, with no trusted-author check, and a lock that cannot be read or
+parsed is held, shown as `release lock: held, unreadable: <why>`.
+
+A lock is **stale** by these rules, in order. A `running` lock with a
+heartbeat under 900 seconds old is live, never stale, and no issue is
+read. Otherwise a lock that names a tracking issue is stale exactly when
+that issue is closed: an open one keeps it the human's, however old its
+heartbeat. A lock that names none is not stale while an open release
+tracking issue of its version with a trusted body exists (shown as its
+tracking issue, `not in the lock`); failing that, it is stale once its
+heartbeat is 900 seconds old. An unreadable lock is never stale.
+
+```text
+$ vrg-release-lock status
+no release lock held
+```
+
+`--json` prints one object: the lock record's fields (`holder_identity`,
+`holder_host`, `version`, `worktree`, `tracking_issue`, `stage`,
+`health`, `broken_stage`, `started_at`, `heartbeat_at`, `token`; each
+`null` with no readable record) plus `repo`, `held`, `sha` (the lock
+ref's commit, `null` when absent), `error` (why a held lock is
+unreadable, else `""`), `stale`, `live`, `reason`,
+`judged_tracking_issue` (the issue the staleness verdict rests on, `""`
+with none), `heartbeat_age_secs` (`null` with no readable record) and
+`held_prs` (a list of `{"number", "url"}`). Every key is always present.
+It is the machine-readable state a future auto-releaser reads.
+`vrg-repo-status` shows the same text form in its Release lock section.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_lock` (`lib/release_lock/status.py`, `lib/release_lock/stale.py`) |
+| Args | `status` with `--json` (print one JSON object) and `--repo <owner>/<repo>` (default: the repository `origin` names) |
+| Preconditions | `gh` authenticated, and `git` able to read the repository's origin over HTTPS |
+| Failure mode | Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an `origin` that is not on github.com prints `ERROR:` on stderr with nothing on stdout; it is never shown as "no release lock held" |
+| Exit codes | 0 the lock was read (held or not, stale or not), 1 a failed read, 2 usage error |
+| Status | Active |
+
 ### vrg-release-record
 
 Read a task's `Released:` record, which `vrg-release` posts, as release
@@ -2268,9 +2316,11 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 
 Show every worktree git knows about in the current repo, grouped by
 kind, so nothing with code on disk goes unseen (issue #3386), then the
-open PRs on `origin` that no worktree shows (issue #4581), then what the
-integration branch holds that `main` does not. Read-only — it never
-fetches or writes a ref, cleanup stays `vrg-finalize-pr`'s job, and
+open PRs on `origin` that no worktree shows (issue #4581), then the
+release lock, then what the integration branch holds that `main` does
+not. Read-only — it never fetches into the clone or writes a ref (the
+release lock is read through a scratch repository), cleanup stays
+`vrg-finalize-pr`'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:
 
@@ -2294,7 +2344,9 @@ branches with no worktree are not shown. The sections, in order:
    worktree outside `.worktrees/` (shown by its full path).
 5. **Open PRs on origin with no local worktree** — every open PR whose
    head branch no linked worktree holds, described below. Always shown.
-6. **Pending release** — every change on the integration branch that is
+6. **Release lock** — whether a release holds `develop`'s release lock,
+   described below. Always shown.
+7. **Pending release** — every change on the integration branch that is
    not yet on `main`, described below. Shown only in a repo that
    publishes.
 
@@ -2381,8 +2433,37 @@ PR    BRANCH                    BASE     TYPE       AUTHOR                     C
   prints, then the command exits 1. The reason never carries URL
   credentials.
 
-**Pending release.** The section follows the open-PR section and comes
-before the summary lines. It is shown only when `vergil.toml` sets
+**Release lock.** The section follows the open-PR section. It is the
+text form of [`vrg-release-lock status`](#vrg-release-lock), read the
+same way: `no release lock held`, or one line per field of the lock
+`refs/vergil/release-lock` holds on `origin` (its holder, version,
+tracking issue, stage, health, start, heartbeat and age, and worktree),
+then whether it is stale and why, and the PRs it holds unarmed. A
+release, a reclaim or a break can be watched here as it happens.
+
+```text
+Release lock
+release lock: held
+holder: human on mac.local
+version: 2.1.400
+tracking issue: vergil-project/vergil-tooling#5300
+stage: cut
+health: running
+started: 2026-11-27T11:00:00Z
+heartbeat: 2026-11-27T11:59:00Z (60s ago)
+worktree: /Users/me/dev/vergil-tooling/.worktrees/release-2.1.400
+stale: no (running with a fresh heartbeat)
+held PRs: #5310, #5312
+```
+
+A read that fails (the lock ref, the tracking issue, the PR listing), or
+an `origin` that is not on github.com, is an error, never "no release
+lock held": the section prints its heading and
+`ERROR: release lock: <reason>` alone. The rest of the output still
+prints, then the command exits 1.
+
+**Pending release.** The section follows the Release lock section and
+comes before the summary lines. It is shown only when `vergil.toml` sets
 `[publish].release = true`; with the flag false or absent, nothing is
 printed for it, and without a `vergil.toml` a note says it was skipped.
 In a publishing repo it is always shown, even when nothing is pending.
@@ -2451,11 +2532,11 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; pending release: `lib/pending_release.py`) |
+| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; release lock: `lib/release_lock/status.py`; pending release: `lib/pending_release.py`) |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
-| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com `origin` and GitHub credentials |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
-| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR or pending-release lookup error |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR, Release lock and Pending release sections, a github.com `origin` and GitHub credentials |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR, release-lock or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
+| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR, release-lock or pending-release lookup error |
 | Status | Active |
 
 ### vrg-whoami

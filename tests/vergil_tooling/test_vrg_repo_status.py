@@ -34,6 +34,10 @@ from vergil_tooling.lib.pending_release import (
     ReleaseTags,
 )
 from vergil_tooling.lib.pr_await import AwaitResult
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.refs import LockState
+from vergil_tooling.lib.release_lock.stale import Staleness
+from vergil_tooling.lib.release_lock.status import HeldPR, LockStatus
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -107,6 +111,21 @@ _HOUR = 3600.0
 _STUB_MODEL = "stub-model"
 
 
+_LOCK_REPO = "vergil-project/vergil-tooling"
+
+
+def _no_lock() -> LockStatus:
+    return LockStatus(
+        repo=_LOCK_REPO,
+        state=LockState(sha=None, record=None, error=""),
+        staleness=Staleness(
+            stale=False, live=False, reason="no release lock held", tracking_issue=""
+        ),
+        heartbeat_age_secs=None,
+        held_prs=(),
+    )
+
+
 def _raws(statuses: list[WorktreeStatus]) -> list[RawWorktree]:
     """Mirror a list of branched statuses as the RawWorktree records
     discovery would return for them."""
@@ -126,6 +145,8 @@ def _run(
     gone: set[str] | Exception | None = None,
     still_present: bool | None = None,
     merge: Any = None,
+    lock: LockStatus | Exception | None = None,
+    lock_repo: str | Exception | None = "vergil-project/vergil-tooling",
     argv: list[str] | None = None,
 ) -> tuple[int, dict[str, MagicMock]]:
     """Run main() against a mocked repo: main checkout at /repo plus *linked*.
@@ -135,6 +156,8 @@ def _run(
     they are exceptions and returned otherwise. ``merge`` is what each open
     PR's merge-state read (``pr_await.standing_block``) gives: ``None`` (can
     still merge, the default), an ``AwaitResult``, or an exception it raises.
+    ``lock`` is what the release-lock read gives (no lock held by default), or
+    an exception it raises; ``lock_repo`` is the repo ``origin`` names.
     ``integration=None`` means no
     ``vergil.toml``; a string is the integration branch of a stub branching
     model, whose ``[publish].release`` is ``publish``.
@@ -182,6 +205,14 @@ def _run(
             _patch("pr_await.standing_block", side_effect=merge)
         else:
             _patch("pr_await.standing_block", return_value=merge)
+        if isinstance(lock_repo, Exception):
+            _patch("lock_status.origin_repo", side_effect=lock_repo)
+        else:
+            _patch("lock_status.origin_repo", return_value=lock_repo)
+        if isinstance(lock, Exception):
+            _patch("lock_status.gather", side_effect=lock)
+        else:
+            _patch("lock_status.gather", return_value=lock or _no_lock())
         rc = main(argv or [])
     return rc, mocks
 
@@ -1365,3 +1396,89 @@ def test_open_prs_error_is_shown_and_exits_nonzero(capsys: pytest.CaptureFixture
     # The rest still prints.
     assert "Nothing pending release" in out
     assert "Development: 1 active" in out
+
+
+# -- the Release lock section ------------------------------------------------------
+
+
+def _lock_section(out: str) -> list[str]:
+    lines = out.splitlines()
+    start = lines.index("Release lock")
+    end = next((i for i in range(start + 1, len(lines)) if not lines[i]), len(lines))
+    return lines[start + 1 : end]
+
+
+def test_repo_status_shows_lock_section(capsys: pytest.CaptureFixture[str]) -> None:
+    rec = LockRecord(
+        holder_identity="human",
+        holder_host="mac.local",
+        version="2.1.400",
+        worktree="/w/.worktrees/release-2.1.400",
+        tracking_issue=f"{_LOCK_REPO}#5300",
+        stage="cut",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T11:00:00Z",
+        heartbeat_at="2026-11-27T11:59:00Z",
+        token="t",
+    )
+    held = LockStatus(
+        repo=_LOCK_REPO,
+        state=LockState(sha="c" * 40, record=rec, error=""),
+        staleness=Staleness(
+            stale=False,
+            live=True,
+            reason="running with a fresh heartbeat",
+            tracking_issue=rec.tracking_issue,
+        ),
+        heartbeat_age_secs=60,
+        held_prs=(HeldPR(number=12, url="u12"),),
+    )
+    rc, mocks = _run([], lock=held)
+    assert rc == 0
+    out = capsys.readouterr().out
+    section = _lock_section(out)
+    assert "release lock: held" in section
+    assert "holder: human on mac.local" in section
+    assert "version: 2.1.400" in section
+    assert f"tracking issue: {_LOCK_REPO}#5300" in section
+    assert "stage: cut" in section
+    assert "health: running" in section
+    assert "stale: no (running with a fresh heartbeat)" in section
+    assert "held PRs: #12" in section
+    assert any(line.startswith("heartbeat: ") and "(60s ago)" in line for line in section)
+    mocks["lock_status.gather"].assert_called_once_with(_LOCK_REPO)
+    # Beside everything shown today: after the open PRs, before the summary line.
+    assert out.index("Open PRs on origin with no local worktree") < out.index("Release lock")
+    assert out.index("Release lock") < out.rindex("1 worktree:")
+
+
+def test_repo_status_no_lock(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _run([])
+    assert rc == 0
+    assert _lock_section(capsys.readouterr().out) == ["no release lock held"]
+
+
+def test_repo_status_lock_read_failure_is_error(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _run([], lock=RefReadError("reading refs/vergil/release-lock failed: HTTP 502"))
+    assert rc == 1
+    section = _lock_section(capsys.readouterr().out)
+    assert section == ["ERROR: release lock: reading refs/vergil/release-lock failed: HTTP 502"]
+
+
+def test_repo_status_lock_non_github_origin_is_error(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, mocks = _run([], lock_repo=None)
+    assert rc == 1
+    section = _lock_section(capsys.readouterr().out)
+    assert section == ["ERROR: release lock: origin is not a github.com remote"]
+    mocks["lock_status.gather"].assert_not_called()
+
+
+def test_repo_status_lock_origin_read_failure_is_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failure = subprocess.CalledProcessError(2, ["git", "remote", "get-url"], stderr="no origin")
+    rc, _ = _run([], lock_repo=failure)
+    assert rc == 1
+    section = _lock_section(capsys.readouterr().out)
+    assert section[0].startswith("ERROR: release lock: could not read the origin remote")

@@ -22,7 +22,15 @@ on ``origin`` that no linked worktree shows, then the Pending release section:
    (issue #4581). Always shown; a failed lookup prints ``ERROR:``, never
    "no open PRs", and the command exits non-zero after the rest of the
    output.
-6. **Pending release** — every change the integration branch holds that
+6. **Release lock** — whether ``refs/vergil/release-lock`` is held on
+   ``origin`` and, if so, its holder, version, tracking issue, stage,
+   health, heartbeat age, whether it is stale, and the PRs it holds unarmed,
+   in the text form of ``vrg-release-lock status``
+   (:func:`vergil_tooling.lib.release_lock.status.text_lines`; spec §5.6 of
+   epic vergil-project/.github#1664). Always shown; a failed read prints
+   ``ERROR:``, never "no release lock held", and the command exits non-zero
+   after the rest of the output.
+7. **Pending release** — every change the integration branch holds that
    ``main`` does not, mapped to its PR by commit SHA, in merge order, with
    the latest release and rolling tags (epic vergil-project/.github#1049).
    Shown only when ``vergil.toml`` sets ``[publish].release``. Read from the
@@ -66,6 +74,8 @@ from vergil_tooling.lib.pending_release import (
     gather_pending_release,
 )
 from vergil_tooling.lib.process_errors import error_text, failure_message
+from vergil_tooling.lib.release_lock import status as lock_status
+from vergil_tooling.lib.release_lock.model import ReleaseLockError
 from vergil_tooling.lib.worktrees import (
     MainCheckoutStatus,
     RawWorktree,
@@ -121,6 +131,8 @@ _PENDING_COLUMNS = ("PR", "BRANCH", "TYPE", "MERGED", "TITLE")
 _OPEN_COLUMNS = ("PR", "BRANCH", "BASE", "TYPE", "AUTHOR", "CI", "OPENED", "TITLE")
 
 _OPEN_HEADING = "Open PRs on origin with no local worktree"
+
+_LOCK_HEADING = "Release lock"
 
 # A longer TITLE is cut to this width, its last character an ellipsis, to
 # keep each pending-release row on one line.
@@ -213,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     # then the command exits non-zero: it could not say what is open or
     # pending (spec §5.4 of epic vergil-project/.github#1049, issue #4581).
     open_ok = _print_open_prs(sections, now)
+    lock_ok = _print_release_lock()
     pending_ok = _print_pending(integration, now) if show_pending else True
 
     print()
@@ -221,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     if gone_error is not None:
         print(f"  note: branch-gone check failed: {gone_error}")
     _print_vanished(vanished)
-    return 0 if open_ok and pending_ok else 1
+    return 0 if open_ok and lock_ok and pending_ok else 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -585,6 +598,32 @@ def _print_open_prs(sections: dict[WorktreeKind, list[WorktreeStatus]], now: flo
         return True
     print(text_table.render(_OPEN_COLUMNS, _open_rows(unbacked, now)))
     print(_open_summary(unbacked))
+    return True
+
+
+def _print_release_lock() -> bool:
+    """Print the Release lock section; return False only on an error.
+
+    A failed read, or an ``origin`` that names no GitHub repository, prints
+    the heading and the ``ERROR:`` line alone, never "no release lock held".
+    """
+    print()
+    print(_LOCK_HEADING)
+    try:
+        repo = lock_status.origin_repo()
+    except subprocess.CalledProcessError as exc:
+        print(f"ERROR: release lock: could not read the origin remote: {error_text(exc)}")
+        return False
+    if repo is None:
+        print("ERROR: release lock: origin is not a github.com remote")
+        return False
+    try:
+        status = lock_status.gather(repo)
+    except ReleaseLockError as exc:
+        print(f"ERROR: release lock: {exc}")
+        return False
+    for line in lock_status.text_lines(status):
+        print(line)
     return True
 
 
