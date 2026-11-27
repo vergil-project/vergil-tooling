@@ -15404,6 +15404,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-workflows-disabled-for-inactivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — workflows disabled for inactivity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19362,6 +19373,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#github-checks-workflows-disabled-for-inactivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub checks — workflows disabled for inactivity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19546,7 +19568,7 @@ to date.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, or a branch named like a rolling tag, which must be deleted by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged</td>
+<td>Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or a workflow GitHub disabled for inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged</td>
 </tr>
 <tr>
 <td>2</td>
@@ -20326,6 +20348,33 @@ names the ruleset, the rule type, the key, and the live value:</p>
 </ul>
 <p>A whole live rule whose <code>type</code> the desired ruleset lacks is not an
 undeclared parameter. It is reported as <code>.rules</code> value drift.</p>
+<h2 id="github-checks-workflows-disabled-for-inactivity">GitHub checks — workflows disabled for inactivity<a class="headerlink" href="#github-checks-workflows-disabled-for-inactivity" title="Permanent link">&para;</a></h2>
+<p>GitHub turns off a public repository's scheduled workflows after 60 days
+with no repository activity, and gives each the workflow state
+<code>disabled_inactivity</code>
+(<a href="https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/disabling-and-enabling-a-workflow">Disabling and enabling a workflow</a>).
+A workflow switched off this way fails silently: it simply stops running.
+The audit lists the repo's workflows (<code>GET /repos/{owner}/{repo}/actions/workflows</code>)
+and reports each one in that state as drift,
+<code>inactive_workflows.&lt;path&gt;</code>, expected <code>active</code>
+(vergil-project/vergil-tooling#5226):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>    inactive_workflows..github/workflows/epic-sweep.yml: expected='active', actual='disabled_inactivity'
+</code></pre></div>
+<ul>
+<li><strong>It is non-compliant.</strong> <code>audit</code> exits 1, and so does the nightly
+  <code>update</code>, which turns the scheduled run red.</li>
+<li><strong><code>update</code> and <code>apply</code> only report it.</strong> They never turn a workflow
+  back on: whether to re-enable it is a human's call, and the nightly
+  job's token holds Actions read, not write. They still converge any
+  other drift and open the sync PR, then exit 1 naming each workflow.
+  Re-enable one from the repo's Actions tab or with
+  <code>gh workflow enable &lt;file name&gt; --repo OWNER/REPO</code>.</li>
+<li><strong>Reading the list needs <code>actions=read</code>.</strong> A token without it gets a
+  403 naming the missing permission, and the listing is
+  <a href="#settings-the-identity-cannot-read">not checked</a>, as
+  <code>inactive_workflows</code>. The nightly job's token holds Actions read.</li>
+<li>A workflow turned off by hand (<code>disabled_manually</code>) is not reported.</li>
+</ul>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../guides/consuming-repo-setup/">Consuming Repo Setup</a> — the
