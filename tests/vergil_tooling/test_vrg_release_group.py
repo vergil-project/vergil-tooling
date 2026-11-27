@@ -52,9 +52,7 @@ def _log(
     )
 
 
-def _run(
-    argv: list[str], capsys: pytest.CaptureFixture[str]
-) -> tuple[int, str, str]:
+def _run(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str, str]:
     rc = main(argv)
     captured = capsys.readouterr()
     return rc, captured.out, captured.err

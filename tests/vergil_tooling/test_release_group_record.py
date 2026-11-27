@@ -14,8 +14,8 @@ import pytest
 
 from vergil_tooling.lib import epic_audit, epics, proxies, trust
 from vergil_tooling.lib.epics import IssueRef, TaskEpic
-from vergil_tooling.lib.release_groups import record
 from vergil_tooling.lib.release_groups.record import (
+    GroupLog,
     GroupRecordError,
     ParsedRecord,
     groups_of,
@@ -26,7 +26,7 @@ from vergil_tooling.lib.release_groups.record import (
 from vergil_tooling.lib.trust import CommentStream, Role, Skipped, StreamComment
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable
 
 EPIC = IssueRef("org", "repo", 40)
 CONTINUATION = IssueRef("org", "repo", 41)
@@ -66,7 +66,7 @@ def _outsider(cid: int, *, edit: bool = False) -> Skipped:
     )
 
 
-def _assert_epic_refused(log: record.GroupLog, comment: str) -> None:
+def _assert_epic_refused(log: GroupLog, comment: str) -> None:
     """The log refuses the whole epic, and the refusal names *comment*."""
     assert log.epic_error is not None
     assert comment in str(log.epic_error)
@@ -167,20 +167,20 @@ def test_render_record_round_trips() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "message"),
+    ("render", "message"),
     [
-        ({"group": "G0", "rev": 1, "members": (ref(1),)}, "not a group ID"),
-        ({"group": "G1", "rev": 0, "members": (ref(1),)}, "positive"),
-        ({"group": "G1", "rev": 1, "members": ()}, "names no members"),
-        ({"group": "G1", "rev": 1, "members": (ref(1), ref(1))}, "more than once"),
-        ({"group": "G1", "rev": 1, "members": (ref(1),), "dissolved": True}, "dissolved"),
-        ({"group": "G1", "rev": 1, "members": (ref(1),), "reason": "a\nb"}, "one non-empty"),
-        ({"group": "G1", "rev": 1, "members": (ref(1),), "reason": "  "}, "one non-empty"),
+        (lambda: render_record("G0", 1, (ref(1),)), "not a group ID"),
+        (lambda: render_record("G1", 0, (ref(1),)), "positive"),
+        (lambda: render_record("G1", 1, ()), "names no members"),
+        (lambda: render_record("G1", 1, (ref(1), ref(1))), "more than once"),
+        (lambda: render_record("G1", 1, (ref(1),), dissolved=True), "dissolved"),
+        (lambda: render_record("G1", 1, (ref(1),), reason="a\nb"), "one non-empty"),
+        (lambda: render_record("G1", 1, (ref(1),), reason="  "), "one non-empty"),
     ],
 )
-def test_render_record_rejects_bad_input(kwargs: dict[str, object], message: str) -> None:
+def test_render_record_rejects_bad_input(render: Callable[[], str], message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        render_record(**kwargs)  # type: ignore[arg-type]
+        render()
 
 
 # --- the log: revisions, conflicts, edits -------------------------------------

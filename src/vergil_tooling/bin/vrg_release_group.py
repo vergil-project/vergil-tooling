@@ -102,9 +102,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     listing = commands.add_parser("list", help="List an epic's release groups")
-    listing.add_argument(
-        "--epic", required=True, type=_epic_ref, help="The epic: owner/repo#N"
-    )
+    listing.add_argument("--epic", required=True, type=_epic_ref, help="The epic: owner/repo#N")
     listing.add_argument("--group", type=_group_id, help="Only this group, e.g. G1")
     listing.add_argument(
         "--json",

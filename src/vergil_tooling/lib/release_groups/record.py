@@ -135,9 +135,7 @@ def parse_record(body: str) -> ParsedRecord | None:
 def _members(text: str) -> tuple[epics.IssueRef, ...]:
     """The members of a grammar-checked member list, each once."""
     refs = tuple(
-        epics.IssueRef(
-            owner=m.group("owner"), repo=m.group("repo"), number=int(m.group("number"))
-        )
+        epics.IssueRef(owner=m.group("owner"), repo=m.group("repo"), number=int(m.group("number")))
         for m in _MEMBER_RE.finditer(text)
     )
     if len(set(refs)) != len(refs):
@@ -252,10 +250,10 @@ def _read(epic: epics.IssueRef, authors: TrustedAuthors | None) -> _Read:
         error = GroupRecordError(f"{head.slug} cannot be read: " + "; ".join(problems))
         return _Read(GroupLog(head, {}, {}, error, frozenset()), {})
 
+    # Every entry is scoped here: an unscoped one is a problem of the epic, refused above.
     by_group: dict[str, list[_Entry]] = {}
-    for entry in entries:
-        if entry.group is not None:
-            by_group.setdefault(entry.group, []).append(entry)
+    for group_id, entry in [(e.group, e) for e in entries if e.group is not None]:
+        by_group.setdefault(group_id, []).append(entry)
     groups: dict[str, Group] = {}
     broken: dict[str, GroupRecordError] = {}
     holds: dict[str, tuple[ParsedRecord, ...]] = {}
