@@ -191,6 +191,8 @@ class LockState:
     sha: str | None  # None when the ref is absent
     record: LockRecord | None  # None when absent or unreadable
     error: str  # non-empty when present but unreadable
+    #: The lock file's text as read, parsed or not; ``""`` when absent or not readable.
+    text: str = ""
 
     @property
     def held(self) -> bool:
@@ -202,18 +204,24 @@ def read_lock(repo: str) -> LockState:
     """Read *repo*'s lock, with no trusted-author check.
 
     A lock that is present but cannot be fetched, read or parsed is held:
-    ``sha`` set, ``record`` ``None`` and ``error`` naming why. When whether
-    the lock is present cannot be told, :class:`RefReadError` is raised.
+    ``sha`` set, ``record`` ``None`` and ``error`` naming why. ``text`` is
+    the file's text whenever it could be read, parsed or not, so a break can
+    record an unparseable lock as it was. When whether the lock is present
+    cannot be told, :class:`RefReadError` is raised.
     """
     with scratch(repo, RefReadError) as where:
         sha = remote_sha(where, LOCK_REF)
         if sha is None:
             return LockState(sha=None, record=None, error="")
+        text = ""
         try:
             sha = fetch(where, LOCK_REF)
-            return LockState(sha=sha, record=from_json(read_file(where, sha, LOCK_FILE)), error="")
+            text = read_file(where, sha, LOCK_FILE)
+            return LockState(sha=sha, record=from_json(text), error="", text=text)
         except (RefReadError, LockParseError) as exc:
-            return LockState(sha=sha, record=None, error=f"{LOCK_REF} is unreadable: {exc}")
+            return LockState(
+                sha=sha, record=None, error=f"{LOCK_REF} is unreadable: {exc}", text=text
+            )
 
 
 def build_lock(where: Path, rec: LockRecord) -> str:

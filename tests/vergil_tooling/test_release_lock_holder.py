@@ -483,6 +483,37 @@ def test_loss_with_history_entry_names_cause(
     assert ("superseded" in str(lost)) == (action == "takeover")
 
 
+def test_loss_after_a_break_that_did_not_land_is_not_the_break(
+    origin: Origin, owners: list[LockOwner]
+) -> None:
+    owner = _take(owners)
+    owner.stop_heartbeat()
+    ours = _on_origin(origin)
+    _append("break", ours, actor="human")
+    _append("break-failed", ours, actor="human")  # the break above never deleted the lock
+    origin.git("update-ref", "-d", refs.LOCK_REF)
+    with pytest.raises(LockLost) as caught:
+        owner.update(stage="cut")
+    assert caught.value.cause is None
+    assert caught.value.outside_change
+
+
+def test_loss_after_a_failed_then_landed_break_names_the_break(
+    origin: Origin, owners: list[LockOwner]
+) -> None:
+    owner = _take(owners)
+    owner.stop_heartbeat()
+    ours = _on_origin(origin)
+    _append("break", ours, actor="first-try")
+    _append("break-failed", ours, actor="first-try")
+    _append("break", ours, actor="second-try")
+    origin.git("update-ref", "-d", refs.LOCK_REF)
+    with pytest.raises(LockLost) as caught:
+        owner.update(stage="cut")
+    assert caught.value.cause is not None
+    assert caught.value.cause.actor == "second-try"
+
+
 def test_loss_without_history_entry_reported_as_outside_change(
     origin: Origin, owners: list[LockOwner]
 ) -> None:

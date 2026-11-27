@@ -3,7 +3,9 @@
 Spec §5.2 of epic vergil-project/.github#1664.
 
 One commit per break, reclaim, reclaim re-arm, supersede takeover or retake,
-each a one-file commit whose parent is the entry before it. An entry is
+each a one-file commit whose parent is the entry before it. A break is
+recorded before its delete, so a break whose delete never landed gets a
+second entry, ``break-failed``, for the same old lock. An entry is
 appended by compare-and-swap against the tip it was built on, and rebuilt on
 the new tip when another append won; like the lock, the history is read with
 no trusted-author check.
@@ -28,7 +30,7 @@ HISTORY_FILE = "release-lock-history.json"
 #: How many times an append is rebuilt on a tip another append moved.
 _APPEND_ATTEMPTS = 5
 
-Action = Literal["break", "reclaim", "reclaim-rearm", "takeover", "retake"]
+Action = Literal["break", "break-failed", "reclaim", "reclaim-rearm", "takeover", "retake"]
 _ACTIONS: tuple[str, ...] = get_args(Action)
 _TEXT_FIELDS = ("action", "old", "actor", "at", "reason")
 

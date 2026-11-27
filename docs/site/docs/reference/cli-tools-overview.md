@@ -549,13 +549,30 @@ with none), `heartbeat_age_secs` (`null` with no readable record) and
 It is the machine-readable state a future auto-releaser reads.
 `vrg-repo-status` shows the same text form in its Release lock section.
 
+`break --reason "<why>"` is the human's escape hatch. It removes any held
+lock, a live or an unreadable one included. It first records the reason
+and the old lock's contents in `refs/vergil/release-lock-history` and, when
+the lock names a tracking issue, as a comment there; then it deletes the
+lock by compare-and-swap and runs the re-arm sweep over the PRs the lock
+held. A live holder's heartbeat can rewrite the lock between the read and
+the delete, so a lost delete is retried against a fresh read, up to three
+attempts, while the lock is still the same holder's. A break that still
+loses, or finds the lock gone or taken by another holder, records a
+`break-failed` entry and a comment, exits 1 and re-arms nothing. It is
+human only: refused under every agent identity and agent signal, as
+`vrg-release` is. An agent never breaks a lock; it may only reclaim a
+stale one. `--json` prints the result
+as one object: `repo`, `action` (`break`), `old_sha`, `tracking_issue`,
+`reason` and `rearm` (`armed`, `merged` and `held`, lists of PR URLs, and
+`refused`, a list of `{"url", "reason"}`).
+
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_release_lock` (`lib/release_lock/status.py`, `lib/release_lock/stale.py`) |
-| Args | `status` with `--json` (print one JSON object) and `--repo <owner>/<repo>` (default: the repository `origin` names) |
-| Preconditions | `gh` authenticated, and `git` able to read the repository's origin over HTTPS |
-| Failure mode | Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an `origin` that is not on github.com prints `ERROR:` on stderr with nothing on stdout; it is never shown as "no release lock held" |
-| Exit codes | 0 the lock was read (held or not, stale or not), 1 a failed read, 2 usage error |
+| Source | `vergil_tooling.bin.vrg_release_lock` (`lib/release_lock/status.py`, `lib/release_lock/stale.py`, `lib/release_lock/reclaim.py`) |
+| Args | `status` with `--json` (print one JSON object) and `--repo <owner>/<repo>` (default: the repository `origin` names); `break` with `--reason` (required, not blank), `--json` and `--repo` |
+| Preconditions | `gh` authenticated, and `git` able to read the repository's origin over HTTPS; `break` also needs the human identity and write access to the repository |
+| Failure mode | Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an `origin` that is not on github.com prints `ERROR:` on stderr with nothing on stdout; it is never shown as "no release lock held". A `break` with no lock held, a failed record (nothing is deleted), a delete that did not land, or a failed re-arm sweep after the delete prints `ERROR:` naming it |
+| Exit codes | 0 the lock was read (held or not, stale or not) or broken and re-armed, 1 a failed read, a refusal or a failed break, 2 usage error |
 | Status | Active |
 
 ### vrg-release-record

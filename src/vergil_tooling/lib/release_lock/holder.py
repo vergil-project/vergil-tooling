@@ -88,20 +88,27 @@ def _find_cause(repo: str, tokens: frozenset[str]) -> tuple[history.HistoryEntry
 
     Returns the entry (or ``None``) and, when the history could not be read,
     the reason (else ``""``). An entry whose old lock does not parse names no
-    token, so it is never this owner's.
+    token, so it is never this owner's. A break is recorded before its
+    delete, so a ``break`` entry followed by a ``break-failed`` one for the
+    same lock never landed, and is never the cause.
     """
     try:
         entries = history.read_history(repo)
     except RefReadError as exc:
         return None, str(exc)
+    unlanded: set[str] = set()
     for entry in reversed(entries):
-        if entry.action not in _CAUSES:
+        if entry.action not in _CAUSES and entry.action != "break-failed":
             continue
         try:
             old = from_json(entry.old)
         except LockParseError:
             continue
-        if old.token in tokens:
+        if old.token not in tokens:
+            continue
+        if entry.action == "break-failed":
+            unlanded.add(old.token)
+        elif not (entry.action == "break" and old.token in unlanded):
             return entry, ""
     return None, ""
 
