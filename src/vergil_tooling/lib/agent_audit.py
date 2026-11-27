@@ -68,6 +68,29 @@ last landing fully checked, so the next run checks the rest again. A landing
 with a finding has been checked, so the marker moves past it: the finding is
 reported in that run, whose log ``hoshin`` reads.
 
+**The backstop** (epic vergil-project/.github#1664, spec §5.9).
+:func:`backstop` checks the release lock's invariant on the repository as it
+stands, the open PRs into ``develop`` and the lock, apart from any landing:
+
+- ``invariant-breach``: an open, non-draft PR the one PR path accepts
+  (:func:`~vergil_tooling.lib.pr_path.accepts`) with auto-merge off while no
+  lock is held. While a lock is held, readable or not, stale or not, it holds
+  such PRs, and the audit is quiet on them.
+- ``draft-pr``: every open draft PR into ``develop``; drafts are not used in
+  this workflow, and the path is not asked about them.
+- ``stale-lock``: a held lock that :func:`~.release_lock.stale.judge` finds
+  stale, with its reason.
+- ``unreadable-lock``: a lock that is present but cannot be read or parsed,
+  with its read error. The audit never deletes or rewrites it: only
+  ``vrg-release-lock break`` does.
+- An open PR the path does not accept (a fork's or an outsider's) is an
+  :class:`OutsiderPR`, reported on a line of its own and never a finding.
+
+The backstop is report-only: it never arms, merges, disarms or reclaims. A
+read it needs that fails is a ``read-failure`` finding, never a pass: with
+the lock's state unknown no breach is judged, and a PR the path could not
+judge is not counted either way.
+
 The audit is a security-signal job: it files no issue and posts nothing. Its
 findings are its exit status and its output.
 """
@@ -78,13 +101,17 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-from vergil_tooling.lib import agent_gates, git, github, pr_provenance, trust
+from vergil_tooling.lib import agent_gates, git, github, pr_path, pr_provenance, trust
 from vergil_tooling.lib.github_config import APP_MERGES_RELEASES
 from vergil_tooling.lib.linkage import extract_tracking_refs
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock import stale as lock_stale
+from vergil_tooling.lib.release_lock import status as lock_status
+from vergil_tooling.lib.release_lock.model import ReleaseLockError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -96,12 +123,15 @@ __all__ = [
     "AUDITED_BRANCHES",
     "MARKER_BRANCHES",
     "AuditError",
+    "Backstop",
     "BranchAudit",
     "Finding",
     "Landing",
     "MarkerInit",
+    "OutsiderPR",
     "audit",
     "audit_branch",
+    "backstop",
     "create_marker",
     "init_markers",
     "marker_branch",
@@ -142,6 +172,17 @@ PROVENANCE = "provenance"
 TASK_ISSUE = "task-issue"
 GATES = "gates"
 READ_FAILURE = "read-failure"
+# The backstop's finding kinds (spec §5.9 of epic vergil-project/.github#1664).
+INVARIANT_BREACH = "invariant-breach"
+DRAFT_PR = "draft-pr"
+STALE_LOCK = "stale-lock"
+UNREADABLE_LOCK = "unreadable-lock"
+#: The kind on an outsider PR's line: reported, never a finding.
+OUTSIDER_PR = "outsider-pr"
+
+#: The branch the release lock guards, and the one the backstop reports on.
+_LOCKED_BRANCH = "develop"
+_LOCK_SUBJECT = "the release lock"
 
 # Timeline events whose actor is not the one who acted on the PR: GitHub
 # names the mentioned or subscribed account, or the PR was referenced from
@@ -917,3 +958,120 @@ def audit(clone: Path, repo: str, authors: TrustedAuthors) -> list[BranchAudit]:
                 result.findings.append(Finding(READ_FAILURE, repo, branch, "the marker", str(exc)))
         results.append(result)
     return results
+
+
+# --- the backstop --------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutsiderPR:
+    """An open PR into ``develop`` that the one PR path does not accept, and why."""
+
+    number: int
+    url: str
+    refusal: str
+
+    def render(self, repo: str) -> str:
+        """Its own report line, in a finding's shape but never counted as one."""
+        return f"{OUTSIDER_PR}: {repo} {_LOCKED_BRANCH}: PR #{self.number}: {self.refusal}"
+
+
+@dataclass
+class Backstop:
+    """The backstop's result: its findings, and the outsider PRs it reports apart."""
+
+    findings: list[Finding] = field(default_factory=list)
+    outsiders: list[OutsiderPR] = field(default_factory=list)
+
+
+def _lock_findings(repo: str, *, now: datetime) -> tuple[bool | None, list[Finding]]:
+    """Whether *repo*'s release lock is held (``None`` when unknown), and its findings."""
+
+    def finding(kind: str, detail: str) -> Finding:
+        return Finding(kind, repo, _LOCKED_BRANCH, _LOCK_SUBJECT, detail)
+
+    try:
+        state = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        return None, [finding(READ_FAILURE, f"cannot read the release lock: {exc}")]
+    if not state.held:
+        return False, []
+    sha = (state.sha or "")[:12]
+    rec = state.record
+    if rec is None:
+        detail = f"the lock at {sha} cannot be read: {state.error}; the audit never deletes it"
+        return True, [finding(UNREADABLE_LOCK, detail)]
+    try:
+        verdict = lock_stale.judge(repo, state, now=now)
+    except ReleaseLockError as exc:
+        return True, [finding(READ_FAILURE, f"cannot judge whether the lock is stale: {exc}")]
+    if not verdict.stale:
+        return True, []
+    detail = (
+        f"the lock at {sha}, held by {rec.holder_identity} for release {rec.version} at stage"
+        f" {rec.stage} ({rec.health}), is stale: {verdict.reason}"
+    )
+    return True, [finding(STALE_LOCK, detail)]
+
+
+def backstop(repo: str, *, now: datetime | None = None) -> Backstop:
+    """Check the release lock's invariant on *repo* as it stands (see the module docstring).
+
+    Report-only: it reads the lock and the open PRs into ``develop``, and
+    never arms, merges, disarms or writes anything.
+    """
+    when = now if now is not None else datetime.now(UTC)
+    result = Backstop()
+    held, result.findings = _lock_findings(repo, now=when)
+    try:
+        prs = lock_status.develop_prs(repo)
+    except ReleaseLockError as exc:
+        result.findings.append(
+            Finding(READ_FAILURE, repo, _LOCKED_BRANCH, "the open PRs", f"cannot list them: {exc}")
+        )
+        return result
+    for item in prs:
+        number, url = int(str(item["number"])), str(item["url"])
+        subject = f"PR #{number}"
+        if item["isDraft"]:
+            result.findings.append(
+                Finding(
+                    DRAFT_PR,
+                    repo,
+                    _LOCKED_BRANCH,
+                    subject,
+                    f"{url} is an open draft PR into {_LOCKED_BRANCH}; drafts cannot be"
+                    " auto-merged and are not used in this workflow",
+                )
+            )
+            continue
+        try:
+            refusal = pr_path.accepts(url)
+        except pr_path.PRPathError as exc:
+            result.findings.append(
+                Finding(
+                    READ_FAILURE,
+                    repo,
+                    _LOCKED_BRANCH,
+                    subject,
+                    f"cannot tell whether the one PR path accepts it: {exc}",
+                )
+            )
+            continue
+        if refusal is not None:
+            result.outsiders.append(OutsiderPR(number=number, url=url, refusal=refusal))
+            continue
+        # With the lock's state unknown (``None``, already a read failure),
+        # an unarmed PR cannot be told from one a lock holds: no breach.
+        if item["autoMergeRequest"] is None and held is False:
+            result.findings.append(
+                Finding(
+                    INVARIANT_BREACH,
+                    repo,
+                    _LOCKED_BRANCH,
+                    subject,
+                    f"{url} is accepted by the one PR path but has auto-merge off while no"
+                    " release lock is held; left for the human, the audit never arms it",
+                )
+            )
+    return result

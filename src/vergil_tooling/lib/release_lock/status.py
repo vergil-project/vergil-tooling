@@ -99,8 +99,15 @@ def origin_repo(remote: str = "origin") -> str | None:
     return github.github_remote_repo(git.remote_url(remote))
 
 
-def _develop_prs(repo: str) -> list[dict[str, object]]:
-    """The open PRs into ``develop`` of *repo*, with their draft and auto-merge state."""
+def develop_prs(repo: str) -> list[dict[str, object]]:
+    """The open PRs into ``develop`` of *repo*, with their draft and auto-merge state.
+
+    Each is a dict with ``number``, ``url``, ``isDraft`` and
+    ``autoMergeRequest`` (``None`` when auto-merge is off). The daily agent
+    audit's backstop (:func:`~vergil_tooling.lib.agent_audit.backstop`)
+    reads the same listing. A failed, malformed or possibly cut-short listing
+    raises :class:`StatusError`.
+    """
     what = f"the open PRs into {_DEVELOP} of {repo}"
     try:
         data = github.read_json(
@@ -144,7 +151,7 @@ def _develop_prs(repo: str) -> list[dict[str, object]]:
 def held_prs(repo: str) -> tuple[HeldPR, ...]:
     """The open, non-draft ``develop`` PRs of *repo* with auto-merge off that the path accepts."""
     held: list[HeldPR] = []
-    for item in _develop_prs(repo):
+    for item in develop_prs(repo):
         if item["isDraft"] or item["autoMergeRequest"] is not None:
             continue
         number, url = int(str(item["number"])), str(item["url"])
