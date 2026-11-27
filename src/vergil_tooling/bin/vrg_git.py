@@ -3,7 +3,8 @@
 Enforces a subcommand allowlist and flag deny lists.
 
 vrg-git protects origin, not the local checkout. The guards that protect
-origin (the push deny-list, the frozen-push refusal) are strict. Rewriting
+origin (the push deny-list, the frozen-push refusal, the refusal of a plain
+push to an open develop PR's branch or to a release-lock ref) are strict. Rewriting
 or discarding local work (``reset``, ``clean``, a pathspec ``checkout`` and
 ``rebase -i --autosquash``) is allowed on a branch that is neither protected
 nor frozen, and refused, failing closed, everywhere else (#4217).
@@ -17,10 +18,11 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import branch_names, epics, github, retry, trust
+from vergil_tooling.lib import branch_names, epics, github, pr_path, retry, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import (
     _git_auth_env,
@@ -29,6 +31,7 @@ from vergil_tooling.lib.git import (
     workflow_push_refusal_text,
 )
 from vergil_tooling.lib.pr_workflow import freeze
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -377,6 +380,10 @@ def _run(argv: list[str]) -> int:
         frozen_msg = _check_frozen_push(argv[1:])
         if frozen_msg is not None:
             print(frozen_msg, file=sys.stderr)
+            return 1
+        destination_msg = _check_push_destinations(argv[1:])
+        if destination_msg is not None:
+            print(destination_msg, file=sys.stderr)
             return 1
 
     env = None
@@ -1412,6 +1419,403 @@ def _check_frozen_push(args: list[str]) -> str | None:
     )
 
 
+# -- the open-PR and release-lock push refusal (spec §5.4, epic .github#1664) --
+
+#: Every ref under this prefix (the lock, ``refs/vergil/release-lock-history``
+#: and every ``refs/vergil/release-lock-arming/*`` ref) is written only by the
+#: tooling, through ``lib.git``; a push to one through vrg-git is always refused.
+_RELEASE_LOCK_PREFIX = "refs/vergil/release-lock"
+
+# Push options that take no value and never push a ref no refspec names.
+_PUSH_PLAIN_FLAGS = frozenset(
+    {
+        "-u",
+        "--set-upstream",
+        "-q",
+        "--quiet",
+        "-v",
+        "--verbose",
+        "--progress",
+        "--no-progress",
+        "-n",
+        "--dry-run",
+        "--porcelain",
+        "--atomic",
+        "--no-atomic",
+        "--verify",
+        "--no-verify",
+        "--tags",
+        "--follow-tags",
+        "--no-follow-tags",
+        "--thin",
+        "--no-thin",
+        "-4",
+        "--ipv4",
+        "-6",
+        "--ipv6",
+        "--signed",
+        "--no-signed",
+        "--force-with-lease",
+        "--no-force-with-lease",
+        "--force-if-includes",
+        "--no-force-if-includes",
+        "--no-recurse-submodules",
+    }
+)
+# Push options whose value is the next token unless attached with ``=``.
+_PUSH_VALUE_OPTIONS = frozenset(
+    {"-o", "--push-option", "--receive-pack", "--exec", "--repo", "--recurse-submodules"}
+)
+# Push options that take a value only when it is attached with ``=``.
+_PUSH_ATTACHED_OPTIONS = frozenset({"--signed", "--force-with-lease"})
+# Options that push refs no refspec names, so their destinations cannot be judged.
+_PUSH_UNJUDGEABLE = frozenset({"--all", "--branches", "--mirror", "--prune"})
+# The only submodule modes that push nothing in another repository.
+_PUSH_SUBMODULE_SAFE = frozenset({"check", "no"})
+# Short push flags, without a value, that may be clustered (``-uq``).
+_PUSH_SHORT_PLAIN = frozenset("uqvnd46")
+
+
+@dataclass(frozen=True)
+class _PushArgs:
+    """What a ``git push`` command line names.
+
+    *repository* is the remote or URL (``None`` for the default). Each of
+    *refspecs* is ``(source, destination)``, the destination ``None`` when
+    the refspec names only a source and an empty source a delete. *leases*
+    holds the ref of each ``--force-with-lease=<ref>[:<expect>]``.
+    """
+
+    repository: str | None
+    refspecs: tuple[tuple[str, str | None], ...]
+    leases: tuple[str, ...]
+
+
+def _push_option(arg: str, rest: list[str]) -> tuple[str, str, int] | None:
+    """``(name, value, tokens used from rest)`` of a value-taking push option, else None."""
+    if arg.startswith("-o") and arg != "-o":
+        return "-o", arg[2:], 0
+    name, sep, value = arg.partition("=")
+    if name not in _PUSH_VALUE_OPTIONS or (sep and name == "-o"):
+        return None
+    if sep:
+        return name, value, 0
+    if not rest:
+        return name, "", -1
+    return name, rest[0], 1
+
+
+def _parse_push_args(args: list[str]) -> _PushArgs | str:  # noqa: C901, PLR0911, PLR0912
+    """Parse ``git push *args*``, or say why its destinations cannot be told.
+
+    Fail-closed: an option it does not know, an option that pushes refs no
+    refspec names (``--all``, ``--mirror``, ``--prune``), a submodule mode
+    that pushes in another repository and a refspec it cannot read are
+    refused, never guessed at.
+    """
+    positionals: list[str] = []
+    leases: list[str] = []
+    repo_option: str | None = None
+    delete = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg == "--":
+            positionals.extend(args[index:])
+            break
+        if not arg.startswith("-") or arg == "-":
+            positionals.append(arg)
+            continue
+        if arg in _PUSH_UNJUDGEABLE:
+            return f"push {arg} pushes refs no refspec names, so vrg-git cannot judge them"
+        if arg in ("-d", "--delete"):
+            delete = True
+            continue
+        if arg in _PUSH_PLAIN_FLAGS:
+            continue
+        name, sep, value = arg.partition("=")
+        if sep and name in _PUSH_ATTACHED_OPTIONS:
+            if name == "--force-with-lease":
+                leases.append(value.partition(":")[0])
+            continue
+        option = _push_option(arg, args[index:])
+        if option is not None:
+            name, value, used = option
+            if used < 0:
+                return f"push {arg} needs a value"
+            index += used
+            if name == "--repo":
+                repo_option = value
+            if name == "--recurse-submodules" and value not in _PUSH_SUBMODULE_SAFE:
+                return (
+                    f"push --recurse-submodules={value} pushes in another repository, "
+                    "so vrg-git cannot judge it"
+                )
+            continue
+        if not arg.startswith("--") and set(arg[1:]) <= _PUSH_SHORT_PLAIN:
+            delete = delete or "d" in arg
+            continue
+        return f"push {arg} is not an option vrg-git can judge a push with"
+    repository = positionals[0] if positionals else repo_option
+    refspecs: list[tuple[str, str | None]] = []
+    words = positionals[1:]
+    index = 0
+    while index < len(words):
+        word = words[index]
+        index += 1
+        if word == "tag" and not delete:
+            if index >= len(words):
+                return "push refspec 'tag' needs a tag name"
+            refspecs.append((f"refs/tags/{words[index]}", f"refs/tags/{words[index]}"))
+            index += 1
+            continue
+        parsed = _parse_refspec(word, delete=delete)
+        if isinstance(parsed, str):
+            return parsed
+        refspecs.append(parsed)
+    return _PushArgs(repository=repository, refspecs=tuple(refspecs), leases=tuple(leases))
+
+
+def _parse_refspec(refspec: str, *, delete: bool) -> tuple[str, str | None] | str:
+    """``(source, destination)`` of one push *refspec*, or why it cannot be read.
+
+    A delete (``:<dst>``, or any refspec under ``--delete``) has an empty
+    source. A refspec naming only a source has the destination ``None``. A
+    wildcard, a negative or matching refspec, more than one ``:`` and an
+    empty destination cannot be read.
+    """
+    unreadable = f"push refspec '{refspec}' cannot be parsed, so vrg-git cannot judge it"
+    spec = refspec.removeprefix("+")
+    if not spec or spec.startswith("^") or "*" in spec or spec.count(":") > 1 or spec == ":":
+        return unreadable
+    src, sep, dst = spec.partition(":")
+    if delete:
+        return unreadable if sep or spec != refspec else ("", src)
+    if sep and not dst:
+        return unreadable
+    return (src, dst) if sep else (src, None)
+
+
+def _ref_candidates(name: str) -> set[str]:
+    """Every full ref name git may resolve the short or full ref *name* to."""
+    if name.startswith("refs/"):
+        return {name}
+    return {name, f"refs/{name}", f"refs/tags/{name}", f"refs/heads/{name}"}
+
+
+def _branch_candidates(name: str) -> set[str]:
+    """Every branch name the destination *name* may be (none for a non-branch ref)."""
+    if name.startswith("refs/heads/"):
+        return {name.removeprefix("refs/heads/")}
+    if name.startswith("refs/"):
+        return set()
+    found = {name}
+    if name.startswith("heads/"):
+        found.add(name.removeprefix("heads/"))
+    return found
+
+
+def _lock_refusal(names: list[str]) -> str | None:
+    """Refuse when any of *names* may be a ref under ``refs/vergil/release-lock``."""
+    for name in names:
+        if any(ref.startswith(_RELEASE_LOCK_PREFIX) for ref in _ref_candidates(name)):
+            return (
+                f"vrg-git: the push to {name} is refused: refs under {_RELEASE_LOCK_PREFIX} "
+                "(the release lock, its history and its arming refs) are written only by "
+                "the tooling, never by a push through vrg-git. There is no bypass."
+            )
+    return None
+
+
+def _git_read(*args: str, ok: tuple[int, ...] = (0,)) -> str:
+    """Stripped stdout of a local ``git *args`` read.
+
+    An exit status outside *ok* raises :class:`subprocess.CalledProcessError`,
+    which the caller turns into a refusal (it never reads as an empty answer).
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in ok:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
+    return result.stdout.strip()
+
+
+def _current_branch() -> str | None:
+    """The checked-out branch, or None on a detached HEAD."""
+    branch = _git_read("symbolic-ref", "-q", "--short", "HEAD", ok=(0, 1))
+    return branch or None
+
+
+def _remote_push_refspecs(remote: str) -> list[str]:
+    """``remote.<remote>.push``, which changes where a source-only refspec lands."""
+    return _git_read("config", "--get-all", f"remote.{remote}.push", ok=(0, 1)).split()
+
+
+def _bare_push_destination(repository: str | None) -> tuple[str, str] | str:
+    """``(remote, destination ref)`` a bare push resolves to, or why it cannot be told.
+
+    The current branch's push target (``@{push}``), falling back to its
+    upstream. A push that may also push other refs (``remote.<r>.push`` set,
+    ``push.default=matching``) cannot be judged by one destination and is
+    refused, as is one named to a remote other than the one it resolves to.
+    """
+    branch = _current_branch()
+    if branch is None:
+        return "a bare push on a detached HEAD has no destination vrg-git can judge"
+    fields = _git_read(
+        "for-each-ref",
+        "--format=%(push)%00%(push:remotename)%00%(upstream:remotename)%00%(upstream:remoteref)",
+        f"refs/heads/{branch}",
+    ).split("\0")
+    if len(fields) != 4:  # noqa: PLR2004
+        return f"the push target of {branch} cannot be read"
+    push_ref, push_remote, up_remote, up_ref = fields
+    tracking = f"refs/remotes/{push_remote}/"
+    resolved: tuple[str, str] | None = None
+    if push_remote and push_ref.startswith(tracking):
+        resolved = (push_remote, "refs/heads/" + push_ref.removeprefix(tracking))
+    elif up_remote and up_ref:
+        resolved = (up_remote, up_ref)
+    if resolved is None:
+        return f"{branch} has no push target or upstream, so a bare push has no destination"
+    if repository is not None and repository != resolved[0]:
+        return f"a bare push to {repository} does not go to {branch}'s push remote {resolved[0]}"
+    if _remote_push_refspecs(resolved[0]):
+        return f"remote.{resolved[0]}.push is set, so a bare push may push other refs too"
+    if _git_read("config", "--get", "push.default", ok=(0, 1)) == "matching":
+        return "push.default is matching, so a bare push pushes every matching branch"
+    return resolved
+
+
+def _is_local_target(url: str) -> bool:
+    """True for a push target on this machine, where no PR lives."""
+    return url == "." or url.startswith(("file://", "/")) or Path(url).is_dir()
+
+
+def _push_target(remote: str | None) -> str | None:
+    """Where the push goes: ``"origin"``, ``"local"``, or a refusal for anywhere else.
+
+    The open-PR lookup reads ``origin``'s repository, so a push to another
+    GitHub repository, or to a URL that names no repository vrg-git can
+    recognize, cannot be judged and is refused. A local target holds no PR.
+    """
+    remote = remote or "origin"
+    names = _git_read("remote").split()
+    url = _git_read("remote", "get-url", "--push", remote) if remote in names else remote
+    if _is_local_target(url):
+        return "local"
+    target = github.github_remote_repo(url)
+    if target is not None and target == github.github_remote_repo(
+        _git_read("remote", "get-url", "origin")
+    ):
+        return "origin"
+    return (
+        f"vrg-git: the push to {remote} is refused: it is not origin's GitHub repository, "
+        "so vrg-git cannot tell whether its destination is an open PR's branch."
+    )
+
+
+def _resolve_destinations(spec: _PushArgs) -> tuple[str | None, list[str]] | str:
+    """The remote and every destination ref name the push writes, or why they cannot be told."""
+    if not spec.refspecs:
+        found = _bare_push_destination(spec.repository)
+        if isinstance(found, str):
+            return found
+        return found[0], [found[1]]
+    remote = spec.repository
+    configured = remote is not None and bool(_remote_push_refspecs(remote))
+    dests: list[str] = []
+    for src, dst in spec.refspecs:
+        if dst is not None:
+            dests.append(dst)
+        elif configured:
+            return f"remote.{remote}.push is set, so '{src}' alone may land on another ref"
+        elif src in ("HEAD", "@"):
+            branch = _current_branch()
+            if branch is None:
+                return f"'{src}' on a detached HEAD has no destination vrg-git can judge"
+            dests.append(f"refs/heads/{branch}")
+        else:
+            dests.append(src)
+    return remote, dests
+
+
+def _open_pr_refusal(branches: set[str]) -> str | None:
+    """Refuse when any of *branches* is the branch of an open PR into ``develop``."""
+    for branch in sorted(branches):
+        try:
+            pr_url = pr_path.open_develop_pr_url(branch)
+        except pr_path.PRPathError as exc:
+            return (
+                f"vrg-git: the push is refused: it cannot be told whether {branch} is the "
+                f"branch of an open PR into develop ({exc}). Fix the cause and push again."
+            )
+        if pr_url is not None:
+            return (
+                f"vrg-git: a plain push to {branch} is refused: it is the branch of an open PR "
+                f"into develop ({pr_url}). Every new head of an open PR goes through the one PR "
+                "path, which judges it before it pushes it: push it with `vrg-submit-pr --push` "
+                "(add --force-with-lease for a rebased head)."
+            )
+    return None
+
+
+def _check_push_destinations(args: list[str]) -> str | None:
+    """Refuse a push to a release-lock ref or to an open develop PR's branch (spec §5.4).
+
+    Every destination the push's refspecs name is judged, not only the
+    current branch's, and a bare push by the destination it resolves to. A
+    push under ``refs/vergil/release-lock`` is always refused, a delete and a
+    lease create included. A push to the branch of an open PR into
+    ``develop`` is refused, naming ``vrg-submit-pr --push``. There is no
+    bypass (no environment variable, flag or marker), and it fails closed:
+    when the refspecs or the state it judges by cannot be read, it refuses,
+    naming why. The path's own push goes through ``lib.git``, never here.
+    """
+    spec = _parse_push_args(args)
+    if isinstance(spec, str):
+        return f"vrg-git: the push is refused: {spec}."
+    named = [dst if dst is not None else src for src, dst in spec.refspecs]
+    lock = _lock_refusal(named + [lease for lease in spec.leases if lease])
+    if lock is not None:
+        return lock
+    return _check_open_pr_push(spec)
+
+
+def _check_open_pr_push(spec: _PushArgs) -> str | None:
+    """Resolve *spec*'s destinations and refuse one that is an open develop PR's branch."""
+    try:
+        resolved = _resolve_destinations(spec)
+        if isinstance(resolved, str):
+            return f"vrg-git: the push is refused: {resolved}."
+        remote, dests = resolved
+        lock = _lock_refusal(dests)
+        if lock is not None:
+            return lock
+        branches: set[str] = set()
+        for dst in dests:
+            branches |= _branch_candidates(dst)
+        if not branches:
+            return None
+        target = _push_target(remote)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return (
+            f"vrg-git: the push is refused: its destination could not be read ({error_text(exc)})."
+        )
+    if target == "local":
+        return None
+    if target != "origin":
+        return target
+    return _open_pr_refusal(branches)
+
+
 def _run_network_with_retry(
     argv: list[str], env: dict[str, str] | None
 ) -> subprocess.CompletedProcess[str]:
@@ -1494,6 +1898,11 @@ def _print_help() -> None:
         "  - Freeze: a push or a local rewrite is refused once the branch was\n"
         "    reported ready\n"
         "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
+        "  - Open PRs: a plain push to the branch of an open PR into develop is\n"
+        "    refused (push it with vrg-submit-pr --push), judged on every\n"
+        "    destination the refspecs name (a bare push by its @{push} target,\n"
+        "    else its upstream); an unparseable refspec or a failed PR lookup\n"
+        "    refuses it. A push under refs/vergil/release-lock is always refused.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"
         "    the resolved identity mode (see vrg-whoami).\n"
         "\n"

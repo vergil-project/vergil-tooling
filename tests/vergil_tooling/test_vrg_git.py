@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from vergil_tooling.bin import vrg_git
 from vergil_tooling.bin.vrg_git import (
     _check_issue_is_open_task,
     _check_local_rewrite,
@@ -53,6 +54,20 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
     fake = trust_stubs.FakeItems()
     monkeypatch.setattr(github, "graphql", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _no_open_pr_lookup(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every push passes the open-PR check, unless the test asks for the real one.
+
+    The check resolves the push's destination with git and looks the PR up
+    on GitHub; the tests of other push rules mock ``subprocess.run`` whole,
+    so they would only see it fail closed. A test of the check itself takes
+    the ``open_prs`` fixture, which keeps the real one. The release-lock and
+    refspec refusals are pure parsing and always run.
+    """
+    if "open_prs" not in request.fixturenames:
+        monkeypatch.setattr(vrg_git, "_check_open_pr_push", lambda _spec: None)
 
 
 # -- no arguments -------------------------------------------------------------
@@ -1062,6 +1077,402 @@ def test_frozen_push_at_reported_commit_refuses_other_refspecs(
     assert "FROZEN" in err
     assert "vrg-git push -u origin feature/42-x" in err
     mock_run.assert_not_called()
+
+
+# -- a plain push to an open develop PR's branch, and the lock refs ----------
+#
+# Spec §5.4 of epic vergil-project/.github#1664 (plan Task 14). These run real
+# git in a clone whose origin is a GitHub URL that is never contacted: the
+# network push is recorded, and the PR lookup is the real
+# ``pr_path.open_develop_pr_url`` over a stubbed ``trust.prs_for_branch``.
+
+_ORIGIN_URL = "https://github.com/org/repo.git"
+_PR_URL = "https://github.com/org/repo/pull/{}"
+
+
+class _OpenPRs:
+    """The PRs GitHub holds, by head branch, and every lookup and push the guard made."""
+
+    def __init__(self) -> None:
+        self.prs: dict[str, tuple[str, str]] = {}  # branch -> (state, base)
+        self.error: Exception | None = None
+        self.lookups: list[str] = []
+        self.pushed: list[list[str]] = []
+
+    def prs_for_branch(
+        self, repo: str, branch: str, *, state: str
+    ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+        assert repo == _REPO
+        assert state == "open"
+        self.lookups.append(branch)
+        if self.error is not None:
+            raise self.error
+        if branch not in self.prs:
+            return [], []
+        pr_state, base = self.prs[branch]
+        ref = trust.PRRef(
+            number=7,
+            url=_PR_URL.format(7),
+            title="t",
+            head=branch,
+            head_oid="a" * 40,
+            base=base,
+            author_role=trust.Role.AGENTS,
+            state=pr_state,
+        )
+        return [ref], []
+
+    def run(
+        self, argv: list[str], _env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        self.pushed.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+
+@pytest.fixture
+def open_prs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _OpenPRs:
+    """A clone on ``feature/1-a``, tracking ``origin/feature/1-a``, with a GitHub origin."""
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "remote", "add", "origin", _ORIGIN_URL)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature/1-a")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "work")
+    _git(repo, "update-ref", "refs/remotes/origin/feature/1-a", "HEAD")
+    _git(repo, "branch", "-q", "--set-upstream-to=origin/feature/1-a")
+    monkeypatch.chdir(repo)
+    state = _OpenPRs()
+    monkeypatch.setattr(vrg_git.pr_path.trust, "prs_for_branch", state.prs_for_branch)
+    monkeypatch.setattr(vrg_git, "_run_network_with_retry", state.run)
+    monkeypatch.setattr(vrg_git.github, "get_installation_token", lambda _org=None: None)
+    return state
+
+
+def _refused(argv: list[str], state: _OpenPRs, capsys: pytest.CaptureFixture[str]) -> str:
+    """Run *argv*, check it was refused with nothing pushed, and return its stderr."""
+    rc = main(argv)
+    err = capsys.readouterr().err
+    assert rc == 1, err
+    assert state.pushed == []
+    return err
+
+
+def test_push_to_open_develop_pr_branch_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    open_prs.prs["feature/1-a"] = ("OPEN", "develop")
+
+    for argv in (
+        ["push", "origin", "feature/1-a"],
+        ["push", "-u", "origin", "HEAD"],
+        ["push", "--force-with-lease", "origin", "HEAD:refs/heads/feature/1-a"],
+    ):
+        err = _refused(argv, open_prs, capsys)
+        assert "vrg-submit-pr --push" in err
+        assert _PR_URL.format(7) in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "origin", "HEAD:feature/2-b"],
+        ["push", "origin", "+HEAD:refs/heads/feature/2-b"],
+        ["push", "origin", "feature/1-a", "HEAD:feature/2-b"],
+        ["push", "origin", "feature/2-b"],
+        ["push", "origin", ":feature/2-b"],
+        ["push", "--delete", "origin", "feature/2-b"],
+    ],
+)
+def test_push_refspec_naming_other_open_pr_branch_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    # The current branch, feature/1-a, has no PR; the refspec names another
+    # branch's, which this worktree does not hold.
+    open_prs.prs["feature/2-b"] = ("OPEN", "develop")
+
+    err = _refused(argv, open_prs, capsys)
+    assert "feature/2-b" in err
+    assert "vrg-submit-pr --push" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "origin", "refs/heads/*:refs/heads/*"],
+        ["push", "origin", ":"],
+        ["push", "origin", "a:b:c"],
+        ["push", "origin", "HEAD:"],
+        ["push", "origin", "^refs/heads/x"],
+        ["push", "origin", "+"],
+        ["push", "origin", "tag"],
+        ["push", "--delete", "origin", "a:b"],
+        ["push", "--all", "origin"],
+        ["push", "--mirror", "origin"],
+        ["push", "--prune", "origin", "feature/1-a"],
+        ["push", "--recurse-submodules=on-demand", "origin", "feature/1-a"],
+        ["push", "--no-such-option", "origin", "feature/1-a"],
+        ["push", "-o"],
+    ],
+)
+def test_unparseable_refspec_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    err = _refused(argv, open_prs, capsys)
+    assert "judge" in err or "needs a" in err
+    assert open_prs.lookups == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "origin", "feature/1-a"],
+        ["push", "-u", "origin", "HEAD"],
+        ["push", "-uq", "origin", "@"],
+        ["push", "-o", "ci.skip", "origin", "HEAD:feature/1-a"],
+        ["push", "--push-option=x", "--repo=origin", "origin", "refs/heads/feature/1-a"],
+    ],
+)
+def test_push_of_branch_with_no_pr_allowed(open_prs: _OpenPRs, argv: list[str]) -> None:
+    open_prs.prs["feature/1-a"] = ("OPEN", "main")  # a PR into another base is no bar
+
+    assert main(argv) == 0
+    assert open_prs.pushed == [argv]
+    assert open_prs.lookups == ["feature/1-a"]
+
+
+def test_push_to_branch_with_closed_pr_allowed(open_prs: _OpenPRs) -> None:
+    open_prs.prs["feature/1-a"] = ("CLOSED", "develop")
+
+    assert main(["push", "origin", "feature/1-a"]) == 0
+    assert open_prs.pushed == [["push", "origin", "feature/1-a"]]
+
+
+def test_push_of_a_tag_makes_no_lookup(open_prs: _OpenPRs) -> None:
+    assert main(["push", "origin", "tag", "v1.0.0"]) == 0
+    assert main(["push", "origin", "refs/tags/v1.0.0"]) == 0
+    assert open_prs.lookups == []
+
+
+def test_pr_lookup_failure_refuses(open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]) -> None:
+    open_prs.error = trust.TrustReadError("prs_for_branch org/repo feature/1-a", "HTTP 502")
+
+    err = _refused(["push", "origin", "feature/1-a"], open_prs, capsys)
+    assert "cannot be told whether feature/1-a" in err
+    assert "HTTP 502" in err
+
+
+def test_push_to_another_github_repository_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for remote in ("https://github.com/org/other.git", "gh:org/repo"):
+        err = _refused(["push", remote, "HEAD:feature/9-z"], open_prs, capsys)
+        assert "not origin's GitHub repository" in err
+    assert open_prs.lookups == []
+
+
+def test_push_to_a_local_target_makes_no_lookup(open_prs: _OpenPRs, tmp_path: Path) -> None:
+    bare = tmp_path / "bare.git"
+    _git(tmp_path, "init", "-q", "--bare", str(bare))
+
+    assert main(["push", str(bare), "HEAD:feature/1-a"]) == 0
+    assert open_prs.lookups == []
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        "VRG_ALLOW_PUSH",
+        "VRG_SKIP_PUSH_GUARD",
+        "VRG_GIT_BYPASS",
+        "VRG_NO_VERIFY",
+        "VERGIL_BYPASS",
+        "VRG_RELEASE_LOCK_HOLDER",
+    ],
+)
+def test_no_env_or_flag_bypass(
+    open_prs: _OpenPRs,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    env: str,
+) -> None:
+    open_prs.prs["feature/1-a"] = ("OPEN", "develop")
+    monkeypatch.setenv(env, "1")
+
+    for argv in (
+        ["push", "origin", "feature/1-a"],
+        ["push", "--no-verify", "origin", "feature/1-a"],
+        ["push", "-o", "bypass", "origin", "feature/1-a"],
+        ["push", "--force-with-lease", "--force-if-includes", "origin", "feature/1-a"],
+        ["push", "--atomic", "--porcelain", "origin", "feature/1-a"],
+        ["push", "origin", "HEAD:refs/vergil/release-lock"],
+    ):
+        _refused(argv, open_prs, capsys)
+
+
+def test_path_push_does_not_use_wrapper() -> None:
+    # The path's own push (vrg-submit-pr --push) goes through lib.git, so
+    # this refusal never stands in its way; it must never shell out to
+    # vrg-git or import the wrapper.
+    import ast
+    import inspect
+
+    from vergil_tooling.lib import pr_path
+
+    source = inspect.getsource(pr_path)
+    tree = ast.parse(source)
+    imported = {
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    } | {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    assert not any("vrg_git" in name or name.startswith("vergil_tooling.bin") for name in imported)
+    strings = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    assert not any("vrg-git" in s for s in strings[1:])  # the module docstring may name it
+    func = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "push_to_open_pr"
+    )
+    pushes = [
+        node
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "git.run"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "push"
+    ]
+    assert len(pushes) == 1
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["push"], ["push", "--force-with-lease"], ["push", "origin"], ["push", "-u", "-q"]],
+)
+def test_bare_push_of_branch_with_no_pr_allowed(open_prs: _OpenPRs, argv: list[str]) -> None:
+    assert main(argv) == 0
+    assert open_prs.pushed == [argv]
+    assert open_prs.lookups == ["feature/1-a"]
+
+
+def test_bare_push_to_open_pr_branch_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    open_prs.prs["feature/1-a"] = ("OPEN", "develop")
+
+    for argv in (["push"], ["push", "--force-with-lease"], ["push", "origin"]):
+        err = _refused(argv, open_prs, capsys)
+        assert "vrg-submit-pr --push" in err
+
+
+def test_bare_push_resolves_to_its_upstream(open_prs: _OpenPRs) -> None:
+    # A branch tracking another name (push.default=upstream) is judged by
+    # the branch it pushes to.
+    _git(Path.cwd(), "config", "push.default", "upstream")
+    _git(Path.cwd(), "branch", "-q", "--set-upstream-to=origin/develop")
+
+    assert main(["push"]) == 0
+    assert open_prs.lookups == ["develop"]
+
+
+@pytest.mark.parametrize(
+    ("setup", "argv", "expected"),
+    [
+        (("checkout", "-q", "--detach"), ["push"], "detached HEAD"),
+        (("checkout", "-q", "--detach"), ["push", "origin", "HEAD"], "detached HEAD"),
+        (("branch", "-q", "--unset-upstream"), ["push"], "no push target or upstream"),
+        (("config", "remote.origin.push", "refs/heads/*:refs/heads/x/*"), ["push"], "push is set"),
+        (
+            ("config", "remote.origin.push", "refs/heads/a:refs/heads/b"),
+            ["push", "origin", "feature/1-a"],
+            "push is set",
+        ),
+        (("config", "push.default", "matching"), ["push"], "matching"),
+        (("remote", "add", "fork", "https://github.com/org/repo.git"), ["push", "fork"], "fork"),
+    ],
+)
+def test_bare_push_unresolvable_destination_refused(
+    open_prs: _OpenPRs,
+    capsys: pytest.CaptureFixture[str],
+    setup: tuple[str, ...],
+    argv: list[str],
+    expected: str,
+) -> None:
+    open_prs.pushed.clear()
+    _git(Path.cwd(), *setup)
+
+    err = _refused(argv, open_prs, capsys)
+    assert expected in err
+    assert open_prs.lookups == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "origin", ":refs/vergil/release-lock"],
+        ["push", "origin", "+:refs/vergil/release-lock"],
+        ["push", "--delete", "origin", "refs/vergil/release-lock"],
+        ["push", "-d", "origin", "vergil/release-lock"],
+        ["push", "origin", ":vergil/release-lock-history"],
+    ],
+)
+def test_lock_ref_delete_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    err = _refused(argv, open_prs, capsys)
+    assert "refs/vergil/release-lock" in err
+    assert "no bypass" in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "--force-with-lease=refs/vergil/release-lock:", "origin", "HEAD:refs/vergil/release-lock"],
+        ["push", "--force-with-lease=refs/vergil/release-lock:", "origin", "feature/1-a"],
+        ["push", "--force-with-lease=vergil/release-lock", "origin", "feature/1-a"],
+    ],
+)
+def test_lock_ref_lease_create_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    err = _refused(argv, open_prs, capsys)
+    assert "refs/vergil/release-lock" in err
+    assert open_prs.lookups == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["push", "origin", "HEAD:refs/vergil/release-lock-arming/12"],
+        ["push", "origin", "refs/vergil/release-lock-arming/12"],
+        ["push", "origin", "HEAD:refs/vergil/release-lock-history"],
+        ["push", "origin", "HEAD:refs/vergil/release-lock"],
+        ["push", "origin", "feature/1-a", "HEAD:vergil/release-lock-arming/3"],
+    ],
+)
+def test_arming_ref_write_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    err = _refused(argv, open_prs, capsys)
+    assert "only by the tooling" in err
+    assert open_prs.lookups == []
+
+
+def test_lock_ref_refused_to_a_local_target_too(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _refused(["push", ".", "HEAD:refs/vergil/release-lock"], open_prs, capsys)
 
 
 def test_rebase_normal_allowed() -> None:
