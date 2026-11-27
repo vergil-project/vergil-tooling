@@ -19,7 +19,10 @@ one rule to the change from the merge base of *base* and *head* to *head*:
   `` (#<N>)``, is covered on that issue by its
   :func:`~vergil_tooling.lib.change_fingerprint.commit_fingerprint` and the
   branch holds no other commit (an unfolded ``fixup!`` or a later fix is
-  covered only as part of the whole change).
+  covered only as part of the whole change). The commits are covered in
+  order as a chain (spec §5.4): commit k's covering record or approved
+  exemption must be at or after the review of commit k-1, so a changed
+  earlier commit voids every later record until it is reviewed again.
 
 **Fail closed.** Every lookup failure (an unreadable ref, diff,
 comment stream or configured login) gives ``ok=False`` with the error as
@@ -39,6 +42,7 @@ first, the one shared test of that.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import trust
@@ -62,6 +66,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
+    from vergil_tooling.lib.merge_review.record import Record
     from vergil_tooling.lib.rulings.approvals import Approval
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
@@ -153,21 +158,32 @@ class _Lookups:
     def __init__(self, authors: TrustedAuthors) -> None:
         self.authors = authors
         self._approvals: dict[str, list[Approval]] = {}
-        self._records: dict[str, frozenset[str]] = {}
+        self._records: dict[str, list[Record]] = {}
 
     def approvals(self, ref: str) -> list[Approval]:
         if ref not in self._approvals:
             self._approvals[ref] = verified_approvals(ref, authors=self.authors)
         return self._approvals[ref]
 
-    def covers(self, ref: str, fingerprint: str) -> bool:
-        """Whether a record or an exemption on *ref* covers *fingerprint*."""
+    def found(self, ref: str) -> list[Record]:
         if ref not in self._records:
-            found = records(ref, authors=self.authors)
-            self._records[ref] = frozenset(record.fingerprint for record in found)
-        if fingerprint in self._records[ref]:
+            self._records[ref] = records(ref, authors=self.authors)
+        return self._records[ref]
+
+    def covers(self, ref: str, fingerprint: str) -> bool:
+        """Whether a record or an exemption on *ref* covers *fingerprint*, whenever it was given."""
+        if any(record.fingerprint == fingerprint for record in self.found(ref)):
             return True
-        return fingerprint in {a.fingerprint for a in self.approvals(ref)}
+        return any(approval.fingerprint == fingerprint for approval in self.approvals(ref))
+
+    def entries(self, ref: str) -> list[tuple[str, str]]:
+        """Each ``(fingerprint, at)`` a record or an approved exemption on *ref* holds.
+
+        *at* is the time the record was posted, or the approving reply was: ISO 8601.
+        """
+        found = [(record.fingerprint, record.at) for record in self.found(ref)]
+        approved = [(approval.fingerprint, approval.at) for approval in self.approvals(ref)]
+        return found + approved
 
 
 def _resolve_refs(issue_refs: list[str], change: str) -> tuple[list[str], list[str]]:
@@ -208,6 +224,70 @@ def _issue_commit(commits: list[tuple[str, str]], ref: str) -> tuple[str | None,
     return own[0], None
 
 
+def _moment(value: str, ref: str) -> datetime:
+    """The time *value* (ISO 8601) a record or approval on *ref* was posted, read strictly."""
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError as exc:
+        msg = f"the time {value!r} of a record or approval on {ref} is not ISO 8601"
+        raise RecordError(msg) from exc
+    if moment.tzinfo is None:
+        msg = f"the time {value!r} of a record or approval on {ref} has no time zone"
+        raise RecordError(msg)
+    return moment
+
+
+def _review_time(
+    lookups: _Lookups, ref: str, fingerprint: str, after: datetime | None
+) -> datetime | None:
+    """The earliest time, at or after *after*, a record or approval on *ref* covers *fingerprint*.
+
+    ``None`` when none does. Every time on *ref* is read, so a malformed one
+    fails the lookup rather than being skipped.
+    """
+    timed = [(fp, _moment(at, ref)) for fp, at in lookups.entries(ref)]
+    eligible = [
+        moment
+        for fp, moment in timed
+        if fp == fingerprint and (after is None or moment >= after)
+    ]
+    return min(eligible, default=None)
+
+
+def _uncovered_reason(
+    lookups: _Lookups,
+    ref: str,
+    sha: str,
+    subject: str,
+    fingerprint: str,
+    whole: str,
+    anchor: str | None,
+) -> str:
+    """Why batch commit *sha* on *ref* is uncovered, given the commit *anchor* whose review bounds it.
+
+    *anchor* is ``None`` only for the batch's first commit, which has no earlier
+    review to be after. Past a chain break, *anchor* is the commit where the
+    chain broke.
+    """
+    if anchor is None:
+        return (
+            f"merge review: no merge-review record or approved exemption on {ref}"
+            f" covers its commit {sha[:12]} (fingerprint {fingerprint}),"
+            f" and none on the batch covers the whole change ({whole})"
+        )
+    if lookups.covers(ref, fingerprint):
+        return (
+            f"merge review: commit {sha[:12]} ({subject}) is uncovered: its record on {ref}"
+            f" (fingerprint {fingerprint}) predates the review of commit {anchor[:12]};"
+            " it must be reviewed again"
+        )
+    return (
+        f"merge review: no merge-review record or approved exemption on {ref} covers its"
+        f" commit {sha[:12]} (fingerprint {fingerprint}) after the review of commit"
+        f" {anchor[:12]}, and none on the batch covers the whole change ({whole})"
+    )
+
+
 def _merge_review_reasons(
     repo: Path, base: str, head: str, refs: list[str], lookups: _Lookups
 ) -> list[str]:
@@ -220,8 +300,16 @@ def _merge_review_reasons(
             f" on {refs[0]} covers the change (fingerprint {whole}); run merge review"
         ]
     commits = branch_commits(repo, base, head)
+    subjects = dict(commits)
     reasons: list[str] = []
     claimed: set[str] = set()
+    # The chain (spec 5.4), walked in the batch's order. ``bound`` is c(k-1), the
+    # earliest review of the previous commit, and ``anchor`` the commit it is of.
+    # Once one commit is uncovered, ``broke`` names it and every later commit is
+    # uncovered too.
+    bound: datetime | None = None
+    anchor: str | None = None
+    broke: str | None = None
     for ref in refs:
         sha, problem = _issue_commit(commits, ref)
         if sha is None:
@@ -229,12 +317,20 @@ def _merge_review_reasons(
             continue
         claimed.add(sha)
         fingerprint = commit_fingerprint(repo, sha)
-        if not lookups.covers(ref, fingerprint):
-            reasons.append(
-                f"merge review: no merge-review record or approved exemption"
-                f" on {ref} covers its commit {sha[:12]} (fingerprint {fingerprint}),"
-                f" and none on the batch covers the whole change ({whole})"
+        if broke is None:
+            covered_at = _review_time(lookups, ref, fingerprint, bound)
+            if covered_at is not None:
+                bound, anchor = covered_at, sha
+                continue
+            broke = sha
+            reason_anchor = anchor
+        else:
+            reason_anchor = broke
+        reasons.append(
+            _uncovered_reason(
+                lookups, ref, sha, subjects[sha], fingerprint, whole, reason_anchor
             )
+        )
     reasons += [
         f"merge review: commit {sha[:12]} ({subject}) is no issue's own commit, so only a"
         f" record or exemption covering the whole change ({whole}) covers it"
