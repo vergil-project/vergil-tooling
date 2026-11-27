@@ -57,6 +57,16 @@ def delete(repo: str, pr: int, *, expected: str) -> bool:
         return refs.write_ref(where, ref, new=None, expected=expected)
 
 
+def current(repo: str, pr: int) -> str | None:
+    """The sha PR *pr*'s arming ref has on *repo*, ``None`` when it is absent.
+
+    Raises :class:`RefReadError` when whether it is present cannot be told.
+    """
+    ref = arming_ref(pr)
+    with refs.scratch(repo, RefReadError) as where:
+        return refs.remote_sha(where, ref)
+
+
 def list_arming(repo: str) -> dict[int, str]:
     """Every arming ref on *repo*, PR number to sha, whoever wrote it.
 

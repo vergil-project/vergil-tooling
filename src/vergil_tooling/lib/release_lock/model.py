@@ -28,6 +28,12 @@ ARM_CALL_BOUND_SECS = 60
 ARMING_WAIT_BOUND_SECS = 900
 #: How often the release lists the arming refs while it waits on them.
 ARMING_POLL_SECS = 5
+#: An arm call that finds another caller's arming ref waits this long, in all, for
+#: the PR to be armed or merged, the ref to go, or the ref to go stale: long enough
+#: to see one value unchanged for the arming expiry, with an arm call's bound to spare.
+ARMING_COLLISION_WAIT_SECS = ARMING_EXPIRY_SECS + ARM_CALL_BOUND_SECS
+#: How often that wait reads the PR's auto-merge state and its arming ref.
+ARMING_COLLISION_POLL_SECS = 10
 #: The watch's poll interval while the lock is held by a broken release.
 BROKEN_WATCH_POLL_SECS = 300
 

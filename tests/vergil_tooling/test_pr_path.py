@@ -42,6 +42,9 @@ from vergil_tooling.lib.release_lock import arming
 from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock.model import (
     ARM_CALL_BOUND_SECS,
+    ARMING_COLLISION_POLL_SECS,
+    ARMING_COLLISION_WAIT_SECS,
+    ARMING_EXPIRY_SECS,
     LockRecord,
     RefReadError,
     RefWriteError,
@@ -55,6 +58,8 @@ if TYPE_CHECKING:
 
 PR = "https://github.com/o/r/pull/7"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
+#: Another caller's arming ref for PR 7.
+OTHER = "f" * 40
 OTHER_HEAD = "fedcba9876543210fedcba9876543210fedcba98"
 HUMAN = "human"
 AGENT = "human-vergil-user"
@@ -255,18 +260,24 @@ class FakeLock:
     A test that reads the order of the handshake shares *events* with
     :class:`FakeGitHub`'s (``fake.events = lock.events``). *on_create*
     runs right after a create lands (a release taking the lock then, say).
+    Another caller's ref is a value already in *arming* (:data:`OTHER`), so
+    the create collides with it. *on_current* runs before each read of the
+    ref (another caller renewing or deleting it), *on_renew* before each
+    renewal.
     """
 
     record: LockRecord | None = None
     unreadable: str = ""
     read_error: str = ""
     arming: dict[int, str] = field(default_factory=dict)
-    collides: bool = False
     renew_finds_gone: bool = False
     write_error: str = ""
     renew_error: str = ""
     delete_error: str = ""
+    current_error: str = ""
     on_create: Callable[[], None] | None = None
+    on_current: Callable[[], None] | None = None
+    on_renew: Callable[[], None] | None = None
     events: list[str] = field(default_factory=list)
     serial: int = 0
 
@@ -290,18 +301,29 @@ class FakeLock:
         self.events.append("create")
         if self.write_error:
             raise RefWriteError(self.write_error)
-        if self.collides:
+        if pr in self.arming:
             return None
         self.arming[pr] = self._sha()
         if self.on_create is not None:
             self.on_create()
         return self.arming[pr]
 
+    def current(self, repo: str, pr: int) -> str | None:
+        assert (repo, pr) == ("o/r", 7)
+        self.events.append("current")
+        if self.current_error:
+            raise RefReadError(self.current_error)
+        if self.on_current is not None:
+            self.on_current()
+        return self.arming.get(pr)
+
     def renew(self, repo: str, pr: int, *, expected: str) -> str | None:
         assert (repo, pr) == ("o/r", 7)
         self.events.append("renew")
         if self.renew_error:
             raise RefWriteError(self.renew_error)
+        if self.on_renew is not None:
+            self.on_renew()
         if self.renew_finds_gone:
             self.arming.pop(pr, None)
         if self.arming.get(pr) != expected:
@@ -327,7 +349,7 @@ def lock(monkeypatch: pytest.MonkeyPatch) -> FakeLock:
     """A free release lock by default: every arm makes the handshake against this fake."""
     fake_lock = FakeLock()
     monkeypatch.setattr(lock_refs, "read_lock", fake_lock.read_lock)
-    for name in ("create", "renew", "delete"):
+    for name in ("create", "current", "renew", "delete"):
         monkeypatch.setattr(arming, name, getattr(fake_lock, name))
     return fake_lock
 
@@ -933,21 +955,29 @@ def test_arm_create_collision_waits_for_other_caller(
     fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
 ) -> None:
     fake.events = lock.events
-    lock.collides = True
+    lock.arming = {7: OTHER}
     fake.other_arms_after = 2
 
     result = arm(PR, clone=clone)
 
     assert result == ArmResult(outcome="armed", pr_url=PR, head=HEAD, method="SQUASH")
-    assert lock.events == ["create", "read_auto_merge", "read_auto_merge", "read_auto_merge"]
+    assert lock.events == [
+        "create",
+        "read_auto_merge",
+        "current",
+        "read_auto_merge",
+        "current",
+        "read_auto_merge",
+    ]
     assert fake.mutations == []
-    assert 0 < no_wait[0] <= ARM_CALL_BOUND_SECS
+    assert no_wait[0] == pytest.approx(2 * ARMING_COLLISION_POLL_SECS)
+    assert lock.arming == {7: OTHER}
 
 
 def test_arm_create_collision_with_merged_pr_is_merged(
     fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
 ) -> None:
-    lock.collides = True
+    lock.arming = {7: OTHER}
     fake.other_merges = True
 
     result = arm(PR, clone=clone)
@@ -957,18 +987,213 @@ def test_arm_create_collision_with_merged_pr_is_merged(
     assert fake.merges == []
 
 
+def test_arm_create_collision_with_closed_pr_raises(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock.arming = {7: OTHER}
+    snapshot = fake.read_json
+
+    def read_json(*args: str) -> object:
+        if args[args.index("--json") + 1] == "state,autoMergeRequest":
+            fake.state = "CLOSED"  # closed while the other caller was arming it
+        return snapshot(*args)
+
+    monkeypatch.setattr(github, "read_json", read_json)
+
+    with pytest.raises(pr_path.ArmingCollisionError, match="and it is closed"):
+        arm(PR, clone=clone)
+
+    assert lock.arming == {7: OTHER}
+    assert fake.mutations == []
+
+
+def _churn(lock: FakeLock) -> None:
+    """Another caller rewrites PR 7's arming ref before every read of it."""
+    lock.arming[7] = lock._sha()  # noqa: SLF001
+
+
 def test_arm_create_collision_still_unarmed_raises(
     fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
 ) -> None:
-    lock.collides = True
+    lock.arming = {7: OTHER}
+    lock.on_current = lambda: _churn(lock)  # a live caller: never stale
 
     with pytest.raises(pr_path.ArmingCollisionError, match="another caller is arming it") as info:
         arm(PR, clone=clone)
 
     assert isinstance(info.value, PRPathError)
-    assert f"still unarmed after {ARM_CALL_BOUND_SECS}s" in str(info.value)
-    assert no_wait[0] == pytest.approx(ARM_CALL_BOUND_SECS)
+    assert f"still unarmed after {ARMING_COLLISION_WAIT_SECS}s" in str(info.value)
+    assert no_wait[0] == pytest.approx(ARMING_COLLISION_WAIT_SECS)
     assert fake.mutations == []
+    assert "renew" not in lock.events
+
+
+# --- a stale arming ref outside a release (vergil-tooling#5324) -------------------
+
+
+def test_arm_takes_over_a_stale_arming_ref_and_arms(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    """A ref left by a crashed caller, or an arm call stopped at its bound."""
+    fake.events = lock.events
+    lock.arming = {7: OTHER}
+
+    result = arm(PR, clone=clone)
+
+    assert result == ArmResult(outcome="armed", pr_url=PR, head=HEAD, method="SQUASH")
+    # Replaced only once seen unchanged for the full expiry, never sooner.
+    assert no_wait[0] == pytest.approx(ARMING_EXPIRY_SECS)
+    tail = lock.events[lock.events.index("renew") - 1 :]
+    assert tail == ["read_lock", "renew", "read_lock", "renew", "enable", "delete"]
+    polls = ARMING_EXPIRY_SECS // ARMING_COLLISION_POLL_SECS + 1
+    assert lock.events.count("read_auto_merge") == polls
+    assert fake.mutations == [{"id": "PR_kw7", "head": HEAD, "method": "SQUASH"}]
+    assert lock.arming == {}
+
+
+def test_arm_stale_ref_change_restarts_the_clock(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.arming = {7: OTHER}
+    reads = [0]
+
+    def renew_once_at_the_third_read() -> None:
+        reads[0] += 1
+        if reads[0] == 3:
+            _churn(lock)
+
+    lock.on_current = renew_once_at_the_third_read
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "armed"
+    # The new value was first seen at the third poll, so expires a full expiry later.
+    assert no_wait[0] == pytest.approx(2 * ARMING_COLLISION_POLL_SECS + ARMING_EXPIRY_SECS)
+
+
+def test_arm_stale_ref_with_lock_held_is_held_and_left(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.arming = {7: OTHER}
+    reads = [0]
+
+    def release_takes_the_lock() -> None:
+        reads[0] += 1
+        if reads[0] == 2:
+            lock.record = _record()
+
+    lock.on_current = release_takes_the_lock
+
+    result = arm(PR, clone=clone)
+
+    assert (result.outcome, result.detail) == ("held", "held for release 2.1.400")
+    assert "renew" not in lock.events
+    assert lock.arming == {7: OTHER}  # the release's wait expires it
+    assert fake.mutations == []
+
+
+def test_arm_stale_ref_changed_at_the_swap_is_not_replaced(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.arming = {7: OTHER}
+    lock.on_renew = lambda: _churn(lock)  # renewed by its writer as the swap goes out
+
+    with pytest.raises(pr_path.ArmingCollisionError, match="still unarmed"):
+        arm(PR, clone=clone)
+
+    assert lock.events.count("renew") == 1
+    assert lock.arming[7] != OTHER
+    assert fake.mutations == []
+
+
+def test_arm_collision_ref_gone_creates_its_own_and_arms(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    """The other caller ended without arming (held, refused or failed) and deleted its ref."""
+    fake.events = lock.events
+    lock.arming = {7: OTHER}
+
+    def other_caller_deletes_its_ref() -> None:
+        lock.arming.pop(7, None)
+
+    lock.on_current = other_caller_deletes_its_ref
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "armed"
+    assert lock.events == [
+        "create",
+        "read_auto_merge",
+        "current",
+        "create",
+        "read_lock",
+        "renew",
+        "enable",
+        "delete",
+    ]
+    assert lock.arming == {}
+    assert no_wait[0] == 0
+
+
+def test_arm_collision_ref_gone_then_a_third_caller_wins_the_create(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock.arming = {7: OTHER}
+    fake.other_arms_after = 2  # the third caller arms it
+    creates = [0]
+    real_create = lock.create
+
+    def create(repo: str, pr: int) -> str | None:
+        creates[0] += 1
+        if creates[0] == 2:
+            lock.arming[pr] = "e" * 40  # the third caller's create lands first
+        return real_create(repo, pr)
+
+    def other_caller_deletes_its_ref() -> None:
+        if lock.arming.get(7) == OTHER:
+            del lock.arming[7]
+
+    monkeypatch.setattr(arming, "create", create)
+    lock.on_current = other_caller_deletes_its_ref
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "armed"
+    assert creates[0] == 2
+    assert "renew" not in lock.events
+    assert fake.mutations == []
+
+
+def test_arm_collision_ref_read_failure_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.arming = {7: OTHER}
+    lock.current_error = "git ls-remote failed"
+
+    with pytest.raises(PRPathError, match="reading its arming ref failed: git ls-remote failed"):
+        arm(PR, clone=clone)
+
+
+def test_arm_stale_ref_swap_failure_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.arming = {7: OTHER}
+    lock.renew_error = "git push failed"
+
+    with pytest.raises(PRPathError, match="replacing its stale arming ref failed: git push failed"):
+        arm(PR, clone=clone)
+
+    assert lock.arming == {7: OTHER}
 
 
 def test_arm_renew_finds_ref_gone_aborts(
@@ -1501,7 +1726,7 @@ def test_arm_collision_state_read_failure_raises(
     lock: FakeLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lock.collides = True
+    lock.arming = {7: OTHER}
     snapshot = fake.read_json
 
     def read_json(*args: str) -> object:
@@ -1522,7 +1747,7 @@ def test_arm_collision_state_read_not_an_object_raises(
     lock: FakeLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lock.collides = True
+    lock.arming = {7: OTHER}
     snapshot = fake.read_json
 
     def read_json(*args: str) -> object:

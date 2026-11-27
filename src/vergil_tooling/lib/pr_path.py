@@ -63,14 +63,22 @@ and then read the lock:
   merge) under :func:`retry.bounded`'s :data:`ARM_CALL_BOUND_SECS`, retries
   included, then delete the ref. A renewal that finds the ref gone is
   ``refused`` with ``arming ref expired``. An arm call stopped at the bound
-  raises and leaves the ref for the release to expire, since the stopped
-  call may still land.
+  raises and leaves the ref, since the stopped call may still land: a
+  release expires it, and so does the next arm of the PR (below).
 - Lock held, or unreadable: delete the ref and report ``held`` (*detail*
   ``held for release <version>``, or the read error), with the PR unarmed.
 - The create finds a ref already there (another caller is arming the PR):
-  the path does not arm, and waits up to :data:`ARM_CALL_BOUND_SECS` for the
-  PR to be armed or merged; still unarmed, it raises
-  :class:`ArmingCollisionError`.
+  the path does not arm while that ref stands, and waits up to
+  :data:`ARMING_COLLISION_WAIT_SECS` for the PR to be armed or merged (its
+  outcome then). If the ref goes meanwhile, it creates its own and goes on
+  through the handshake. If the ref is **stale**, its value seen unchanged
+  by this wait for :data:`ARMING_EXPIRY_SECS` while the PR stayed open and
+  unarmed (a caller that crashed, or whose arm call was stopped at the
+  bound), the path reads the lock: held, it reports ``held`` and leaves the
+  ref for the release to expire; free, it takes the ref over by
+  compare-and-swap on that value and goes on through the handshake. So a
+  leftover ref never leaves a PR unarmable outside a release. Still unarmed
+  at the bound, it raises :class:`ArmingCollisionError`.
 
 The release writes the lock and then waits until every arming ref is gone,
 so each side writes before it reads and at least one sees the other.
@@ -118,7 +126,12 @@ from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release_lock import arming
 from vergil_tooling.lib.release_lock import refs as lock_refs
-from vergil_tooling.lib.release_lock.model import ARM_CALL_BOUND_SECS
+from vergil_tooling.lib.release_lock.model import (
+    ARM_CALL_BOUND_SECS,
+    ARMING_COLLISION_POLL_SECS,
+    ARMING_COLLISION_WAIT_SECS,
+    ARMING_EXPIRY_SECS,
+)
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 
@@ -463,13 +476,12 @@ def _delete_arming_ref(pr: _PR, sha: str) -> None:
 def _through_the_gate(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     """Arm *pr* through the arming gate's handshake (spec §5.4, see :func:`arm`)."""
     url = pr.snap.url
-    try:
-        sha = arming.create(pr.repo, pr.number)
-    except release_lock.ReleaseLockError as exc:
-        msg = f"{url}: writing its arming ref failed: {exc}"
-        raise PRPathError(msg) from exc
+    sha = _create_arming_ref(pr)
     if sha is None:
-        return _await_other_caller(pr, head, method)
+        taken = _await_other_caller(pr, head, method)
+        if isinstance(taken, ArmResult):
+            return taken
+        sha = taken
     try:
         state = _read_lock(pr)
     except PRPathError as exc:
@@ -494,8 +506,9 @@ def _through_the_gate(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     try:
         result = _enable_bounded(pr, head, method)
     except PRPathError as exc:
-        # A stopped call may still land, so its arming ref stays for the
-        # release to expire (spec §5.4), which never disarms before then.
+        # A stopped call may still land, so its arming ref stays for a
+        # release, or the PR's next arm, to expire (spec §5.4); neither
+        # takes it before the expiry.
         if not isinstance(exc, _ArmCallStoppedError):
             _delete_after_failure(pr, renewed, exc)
         raise
@@ -512,45 +525,122 @@ def _delete_after_failure(pr: _PR, sha: str, failure: PRPathError) -> None:
         raise PRPathError(msg) from failure
 
 
-def _await_other_caller(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
-    """Another caller holds *pr*'s arming ref: wait, bounded, for it to arm or merge the PR."""
+def _create_arming_ref(pr: _PR) -> str | None:
+    """Write *pr*'s arming ref by a create-only push: its sha, ``None`` if one exists."""
+    try:
+        return arming.create(pr.repo, pr.number)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{pr.snap.url}: writing its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _current_arming_ref(pr: _PR) -> str | None:
+    """The sha of *pr*'s arming ref as it stands, ``None`` when it is gone."""
+    try:
+        return arming.current(pr.repo, pr.number)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{pr.snap.url}: reading its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _auto_merge_state(url: str) -> dict[str, object]:
+    try:
+        data = github.read_json("pr", "view", url, "--json", "state,autoMergeRequest")
+    except subprocess.CalledProcessError as exc:
+        msg = f"{url}: reading its auto-merge state failed: {error_text(exc)}"
+        raise PRPathError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{url}: gh pr view returned {data!r} for its auto-merge state"
+        raise PRPathError(msg)
+    return data
+
+
+def _await_other_caller(pr: _PR, head: str, method: MergeMethod) -> ArmResult | str:
+    """Another caller holds *pr*'s arming ref: wait, bounded, for the PR or the ref to settle.
+
+    Each poll reads the PR's auto-merge state, then its arming ref:
+
+    - Merged or armed: that is the outcome. Closed: :class:`ArmingCollisionError`.
+    - The ref is gone (the other caller ended without arming): create it
+      afresh, and on success return its sha, for the caller to go on
+      through the handshake with.
+    - The ref is stale, its value seen unchanged by this wait for
+      :data:`ARMING_EXPIRY_SECS` with the PR open and unarmed at every
+      poll: :func:`_replace_stale` takes it over, by compare-and-swap on
+      that value, and its sha is returned. A lock held then reports
+      ``held`` instead, and leaves the ref for the release's own expiry.
+
+    Any change of the ref's value, or a ref that goes and comes back,
+    restarts its clock, as the release's rule does. Past
+    :data:`ARMING_COLLISION_WAIT_SECS` with none of these, it raises
+    :class:`ArmingCollisionError`.
+    """
     url = pr.snap.url
-
-    def probe() -> dict[str, object]:
-        try:
-            data = github.read_json("pr", "view", url, "--json", "state,autoMergeRequest")
-        except subprocess.CalledProcessError as exc:
-            msg = f"{url}: reading its auto-merge state failed: {error_text(exc)}"
-            raise PRPathError(msg) from exc
-        if not isinstance(data, dict):
-            msg = f"{url}: gh pr view returned {data!r} for its auto-merge state"
-            raise PRPathError(msg)
-        return data
-
-    def settled(data: dict[str, object]) -> bool:
-        return data.get("state") != _OPEN or data.get("autoMergeRequest") is not None
-
-    def on_wait(_data: object, delay: float) -> None:
+    deadline = time.monotonic() + ARMING_COLLISION_WAIT_SECS
+    sighting: tuple[str, float] | None = None
+    while True:
+        data = _auto_merge_state(url)
+        state = data.get("state")
+        if state == "MERGED":
+            return ArmResult(outcome="merged", pr_url=url, head=head, method=method)
+        if state == _OPEN and data.get("autoMergeRequest") is not None:
+            return ArmResult(outcome="armed", pr_url=url, head=head, method=method)
+        if state != _OPEN:
+            text = str(state or "").lower() or "unknown"
+            msg = f"{url}: another caller is arming it (its arming ref exists), and it is {text}"
+            raise ArmingCollisionError(msg)
+        sha = _current_arming_ref(pr)
+        now = time.monotonic()
+        if sha is None:
+            sighting = None
+            mine = _create_arming_ref(pr)
+            if mine is not None:
+                return mine
+        elif sighting is None or sighting[0] != sha:
+            sighting = (sha, now)
+        elif now - sighting[1] >= ARMING_EXPIRY_SECS:
+            taken = _replace_stale(pr, head, method, sha)
+            if taken is not None:
+                return taken
+            sighting = None
+        remaining = deadline - now
+        if remaining <= 0:
+            msg = (
+                f"{url}: another caller is arming it (its arming ref exists), and it is still "
+                f"unarmed after {ARMING_COLLISION_WAIT_SECS}s"
+            )
+            raise ArmingCollisionError(msg)
+        delay = min(ARMING_COLLISION_POLL_SECS, remaining)
         print(f"{url}: another caller is arming it; checking again in {delay:.0f}s")
+        time.sleep(delay)
 
-    _done, data = retry.poll_until(
-        probe,
-        settled,
-        budget=ARM_CALL_BOUND_SECS,
-        sleep=time.sleep,
-        clock=time.monotonic,
-        on_wait=on_wait,
-    )
-    if data.get("state") == "MERGED":
-        return ArmResult(outcome="merged", pr_url=url, head=head, method=method)
-    if data.get("state") == _OPEN and data.get("autoMergeRequest") is not None:
-        return ArmResult(outcome="armed", pr_url=url, head=head, method=method)
-    state = str(data.get("state", "")).lower() or "unknown"
-    msg = (
-        f"{url}: another caller is arming it (its arming ref exists), and it is still "
-        f"unarmed after {ARM_CALL_BOUND_SECS}s (state {state})"
-    )
-    raise ArmingCollisionError(msg)
+
+def _replace_stale(pr: _PR, head: str, method: MergeMethod, stale: str) -> ArmResult | str | None:
+    """Take over *pr*'s stale arming ref at *stale* (see :func:`_await_other_caller`).
+
+    The lock is read first: while a release holds it, the ref is the
+    release's to expire, and the PR is ``held``. Otherwise the ref is
+    renewed by compare-and-swap on *stale*: its new sha, or ``None`` when it
+    changed meanwhile. Why this keeps the release's quiesce guarantee is in
+    :mod:`vergil_tooling.lib.release_lock.sweeps`.
+    """
+    url = pr.snap.url
+    state = _read_lock(pr)
+    if state.held:
+        return ArmResult(
+            outcome="held", pr_url=url, head=head, method=method, detail=held_detail(state)
+        )
+    try:
+        mine = arming.renew(pr.repo, pr.number, expected=stale)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{url}: replacing its stale arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+    if mine is not None:
+        print(
+            f"{url}: replaced its stale arming ref {arming.arming_ref(pr.number)} "
+            f"({stale[:12]}): unchanged for {ARMING_EXPIRY_SECS}s with the PR unarmed"
+        )
+    return mine
 
 
 @dataclass(frozen=True)
