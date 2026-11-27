@@ -8,8 +8,10 @@ fake only the GitHub comment reads, through the shared
 
 from __future__ import annotations
 
+import json
+import subprocess
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -23,8 +25,12 @@ from vergil_tooling.lib.agent_gates import evaluate
 from vergil_tooling.lib.change_fingerprint import change_fingerprint, commit_fingerprint
 from vergil_tooling.lib.github import ClosingIssue, PRClosingReferences
 from vergil_tooling.lib.merge_review import record
+from vergil_tooling.lib.merge_review.record import batch_member_change, covered_change
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError, check_commit_per_issue
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 ONE = "o/r#7"
 TWO = "o/r#8"
@@ -381,3 +387,419 @@ def test_fix_after_submit_batch_check_passes_and_refuses(
     folded = batch_repo.head()
     assert _batch_check(batch_repo, monkeypatch, folded) == 0
     assert f"Batch check passed for PR {PR_URL} at {folded}" in capsys.readouterr().out
+
+
+# --- the record of one batch member, through the real record path -----------------------
+
+
+@pytest.fixture
+def main_root(batch_repo: BatchRepo) -> Path:
+    """The main clone's root for the markers: a directory of its own, beside the clone."""
+    root = batch_repo.root / "main"
+    root.mkdir()
+    return root
+
+
+def _mark(main_root: Path, batch_repo: BatchRepo, refs: list[str]) -> None:
+    """Write every member's marker, with ``origin/develop`` as the batch's base."""
+    base = batch_repo.git("rev-parse", "origin/develop")
+    issues = [f"#{ref.split('#')[1]}" for ref in refs]
+    batch_marker.write_markers(main_root, issues, base_sha=base)
+
+
+def _record(batch_repo: BatchRepo, thread: Thread, main_root: Path, ref: str) -> None:
+    """Post *ref*'s record as the record path computes it; the GitHub post is the only stub."""
+    covered = covered_change(batch_repo.path, int(ref.split("#")[1]), main_root=main_root)
+    thread.record(ref, covered.head, covered.fingerprint)
+
+
+def test_member_record_for_middle_commit_with_later_commits(
+    batch_repo: BatchRepo, main_root: Path
+) -> None:
+    shas = _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    marker = batch_marker.read_marker(main_root, "#8")
+    assert marker is not None
+    covered = covered_change(batch_repo.path, 8, main_root=main_root)
+    assert covered.head == shas[1]
+    assert covered.fingerprint == commit_fingerprint(batch_repo.path, shas[1])
+    assert batch_member_change(batch_repo.path, marker, "#8", batch_repo.head()) == covered
+
+
+def test_rereview_restores_coverage_after_middle_fold(
+    batch_repo: BatchRepo, thread: Thread, main_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    assert _gate(batch_repo, REFS4).ok
+
+    batch_repo.fixup(_branch(batch_repo)[1], {"b.txt": "uno\nDOS\nfolded\n"})
+    batch_repo.autosquash()
+    assert not _gate(batch_repo, REFS4).ok
+
+    _record(batch_repo, thread, main_root, TWO)
+    _record(batch_repo, thread, main_root, THREE)
+    _record(batch_repo, thread, main_root, FOUR)
+    assert _gate(batch_repo, REFS4).ok
+    _check(batch_repo, monkeypatch, REFS4)
+
+
+def test_member_change_excludes_later_commits(batch_repo: BatchRepo, main_root: Path) -> None:
+    shas = _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    eight = covered_change(batch_repo.path, 8, main_root=main_root)
+    assert eight.head == shas[1]
+    assert eight.fingerprint == commit_fingerprint(batch_repo.path, shas[1])
+
+    fixup = batch_repo.fixup(shas[3], {"d.txt": "cuatro\nfixed\n"})
+    ten = covered_change(batch_repo.path, 10, main_root=main_root)
+    assert ten.head == fixup
+    assert ten.fingerprint == change_fingerprint(batch_repo.path, shas[2], fixup)
+    assert ten.fingerprint != change_fingerprint(batch_repo.path, "origin/develop", fixup)
+
+
+def test_member_record_for_first_commit_after_rebase(
+    batch_repo: BatchRepo, main_root: Path
+) -> None:
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    batch_repo.advance_develop({"moved.txt": "moved\n"})
+    batch_repo.advance_develop({"moved2.txt": "moved again\n"})
+    batch_repo.rebase_onto_develop()
+    assert len(_branch(batch_repo)) == 4
+
+    batch_repo.fixup(_branch(batch_repo)[0], {"a.txt": "one\nTWO\nfolded\n"})
+    batch_repo.autosquash()
+    first = _branch(batch_repo)[0]
+    covered = covered_change(batch_repo.path, 7, main_root=main_root)
+    assert covered.head == first
+    assert covered.fingerprint == commit_fingerprint(batch_repo.path, first)
+    assert covered.fingerprint != change_fingerprint(batch_repo.path, "origin/develop", "HEAD")
+
+
+# --- the read-only probe: vrg-pr-workflow batch-gates ------------------------------------
+
+
+@pytest.fixture
+def probe(
+    batch_repo: BatchRepo,
+    main_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Run the probe in the batch's clone, its markers under *main_root*, GitHub reads faked."""
+    monkeypatch.setattr(vrg_pr_workflow, "_clone_repo", lambda: "o/r")
+    monkeypatch.setattr(vrg_pr_workflow, "load_trusted_authors", lambda: AUTHORS)
+    monkeypatch.setattr(vrg_pr_workflow.git, "main_worktree_root", lambda: main_root)
+    monkeypatch.chdir(batch_repo.path)
+    return main_root
+
+
+def _probe(*args: str) -> int:
+    return vrg_pr_workflow.main(["batch-gates", *args])
+
+
+def _verdicts(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
+    found: dict[str, Any] = json.loads(capsys.readouterr().out)
+    return found
+
+
+def test_batch_gates_reports_uncovered_after_fold(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    capsys.readouterr()
+    assert _probe("--json") == 0
+    assert [c["covered"] for c in _verdicts(capsys)["commits"]] == [True] * 4
+
+    batch_repo.fixup(_branch(batch_repo)[1], {"b.txt": "uno\nDOS\nfolded\n"})
+    batch_repo.autosquash()
+    assert _probe("--json") == 1
+    report = _verdicts(capsys)
+    assert report["head"] == batch_repo.head()
+    assert report["branch"] == "feature"
+    commits = report["commits"]
+    assert [c["issue"] for c in commits] == REFS4
+    assert [c["covered"] for c in commits] == [True, False, False, False]
+    assert commits[1]["sha"] == _branch(batch_repo)[1]
+    assert commits[1]["reason"] is not None
+    # Commit 3's record predates the review of the folded commit 2, which is the break.
+    assert f"predates the review of commit {_branch(batch_repo)[1][:12]}" in commits[2]["reason"]
+
+
+def test_batch_gates_all_covered_exits_0(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    capsys.readouterr()
+    assert _probe() == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines] == REFS4
+    assert [line.split()[2] for line in lines] == ["covered"] * 4
+
+
+def test_batch_gates_before_report_ready(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    handoff = batch_repo.path / ".vergil" / "pr-workflow.json"
+    assert not handoff.exists()
+    capsys.readouterr()
+    assert _probe("--json") == 0
+    assert not handoff.exists()
+    assert _verdicts(capsys)["branch"] == "feature"
+
+
+def test_batch_gates_after_report_ready_refuses(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    # report-ready removes the members' markers once it has recorded the state.
+    batch_marker.remove_markers(main_root, ["#7", "#8", "#9", "#10"])
+    capsys.readouterr()
+    assert _probe() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no batch marker" in captured.err
+    assert "report-ready removes the markers" in captured.err
+
+
+def test_member_change_for_rebased_moved_develop_is_unchanged(
+    batch_repo: BatchRepo, main_root: Path
+) -> None:
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    before = covered_change(batch_repo.path, 9, main_root=main_root)
+    batch_repo.advance_develop({"moved.txt": "moved\n"})
+    batch_repo.rebase_onto_develop()
+    after = covered_change(batch_repo.path, 9, main_root=main_root)
+    third = _branch(batch_repo)[2]
+    assert after.head == third
+    assert after.fingerprint == before.fingerprint == commit_fingerprint(batch_repo.path, third)
+
+
+def test_batch_gates_after_rebase_onto_moved_develop(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    batch_repo.advance_develop({"moved.txt": "moved\n"})
+    batch_repo.advance_develop({"moved2.txt": "moved again\n"})
+    batch_repo.rebase_onto_develop()
+    capsys.readouterr()
+    assert _probe("--json") == 0
+    commits = _verdicts(capsys)["commits"]
+    assert [c["covered"] for c in commits] == [True] * 4
+    # develop's new commits are not part of the batch: the verdicts are the branch's own.
+    assert [c["sha"] for c in commits] == _branch(batch_repo)
+    assert len(commits) == 4
+
+
+def test_batch_gates_matches_submit_gate(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    shas = _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    _record(batch_repo, thread, main_root, ONE)
+    _record(batch_repo, thread, main_root, TWO)
+    # An unfolded fixup of commit 8 after commit 10: no issue claims it.
+    batch_repo.fixup(shas[1], {"b.txt": "uno\nDOS\nagain\n"})
+    capsys.readouterr()
+
+    expected = _gate(batch_repo, REFS4)
+    assert not expected.ok
+    assert _probe("--json") == 1
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    per_commit = [c["reason"] for c in report["commits"] if c["reason"] is not None]
+    extra = [line.removeprefix("batch-gates: ") for line in captured.err.splitlines()]
+    assert per_commit + extra == list(expected.reasons)
+    assert [c["covered"] for c in report["commits"]] == [True, True, False, False]
+    assert len(extra) == 1
+    assert "is no issue's own commit" in extra[0]
+
+
+def _verdicts_of(batch_repo: BatchRepo, refs: list[str]) -> agent_gates.CommitVerdicts:
+    return agent_gates.evaluate_commits(
+        batch_repo.path, base="origin/develop", head="HEAD", issue_refs=refs, authors=AUTHORS
+    )
+
+
+def test_evaluate_commits_whole_change_covers_every_issue(
+    batch_repo: BatchRepo, thread: Thread
+) -> None:
+    shas = _four(batch_repo)
+    whole = change_fingerprint(batch_repo.path, "origin/develop", "HEAD")
+    thread.record(ONE, batch_repo.head(), whole)
+    verdicts = _verdicts_of(batch_repo, REFS4)
+    assert verdicts.ok
+    assert verdicts.reasons == ()
+    assert [(c.issue, c.sha, c.covered, c.reason) for c in verdicts.commits] == [
+        (ref, sha, True, None) for ref, sha in zip(REFS4, shas, strict=True)
+    ]
+
+
+def test_evaluate_commits_whole_change_for_a_single_issue_names_the_head(
+    batch_repo: BatchRepo, thread: Thread
+) -> None:
+    _four(batch_repo)
+    thread.record(
+        ONE, batch_repo.head(), change_fingerprint(batch_repo.path, "origin/develop", "HEAD")
+    )
+    verdicts = _verdicts_of(batch_repo, [ONE])
+    assert verdicts.ok
+    assert verdicts.commits == (agent_gates.CommitVerdict(ONE, batch_repo.head(), True, None),)
+
+
+def test_evaluate_commits_whole_change_names_no_commit_for_an_issue_without_one(
+    batch_repo: BatchRepo, thread: Thread
+) -> None:
+    _four(batch_repo)
+    thread.record(
+        ONE, batch_repo.head(), change_fingerprint(batch_repo.path, "origin/develop", "HEAD")
+    )
+    verdicts = _verdicts_of(batch_repo, [*REFS4, "o/r#11"])
+    assert verdicts.ok
+    assert verdicts.commits[-1] == agent_gates.CommitVerdict("o/r#11", None, True, None)
+
+
+def test_evaluate_commits_single_issue_uncovered_names_the_head(
+    batch_repo: BatchRepo, thread: Thread
+) -> None:
+    _four(batch_repo)
+    thread.empty(ONE)
+    verdicts = _verdicts_of(batch_repo, [ONE])
+    assert not verdicts.ok
+    (only,) = verdicts.commits
+    assert only.sha == batch_repo.head()
+    assert not only.covered
+    assert only.reason is not None
+    assert "run merge review" in only.reason
+
+
+def test_evaluate_commits_refuses_an_unreadable_head(
+    batch_repo: BatchRepo, thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _four(batch_repo)
+    thread.empty(ONE)
+    real = agent_gates.git.read_output
+
+    def unreadable(*args: str) -> str:
+        if args[-1] == "HEAD^{commit}":
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse"])
+        return real(*args)
+
+    monkeypatch.setattr(agent_gates.git, "read_output", unreadable)
+    verdicts = _verdicts_of(batch_repo, [ONE])
+    assert verdicts.read_failure
+    assert verdicts.commits == ()
+    assert "cannot read the commit HEAD" in verdicts.extra_reasons[0]
+
+
+def test_evaluate_commits_reports_an_unusable_issue_ref(batch_repo: BatchRepo) -> None:
+    _four(batch_repo)
+    verdicts = _verdicts_of(batch_repo, ["not-a-ref"])
+    assert not verdicts.ok
+    assert verdicts.commits == ()
+    assert verdicts.extra_reasons[0].startswith("task issue:")
+
+
+def test_batch_gates_writes_nothing(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    for ref in REFS4:
+        _record(batch_repo, thread, main_root, ref)
+    batch_repo.fixup(_branch(batch_repo)[1], {"b.txt": "uno\nDOS\nfolded\n"})
+    batch_repo.autosquash()
+    before = _snapshot(batch_repo, main_root)
+    capsys.readouterr()
+    assert _probe("--json") == 1
+    assert _snapshot(batch_repo, main_root) == before
+
+
+def test_batch_gates_read_failure_exits_1(
+    batch_repo: BatchRepo,
+    thread: Thread,
+    main_root: Path,
+    probe: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread.empty(*REFS4)
+    _four(batch_repo)
+    _mark(main_root, batch_repo, REFS4)
+    batch_repo.git("remote", "set-url", "origin", str(batch_repo.root / "gone.git"))
+    capsys.readouterr()
+    assert _probe("--json") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cannot fetch origin develop" in captured.err
+
+
+def _snapshot(batch_repo: BatchRepo, main_root: Path) -> dict[str, object]:
+    """Everything a probe could change: the clone's status and refs, the markers, the handoff."""
+    markers = {
+        str(path.relative_to(main_root)): path.read_text()
+        for path in sorted(main_root.rglob("*"))
+        if path.is_file()
+    }
+    dirs = sorted(
+        str(path.relative_to(main_root)) for path in main_root.rglob("*") if path.is_dir()
+    )
+    return {
+        "status": batch_repo.git("status", "--porcelain=v1", "--ignored"),
+        "refs": batch_repo.git("for-each-ref", "--format=%(refname) %(objectname)"),
+        "head": batch_repo.head(),
+        "markers": markers,
+        "dirs": dirs,
+        "handoff": (batch_repo.path / ".vergil" / "pr-workflow.json").exists(),
+    }
