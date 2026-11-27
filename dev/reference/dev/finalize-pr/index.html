@@ -19794,7 +19794,19 @@ can take it.</p>
 </tbody>
 </table>
 <p>With no <code>branching_model</code>, finalize warns and protects <code>develop</code>,
-<code>main</code> and <code>gh-pages</code>.
+<code>main</code> and <code>gh-pages</code>.</p>
+<p>A running release's worktrees are kept, here and in steps 3 and
+<code>--clean-dirty</code>: the worktree the release lock
+(<code>refs/vergil/release-lock</code>) names, whatever its branch, and every
+<code>release/*</code> worktree while the lock is held, while it cannot be read,
+or while a trusted <code>release: X.Y.Z</code> tracking issue is open. The
+tracking-issue key keeps a broken release's worktree after
+<code>vrg-release-lock break</code> deletes its lock, until its issue closes. A
+kept worktree is named on the output with the reason. A lock or issue
+read that fails keeps the worktrees it covers and fails the run. The
+release's own removals (its <code>teardown-worktree</code> stage and
+<code>--supersede</code>) are not judged here. Every removal is logged, naming
+the worktree, its branch and the reason.
 5. <strong>Prune.</strong> Any relay ref whose branch no longer exists on origin is
    pruned, as a safety net for a branch deleted outside finalize. Cached
    container images whose branch is live in no repo of the platform repo
