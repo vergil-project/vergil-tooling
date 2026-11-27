@@ -101,8 +101,10 @@ class RecordError(Exception):
 class Record:
     """One merge-review record: the head judged, its change fingerprint and the outcome.
 
-    ``comment_id`` and ``author`` are the closing comment's, set by
-    :func:`records`; a record parsed from a bare body has ``0`` and ``""``.
+    ``comment_id``, ``author`` and ``at`` (the comment's ``createdAt``, ISO 8601)
+    are the closing comment's, set by :func:`records`; a record parsed from a
+    bare body has ``0``, ``""`` and ``""``. The stored record line holds none of
+    them: the time is the comment's, and the gate's chain reads it from there.
     """
 
     head: str
@@ -110,6 +112,7 @@ class Record:
     outcome: str
     comment_id: int = 0
     author: str = ""
+    at: str = ""
 
 
 def check_outcome(outcome: str) -> str:
@@ -197,6 +200,7 @@ def records(issue_ref: str, *, authors: TrustedAuthors) -> list[Record]:
                     outcome=record.outcome,
                     comment_id=comment.id,
                     author=comment.author,
+                    at=comment.created_at,
                 )
             )
     return found

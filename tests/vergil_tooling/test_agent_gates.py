@@ -17,6 +17,7 @@ from vergil_tooling.lib.rulings.approvals import render_exemption_request
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 AUTHORS = TrustedAuthors(human=("human",), agents=("human-vergil-user",))
@@ -43,7 +44,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _commit(repo: Path, files: dict[str, str | None], message: str) -> str:
+def _commit(repo: Path, files: Mapping[str, str | None], message: str) -> str:
     for name, text in files.items():
         path = repo / name
         if text is None:
@@ -91,20 +92,40 @@ def items(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
     return fake
 
 
+def _stamp(tick: int) -> str:
+    """A UTC time in 2026-01-01 at minute and second *tick* of the day's first hour."""
+    return f"2026-01-01T00:{tick // 60:02d}:{tick % 60:02d}Z"
+
+
 class Thread:
-    """The comments of the issues under test, numbered across all of them."""
+    """The comments of the issues under test, numbered and timed across all of them.
+
+    Every comment is stamped one second after the one before it, so the order
+    comments are added in is the order they were posted in.
+    """
 
     def __init__(self, items: trust_stubs.FakeItems) -> None:
         self.items = items
         self.nodes: dict[tuple[str, int], list[dict[str, Any]]] = {}
         self.next_id = 100
+        self.clock = 0
 
-    def add(self, ref: str, body: str, author: dict[str, str], *, editor: Any = None) -> None:
+    def add(
+        self,
+        ref: str,
+        body: str,
+        author: dict[str, str],
+        *,
+        editor: Any = None,
+        created: str | None = None,
+    ) -> None:
         repo, _, number = ref.partition("#")
         key = (repo, int(number))
         self.next_id += 1
+        self.clock += 1
+        posted = created if created is not None else _stamp(self.clock)
         self.nodes.setdefault(key, []).append(
-            trust_stubs.comment(self.next_id, body, author, editor=editor)
+            trust_stubs.comment(self.next_id, body, author, editor=editor, created=posted)
         )
         self.items.items[key] = trust_stubs.item(nodes=self.nodes[key])
 
@@ -114,16 +135,30 @@ class Thread:
             key = (repo, int(number))
             self.items.items.setdefault(key, trust_stubs.item(nodes=[]))
 
-    def record(self, ref: str, head: str, fingerprint: str, outcome: str = "eligible") -> None:
+    def record(
+        self,
+        ref: str,
+        head: str,
+        fingerprint: str,
+        outcome: str = "eligible",
+        *,
+        created: str | None = None,
+    ) -> None:
         body = (
             f"Merge review: done: {outcome}; accepted-risk 0\n"
             f"{render_record(head, fingerprint, outcome)}\n\n- R1: fixed\n"
         )
-        self.add(ref, body, AGENT)
+        self.add(ref, body, AGENT, created=created)
+
+    def request(self, ref: str, fingerprint: str) -> None:
+        self.add(ref, render_exemption_request("a typo fix", fingerprint), AGENT)
+
+    def approve(self, ref: str) -> None:
+        self.add(ref, APPROVE, HUMAN)
 
     def exempt(self, ref: str, fingerprint: str) -> None:
-        self.add(ref, render_exemption_request("a typo fix", fingerprint), AGENT)
-        self.add(ref, APPROVE, HUMAN)
+        self.request(ref, fingerprint)
+        self.approve(ref)
 
 
 @pytest.fixture
@@ -352,6 +387,167 @@ def test_batch_exemption_of_an_issues_own_commit_covers_it(repo: Path, thread: T
     thread.record(ONE, first, commit_fingerprint(repo, first))
     thread.exempt(TWO, commit_fingerprint(repo, second))
     assert _evaluate(repo, [ONE, TWO]).ok
+
+
+# --- the chain of a batch ---------------------------------------------------------
+
+THREE = "o/r#9"
+REFS3 = [ONE, TWO, THREE]
+FIRST_FILES: dict[str, str | None] = {"a.txt": "one\nTWO\nthree\n"}
+SECOND_FILES: dict[str, str | None] = {"b.txt": "uno\nDOS\n"}
+SECOND_FOLDED: dict[str, str | None] = {"b.txt": "uno\nDOS\nfolded\n"}
+THIRD_FILES: dict[str, str | None] = {"c.txt": "tres\n"}
+THIRD_FIXED: dict[str, str | None] = {"c.txt": "tres\nfixed\n"}
+
+
+def _batch3(repo: Path) -> tuple[str, str, str]:
+    first = _commit(repo, FIRST_FILES, "first change (#7)")
+    second = _commit(repo, SECOND_FILES, "second change (#8)")
+    third = _commit(repo, THIRD_FILES, "third change (#9)")
+    return first, second, third
+
+
+def _rebuild(repo: Path, steps: list[tuple[Mapping[str, str | None], str]]) -> tuple[str, str, str]:
+    """Replace the feature branch with three commits built afresh on develop."""
+    _git(repo, "reset", "-q", "--hard", "develop")
+    first, second, third = (_commit(repo, files, message) for files, message in steps)
+    return first, second, third
+
+
+def _fold_into_second(repo: Path) -> tuple[str, str, str]:
+    """The batch as a fold into commit 2 leaves it: commit 2 changes, commits 1 and 3 do not."""
+    return _rebuild(
+        repo,
+        [
+            (FIRST_FILES, "first change (#7)"),
+            (SECOND_FOLDED, "second change (#8)"),
+            (THIRD_FILES, "third change (#9)"),
+        ],
+    )
+
+
+def _records_in_order(repo: Path, thread: Thread) -> tuple[str, str, str]:
+    first, second, third = _batch3(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.record(TWO, second, commit_fingerprint(repo, second))
+    thread.record(THREE, third, commit_fingerprint(repo, third))
+    return first, second, third
+
+
+def test_chain_fold_into_middle_voids_later_records(repo: Path, thread: Thread) -> None:
+    _records_in_order(repo, thread)
+    assert _evaluate(repo, REFS3).ok
+
+    _first, second, third = _fold_into_second(repo)
+    thread.record(TWO, second, commit_fingerprint(repo, second))
+    result = _evaluate(repo, REFS3)
+    assert not result.ok
+    assert len(result.reasons) == 1
+    reason = result.reasons[0]
+    assert f"commit {third[:12]} (third change (#9))" in reason
+    assert f"its record on {THREE}" in reason
+    assert f"predates the review of commit {second[:12]}" in reason
+
+
+def test_chain_rereview_of_later_commits_restores(repo: Path, thread: Thread) -> None:
+    _records_in_order(repo, thread)
+    _first, second, third = _fold_into_second(repo)
+    thread.record(TWO, second, commit_fingerprint(repo, second))
+    assert not _evaluate(repo, REFS3).ok
+
+    thread.record(THREE, third, commit_fingerprint(repo, third))
+    assert _evaluate(repo, REFS3).ok
+
+
+def test_chain_clean_rebase_voids_nothing(repo: Path, thread: Thread) -> None:
+    _, _, third = _records_in_order(repo, thread)
+    _git(repo, "checkout", "-q", "develop")
+    _commit(repo, {"d.txt": "moved\n"}, "develop moves on")
+    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "rebase", "-q", "develop")
+    assert _git(repo, "rev-parse", "HEAD") != third
+    assert _evaluate(repo, REFS3).ok
+
+
+def test_chain_fix_to_last_commit_needs_only_last(repo: Path, thread: Thread) -> None:
+    _records_in_order(repo, thread)
+    _first, _second, third = _rebuild(
+        repo,
+        [
+            (FIRST_FILES, "first change (#7)"),
+            (SECOND_FILES, "second change (#8)"),
+            (THIRD_FIXED, "third change (#9)"),
+        ],
+    )
+    result = _evaluate(repo, REFS3)
+    assert not result.ok
+    assert len(result.reasons) == 1
+    assert f"commit {third[:12]}" in result.reasons[0]
+
+    thread.record(THREE, third, commit_fingerprint(repo, third))
+    assert _evaluate(repo, REFS3).ok
+
+
+@pytest.mark.parametrize("posted", ["not a time", "2026-11-03T08:00:00"])
+def test_chain_fails_closed_on_a_time_it_cannot_read(
+    repo: Path, thread: Thread, posted: str
+) -> None:
+    first, second, _third = _batch3(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.record(TWO, second, commit_fingerprint(repo, second), created=posted)
+    thread.empty(THREE)
+    result = _evaluate(repo, REFS3)
+    assert not result.ok
+    assert result.read_failure
+    assert result.reasons[0].startswith("merge review: lookup failed for")
+    assert posted in result.reasons[0]
+
+
+def test_chain_records_in_build_order_pass(repo: Path, thread: Thread) -> None:
+    _records_in_order(repo, thread)
+    assert _evaluate(repo, REFS3) == agent_gates.GateResult(ok=True, reasons=())
+
+
+def test_chain_exemption_counts_at_its_approval_time(repo: Path, thread: Thread) -> None:
+    first, second, third = _batch3(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.record(TWO, second, commit_fingerprint(repo, second))
+    third_fingerprint = commit_fingerprint(repo, third)
+    thread.request(THREE, third_fingerprint)
+
+    _first, second2, third2 = _fold_into_second(repo)
+    assert commit_fingerprint(repo, third2) == third_fingerprint
+    thread.record(TWO, second2, commit_fingerprint(repo, second2))
+    thread.approve(THREE)
+    assert _evaluate(repo, REFS3).ok
+
+
+def test_chain_exemption_approved_before_the_rereview_does_not_count(
+    repo: Path, thread: Thread
+) -> None:
+    first, second, third = _batch3(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.record(TWO, second, commit_fingerprint(repo, second))
+    third_fingerprint = commit_fingerprint(repo, third)
+    thread.request(THREE, third_fingerprint)
+    thread.approve(THREE)
+
+    _first, second2, third2 = _fold_into_second(repo)
+    thread.record(TWO, second2, commit_fingerprint(repo, second2))
+    result = _evaluate(repo, REFS3)
+    assert not result.ok
+    assert len(result.reasons) == 1
+    assert f"commit {third2[:12]}" in result.reasons[0]
+    assert f"predates the review of commit {second2[:12]}" in result.reasons[0]
+
+
+def test_whole_change_record_still_covers_every_commit(repo: Path, thread: Thread) -> None:
+    _records_in_order(repo, thread)
+    _first, _second, third = _fold_into_second(repo)
+    assert not _evaluate(repo, REFS3).ok
+
+    thread.record(THREE, third, _fp(repo))
+    assert _evaluate(repo, REFS3).ok
 
 
 # --- agent involvement ------------------------------------------------------------
