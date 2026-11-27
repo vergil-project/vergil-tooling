@@ -232,6 +232,20 @@ def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
     ):
         _delete_own(ctx, state.sha, phase=phase)
         return
+    if state.record is None:
+        # Whose an unreadable lock is cannot be known (issue #5352), so it is
+        # never called another release's: the read error and the escape hatch.
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=(
+                f"This run holds no release lock (it is a resume), and the release lock on"
+                f" {ctx.repo} is held but could not be read ({state.error}), so `unlock`"
+                " will not delete it. Check it with `vrg-release-lock status`; once no"
+                f" release run holding it is alive, remove it with `{_BREAK}`, which also"
+                f" re-arms the PRs, then re-run `vrg-release --resume {ctx.version}`."
+            ),
+        )
     raise ReleaseError(
         phase=phase,
         command=command,
