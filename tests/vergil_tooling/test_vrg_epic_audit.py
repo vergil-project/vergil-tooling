@@ -358,7 +358,7 @@ def test_main_epic_blocker_read_failure_exits_1(
 
 
 @contextlib.contextmanager
-def _patch_epic_listing(children: list[ChildState]) -> Iterator[None]:
+def _patch_epic_listing(children: list[ChildState]) -> Generator[None]:
     """Patch the listing of a one-container epic of the vergil-project home with *children*."""
     with (
         patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
