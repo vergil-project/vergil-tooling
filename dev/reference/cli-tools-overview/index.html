@@ -21671,6 +21671,23 @@ with none), <code>heartbeat_age_secs</code> (<code>null</code> with no readable 
 <code>held_prs</code> (a list of <code>{"number", "url"}</code>). Every key is always present.
 It is the machine-readable state a future auto-releaser reads.
 <code>vrg-repo-status</code> shows the same text form in its Release lock section.</p>
+<p><code>break --reason "&lt;why&gt;"</code> is the human's escape hatch. It removes any held
+lock, a live or an unreadable one included. It first records the reason
+and the old lock's contents in <code>refs/vergil/release-lock-history</code> and, when
+the lock names a tracking issue, as a comment there; then it deletes the
+lock by compare-and-swap and runs the re-arm sweep over the PRs the lock
+held. A live holder's heartbeat can rewrite the lock between the read and
+the delete, so a lost delete is retried against a fresh read, up to three
+attempts, while the lock is still the same holder's. A break that still
+loses, finds the lock gone or taken by another holder, or fails once its
+entry is written (the comment, the delete's push or the re-read), records
+a <code>break-failed</code> entry and a comment, exits 1 and re-arms nothing. It is
+human only: refused under every agent identity and agent signal, as
+<code>vrg-release</code> is. An agent never breaks a lock; it may only reclaim a
+stale one. <code>--json</code> prints the result
+as one object: <code>repo</code>, <code>action</code> (<code>break</code>), <code>old_sha</code>, <code>tracking_issue</code>,
+<code>reason</code> and <code>rearm</code> (<code>armed</code>, <code>merged</code> and <code>held</code>, lists of PR URLs, and
+<code>refused</code>, a list of <code>{"url", "reason"}</code>).</p>
 <table>
 <thead>
 <tr>
@@ -21681,23 +21698,23 @@ It is the machine-readable state a future auto-releaser reads.
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_release_lock</code> (<code>lib/release_lock/status.py</code>, <code>lib/release_lock/stale.py</code>)</td>
+<td><code>vergil_tooling.bin.vrg_release_lock</code> (<code>lib/release_lock/status.py</code>, <code>lib/release_lock/stale.py</code>, <code>lib/release_lock/reclaim.py</code>)</td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>status</code> with <code>--json</code> (print one JSON object) and <code>--repo &lt;owner&gt;/&lt;repo&gt;</code> (default: the repository <code>origin</code> names)</td>
+<td><code>status</code> with <code>--json</code> (print one JSON object) and <code>--repo &lt;owner&gt;/&lt;repo&gt;</code> (default: the repository <code>origin</code> names); <code>break</code> with <code>--reason</code> (required, not blank), <code>--json</code> and <code>--repo</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td><code>gh</code> authenticated, and <code>git</code> able to read the repository's origin over HTTPS</td>
+<td><code>gh</code> authenticated, and <code>git</code> able to read the repository's origin over HTTPS; <code>break</code> also needs the human identity and write access to the repository</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an <code>origin</code> that is not on github.com prints <code>ERROR:</code> on stderr with nothing on stdout; it is never shown as "no release lock held"</td>
+<td>Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an <code>origin</code> that is not on github.com prints <code>ERROR:</code> on stderr with nothing on stdout; it is never shown as "no release lock held". A <code>break</code> with no lock held, a failed record (nothing is deleted), a delete that did not land, or a failed re-arm sweep after the delete prints <code>ERROR:</code> naming it</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 the lock was read (held or not, stale or not), 1 a failed read, 2 usage error</td>
+<td>0 the lock was read (held or not, stale or not) or broken and re-armed, 1 a failed read, a refusal or a failed break, 2 usage error</td>
 </tr>
 <tr>
 <td>Status</td>
