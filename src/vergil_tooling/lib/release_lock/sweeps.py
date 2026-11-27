@@ -97,8 +97,6 @@ from vergil_tooling.lib.release_lock.model import (
     ARMING_EXPIRY_SECS,
     ARMING_POLL_SECS,
     ARMING_WAIT_BOUND_SECS,
-    RefReadError,
-    RefWriteError,
     ReleaseLockError,
 )
 
@@ -109,8 +107,6 @@ __all__ = [
     "QuiesceResult",
     "RearmResult",
     "RearmSweepError",
-    "RefReadError",
-    "RefWriteError",
     "SweepError",
     "disarm_all",
     "quiesce",
@@ -263,9 +259,7 @@ def _delete_expired(repo: str, pr: int, sha: str) -> bool:
         msg = f"deleting the expired arming ref of #{pr} ({arming.arming_ref(pr)}) failed: {exc}"
         raise SweepError(msg) from exc
     if done:
-        print(
-            f"deleted {arming.arming_ref(pr)} ({sha[:12]}): unchanged for {ARMING_EXPIRY_SECS}s"
-        )
+        print(f"deleted {arming.arming_ref(pr)} ({sha[:12]}): unchanged for {ARMING_EXPIRY_SECS}s")
     return done
 
 
@@ -399,8 +393,8 @@ def rearm_all(repo: str, *, holder_pass: str | None = None) -> RearmResult:
         outcome: str
         detail: str
         try:
-            result = pr_path.arm(url, holder_pass=holder_pass)
-            outcome, detail = result.outcome, result.detail
+            offered = pr_path.arm(url, holder_pass=holder_pass)
+            outcome, detail = offered.outcome, offered.detail
         except pr_path.ArmingCollisionError as exc:
             try:
                 outcome, detail = _after_collision(url, exc)

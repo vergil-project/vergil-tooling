@@ -11,13 +11,19 @@ where a re-arm sweep is judged.
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from tests.vergil_tooling.release_lock_stubs import REPO, Origin, make_origin
 from vergil_tooling.lib import github, pr_path
-from vergil_tooling.lib.release_lock import ReleaseLockError, arming, sweeps
+from vergil_tooling.lib.release_lock import (
+    RefReadError,
+    RefWriteError,
+    ReleaseLockError,
+    arming,
+    sweeps,
+)
 from vergil_tooling.lib.release_lock.model import (
     ARMING_EXPIRY_SECS,
     ARMING_POLL_SECS,
@@ -67,7 +73,7 @@ def _deletions(monkeypatch: pytest.MonkeyPatch, time: FakeTime) -> list[tuple[in
             landed.append((pr, time.now))
         return done
 
-    monkeypatch.setattr(sweeps.arming, "delete", delete)
+    monkeypatch.setattr(arming, "delete", delete)
     return landed
 
 
@@ -155,7 +161,7 @@ def test_wait_delete_mismatch_is_not_counted(
             assert arming.renew(REPO, 6, expected=first) is not None
         return real(repo, pr, expected=expected)
 
-    monkeypatch.setattr(sweeps.arming, "delete", delete)
+    monkeypatch.setattr(arming, "delete", delete)
 
     assert _wait(time) == [6]
     assert len(attempts) == 2
@@ -185,19 +191,19 @@ def test_wait_past_bound_raises_naming_refs(origin: Origin) -> None:
 
 def test_wait_listing_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(repo: str) -> dict[int, str]:
-        raise sweeps.RefReadError("ls-remote failed")
+        raise RefReadError("ls-remote failed")
 
-    monkeypatch.setattr(sweeps.arming, "list_arming", fail)
+    monkeypatch.setattr(arming, "list_arming", fail)
     with pytest.raises(sweeps.SweepError, match="ls-remote failed"):
         _wait(FakeTime())
 
 
 def test_wait_delete_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     def delete(repo: str, pr: int, *, expected: str) -> bool:
-        raise sweeps.RefWriteError("push failed")
+        raise RefWriteError("push failed")
 
-    monkeypatch.setattr(sweeps.arming, "list_arming", lambda repo: {8: "a" * 40})
-    monkeypatch.setattr(sweeps.arming, "delete", delete)
+    monkeypatch.setattr(arming, "list_arming", lambda repo: {8: "a" * 40})
+    monkeypatch.setattr(arming, "delete", delete)
     with pytest.raises(sweeps.SweepError, match=r"#8.*push failed"):
         _wait(FakeTime())
 
@@ -249,9 +255,7 @@ class FakeGitHub:
             assert args[args.index("--repo") + 1] == REPO
             assert args[args.index("--base") + 1] == "develop"
             fields = args[args.index("--json") + 1].split(",")
-            listing = [
-                {f: p[f] for f in fields} for p in self.prs.values() if p["state"] == "OPEN"
-            ]
+            listing = [{f: p[f] for f in fields} for p in self.prs.values() if p["state"] == "OPEN"]
             self.lists += 1
             hook = self.after_list.get(self.lists)
             if hook is not None:
@@ -372,7 +376,7 @@ def test_disarm_unexpected_state_raises(gh: FakeGitHub) -> None:
 
 def _no_arming_refs(monkeypatch: pytest.MonkeyPatch, *, expired: list[int]) -> None:
     monkeypatch.setattr(sweeps, "wait_for_arming_refs", lambda repo, **kw: list(expired))
-    monkeypatch.setattr(sweeps.arming, "list_arming", lambda repo: {})
+    monkeypatch.setattr(arming, "list_arming", lambda repo: {})
 
 
 def test_quiesce_disarms_once_with_nothing_expired(
@@ -381,9 +385,7 @@ def test_quiesce_disarms_once_with_nothing_expired(
     _no_arming_refs(monkeypatch, expired=[])
     url = gh.add(1, armed=True)
     result = sweeps.quiesce(REPO)
-    assert result == sweeps.QuiesceResult(
-        expired=(), disarmed=(url,), late=(), arming_at_check=()
-    )
+    assert result == sweeps.QuiesceResult(expired=(), disarmed=(url,), late=(), arming_at_check=())
     # The first sweep, then the final check: no second sweep.
     assert gh.lists == 2
 
@@ -419,7 +421,7 @@ def test_quiesce_reports_arming_refs_at_final_check(
     gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(sweeps, "wait_for_arming_refs", lambda repo, **kw: [])
-    monkeypatch.setattr(sweeps.arming, "list_arming", lambda repo: {21: "b" * 40})
+    monkeypatch.setattr(arming, "list_arming", lambda repo: {21: "b" * 40})
     gh.add(1, armed=False)
     assert sweeps.quiesce(REPO).arming_at_check == (21,)
 
@@ -428,10 +430,10 @@ def test_quiesce_final_listing_failure_raises(
     gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(repo: str) -> dict[int, str]:
-        raise sweeps.RefReadError("ls-remote failed")
+        raise RefReadError("ls-remote failed")
 
     monkeypatch.setattr(sweeps, "wait_for_arming_refs", lambda repo, **kw: [])
-    monkeypatch.setattr(sweeps.arming, "list_arming", fail)
+    monkeypatch.setattr(arming, "list_arming", fail)
     with pytest.raises(sweeps.SweepError, match="ls-remote failed"):
         sweeps.quiesce(REPO)
     del gh
@@ -447,7 +449,7 @@ def test_quiesce_passes_clock_and_sleep_to_the_wait(
         return []
 
     monkeypatch.setattr(sweeps, "wait_for_arming_refs", wait)
-    monkeypatch.setattr(sweeps.arming, "list_arming", lambda repo: {})
+    monkeypatch.setattr(arming, "list_arming", lambda repo: {})
     time = FakeTime()
     sweeps.quiesce(REPO, clock=time.clock, sleep=time.sleep)
     assert seen == {"clock": time.clock, "sleep": time.sleep}
@@ -482,7 +484,7 @@ class FakeArm:
         elif outcome == "merged":
             pr["state"] = "MERGED"
         return pr_path.ArmResult(
-            outcome=outcome,  # type: ignore[arg-type]
+            outcome=cast("pr_path.ArmOutcome", outcome),
             pr_url=pr_url,
             head="c" * 40,
             method="SQUASH",

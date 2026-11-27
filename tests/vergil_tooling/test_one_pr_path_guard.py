@@ -209,9 +209,8 @@ def test_only_disarm_sweep_turns_auto_merge_off() -> None:
     hits = [h for h in _scan() if h.kind == _DISABLE]
     assert hits, "the disarm sweep's disablePullRequestAutoMerge was not found"
     stray = [h for h in hits if h.path != "lib/release_lock/sweeps.py"]
-    assert not stray, "auto-merge is turned off outside the disarm sweep (spec §5.1):\n" + "\n".join(
-        f"  src/vergil_tooling/{h.path}:{h.line} ({h.scope}): {h.kind}" for h in stray
-    )
+    where = "\n".join(f"  src/vergil_tooling/{h.path}:{h.line} ({h.scope})" for h in stray)
+    assert not stray, f"auto-merge is turned off outside the disarm sweep (spec §5.1):\n{where}"
 
 
 def test_every_named_site_is_still_there() -> None:
