@@ -77,6 +77,18 @@ rules, writes nothing and makes no freeze check. The body is read only through
 the trust layer (epic vergil-project/.github#1467): one it does not trust fails
 the check, batch or not, since its ``Closes`` lines are what the check goes by.
 It exits 0 when the PR passes or is not a batch PR, and 1 otherwise.
+
+``batch-gates [--json]`` judges a batch's merge-review gate before handoff, run
+in the batch's worktree (epic vergil-project/.github#1672, plan Task 6a). It
+reads the batch's issues from the clone's batch markers, takes the base from a
+freshly fetched ``origin/develop`` as ``vrg-submit-pr`` does, and evaluates the
+gate's merge-review check commit by commit (:func:`agent_gates.evaluate_commits`).
+It writes nothing: no state, no marker, and no git write but the fetch. It
+prints one line per commit, or with ``--json`` the object
+``{"branch", "head", "commits": [{"issue", "sha", "covered", "reason"}]}``, and
+exits 0 when every commit is covered, 1 when one is not or on a read failure,
+2 on usage. Report-ready removes the markers, so after it the probe refuses
+with exit 1.
 """
 
 from __future__ import annotations
@@ -92,6 +104,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
+    agent_gates,
     epics,
     git,
     github,
@@ -107,6 +120,7 @@ from vergil_tooling.lib.linkage import (
     freetext_linkage_error,
     normalize_linkage,
 )
+from vergil_tooling.lib.merge_review import record as merge_record
 from vergil_tooling.lib.pr_body import normalize_issue_ref
 from vergil_tooling.lib.pr_workflow import batch_marker, batch_rules, engine, freeze
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
@@ -114,7 +128,10 @@ from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release_groups import record
-from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import (
+    TrustedAuthorsNotConfiguredError,
+    load_trusted_authors,
+)
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
@@ -279,6 +296,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p_bcheck.set_defaults(func=cmd_batch_check)
+
+    p_bgates = sub.add_parser(
+        "batch-gates",
+        help="Judge a batch's gate commit by commit before handoff (read-only)",
+        description=(
+            "Run in a batch's worktree before report-ready. The batch's issues are read "
+            "from the batch markers of the branch's issues, the base is a freshly fetched "
+            "origin/develop, and the merge-review rule of the submit gate is evaluated "
+            "commit by commit, exactly as vrg-submit-pr would. Writes nothing. Exits 0 "
+            "when every commit is covered, 1 when one is not, or on a read failure, and "
+            "2 on usage. Report-ready removes the markers, so after it this exits 1: the "
+            "probe runs only before handoff. --json prints the verdicts as one object, "
+            '{"branch", "head", "commits": [{"issue", "sha", "covered", "reason"}]}.'
+        ),
+    )
+    p_bgates.add_argument("--json", action="store_true", help="Print the verdicts as JSON")
+    p_bgates.set_defaults(func=cmd_batch_gates)
 
     return parser.parse_args(argv)
 
@@ -1144,6 +1178,106 @@ def cmd_batch_check(args: argparse.Namespace, _transport: LocalFileTransport) ->
         f"one commit per issue since {base} ({base_sha[:12]})."
     )
     return 0
+
+
+#: The base the batch probe judges against: the freshly fetched develop.
+BATCH_GATES_BASE = "origin/develop"
+
+
+def _batch_gate_candidates(commits: list[tuple[str, str]]) -> list[int]:
+    """The issue numbers the branch's own (non-fixup) commits name, in branch order, once each."""
+    numbers: list[int] = []
+    for _sha, subject in commits:
+        number = merge_record.subject_issue(subject)
+        if number is None or subject.startswith(merge_record.FIXUP_PREFIX):
+            continue
+        if number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
+def _batch_gate_line(commit: agent_gates.CommitVerdict) -> str:
+    """One commit's verdict as a line for a person to read."""
+    short = commit.sha[:12] if commit.sha is not None else "(no single commit)"
+    state = "covered" if commit.covered else "UNCOVERED"
+    line = f"{commit.issue}  {short}  {state}"
+    return line if commit.reason is None else f"{line}  {commit.reason}"
+
+
+def cmd_batch_gates(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
+    """Judge a batch's merge-review gate commit by commit, before handoff; write nothing.
+
+    The batch is the one the branch's issues' markers list: the first issue
+    (in branch order) that has a marker gives its issues. The gate's
+    merge-review check (:func:`agent_gates.evaluate_commits`) runs on
+    ``origin/develop..HEAD`` as ``vrg-submit-pr`` runs it. Exits 0 when every
+    commit is covered, 1 otherwise, and 1 with the failure on stderr on any
+    read failure or when no marker is found (report-ready removed them).
+    The only git write is the fetch of ``origin/develop``, and it needs no
+    freeze check.
+    """
+    try:
+        branch = git.current_branch()
+        head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(f"batch-gates: cannot read HEAD ({error_text(exc)})") from exc
+    if branch == "HEAD":
+        raise WorkflowError("batch-gates: HEAD is detached; check out the batch's branch first.")
+    # Quiet and captured: git's ref report must not reach the verdicts on stdout.
+    try:
+        git.read_output("fetch", "-q", "origin", "develop")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(
+            f"batch-gates: cannot fetch origin develop: {error_text(exc)}; nothing was written"
+        ) from exc
+    repo = Path(git.repo_root())
+    try:
+        commits = merge_record.branch_commits(repo, BATCH_GATES_BASE, head)
+        root = git.main_worktree_root()
+    except (merge_record.RecordError, subprocess.CalledProcessError, OSError) as exc:
+        raise WorkflowError(f"batch-gates: {error_text(exc)}; nothing was written") from exc
+    marker = None
+    for number in _batch_gate_candidates(commits):
+        marker = batch_marker.read_marker(root, f"#{number}")
+        if marker is not None:
+            break
+    if marker is None:
+        raise WorkflowError(
+            "batch-gates: no batch marker: batch-gates runs only before handoff"
+            " (report-ready removes the markers); nothing was written"
+        )
+    try:
+        repo_name = _clone_repo()
+    except WrongCloneError as exc:
+        raise WorkflowError(f"batch-gates: {exc}; nothing was written") from exc
+    try:
+        authors = load_trusted_authors()
+    except (TrustedAuthorsNotConfiguredError, ValueError) as exc:
+        raise WorkflowError(f"batch-gates: {exc}; nothing was written") from exc
+    issue_refs = [f"{repo_name}{issue}" for issue in marker.issues]
+    verdicts = agent_gates.evaluate_commits(
+        repo, base=BATCH_GATES_BASE, head=head, issue_refs=issue_refs, authors=authors
+    )
+    if verdicts.read_failure:
+        failure = "; ".join(verdicts.extra_reasons)
+        raise WorkflowError(f"batch-gates: {failure}; nothing was written")
+    if args.json:
+        _emit(
+            {
+                "branch": branch,
+                "head": head,
+                "commits": [
+                    {"issue": c.issue, "sha": c.sha, "covered": c.covered, "reason": c.reason}
+                    for c in verdicts.commits
+                ],
+            }
+        )
+    else:
+        for commit in verdicts.commits:
+            print(_batch_gate_line(commit))
+    for reason in verdicts.extra_reasons:
+        print(f"batch-gates: {reason}", file=sys.stderr)
+    return 0 if verdicts.ok else 1
 
 
 if __name__ == "__main__":

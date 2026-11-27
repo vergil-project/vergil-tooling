@@ -119,8 +119,12 @@ It names the head the run judged, the
 of the change it covers and the outcome, all computed by the command, so a
 clean rebase keeps the record while any change to the branch's own lines
 needs a new review. For one issue of a batch before handoff the change is
-that issue's own, from the previous issue's commit; otherwise it is the
-branch's change since its merge base with `origin/develop`. The record is
+that issue's own commit, wherever it sits in the batch, with its fixups folded
+in, from that commit's parent; the other issues' commits are not part of it.
+Otherwise it is the branch's change since its merge base with
+`origin/develop`. Before handoff, `vrg-pr-workflow batch-gates` judges the
+batch's gate commit by commit, read-only, so a middle commit can be checked
+again before report-ready. The record is
 machine-readable: it counts only when the agent login posted it, unedited,
 and a run that stopped, is waiting, or ended fatal or in error has none.
 

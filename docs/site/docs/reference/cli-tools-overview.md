@@ -345,6 +345,17 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
   the extraction and fails `--check` too.
 
+`batch-gates [--json]` judges a batch's merge-review gate before handoff, run in
+the batch's worktree before `report-ready`. It reads the batch's issues from the
+clone's batch markers, fetches `origin/develop`, and evaluates the submit gate's
+merge-review rule commit by commit, as `vrg-submit-pr` would. It writes nothing:
+no state, no marker, and no git write but that fetch. It prints one line per
+commit (issue, short SHA, `covered` or `UNCOVERED`, and the reason), or with
+`--json` the object `{"branch", "head", "commits": [{"issue", "sha", "covered",
+"reason"}]}`. It exits 0 when every commit is covered, and 1 when one is not, or
+on a read failure (the failure is on stderr). Report-ready removes the markers,
+so after it the probe refuses with exit 1.
+
 `batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
 about to push). It reads the PR's base and head, and its body only through the
@@ -364,7 +375,7 @@ otherwise.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract` (`--issue` repeatable, `--check`), `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract` (`--issue` repeatable, `--check`), `batch-show`, `batch-check` (`--pr` required, `--head`), `batch-gates` (`--json`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
@@ -1982,9 +1993,11 @@ line (or the branch line). The command computes the head and the
 [change fingerprint](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py)
 itself; it takes neither as an argument. For an issue of a batch before
 handoff (it has a batch marker), the change is that issue's own, from the
-previous issue's commit to `HEAD`, which must hold only the issue's first
-commit and its `fixup!` commits; folded, its fingerprint is the issue's
-commit's. Otherwise, a fix to an open PR included, it is the change since
+issue's own commit, the one non-fixup commit of `origin/develop..HEAD` whose
+subject ends in `(#N)`, with the `fixup!` commits directly after it folded in,
+from that commit's parent (the marker's `base_sha` is not used); later
+commits are excluded, and a `fixup!` of it after another commit is refused,
+since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with `origin/develop`. Submit, the watch and the audit read
 the records back from the trust layer's comment stream, agent role only,
 skipping an edited comment. A re-run that finds the same comment already

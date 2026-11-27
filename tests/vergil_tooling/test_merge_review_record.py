@@ -532,45 +532,111 @@ def test_close_first_batch_member_uses_the_base(
 
 
 @pytest.mark.parametrize(
-    ("issue", "subjects", "match"),
+    ("subjects", "match"),
     [
-        # A later issue's commit is on top of the member's.
-        ("o/r#6", ["the second issue (#7)"], "not a fixup"),
-        # The member's first commit is missing.
-        ("o/r#7", [], "no commit for #7"),
-        # A fixup with no first commit.
-        ("o/r#7", ["fixup! the second issue (#7)"], "not #7's first commit"),
-        # A commit naming another issue.
-        ("o/r#7", ["something else (#9)"], "not #7's first commit"),
-        # A stray commit after the member's.
-        ("o/r#7", ["the second issue (#7)", "a stray commit"], "not a fixup"),
+        # The member has no commit of its own, only a later issue's.
+        (["the third issue (#9)"], "holds 0"),
+        # Only a fixup of the member's commit, with no commit of its own.
+        (["fixup! the second issue (#7)"], "holds 0"),
+        # Two commits of the member's own.
+        (["the second issue (#7)", "the second again (#7)"], "holds 2"),
+        # A fixup of the member's commit after another commit: it must be folded first.
+        (
+            ["the second issue (#7)", "a stray commit", "fixup! the second issue (#7)"],
+            "fold it into its commit first",
+        ),
     ],
 )
-def test_close_batch_refuses_a_branch_out_of_shape(
+def test_close_batch_refuses_a_member_with_no_single_commit(
     repo: Path,
     poster: Poster,
     capsys: pytest.CaptureFixture[str],
-    issue: str,
     subjects: list[str],
     match: str,
 ) -> None:
     _batch(repo)
     for n, subject in enumerate(subjects):
         _commit(repo, f"f{n}.txt", f"{n}\n", subject)
-    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}", issue=issue) == 1
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
     assert match in capsys.readouterr().err
     assert poster.posted == []
 
 
-def test_close_batch_refuses_without_the_previous_issues_commit(
-    repo: Path, poster: Poster, capsys: pytest.CaptureFixture[str]
+def test_close_batch_member_needs_no_previous_issues_commit(
+    repo: Path, poster: Poster, items: trust_stubs.FakeItems
 ) -> None:
+    items.items[("o/r", 7)] = trust_stubs.item()
     base = _git(repo, "rev-parse", "HEAD")
     batch_marker.write_markers(repo, ["#6", "#7"], base_sha=base)
+    head = _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 0
+    found = _posted_record(poster)
+    assert found == Record(head, commit_fingerprint(repo, head), "eligible")
+
+
+def test_close_batch_member_records_a_middle_commit_with_later_commits(
+    repo: Path, poster: Poster, items: trust_stubs.FakeItems
+) -> None:
+    for number in (6, 7, 8):
+        items.items[("o/r", number)] = trust_stubs.item()
+    batch_marker.write_markers(repo, ["#6", "#7", "#8"], base_sha=_git(repo, "rev-parse", "HEAD"))
+    _commit(repo, "a.txt", "ONE\ntwo\nthree\n", "the first issue (#6)")
     _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
-    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}") == 1
-    assert "previous issue #6" in capsys.readouterr().err
-    assert poster.posted == []
+    middle = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "d.txt", "eight\n", "the third issue (#8)")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}", issue="o/r#7") == 0
+    found = _posted_record(poster)
+    assert found == Record(middle, commit_fingerprint(repo, middle), "eligible")
+
+
+def test_close_batch_member_excludes_later_commits(
+    repo: Path, poster: Poster, items: trust_stubs.FakeItems
+) -> None:
+    items.items[("o/r", 6)] = trust_stubs.item()
+    batch_marker.write_markers(repo, ["#6", "#7"], base_sha=_git(repo, "rev-parse", "HEAD"))
+    first = _commit(repo, "a.txt", "ONE\ntwo\nthree\n", "the first issue (#6)")
+    _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
+    _commit(repo, "c.txt", "seven, fixed\n", "fixup! the second issue (#7)")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}", issue="o/r#6") == 0
+    path, body = poster.posted[0]
+    assert path == "repos/o/r/issues/6/comments"
+    found = parse_record(body)
+    assert found == Record(first, commit_fingerprint(repo, first), "eligible")
+    assert found.fingerprint != change_fingerprint(repo, "origin/develop", "HEAD")
+
+
+def test_close_batch_member_folds_a_middle_members_fixups(
+    repo: Path, poster: Poster, items: trust_stubs.FakeItems
+) -> None:
+    for number in (6, 7, 8):
+        items.items[("o/r", number)] = trust_stubs.item()
+    batch_marker.write_markers(repo, ["#6", "#7", "#8"], base_sha=_git(repo, "rev-parse", "HEAD"))
+    _commit(repo, "a.txt", "ONE\ntwo\nthree\n", "the first issue (#6)")
+    previous = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
+    head = _commit(repo, "c.txt", "seven, fixed\n", "fixup! the second issue (#7)")
+    _commit(repo, "d.txt", "eight\n", "the third issue (#8)")
+    assert _close(repo, f"{ELIGIBLE}\n{ITEMS}", issue="o/r#7") == 0
+    found = _posted_record(poster)
+    assert found.head == head
+    assert found.fingerprint == change_fingerprint(repo, previous, head)
+
+
+def test_batch_member_change_ignores_the_marker_base(repo: Path) -> None:
+    _batch(repo)
+    marker = batch_marker.Marker(issues=["#6", "#7"], base_sha="0" * 40)
+    _commit(repo, "c.txt", "seven\n", "the second issue (#7)")
+    head = _git(repo, "rev-parse", "HEAD")
+    covered = batch_member_change(repo, marker, "#7", head)
+    assert covered.head == head
+    assert covered.fingerprint == commit_fingerprint(repo, head)
+
+
+def test_batch_member_change_refuses_an_issue_not_in_the_batch(repo: Path) -> None:
+    _batch(repo)
+    marker = batch_marker.Marker(issues=["#6", "#7"], base_sha=_git(repo, "rev-parse", "HEAD"))
+    with pytest.raises(RecordError, match="#9 is not in the batch"):
+        batch_member_change(repo, marker, "#9", _git(repo, "rev-parse", "HEAD"))
 
 
 def test_close_batch_refuses_a_merge_commit(
@@ -600,7 +666,12 @@ def test_close_refuses_an_unreadable_batch_marker(
 def test_batch_member_change_refuses_an_unreadable_range(repo: Path) -> None:
     marker = batch_marker.Marker(issues=["#6", "#7"], base_sha="0" * 40)
     with pytest.raises(RecordError, match="cannot read the commits"):
-        batch_member_change(repo, marker, "#7", _git(repo, "rev-parse", "HEAD"))
+        batch_member_change(repo, marker, "#7", "0" * 40)
+
+
+def test_parent_of_an_unknown_commit_refuses(repo: Path) -> None:
+    with pytest.raises(RecordError, match="cannot read the parent"):
+        record_module._parent(repo, "0" * 40)
 
 
 def test_batch_member_change_refuses_unparsable_git_output(

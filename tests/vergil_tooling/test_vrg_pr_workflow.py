@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import epics, pr_path, trust
+from vergil_tooling.lib import agent_gates, epics, pr_path, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -31,7 +31,7 @@ from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release_groups import record
 from vergil_tooling.lib.release_groups.record import Group, GroupRecordError
-from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1370,3 +1370,242 @@ def test_report_ready_records_the_agent_identity_in_file_and_relay(
     payload = json.loads(_state_file(ready_clone).read_text())
     assert payload["recorded_by"] == "user"
     assert relay.return_value.write.call_args.args[0].recorded_by == "user"
+
+
+# --- batch-gates: the read-only probe ------------------------------------------------
+
+
+def _commit_file(repo: Path, name: str, text: str, subject: str) -> str:
+    (repo / name).write_text(text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture()
+def probe_clone(clone: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The clone with a local ``origin`` holding develop, and a feature branch of two issues.
+
+    The clone names acme/tools for the probe; the main clone's markers are in a
+    directory of their own, which the tests fill as they need.
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    _git(clone, "remote", "set-url", "origin", str(origin))
+    _git(clone, "push", "-q", "origin", "develop")
+    _git(clone, "checkout", "-q", "-b", "feature")
+    _commit_file(clone, "a.txt", "one\n", "the first issue (#7)")
+    _commit_file(clone, "b.txt", "two\n", "the second issue (#8)")
+    monkeypatch.setattr(vrg_pr_workflow, "_clone_repo", lambda: "acme/tools")
+    main_root = tmp_path / "main"
+    main_root.mkdir()
+    monkeypatch.setattr(vrg_pr_workflow.git, "main_worktree_root", lambda: main_root)
+    return clone
+
+
+def _mark_branch(clone: Path) -> None:
+    """Write the batch markers for #7 and #8, with origin/develop as the base."""
+    base = _git(clone, "rev-parse", "origin/develop")
+    write_markers(vrg_pr_workflow.git.main_worktree_root(), ["#7", "#8"], base_sha=base)
+
+
+def test_batch_gates_usage_exits_2(probe_clone: Path) -> None:
+    del probe_clone
+    with pytest.raises(SystemExit) as caught:
+        _run("batch-gates", "--issue", "7")
+    assert caught.value.code == 2
+    with pytest.raises(SystemExit) as caught:
+        _run("batch-gates", "extra")
+    assert caught.value.code == 2
+
+
+def test_batch_gates_refuses_after_report_ready(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no batch marker" in captured.err
+    assert "report-ready removes the markers" in captured.err
+
+
+def test_batch_gates_refuses_a_detached_head(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(probe_clone, "checkout", "-q", "--detach")
+    assert _run("batch-gates") == 1
+    assert "HEAD is detached" in capsys.readouterr().err
+
+
+def test_batch_gates_fetch_failure_exits_1(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    _git(probe_clone, "remote", "set-url", "origin", "/nonexistent/origin.git")
+    assert _run("batch-gates", "--json") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cannot fetch origin develop" in captured.err
+
+
+def _stub_verdicts(
+    monkeypatch: pytest.MonkeyPatch, verdicts: agent_gates.CommitVerdicts
+) -> dict[str, object]:
+    """Replace the per-commit evaluation; return what it was called with."""
+    seen: dict[str, object] = {}
+
+    def fake(repo: Path, *, base: str, head: str, issue_refs: list[str], authors: object) -> object:
+        seen.update(repo=repo, base=base, head=head, refs=issue_refs, authors=authors)
+        return verdicts
+
+    monkeypatch.setattr(vrg_pr_workflow.agent_gates, "evaluate_commits", fake)
+    monkeypatch.setattr(
+        vrg_pr_workflow,
+        "load_trusted_authors",
+        lambda: TrustedAuthors(human=("human",), agents=("agent",)),
+    )
+    return seen
+
+
+def test_batch_gates_json_shape_and_inputs(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    seven = _git(probe_clone, "rev-parse", "HEAD~1")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(
+            agent_gates.CommitVerdict("acme/tools#7", seven, True, None),
+            agent_gates.CommitVerdict("acme/tools#8", head, False, "a reason"),
+        )
+    )
+    seen = _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates", "--json") == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "branch": "feature",
+        "head": head,
+        "commits": [
+            {"issue": "acme/tools#7", "sha": seven, "covered": True, "reason": None},
+            {"issue": "acme/tools#8", "sha": head, "covered": False, "reason": "a reason"},
+        ],
+    }
+    assert seen["base"] == "origin/develop"
+    assert seen["head"] == head
+    assert seen["refs"] == ["acme/tools#7", "acme/tools#8"]
+
+
+def test_batch_gates_exits_0_and_prints_a_line_per_commit(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(
+            agent_gates.CommitVerdict("acme/tools#7", None, True, None),
+            agent_gates.CommitVerdict("acme/tools#8", head, True, None),
+        )
+    )
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "acme/tools#7  (no single commit)  covered",
+        f"acme/tools#8  {head[:12]}  covered",
+    ]
+
+
+def test_batch_gates_extra_reasons_go_to_stderr_and_fail(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(agent_gates.CommitVerdict("acme/tools#8", head, True, None),),
+        extra_reasons=("merge review: commit abc123 (fixup! x) is no issue's own commit",),
+    )
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert "is no issue's own commit" in captured.err
+    assert "covered" in captured.out
+
+
+def test_batch_gate_candidates_name_each_issue_once() -> None:
+    commits = [
+        ("a", "x (#7)"),
+        ("b", "y (#8)"),
+        ("c", "fixup! x (#7)"),
+        ("d", "z (#7)"),
+        ("e", "a commit naming no issue"),
+    ]
+    assert vrg_pr_workflow._batch_gate_candidates(commits) == [7, 8]
+
+
+def test_batch_gates_refuses_a_merge_commit(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    _git(probe_clone, "checkout", "-q", "-b", "side", "HEAD~1")
+    _commit_file(probe_clone, "side.txt", "side\n", "a side line")
+    _git(probe_clone, "checkout", "-q", "feature")
+    _git(probe_clone, "merge", "-q", "--no-edit", "--no-ff", "side")
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "is a merge commit" in captured.err
+
+
+def test_batch_gates_refuses_when_head_cannot_be_read(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    real = vrg_pr_workflow.git.read_output
+
+    def unreadable(*args: str) -> str:
+        if "HEAD^{commit}" in args:
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse"])
+        return real(*args)
+
+    monkeypatch.setattr(vrg_pr_workflow.git, "read_output", unreadable)
+    assert _run("batch-gates") == 1
+    assert "cannot read HEAD" in capsys.readouterr().err
+
+
+def test_batch_gates_refuses_a_clone_whose_repo_is_unknown(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+
+    def unknown() -> str:
+        raise vrg_pr_workflow.WrongCloneError("cannot tell which repo this clone is")
+
+    monkeypatch.setattr(vrg_pr_workflow, "_clone_repo", unknown)
+    assert _run("batch-gates") == 1
+    assert "cannot tell which repo this clone is" in capsys.readouterr().err
+
+
+def test_batch_gates_refuses_without_trusted_authors(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+
+    def unset() -> TrustedAuthors:
+        raise TrustedAuthorsNotConfiguredError("no trusted authors are configured")
+
+    monkeypatch.setattr(vrg_pr_workflow, "load_trusted_authors", unset)
+    assert _run("batch-gates") == 1
+    assert "no trusted authors are configured" in capsys.readouterr().err
+
+
+def test_batch_gates_read_failure_exits_1_with_the_failure_on_stderr(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    failure = "merge review: lookup failed for origin/develop...HEAD: the comment stream is gone"
+    verdicts = agent_gates.CommitVerdicts(commits=(), extra_reasons=(failure,), read_failure=True)
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates", "--json") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "the comment stream is gone" in captured.err
+    assert "nothing was written" in captured.err

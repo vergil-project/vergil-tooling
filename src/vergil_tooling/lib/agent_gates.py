@@ -24,6 +24,12 @@ one rule to the change from the merge base of *base* and *head* to *head*:
   exemption must be at or after the review of commit k-1, so a changed
   earlier commit voids every later record until it is reviewed again.
 
+:func:`evaluate_commits` is the same rule with its verdict kept per commit:
+one :class:`CommitVerdict` for each issue of a batch (its own commit, the
+chain's verdict on it), and the reasons that belong to no issue's commit
+(a commit no issue claims). The batch probe (``vrg-pr-workflow batch-gates``)
+reads it, so the probe and :func:`evaluate` judge every commit by one walk.
+
 **Fail closed.** Every lookup failure (an unreadable ref, diff,
 comment stream or configured login) gives ``ok=False`` with the error as
 the reason, as does a change with no resolvable task issue. Nothing passes
@@ -41,11 +47,12 @@ first, the one shared test of that.
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import trust
+from vergil_tooling.lib import git, trust
 from vergil_tooling.lib.change_fingerprint import (
     FingerprintError,
     change_fingerprint,
@@ -72,10 +79,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AGENT_MODES",
+    "CommitVerdict",
+    "CommitVerdicts",
     "GateError",
     "GateResult",
     "agent_involved",
     "evaluate",
+    "evaluate_commits",
 ]
 
 #: The identity modes that are agent identities: a ready-state one of them
@@ -107,6 +117,49 @@ class GateResult:
     ok: bool
     reasons: tuple[str, ...]
     read_failure: bool = False
+
+
+@dataclass(frozen=True)
+class CommitVerdict:
+    """The merge-review verdict on one issue's commit of a change.
+
+    *sha* is the issue's own commit (the head's commit for a single-issue
+    change), or ``None`` when the branch holds no single commit for the issue,
+    or when the verdict was not worked out commit by commit. *reason* is
+    ``None`` exactly when *covered* is true.
+    """
+
+    issue: str
+    sha: str | None
+    covered: bool
+    reason: str | None
+
+
+@dataclass(frozen=True)
+class CommitVerdicts:
+    """The per-commit merge-review verdicts of a change, and the reasons no commit holds.
+
+    *commits* has one verdict per issue, in the batch's order. *extra_reasons*
+    are the reasons that belong to no issue's commit: a commit no issue
+    claims, or a task issue that cannot be used. *read_failure* is true when
+    a lookup failed; the change then has no verdicts, and the failure is in
+    *extra_reasons*.
+    """
+
+    commits: tuple[CommitVerdict, ...]
+    extra_reasons: tuple[str, ...] = ()
+    read_failure: bool = False
+
+    @property
+    def ok(self) -> bool:
+        """Whether every commit is covered and no reason belongs to none."""
+        return not self.extra_reasons and all(commit.covered for commit in self.commits)
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Every reason the rule fails, in :func:`evaluate`'s order."""
+        given = tuple(c.reason for c in self.commits if c.reason is not None)
+        return given + self.extra_reasons
 
 
 # --- agent involvement ------------------------------------------------------------
@@ -286,20 +339,65 @@ def _uncovered_reason(
     )
 
 
-def _merge_review_reasons(
-    repo: Path, base: str, head: str, refs: list[str], lookups: _Lookups
-) -> list[str]:
+def _head_commit(repo: Path, head: str) -> str:
+    """The full sha of the commit *head* names, for a single-issue verdict."""
+    try:
+        return git.read_output("-C", str(repo), "rev-parse", "--verify", f"{head}^{{commit}}")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        msg = f"cannot read the commit {head}: {exc}"
+        raise RecordError(msg) from exc
+
+
+def _covered_by_whole(
+    repo: Path, base: str, head: str, refs: list[str], *, detail: bool
+) -> tuple[list[CommitVerdict], list[str]]:
+    """The verdicts when a record or exemption covers the whole change.
+
+    Without *detail* nothing more is looked up, as :func:`evaluate` needs no
+    more. With it, each issue gets its verdict: covered, with its own commit
+    when the branch holds exactly one for it (``None`` when it does not, the
+    whole change covering it).
+    """
+    if not detail:
+        return [], []
+    if len(refs) == 1:
+        return [CommitVerdict(refs[0], _head_commit(repo, head), True, None)], []
+    commits = branch_commits(repo, base, head)
+    verdicts = []
+    for ref in refs:
+        sha, _problem = _issue_commit(commits, ref)
+        verdicts.append(CommitVerdict(ref, sha, True, None))
+    return verdicts, []
+
+
+def _walk(
+    repo: Path,
+    base: str,
+    head: str,
+    refs: list[str],
+    lookups: _Lookups,
+    *,
+    detail: bool,
+) -> tuple[list[CommitVerdict], list[str]]:
+    """Every issue's verdict in the batch's order, and the reasons no issue's commit holds.
+
+    The single source of the rule: :func:`evaluate` reads the reasons of the
+    verdicts and the extra reasons, in that order, and :func:`evaluate_commits`
+    keeps the verdicts.
+    """
     whole = change_fingerprint(repo, base, head)
     if any(lookups.covers(ref, whole) for ref in refs):
-        return []
+        return _covered_by_whole(repo, base, head, refs, detail=detail)
     if len(refs) == 1:
-        return [
+        reason = (
             f"merge review: no merge-review record or approved exemption"
             f" on {refs[0]} covers the change (fingerprint {whole}); run merge review"
-        ]
+        )
+        sha = _head_commit(repo, head) if detail else None
+        return [CommitVerdict(refs[0], sha, False, reason)], []
     commits = branch_commits(repo, base, head)
     subjects = dict(commits)
-    reasons: list[str] = []
+    verdicts: list[CommitVerdict] = []
     claimed: set[str] = set()
     # The chain (spec 5.4), walked in the batch's order. ``bound`` is c(k-1), the
     # earliest review of the previous commit, and ``anchor`` the commit it is of.
@@ -311,7 +409,14 @@ def _merge_review_reasons(
     for ref in refs:
         sha, problem = _issue_commit(commits, ref)
         if sha is None:
-            reasons.append(f"{problem}, or a record must cover the whole change ({whole})")
+            verdicts.append(
+                CommitVerdict(
+                    ref,
+                    None,
+                    False,
+                    f"{problem}, or a record must cover the whole change ({whole})",
+                )
+            )
             continue
         claimed.add(sha)
         fingerprint = commit_fingerprint(repo, sha)
@@ -319,21 +424,42 @@ def _merge_review_reasons(
             covered_at = _review_time(lookups, ref, fingerprint, bound)
             if covered_at is not None:
                 bound, anchor = covered_at, sha
+                verdicts.append(CommitVerdict(ref, sha, True, None))
                 continue
             broke = sha
             reason_anchor = anchor
         else:
             reason_anchor = broke
-        reasons.append(
-            _uncovered_reason(lookups, ref, sha, subjects[sha], fingerprint, whole, reason_anchor)
+        reason = _uncovered_reason(
+            lookups, ref, sha, subjects[sha], fingerprint, whole, reason_anchor
         )
-    reasons += [
+        verdicts.append(CommitVerdict(ref, sha, False, reason))
+    extras = [
         f"merge review: commit {sha[:12]} ({subject}) is no issue's own commit, so only a"
         f" record or exemption covering the whole change ({whole}) covers it"
         for sha, subject in commits
         if sha not in claimed
     ]
-    return reasons
+    return verdicts, extras
+
+
+def _judge(
+    repo: Path,
+    base: str,
+    head: str,
+    refs: list[str],
+    authors: TrustedAuthors,
+    *,
+    detail: bool,
+) -> CommitVerdicts:
+    """:func:`_walk` as verdicts; a lookup failure fails closed, with no verdicts."""
+    change = f"{base}...{head}"
+    try:
+        verdicts, extras = _walk(repo, base, head, refs, _Lookups(authors), detail=detail)
+    except _LOOKUP_ERRORS as exc:
+        failure = f"merge review: lookup failed for {change}: {exc}"
+        return CommitVerdicts(commits=(), extra_reasons=(failure,), read_failure=True)
+    return CommitVerdicts(commits=tuple(verdicts), extra_reasons=tuple(extras))
 
 
 def evaluate(
@@ -356,10 +482,25 @@ def evaluate(
     refs, reasons = _resolve_refs(issue_refs, change)
     if reasons:
         return GateResult(ok=False, reasons=tuple(reasons))
-    read_failure = False
-    try:
-        reasons += _merge_review_reasons(repo, base, head, refs, _Lookups(authors))
-    except _LOOKUP_ERRORS as exc:
-        reasons.append(f"merge review: lookup failed for {change}: {exc}")
-        read_failure = True
-    return GateResult(ok=not reasons, reasons=tuple(reasons), read_failure=read_failure)
+    judged = _judge(repo, base, head, refs, authors, detail=False)
+    return GateResult(ok=judged.ok, reasons=judged.reasons, read_failure=judged.read_failure)
+
+
+def evaluate_commits(
+    repo: Path, *, base: str, head: str, issue_refs: list[str], authors: TrustedAuthors
+) -> CommitVerdicts:
+    """The rule of :func:`evaluate`, with a verdict for each issue's commit.
+
+    Takes the same arguments and judges the same change by the same walk, so
+    ``ok`` and ``reasons`` agree with :func:`evaluate`'s. The difference is
+    that the change's commits are read even when a record covers the whole
+    change: each issue's verdict then names its own commit and is covered, with
+    no reason. A single-issue change has one verdict, for the head's commit.
+    A task issue that cannot be used, or an unreadable ref, gives no verdicts
+    and the reason in ``extra_reasons``.
+    """
+    change = f"{base}...{head}"
+    refs, reasons = _resolve_refs(issue_refs, change)
+    if reasons:
+        return CommitVerdicts(commits=(), extra_reasons=tuple(reasons))
+    return _judge(repo, base, head, refs, authors, detail=True)

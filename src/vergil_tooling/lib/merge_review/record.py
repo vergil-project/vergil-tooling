@@ -25,8 +25,11 @@ The record covers:
   the merge base with ``origin/develop`` to ``HEAD``
   (:func:`~vergil_tooling.lib.change_fingerprint.change_fingerprint`);
 - one issue of a batch before handoff (it has a batch marker): that issue's
-  own change, from the previous issue's commit to ``HEAD``. Folded, that is
-  the issue's one commit, so the fingerprint equals the folded commit's
+  own commit, wherever it sits in the batch, with its ``fixup!`` commits
+  folded in, from that commit's parent. No other issue's commit is part of
+  it, and the marker's ``base_sha`` is not used, so a clean rebase onto a
+  moved ``origin/develop`` changes no issue's change. With no fixup, the
+  fingerprint is the commit's
   :func:`~vergil_tooling.lib.change_fingerprint.commit_fingerprint`.
 
 Every failure raises :class:`RecordError` (or the fingerprint's
@@ -280,73 +283,84 @@ def branch_commits(repo: Path, base: str, head: str) -> list[tuple[str, str]]:
     return found
 
 
+def subject_issue(subject: str) -> int | None:
+    """The issue number a commit *subject* ends in (`` (#N)``), or ``None`` when it ends in none."""
+    match = _SUBJECT_REF_RE.search(subject)
+    return None if match is None else int(match.group(1))
+
+
 def subject_names(subject: str, number: int) -> bool:
     """Whether a batch commit *subject* ends in the issue ref `` (#<number>)``."""
-    match = _SUBJECT_REF_RE.search(subject)
-    return match is not None and int(match.group(1)) == number
+    return subject_issue(subject) == number
 
 
-def _previous_commit(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> str:
-    """The batch issue *issue*'s fold base: ``base_sha``, or the previous issue's one commit."""
-    position = marker.issues.index(issue)
-    if position == 0:
-        return marker.base_sha
-    previous = int(marker.issues[position - 1].removeprefix("#"))
-    matches = [
-        sha
-        for sha, subject in branch_commits(repo, marker.base_sha, head)
-        if subject_names(subject, previous) and not subject.startswith(FIXUP_PREFIX)
-    ]
-    if len(matches) != 1:
-        msg = (
-            f"the batch branch must hold exactly one commit for the previous issue"
-            f" #{previous} since {marker.base_sha[:12]}; found {len(matches)}"
-        )
-        raise RecordError(msg)
-    return matches[0]
+def _parent(repo: Path, sha: str) -> str:
+    """The first parent of commit *sha*: the fold base of the issue whose commit it is."""
+    try:
+        return git.read_output("-C", str(repo), "rev-parse", "--verify", f"{sha}^")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        msg = f"cannot read the parent of commit {sha[:12]}: {exc}"
+        raise RecordError(msg) from exc
 
 
 def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> Covered:
     """What a record covers for batch issue *issue* (``#N``) at *head*, before handoff.
 
-    The issue's commits are those of ``<previous issue's commit>..<head>``:
-    its first commit, whose subject ends in `` (#N)``, and only
-    ``fixup!`` commits of it after. Any other commit there (a later issue's,
-    a merge) is refused. The fingerprint is the change since the previous
-    issue's commit, which is the folded commit's ``commit_fingerprint``.
+    The change is the issue's own commit, the one non-fixup commit of
+    ``origin/develop..head`` whose subject ends in `` (#N)``, with its
+    ``fixup!`` commits folded in: the run of them immediately after it. Its
+    fold base is that commit's parent, so the change holds no other issue's
+    commit, whichever side of it that issue sits on, and the marker's
+    ``base_sha`` is not used. Commits after the run that are not its fixups
+    are excluded. A fixup of the commit that comes after another commit is
+    refused, since it must be folded first.
+
+    With no fixup the fingerprint is the commit's ``commit_fingerprint``;
+    otherwise it is the change from the parent to the run's last commit.
     """
-    number = int(issue.removeprefix("#"))
-    previous = _previous_commit(repo, marker, issue, head)
-    own = branch_commits(repo, previous, head)
-    if not own:
-        msg = f"the batch branch has no commit for {issue} after {previous[:12]}"
+    if issue not in marker.issues:
+        msg = f"{issue} is not in the batch {', '.join(marker.issues)}"
         raise RecordError(msg)
-    first_sha, first_subject = own[0]
-    if first_subject.startswith(FIXUP_PREFIX) or not subject_names(first_subject, number):
+    number = int(issue.removeprefix("#"))
+    commits = branch_commits(repo, DEFAULT_BASE, head)
+    owners = [
+        index
+        for index, (_sha, subject) in enumerate(commits)
+        if subject_names(subject, number) and not subject.startswith(FIXUP_PREFIX)
+    ]
+    if len(owners) != 1:
         msg = (
-            f"the first commit after {previous[:12]}, {first_sha[:12]} ({first_subject}),"
-            f" is not {issue}'s first commit: its subject must end in ' ({issue})'"
+            f"the batch branch since {DEFAULT_BASE} must hold exactly one commit for {issue}"
+            f" (subject ending ' ({issue})'); it holds {len(owners)}"
         )
         raise RecordError(msg)
-    for sha, subject in own[1:]:
-        if subject != f"{FIXUP_PREFIX}{first_subject}":
+    index = owners[0]
+    own, subject = commits[index]
+    fixup = f"{FIXUP_PREFIX}{subject}"
+    end = index + 1
+    while end < len(commits) and commits[end][1] == fixup:
+        end += 1
+    for sha, later in commits[end:]:
+        if later == fixup:
             msg = (
-                f"commit {sha[:12]} ({subject}) is not a fixup of {issue}'s first commit;"
-                f" {issue} must be the last issue on the branch"
+                f"commit {sha[:12]} ({later}) is a fixup of {issue}'s commit {own[:12]},"
+                " but another commit comes between them; fold it into its commit first"
             )
             raise RecordError(msg)
-    if len(own) == 1:
-        return Covered(head=head, fingerprint=commit_fingerprint(repo, head))
-    return Covered(head=head, fingerprint=change_fingerprint(repo, previous, head))
+    if end == index + 1:
+        return Covered(head=own, fingerprint=commit_fingerprint(repo, own))
+    last = commits[end - 1][0]
+    return Covered(head=last, fingerprint=change_fingerprint(repo, _parent(repo, own), last))
 
 
 def covered_change(repo: Path, issue_number: int, *, main_root: Path) -> Covered:
     """What a record posted now from the worktree *repo* covers, for task *issue_number*.
 
     A batch member (its batch marker, under *main_root*, exists) gets
-    :func:`batch_member_change`; any other task, or a fix to an open PR
-    (report-ready has removed the markers), the change from the merge base
-    with ``origin/develop`` to ``HEAD``.
+    :func:`batch_member_change`: its own commit, wherever it sits in the
+    batch. Any other task, or a fix to an open PR (report-ready has removed
+    the markers), gets the change from the merge base with ``origin/develop``
+    to ``HEAD``.
     """
     try:
         head = git.read_output("-C", str(repo), "rev-parse", "--verify", "HEAD^{commit}")
