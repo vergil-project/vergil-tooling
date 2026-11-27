@@ -17,6 +17,7 @@ from vergil_tooling.lib.rulings.approvals import render_exemption_request
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 AUTHORS = TrustedAuthors(human=("human",), agents=("human-vergil-user",))
@@ -43,7 +44,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _commit(repo: Path, files: dict[str, str | None], message: str) -> str:
+def _commit(repo: Path, files: Mapping[str, str | None], message: str) -> str:
     for name, text in files.items():
         path = repo / name
         if text is None:
@@ -406,7 +407,7 @@ def _batch3(repo: Path) -> tuple[str, str, str]:
     return first, second, third
 
 
-def _rebuild(repo: Path, steps: list[tuple[dict[str, str], str]]) -> tuple[str, str, str]:
+def _rebuild(repo: Path, steps: list[tuple[Mapping[str, str | None], str]]) -> tuple[str, str, str]:
     """Replace the feature branch with three commits built afresh on develop."""
     _git(repo, "reset", "-q", "--hard", "develop")
     first, second, third = (_commit(repo, files, message) for files, message in steps)
