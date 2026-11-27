@@ -36,6 +36,7 @@ from vergil_tooling.lib.release_lock.model import ReleaseLockError
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release_lock.holder import LockOwner
+    from vergil_tooling.lib.release_lock.model import LockRecord
 
 __all__ = ["UnlockGuard", "holder_identity", "rearm", "rearm_lines", "release_lock"]
 
@@ -160,10 +161,7 @@ def _failure(repo: str, cause: BaseException, what: str) -> ReleaseError:
 _BREAK = 'vrg-release-lock break --reason "<why>"'
 
 
-def _describe(state: lock_refs.LockState) -> str:
-    record = state.record
-    if record is None:
-        return f"it cannot be read ({state.error})"
+def _describe(record: LockRecord) -> str:
     issue = record.tracking_issue or "none recorded"
     return (
         f"release {record.version}, held by {record.holder_identity} on"
@@ -222,17 +220,8 @@ def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
     if state.sha is None:
         print(f"No release lock is held on {ctx.repo}: nothing to release.")
         return
-    tracking_issue = f"{ctx.repo}#{ctx.issue_number}"
-    if (
-        state.record is not None
-        and ctx.issue_number is not None
-        and is_own_lock(
-            state.record, identity=holder_identity(phase), tracking_issue=tracking_issue
-        )
-    ):
-        _delete_own(ctx, state.sha, phase=phase)
-        return
-    if state.record is None:
+    record = state.record
+    if record is None:
         # Whose an unreadable lock is cannot be known (issue #5352), so it is
         # never called another release's: the read error and the escape hatch.
         raise ReleaseError(
@@ -246,12 +235,18 @@ def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
                 f" re-arms the PRs, then re-run `vrg-release --resume {ctx.version}`."
             ),
         )
+    tracking_issue = f"{ctx.repo}#{ctx.issue_number}"
+    if ctx.issue_number is not None and is_own_lock(
+        record, identity=holder_identity(phase), tracking_issue=tracking_issue
+    ):
+        _delete_own(ctx, state.sha, phase=phase)
+        return
     raise ReleaseError(
         phase=phase,
         command=command,
         message=(
             f"This run holds no release lock (it is a resume), and the release lock on"
-            f" {ctx.repo} is held: {_describe(state)}. It is not release {ctx.version}'s"
+            f" {ctx.repo} is held: {_describe(record)}. It is not release {ctx.version}'s"
             f" own ({tracking_issue}), and a resume deletes only its own release's lock."
             " Check it with `vrg-release-lock status`; once no run of the release holding"
             f" it is alive, remove it with `{_BREAK}`, which also re-arms the PRs, then"
