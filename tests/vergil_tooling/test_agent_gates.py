@@ -109,15 +109,22 @@ class Thread:
         self.next_id = 100
         self.clock = 0
 
-    def add(self, ref: str, body: str, author: dict[str, str], *, editor: Any = None) -> None:
+    def add(
+        self,
+        ref: str,
+        body: str,
+        author: dict[str, str],
+        *,
+        editor: Any = None,
+        created: str | None = None,
+    ) -> None:
         repo, _, number = ref.partition("#")
         key = (repo, int(number))
         self.next_id += 1
         self.clock += 1
+        posted = created if created is not None else _stamp(self.clock)
         self.nodes.setdefault(key, []).append(
-            trust_stubs.comment(
-                self.next_id, body, author, editor=editor, created=_stamp(self.clock)
-            )
+            trust_stubs.comment(self.next_id, body, author, editor=editor, created=posted)
         )
         self.items.items[key] = trust_stubs.item(nodes=self.nodes[key])
 
@@ -127,12 +134,20 @@ class Thread:
             key = (repo, int(number))
             self.items.items.setdefault(key, trust_stubs.item(nodes=[]))
 
-    def record(self, ref: str, head: str, fingerprint: str, outcome: str = "eligible") -> None:
+    def record(
+        self,
+        ref: str,
+        head: str,
+        fingerprint: str,
+        outcome: str = "eligible",
+        *,
+        created: str | None = None,
+    ) -> None:
         body = (
             f"Merge review: done: {outcome}; accepted-risk 0\n"
             f"{render_record(head, fingerprint, outcome)}\n\n- R1: fixed\n"
         )
-        self.add(ref, body, AGENT)
+        self.add(ref, body, AGENT, created=created)
 
     def request(self, ref: str, fingerprint: str) -> None:
         self.add(ref, render_exemption_request("a typo fix", fingerprint), AGENT)
@@ -377,11 +392,11 @@ def test_batch_exemption_of_an_issues_own_commit_covers_it(repo: Path, thread: T
 
 THREE = "o/r#9"
 REFS3 = [ONE, TWO, THREE]
-FIRST_FILES = {"a.txt": "one\nTWO\nthree\n"}
-SECOND_FILES = {"b.txt": "uno\nDOS\n"}
-SECOND_FOLDED = {"b.txt": "uno\nDOS\nfolded\n"}
-THIRD_FILES = {"c.txt": "tres\n"}
-THIRD_FIXED = {"c.txt": "tres\nfixed\n"}
+FIRST_FILES: dict[str, str | None] = {"a.txt": "one\nTWO\nthree\n"}
+SECOND_FILES: dict[str, str | None] = {"b.txt": "uno\nDOS\n"}
+SECOND_FOLDED: dict[str, str | None] = {"b.txt": "uno\nDOS\nfolded\n"}
+THIRD_FILES: dict[str, str | None] = {"c.txt": "tres\n"}
+THIRD_FIXED: dict[str, str | None] = {"c.txt": "tres\nfixed\n"}
 
 
 def _batch3(repo: Path) -> tuple[str, str, str]:
@@ -470,6 +485,21 @@ def test_chain_fix_to_last_commit_needs_only_last(repo: Path, thread: Thread) ->
 
     thread.record(THREE, third, commit_fingerprint(repo, third))
     assert _evaluate(repo, REFS3).ok
+
+
+@pytest.mark.parametrize("posted", ["not a time", "2026-11-03T08:00:00"])
+def test_chain_fails_closed_on_a_time_it_cannot_read(
+    repo: Path, thread: Thread, posted: str
+) -> None:
+    first, second, _third = _batch3(repo)
+    thread.record(ONE, first, commit_fingerprint(repo, first))
+    thread.record(TWO, second, commit_fingerprint(repo, second), created=posted)
+    thread.empty(THREE)
+    result = _evaluate(repo, REFS3)
+    assert not result.ok
+    assert result.read_failure
+    assert result.reasons[0].startswith("merge review: lookup failed for")
+    assert posted in result.reasons[0]
 
 
 def test_chain_records_in_build_order_pass(repo: Path, thread: Thread) -> None:

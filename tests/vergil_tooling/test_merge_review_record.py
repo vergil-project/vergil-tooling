@@ -199,9 +199,7 @@ def test_records_carry_the_comment_time_and_the_record_line_is_unchanged(
 ) -> None:
     body = _closing()
     posted = "2026-11-03T08:15:00Z"
-    items.items[KEY] = trust_stubs.item(
-        nodes=[trust_stubs.comment(8, body, AGENT, created=posted)]
-    )
+    items.items[KEY] = trust_stubs.item(nodes=[trust_stubs.comment(8, body, AGENT, created=posted)])
     found = records("o/r#7", authors=AUTHORS)
     assert found == [
         Record(HEAD, FP, "eligible", comment_id=8, author="human-vergil-user", at=posted)

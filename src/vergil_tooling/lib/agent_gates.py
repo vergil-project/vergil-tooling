@@ -247,9 +247,7 @@ def _review_time(
     """
     timed = [(fp, _moment(at, ref)) for fp, at in lookups.entries(ref)]
     eligible = [
-        moment
-        for fp, moment in timed
-        if fp == fingerprint and (after is None or moment >= after)
+        moment for fp, moment in timed if fp == fingerprint and (after is None or moment >= after)
     ]
     return min(eligible, default=None)
 
@@ -263,7 +261,7 @@ def _uncovered_reason(
     whole: str,
     anchor: str | None,
 ) -> str:
-    """Why batch commit *sha* on *ref* is uncovered, given the commit *anchor* whose review bounds it.
+    """Why batch commit *sha* on *ref* is uncovered, given its bounding commit *anchor*.
 
     *anchor* is ``None`` only for the batch's first commit, which has no earlier
     review to be after. Past a chain break, *anchor* is the commit where the
@@ -327,9 +325,7 @@ def _merge_review_reasons(
         else:
             reason_anchor = broke
         reasons.append(
-            _uncovered_reason(
-                lookups, ref, sha, subjects[sha], fingerprint, whole, reason_anchor
-            )
+            _uncovered_reason(lookups, ref, sha, subjects[sha], fingerprint, whole, reason_anchor)
         )
     reasons += [
         f"merge review: commit {sha[:12]} ({subject}) is no issue's own commit, so only a"
