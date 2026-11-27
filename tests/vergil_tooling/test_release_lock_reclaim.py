@@ -22,6 +22,7 @@ from vergil_tooling.lib.release_lock import history, reclaim, refs, stale, sweep
 from vergil_tooling.lib.release_lock.model import (
     STALE_AFTER_SECS,
     LockRecord,
+    RefReadError,
     RefWriteError,
     from_json,
     to_json,
@@ -323,12 +324,68 @@ def test_break_records_before_delete_then_rearms(
     assert "the laptop died" in body
 
 
-def test_break_record_failure_deletes_nothing(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_break_history_failure_deletes_nothing(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_append(repo: str, entry: history.HistoryEntry) -> None:
+        raise RefWriteError("the history push was refused")
+
+    monkeypatch.setattr(history, "append", no_append)
     sha = h.put_lock(_record())
-    h.comment_error = RuntimeError("no token")
-    with pytest.raises(ReclaimError, match="no token"):
+    with pytest.raises(ReclaimError, match="the history push was refused"):
         reclaim.break_lock(REPO, actor="human on mac.local", reason="stuck")
     assert h.origin.sha(refs.LOCK_REF) == sha
+    assert h.comments == []
+    assert h.rearm_runs == []
+
+
+def test_break_comment_failure_deletes_nothing_and_records_not_landed(h: Harness) -> None:
+    sha = h.put_lock(_record())
+    h.comment_error = RuntimeError("no token")
+    with pytest.raises(ReclaimError, match="did not land.*no token") as caught:
+        reclaim.break_lock(REPO, actor="human on mac.local", reason="stuck")
+    assert isinstance(caught.value.__cause__, ReclaimError)
+    assert h.origin.sha(refs.LOCK_REF) == sha
+    entries = h.entries()
+    assert [e.action for e in entries] == ["break", "break-failed"]
+    assert "no token" in entries[1].reason
+    assert h.rearm_runs == []
+
+
+def test_break_delete_push_failure_records_not_landed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = h.put_lock(_record())
+
+    def refused(repo: str, *, expected: str) -> bool:
+        raise RefWriteError("pushing refs/vergil/release-lock failed: HTTP 502")
+
+    monkeypatch.setattr(refs, "delete_lock", refused)
+    with pytest.raises(ReclaimError, match="did not land.*HTTP 502") as caught:
+        reclaim.break_lock(REPO, actor="human on mac.local", reason="stuck")
+    assert isinstance(caught.value.__cause__, RefWriteError)
+    assert h.origin.sha(refs.LOCK_REF) == sha
+    assert [e.action for e in h.entries()] == ["break", "break-failed"]
+    assert len(h.comments) == 2
+    assert h.rearm_runs == []
+
+
+def test_break_reread_failure_records_not_landed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h.put_lock(_record())
+    _rewrite_before_delete(h, monkeypatch, [_beat(h, 1)])
+    real_read = refs.read_lock
+    reads: list[int] = []
+
+    def read_once(repo: str) -> refs.LockState:
+        reads.append(1)
+        if len(reads) > 1:
+            raise RefReadError("reading refs/vergil/release-lock from origin failed: HTTP 502")
+        return real_read(repo)
+
+    monkeypatch.setattr(refs, "read_lock", read_once)
+    with pytest.raises(ReclaimError, match="did not land.*HTTP 502"):
+        reclaim.break_lock(REPO, actor="human on mac.local", reason="stuck")
+    assert [e.action for e in h.entries()] == ["break", "break-failed"]
     assert h.rearm_runs == []
 
 

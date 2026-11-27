@@ -17,9 +17,10 @@
   heartbeat can rewrite the lock between the read and the delete, so a
   mismatch is re-read and the delete retried against the new value, while
   the lock is still the one the entry recorded (the same holder token, or
-  for an unparseable lock the same text). A break that still loses, or
-  finds the lock gone or held by another holder, records a
-  ``break-failed`` entry and a comment, and raises: it never runs the
+  for an unparseable lock the same text). A break that still loses, finds
+  the lock gone or held by another holder, or fails after the ``break``
+  entry is written (its comment, the delete's push or the re-read), records
+  a ``break-failed`` entry and a comment, and raises: it never runs the
   re-arm sweep with the lock in place.
 
 Each entry's ``old`` is the old lock's file text as read, and a holder that
@@ -231,7 +232,15 @@ def _same_lock(recorded: LockState, now: LockState) -> bool:
     return now.record is None and now.text == recorded.text
 
 
-def _not_landed(repo: str, recorded: LockState, *, actor: str, reason: str, why: str) -> NoReturn:
+def _not_landed(
+    repo: str,
+    recorded: LockState,
+    *,
+    actor: str,
+    reason: str,
+    why: str,
+    cause: BaseException | None = None,
+) -> NoReturn:
     """Record that the break of *recorded* did not land, then raise :class:`ReclaimError`."""
     at = utc_now()
     failures: list[str] = []
@@ -263,7 +272,30 @@ def _not_landed(repo: str, recorded: LockState, *, actor: str, reason: str, why:
     msg = f"the break of the release lock on {repo} did not land: {why}"
     if failures:
         msg += "; recording that also failed: " + "; ".join(failures)
-    raise ReclaimError(msg)
+    raise ReclaimError(msg) from cause
+
+
+def _delete(repo: str, recorded: LockState, sha: str) -> tuple[str | None, str]:
+    """Delete the lock *recorded*, at *sha*, by compare-and-swap, retrying while it is the same.
+
+    Returns the sha deleted and ``""``, or ``None`` and why the delete did not
+    land. A failed push or read raises :class:`ReleaseLockError`.
+    """
+    attempt = 1
+    while not refs.delete_lock(repo, expected=sha):
+        now = refs.read_lock(repo)
+        if now.sha is None:
+            return None, "the lock is no longer held: another writer removed it before the delete"
+        if not _same_lock(recorded, now):
+            return None, f"the lock was replaced by another holder's ({_describe(now)})"
+        if attempt == BREAK_ATTEMPTS:
+            return None, (
+                f"its compare-and-swap delete lost {BREAK_ATTEMPTS} times to writes of"
+                " the lock (a live holder's heartbeat)"
+            )
+        sha = now.sha
+        attempt += 1
+    return sha, ""
 
 
 def break_lock(repo: str, *, actor: str, reason: str) -> ReclaimResult:
@@ -274,7 +306,10 @@ def break_lock(repo: str, *, actor: str, reason: str) -> ReclaimResult:
     *reason*, and :class:`ReclaimError` when no lock is held, when recording
     the break fails (nothing is deleted), when the delete does not land (see
     the module docstring), and when the re-arm sweep fails after the lock is
-    gone. A failed lock read raises :class:`RefReadError`.
+    gone. Once the ``break`` entry is written, a failed comment, push or
+    read is a break that did not land: it is recorded as ``break-failed``
+    and raised as :class:`ReclaimError`. A failed first read of the lock
+    raises :class:`RefReadError`.
     """
     reason = reason.strip()
     if not reason:
@@ -296,47 +331,22 @@ def break_lock(repo: str, *, actor: str, reason: str) -> ReclaimResult:
         ),
     )
     issue = _issue(state)
-    if issue:
-        _comment(
-            issue,
-            f"vergil: the release lock on `{repo}` ({_describe(state)}) is being broken by"
-            f" {actor} at {at}: {reason}. Its old contents are recorded in"
-            f" `{refs.HISTORY_REF}`; the lock is deleted next, then the re-arm sweep runs."
-            " The release has stopped: it does not re-take the lock.",
-        )
-    sha = state.sha
-    attempt = 1
-    while not refs.delete_lock(repo, expected=sha):
-        now = refs.read_lock(repo)
-        if now.sha is None:
-            _not_landed(
-                repo,
-                recorded,
-                actor=actor,
-                reason=reason,
-                why="the lock is no longer held: another writer removed it before the delete",
+    # From here on the history says the lock is being broken, so every way the
+    # delete can fail to land is recorded as a break-failed entry before it raises.
+    try:
+        if issue:
+            _comment(
+                issue,
+                f"vergil: the release lock on `{repo}` ({_describe(state)}) is being broken by"
+                f" {actor} at {at}: {reason}. Its old contents are recorded in"
+                f" `{refs.HISTORY_REF}`; the lock is deleted next, then the re-arm sweep runs."
+                " The release has stopped: it does not re-take the lock.",
             )
-        if not _same_lock(recorded, now):
-            _not_landed(
-                repo,
-                recorded,
-                actor=actor,
-                reason=reason,
-                why=f"the lock was replaced by another holder's ({_describe(now)})",
-            )
-        if attempt == BREAK_ATTEMPTS:
-            _not_landed(
-                repo,
-                recorded,
-                actor=actor,
-                reason=reason,
-                why=(
-                    f"its compare-and-swap delete lost {BREAK_ATTEMPTS} times to writes of"
-                    " the lock (a live holder's heartbeat)"
-                ),
-            )
-        sha = now.sha
-        attempt += 1
+        sha, why = _delete(repo, recorded, state.sha)
+    except ReleaseLockError as exc:
+        _not_landed(repo, recorded, actor=actor, reason=reason, why=str(exc), cause=exc)
+    if sha is None:
+        _not_landed(repo, recorded, actor=actor, reason=reason, why=why)
     result, sweep_error = _rearm(repo)
     if sweep_error is not None:
         msg = (

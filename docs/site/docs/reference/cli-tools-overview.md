@@ -557,8 +557,9 @@ lock by compare-and-swap and runs the re-arm sweep over the PRs the lock
 held. A live holder's heartbeat can rewrite the lock between the read and
 the delete, so a lost delete is retried against a fresh read, up to three
 attempts, while the lock is still the same holder's. A break that still
-loses, or finds the lock gone or taken by another holder, records a
-`break-failed` entry and a comment, exits 1 and re-arms nothing. It is
+loses, finds the lock gone or taken by another holder, or fails once its
+entry is written (the comment, the delete's push or the re-read), records
+a `break-failed` entry and a comment, exits 1 and re-arms nothing. It is
 human only: refused under every agent identity and agent signal, as
 `vrg-release` is. An agent never breaks a lock; it may only reclaim a
 stale one. `--json` prints the result
