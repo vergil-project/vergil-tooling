@@ -94,6 +94,20 @@ def test_write_issue_body_edits_via_body_file() -> None:
     with patch(_MOD + ".github.run") as run:
         _write_issue_body(ctx, "new body")
     assert run.call_args.args[:2] == ("issue", "edit")
+    assert run.call_args.kwargs == {"echo": False}
+
+
+def test_write_issue_body_does_not_echo_the_tracking_issue_url(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The URL gh prints for each body edit is not echoed (vergil-tooling#5221)."""
+    ctx = _ctx_with_issue()
+    done = subprocess.CompletedProcess(
+        ["gh"], 0, stdout="https://github.com/o/r/issues/5008\n", stderr=""
+    )
+    with patch("vergil_tooling.lib.github._run_with_retry", return_value=done):
+        _write_issue_body(ctx, "new body")
+    assert "issues/5008" not in capsys.readouterr().out
 
 
 def test_ensure_checklist_adds_block_when_absent() -> None:

@@ -297,11 +297,8 @@ def test_head_branch_confirmed_once_through_the_trust_layer(fake: FakeGitHub) ->
     assert fake.branch_lookups == [("o/r", "feature/1-thing", "all")]
 
 
-def test_unconfirmed_pr_not_watched(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_unconfirmed_pr_not_watched(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
     """A PR the trust layer does not confirm on its branch is never watched or named by branch."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake.script(1, pr_state(1, _fork=True))
 
     [result] = run([url(1)])
@@ -311,7 +308,9 @@ def test_unconfirmed_pr_not_watched(
     assert result.branch == ""
     assert fake.provenance_checks == []
     assert fake.sleeps == []
-    assert "feature/1-thing" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "feature/1-thing" not in out
+    assert "  #1  -       feat: change 1  failed: not a develop PR  0m00s\n" in out
 
 
 def test_trust_read_failure_stops_the_watch(
@@ -846,9 +845,11 @@ def test_a_settling_conflict_is_pending_in_the_status_table(
     run([url(1)])
 
     first = _tables(capsys.readouterr().out)[0]
-    assert "  #1  feat: change 1  conflict reported, waiting for GitHub to settle it  0m00s\n" in (
-        first
+    row = (
+        "  #1  feature/1-thing  feat: change 1  "
+        "conflict reported, waiting for GitHub to settle it  0m00s\n"
     )
+    assert row in first
 
 
 def test_closed(fake: FakeGitHub) -> None:
@@ -1156,23 +1157,23 @@ def test_status_table_for_a_mixed_batch(
     # One table after start-up and one after each of the two polls.
     assert [b.text for b in blocks] == [
         "Watch status after 0m00s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  checks pending (2)  0m00s\n"
-        "  #2  feat: change 2  checks pending (2)  0m00s\n"
-        "  #3  feat: change 3  checks pending (2)  0m00s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  checks pending (2)  0m00s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m00s\n"
+        "  #3  feature/3-thing  feat: change 3  checks pending (2)  0m00s\n"
         "  0 merged, 3 pending, 0 failed; 0m30s left before the batch deadline",
         "Watch status after 0m15s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  merged              0m15s\n"
-        "  #2  feat: change 2  checks pending (2)  0m15s\n"
-        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged              0m15s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m15s\n"
+        "  #3  feature/3-thing  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m15s left before the batch deadline",
         # The ended PRs keep their rows, their waiting time frozen.
         "Watch status after 0m30s:\n"
-        "  PR  TITLE           STATE               WAITING\n"
-        "  #1  feat: change 1  merged              0m15s\n"
-        "  #2  feat: change 2  checks pending (2)  0m30s\n"
-        "  #3  feat: change 3  failed: CI          0m15s\n"
+        "  PR  BRANCH           TITLE           STATE               WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged              0m15s\n"
+        "  #2  feature/2-thing  feat: change 2  checks pending (2)  0m30s\n"
+        "  #3  feature/3-thing  feat: change 3  failed: CI          0m15s\n"
         "  1 merged, 1 pending, 1 failed; 0m00s left before the batch deadline",
     ]
     # The last poll changed no PR's state, only the waiting times (issue #4694).
@@ -1198,7 +1199,7 @@ def test_status_table_change_of_pending_state_is_a_change(
 
     run([url(1)])
 
-    states = [re.split(r"\s{2,}", b.lines[2].strip())[2] for b in blocks]
+    states = [re.split(r"\s{2,}", b.lines[2].strip())[3] for b in blocks]
     assert states == ["checks pending (2)", "checks pending (2)", "checks green, merging", "merged"]
     assert [b.changed for b in blocks] == [True, False, True, True]
 
@@ -1287,7 +1288,7 @@ def test_status_table_pending_states(
     run([url(1)])
 
     first = _tables(capsys.readouterr().out)[0]
-    assert f"  #1  feat: change 1  {state}  0m00s\n" in first
+    assert f"  #1  feature/1-thing  feat: change 1  {state}  0m00s\n" in first
 
 
 def test_status_table_with_unknown_required_checks(
@@ -1298,7 +1299,8 @@ def test_status_table_with_unknown_required_checks(
 
     run([url(1)])
 
-    assert "  #1  feat: change 1  waiting (no merge state)  0m00s\n" in capsys.readouterr().out
+    row = "  #1  feature/1-thing  feat: change 1  waiting (no merge state)  0m00s\n"
+    assert row in capsys.readouterr().out
 
 
 def test_status_table_shortens_long_titles_and_counts_hours(
@@ -1311,7 +1313,7 @@ def test_status_table_shortens_long_titles_and_counts_hours(
     run([url(1)], poll=3725.0)
 
     first, second = _tables(capsys.readouterr().out)
-    assert "  #1  feat(finalize): print a status table on every p...  " in first
+    assert "  #1  feature/1-thing  feat(finalize): print a status table on every p...  " in first
     assert title not in first
     assert "2h00m00s left before the batch deadline" in first
     assert "Watch status after 1h02m05s:" in second
@@ -1329,9 +1331,9 @@ def test_status_table_when_every_pr_ended_at_start_up(
 
     assert _tables(capsys.readouterr().out) == [
         "Watch status after 0m00s:\n"
-        "  PR  TITLE           STATE           WAITING\n"
-        "  #1  feat: change 1  merged          0m00s\n"
-        "  #2  feat: change 2  failed: closed  0m00s\n"
+        "  PR  BRANCH           TITLE           STATE           WAITING\n"
+        "  #1  feature/1-thing  feat: change 1  merged          0m00s\n"
+        "  #2  feature/2-thing  feat: change 2  failed: closed  0m00s\n"
         "  1 merged, 0 pending, 1 failed; 2h00m00s left before the batch deadline"
     ]
 
@@ -1844,3 +1846,82 @@ def test_ready_state_malformed_payload_raises(
 
     with pytest.raises(TypeError, match="carries no JSON object"):
         REAL_READY_STATE(gated.clone, "o/r", "feature/1-thing")
+
+
+# --- the gates before a push (the one PR path's push mode) ----------------------------
+
+
+def _open_snapshot(head: str) -> finalize_watch.Snapshot:
+    return finalize_watch.Snapshot(
+        node_id="PR_1",
+        url=url(1),
+        title="fix: a fix",
+        state="OPEN",
+        base="develop",
+        head_ref="feature",
+        head=head,
+        auto_merge_on=True,
+        merge_state="BLOCKED",
+        rollup=(),
+        merge_commit="",
+        labels=(),
+    )
+
+
+def test_gates_before_push_judge_a_head_only_in_the_clone(
+    gated: Gated, remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A head not yet on origin is judged from the clone; only develop is fetched."""
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", REAL_FETCH)
+    pushed = _sh(gated.clone, "rev-parse", "HEAD")
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+    gated.records.append(gated.fingerprint())
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(pushed), "feature", gated.clone, head=head, pusher_is_agent=False
+    )
+
+    assert reason == ""
+    assert gated.evaluations == [(gated.develop(), head, [TASK])]
+    tracking = _sh(gated.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/")
+    assert tracking.splitlines() == ["refs/remotes/origin/develop"]
+
+
+def test_gates_before_push_refuse_a_head_with_no_merge_review(gated: Gated, remote: Path) -> None:
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(head), "feature", gated.clone, head=head, pusher_is_agent=False
+    )
+
+    assert "merge review" in reason
+
+
+def test_gates_before_push_a_missing_head_is_a_reason(gated: Gated, remote: Path) -> None:
+    missing = "0" * 40
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(missing), "feature", gated.clone, head=missing, pusher_is_agent=False
+    )
+
+    assert reason.startswith(f"the gates could not be re-checked at {missing[:12]}")
+    assert gated.evaluations == []
+
+
+@pytest.mark.parametrize("pusher_is_agent", [True, False])
+def test_gates_before_push_an_agent_pusher_makes_the_pr_agent_involved(
+    gated: Gated, remote: Path, *, pusher_is_agent: bool
+) -> None:
+    gated.actors = (HUMAN_ID,)
+    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+
+    reason = finalize_watch.gates_before_push(
+        _open_snapshot(head), "feature", gated.clone, head=head, pusher_is_agent=pusher_is_agent
+    )
+
+    if pusher_is_agent:
+        assert "merge review" in reason
+        assert len(gated.evaluations) == 1
+    else:
+        assert reason == ""
+        assert gated.evaluations == []

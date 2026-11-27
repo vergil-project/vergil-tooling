@@ -22,6 +22,17 @@ Supports three modes:
   cloud→Mac relay handoff, where the branch and its metadata already rode
   GitHub.
 
+It also has a **push mode** (``--push [--force-with-lease]``, epic
+vergil-project/.github#1664, spec §5.4), which opens nothing: run in the
+worktree of an open PR's branch, it pushes the checked-out ``HEAD`` to that
+branch through the one PR path (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`),
+which runs the provenance check and the agent gates against the new head
+before it pushes, and never pushes a head that fails them. Auto-merge stays
+on throughout. ``--force-with-lease`` is for a rebased head: the lease is
+the branch's remote-tracking ref, the head this clone last saw on origin. A
+branch frozen by ``report-ready`` is refused, as ``vrg-git`` refuses its
+push. It exits 0 once the head is pushed, 1 when it is refused, naming why.
+
 **One path** (epic vergil-project/.github#1218, spec §6.2). Every mode gates
 its PRs, prints one compact table of the selection (issues and linkage,
 branch, title), then hands the whole selection to :func:`_submit_all`. There
@@ -30,8 +41,11 @@ arguments already chose the selection, and the body is on the opened PR.
 For each PR it
 re-checks a batch PR's rules, pushes the branch when the mode pushes, holds
 origin's tip to the head the PR must open at, opens the PR and records the
-submission, runs the provenance check, and turns auto-merge on, pinned to
-that head: the rebase method for a batch PR, squash otherwise. A PR whose
+submission, runs the provenance check, and arms it through the one PR path
+(:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664),
+pinned to that head, with the method the path works out from the PR: rebase
+for a batch PR, squash otherwise. A PR the path refuses fails its submit
+with auto-merge off. A PR whose
 submit fails is named in the final summary and the other PRs continue; a
 provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
@@ -140,7 +154,6 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     agent_gates,
-    auto_merge,
     epics,
     finalize_watch,
     git,
@@ -148,6 +161,7 @@ from vergil_tooling.lib import (
     identity_mode,
     planning_close,
     pr_create,
+    pr_path,
     pr_provenance,
     progress,
     trust,
@@ -216,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 1
+
+    if args.push or args.force_with_lease:
+        return _run_push_mode(args)
 
     # The finalize run's batch deadline is checked before any PR opens, so a
     # malformed $VRG_FINALIZE_DEADLINE refuses the run with nothing done.
@@ -374,6 +391,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated list of ready worktrees to batch-submit, by issue "
         "number or worktree directory name (issue #1673).",
     )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push mode: from the worktree of an open PR's branch into develop, push "
+        "HEAD to that branch through the one PR path, which runs the provenance check "
+        "and the agent gates on the new head before pushing it. Opens no PR and leaves "
+        "auto-merge on. Takes no other mode's arguments.",
+    )
+    parser.add_argument(
+        "--force-with-lease",
+        dest="force_with_lease",
+        action="store_true",
+        help="With --push, for a rebased head: push with a lease on the branch's "
+        "remote-tracking ref, so a head pushed elsewhere since the last fetch is "
+        "never overwritten.",
+    )
     parser.add_argument("--yes", "-y", action="store_true", help=argparse.SUPPRESS)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -427,6 +460,83 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
     if args.yes:
         return YES_REMOVED
     return None
+
+
+_PUSH_PREFIX = "vrg-submit-pr --push"
+
+
+def _push_mode_refusal(args: argparse.Namespace) -> str | None:
+    """Why *args* are not a push-mode run, or ``None`` when they are."""
+    if not args.push:
+        return "vrg-submit-pr: --force-with-lease is a push-mode flag; pass it with --push"
+    others = {
+        "branch arguments": bool(args.branches),
+        "--issue": args.issue is not None,
+        "--summary": args.summary is not None,
+        "--title": args.title is not None,
+        "--all": args.all_worktrees,
+        "--select": args.select is not None,
+        "--release": args.release,
+        "--dry-run": args.dry_run,
+        "--base": args.base is not None,
+    }
+    named = [name for name, given in others.items() if given]
+    if named:
+        return f"{_PUSH_PREFIX}: takes no other mode's arguments, got {', '.join(named)}"
+    return None
+
+
+def _run_push_mode(args: argparse.Namespace) -> int:
+    """Push the worktree's ``HEAD`` to its open PR's branch through the one PR path.
+
+    Exit 0 once the head is pushed, 1 when the push is refused or a step
+    cannot be completed, naming why. Nothing is pushed on a refusal.
+    """
+    refusal = _push_mode_refusal(args)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
+    try:
+        root = Path(git.read_output("rev-parse", "--show-toplevel"))
+        branch = git.current_branch()
+        head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
+    except subprocess.CalledProcessError as exc:
+        msg = f"{_PUSH_PREFIX}: cannot read the worktree's branch: {error_text(exc)}"
+        print(msg, file=sys.stderr)
+        return 1
+    if branch == "HEAD":
+        print(f"{_PUSH_PREFIX}: HEAD is detached; run it on the PR's branch", file=sys.stderr)
+        return 1
+    check = freeze.check_worktree(root, action="push")
+    if check.read_error is not None:
+        print(f"{_PUSH_PREFIX}: warning: {check.read_error}", file=sys.stderr)
+    if check.frozen:
+        print(check.message, file=sys.stderr)
+        return 1
+    lease = None
+    if args.force_with_lease:
+        tracking = f"refs/remotes/origin/{branch}"
+        try:
+            lease = git.read_output("rev-parse", "--verify", f"{tracking}^{{commit}}")
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"{_PUSH_PREFIX}: --force-with-lease needs {tracking}, the head this clone "
+                f"last saw on origin, and it cannot be read ({error_text(exc)}); run "
+                "`vrg-git fetch origin` first",
+                file=sys.stderr,
+            )
+            return 1
+    try:
+        result = pr_path.push_to_open_pr(branch, head=head, lease=lease)
+    except pr_path.PRPathError as exc:
+        print(f"{_PUSH_PREFIX}: {exc}; nothing was pushed", file=sys.stderr)
+        return 1
+    if not result.pushed:
+        where = f" ({result.pr_url})" if result.pr_url else ""
+        print(f"{_PUSH_PREFIX}: refused{where}: {result.detail}", file=sys.stderr)
+        return 1
+    print(f"{_PUSH_PREFIX}: {result.detail} ({result.pr_url}); auto-merge stays on.")
+    return 0
 
 
 _DEVELOP = "develop"
@@ -671,11 +781,15 @@ class SubmitSummary:
     *opened* holds the URL of every PR opened with auto-merge on, or merged
     at once because it could already merge. *failed* holds a ``(branch or
     PR, reason)`` pair for every PR whose submit failed: the branch when it
-    failed before the PR opened, the PR's URL once it had.
+    failed before the PR opened, the PR's URL once it had, its reason then
+    naming the head it opened at and the step that failed. *left_open* holds
+    the URL of every PR that opened but failed a later step, so it is open
+    without auto-merge (vergil-tooling#5198).
     """
 
     opened: list[str]
     failed: list[tuple[str, str]]
+    left_open: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -717,7 +831,7 @@ _PER_PR_ERRORS = (
     TrustedAuthorsNotConfiguredError,
     trust.UntrustedContentError,
     trust.TrustReadError,
-    auto_merge.AutoMergeError,
+    pr_path.PRPathError,
     _SubmitFailedError,
 )
 
@@ -727,11 +841,6 @@ def _failure_reason(exc: BaseException) -> str:
     if isinstance(exc, SystemExit):
         return str(exc.code).removeprefix("vrg-submit-pr: ")
     return error_text(exc)
-
-
-def _merge_method(issue_refs: list[str]) -> auto_merge.MergeMethod:
-    """Rebase for a batch PR (one commit per issue), squash otherwise (spec §6.2)."""
-    return "REBASE" if batch_rules.is_batch(issue_refs) else "SQUASH"
 
 
 def _qualified(issue_ref: str) -> str:
@@ -782,14 +891,14 @@ def _run_gates(sub: _Submission) -> None:
 
 
 def _open_one(sub: _Submission) -> str:
-    """Open *sub*'s PR at its expected head, record the submission, return the URL.
+    """Open *sub*'s PR at its expected head and return its URL.
 
     The gate runs first (:func:`_run_gates`), then a batch is re-checked at
     the head, both before anything is pushed; then the branch is pushed (when
-    *sub.push*), origin's tip is held to the head, and the PR is opened. The
-    submission is recorded as soon as the PR exists, so a later step that
-    fails leaves the worktree marked with the PR it opened rather than ready
-    for a second one.
+    *sub.push*), origin's tip is held to the head, and the PR is opened. A
+    failure here means no PR was opened; the steps after the PR exists run in
+    :meth:`_SubmitRun._submit`, which reports a failure among them with the
+    PR it opened.
     """
     _run_gates(sub)
     _recheck_batch(
@@ -802,8 +911,6 @@ def _open_one(sub: _Submission) -> str:
     print(f"Creating PR for {sub.branch}...")
     pr_url = _create_or_adopt(sub)
     print(f"PR created: {pr_url}")
-    if sub.record_in is not None:
-        submission.record_submission(sub.record_in, pr_url=pr_url)
     return pr_url
 
 
@@ -826,6 +933,24 @@ def _check_provenance(pr_url: str) -> None:
     raise _SubmitFailedError(msg)
 
 
+def _arm(pr_url: str, head: str) -> pr_path.ArmResult:
+    """Arm *pr_url* through the one PR path, pinned to *head*; anything but armed or merged fails.
+
+    :func:`pr_path.arm` judges the PR again at its head (what the path
+    accepts, the provenance check, and the gates for an agent-involved PR,
+    in the main worktree, a clone of this repo), works out the merge method
+    from the PR (rebase for a batch PR, squash otherwise) and turns
+    auto-merge on, or merges the PR directly when GitHub refuses that at
+    clean status. A ``refused`` result
+    raises :class:`_SubmitFailedError` with its reason, so the PR's submit
+    fails with auto-merge left off.
+    """
+    result = pr_path.arm(pr_url, clone=git.main_worktree_root(), head=head)
+    if result.outcome in ("armed", "merged"):
+        return result
+    raise _SubmitFailedError(result.detail or f"the one PR path left it {result.outcome}")
+
+
 _SUBMIT_COMMAND = "vrg-submit-pr"
 
 _NOT_ATTEMPTED = "not attempted: an earlier PR's submit stopped on an unexpected error"
@@ -841,7 +966,7 @@ def _pr_label(pr_url: str) -> str:
 class _SubmitRun:
     """The state one :func:`_submit_all` rollup builds up, one stage per PR.
 
-    *opened* and *failed* become the run's :class:`SubmitSummary`. *fatal* is
+    *opened*, *failed* and *left_open* become the run's :class:`SubmitSummary`. *fatal* is
     an error outside :data:`_PER_PR_ERRORS` (a bug, not a failed PR): the PRs
     after it are not attempted, and :func:`_submit_all` raises it once the
     rollup's summary is printed, as the loop before the rollup did.
@@ -849,6 +974,7 @@ class _SubmitRun:
 
     opened: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
+    left_open: list[str] = field(default_factory=list)
     fatal: Exception | None = None
 
     def stage(self, sub: _Submission) -> progress.Stage:
@@ -874,22 +1000,36 @@ class _SubmitRun:
             reason = _failure_reason(exc)
             self.failed.append((sub.branch, reason))
             raise progress.StageFailedError(f"no PR opened: {reason}") from exc
-        method = _merge_method(sub.issue_refs)
+        # The submission is recorded as soon as the PR exists, so a later step
+        # that fails leaves the worktree marked with the PR it opened rather
+        # than ready for a second one. A failure from here on reports the PR,
+        # its head and the step that failed (vergil-tooling#5198).
+        step = "recording the submission"
         try:
+            if sub.record_in is not None:
+                submission.record_submission(sub.record_in, pr_url=pr_url)
+            step = "the provenance check"
             _check_provenance(pr_url)
-            result = auto_merge.enable_auto_merge(pr_url, head=sub.expected_head, method=method)
+            step = "turning auto-merge on"
+            result = _arm(pr_url, sub.expected_head)
         except _PER_PR_ERRORS as exc:
-            reason = _failure_reason(exc)
+            reason = f"opened at {sub.expected_head[:12]}; {step} failed: {_failure_reason(exc)}"
             self.failed.append((pr_url, reason))
-            raise progress.StageFailedError(
-                f"{_pr_label(pr_url)} opened, submit failed: {reason}"
-            ) from exc
+            self.left_open.append(pr_url)
+            raise progress.StageFailedError(f"{_pr_label(pr_url)} {reason}") from exc
+        except Exception as exc:
+            exc.add_note(
+                f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed, "
+                "so its auto-merge is not on."
+            )
+            raise
         self.opened.append(pr_url)
-        if result.merged_now:
-            outcome = f"merged directly ({method.lower()})"
+        method = str(result.method).lower()
+        if result.outcome == "merged":
+            outcome = f"merged directly ({method})"
             print(f"{pr_url}: {outcome}; it could already merge.")
         else:
-            outcome = f"auto-merge on ({method.lower()}, pinned to {sub.expected_head[:12]})"
+            outcome = f"auto-merge on ({method}, pinned to {sub.expected_head[:12]})"
             print(f"{pr_url}: {outcome}.")
         progress.note(f"{_pr_label(pr_url)} {outcome}")
 
@@ -900,10 +1040,11 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     Every mode reaches this rollup with its PRs already gated (ready state,
     freeze, recorded head) and listed. Each PR is one stage of a
     :mod:`~vergil_tooling.lib.progress` rollup, named after its branch: open
-    it (:func:`_open_one`), run the provenance check, then turn auto-merge on
-    pinned to the expected head, with the rebase method for a batch PR and
-    squash otherwise. GitHub refuses auto-merge on a PR that can already
-    merge; :func:`auto_merge.enable_auto_merge` then merges it directly. The
+    it (:func:`_open_one`), run the provenance check, then arm it through the
+    one PR path (:func:`_arm`, :func:`pr_path.arm`), pinned to the expected
+    head, with the method the path works out from the PR: rebase for a batch
+    PR, squash otherwise. GitHub refuses auto-merge on a PR that can already
+    merge; the path then merges it directly. The
     steps' output goes to the run log (``.vergil/vrg-submit-pr-<stamp>.log``
     in the main worktree); each stage ends on one line with its outcome,
     and the summary points at the log.
@@ -940,7 +1081,7 @@ def _submit_all(selection: list[_Submission], args: argparse.Namespace) -> Submi
     if rc != EXIT_OK and not run.failed:
         msg = f"internal error: the submit rollup exited {rc} with no PR recorded as failed"
         raise RuntimeError(msg)
-    return SubmitSummary(opened=run.opened, failed=run.failed)
+    return SubmitSummary(opened=run.opened, failed=run.failed, left_open=run.left_open)
 
 
 def _print_failed(summary: SubmitSummary) -> None:
@@ -986,11 +1127,19 @@ def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
 
     One ``vrg-finalize-pr`` runs over every opened PR, with ``--release``
     dropped when any PR failed to submit; when none opened, it is not run at
-    all. The failed submits are named after finalize's report.
+    all. The failed submits are named after finalize's report, each PR that
+    opened with its head and the step that failed.
     """
     if not summary.opened:
         _print_failed(summary)
-        print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
+        if summary.left_open:
+            print(
+                f"\nNothing was finalized: {len(summary.left_open)} PR(s) opened but a later "
+                "step failed (named above), so they are open without auto-merge.",
+                file=sys.stderr,
+            )
+        else:
+            print("\nNo PR opened, so nothing was finalized.", file=sys.stderr)
         return EXIT_NOT_ALL_MERGED
     release = args.release and not summary.failed
     cmd = _finalize_cmd(summary.opened, args, release=release)

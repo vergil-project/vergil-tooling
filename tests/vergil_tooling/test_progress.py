@@ -61,13 +61,11 @@ def test_is_github_actions_true(monkeypatch: pytest.MonkeyPatch) -> None:
     assert progress.is_github_actions() is True
 
 
-def test_is_github_actions_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_is_github_actions_false() -> None:
     assert progress.is_github_actions() is False
 
 
-def test_detect_format_tty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_detect_format_tty() -> None:
     with patch("sys.stdout") as mock_stdout:
         mock_stdout.isatty.return_value = True
         assert progress.detect_format() == "rich"
@@ -80,8 +78,7 @@ def test_detect_format_gha(monkeypatch: pytest.MonkeyPatch) -> None:
         assert progress.detect_format() == "gha"
 
 
-def test_detect_format_plain(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_detect_format_plain() -> None:
     with patch("sys.stdout") as mock_stdout:
         mock_stdout.isatty.return_value = False
         assert progress.detect_format() == "plain"

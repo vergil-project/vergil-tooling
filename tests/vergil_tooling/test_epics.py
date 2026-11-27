@@ -49,7 +49,6 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
     A test that patches ``github.graphql`` itself routes the layer's queries
     here with :func:`_with_layer`.
     """
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     fake = trust_stubs.FakeItems()
     monkeypatch.setattr(github, "graphql", fake)

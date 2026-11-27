@@ -13,8 +13,8 @@ merge. Every `vrg-release` already runs the same pipeline as its
 run this command by hand only when you want an update outside a
 release, or to move the repo to a new vergil series with `--vergil`.
 
-`vrg-update-deps` merges its own PR, so it is human-only: it refuses to
-run under an agent identity.
+`vrg-update-deps` arms its own PR to merge, so it is human-only: it
+refuses to run under an agent identity.
 
 ## Usage
 
@@ -169,7 +169,7 @@ tries the deletion again.
 | `update` | Runs each applicable updater in order (`python`, `cargo`, `npm`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
-| `merge` | Waits for the PR's checks and merges it, if validation passed (see [Waiting for green](release.md#waiting-for-green)) |
+| `merge` | If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see [Waiting for green](release.md#waiting-for-green)). A PR the path refuses is recorded as a merge failure with the path's reason, without a wait |
 | `fix-task` | After any failure, files the fix task; after a validation or merge failure, also links it from the PR body |
 | `finalize` | Prints the held-back report and removes the worktree and local branch; once the PR is confirmed merged, also deletes its branch on origin, and fails if a deletion fails |
 | `status` | Exits non-zero if a failure was recorded |

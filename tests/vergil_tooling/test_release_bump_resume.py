@@ -103,9 +103,9 @@ def gh() -> Iterator[dict[str, MagicMock]]:
         # A failed create looks for the PR it may have opened (#4699): none here.
         patch("vergil_tooling.lib.pr_create.open_trusted_prs", return_value=[]),
         patch(_MOD + ".github.merge_commit_sha", return_value="m3rge"),
-        patch(_MOD + ".wait_and_merge") as wait_and_merge,
+        patch(_MOD + "._arm_and_wait") as arm_and_wait,
     ):
-        yield {"create_pr": create_pr, "wait_and_merge": wait_and_merge}
+        yield {"create_pr": create_pr, "arm_and_wait": arm_and_wait}
 
 
 def _ctx(root: Path) -> ReleaseContext:
@@ -163,6 +163,8 @@ def test_first_run_creates_bumps_and_pushes(repo: Path, gh: dict[str, MagicMock]
     ctx = _run(repo)
     _assert_bumped_and_pushed(repo, ctx)
     gh["create_pr"].assert_called_once()
+    # The path arms the PR pinned to the tip this run pushed.
+    gh["arm_and_wait"].assert_called_once_with(ctx, _PR, head=_origin_tip(repo))
 
 
 def test_resume_after_bump_failed_before_commit(repo: Path, gh: dict[str, MagicMock]) -> None:

@@ -165,7 +165,6 @@ class OrgSpy:
 
 @pytest.fixture
 def gh(monkeypatch: pytest.MonkeyPatch) -> FakeGh:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = FakeGh()
     monkeypatch.setattr(github, "graphql", fake.graphql)
     monkeypatch.setattr(

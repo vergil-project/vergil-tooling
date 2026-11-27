@@ -58,7 +58,6 @@ _REPO = "org/repo"
 @pytest.fixture(autouse=True)
 def layer(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
     """The trust layer's reads, strict: a test names every issue it expects read."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     fake = trust_stubs.FakeItems(strict=True)
     monkeypatch.setattr(github, "graphql", fake)

@@ -482,9 +482,12 @@ ad-hoc epic ends up holding only its still-open children.
   `Archive (intake): <name> — <YYYY>-Q<n>`,
   `Archive (planning): <name> — <YYYY>-Q<n>` and
   `Archive (deferred): <name> — <YYYY>-Q<n>` buckets (labels `archive` +
-  `intake` / `planning` / `deferred`), so only open items count against GitHub's
-  100-sub-issue cap. An archive bucket holds at most 95 children; a full one
-  rolls over to a new segment.
+  `intake` / `planning` / `deferred`), so a queue's
+  [chain](#chained-epics) holds only its open items and the slots its closed
+  items free are reused before it grows. An archive bucket holds at most 95
+  children; a full one rolls over to a new segment. Archives are not chained:
+  a segment is a new top-level archive of its own, not a continuation, and no
+  reader reads a quarter's segments as one list.
 
 #### Running the drain
 
@@ -1056,8 +1059,9 @@ Deferred from: <owner>/<repo>#<N>
 prose — a date, an event ("`<owner>/<repo>#<N>` merges", "Zensical 1.0
 ships"), or both — written so a later review can actually check it. `--date
 YYYY-MM-DD` stamps an original deferral date instead of today. Running `defer`
-on an item already in the deferred queue is a **refresh**: a new dated record,
-no move, no `Deferred from:` line.
+on an item already in the deferred queue is a **refresh**: a new dated record
+and no move, carrying forward the `Deferred from:` line of the latest record
+that has one (or saying it has none to carry).
 
 **Bringing it back.** `epic-review deferred` lists the queue with
 `vrg-queue deferred` (least recently deferred first), checks each item's

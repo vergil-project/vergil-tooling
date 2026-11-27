@@ -81,7 +81,9 @@ of an open PR, :func:`recheck_gates`:
 - asks whether the PR is **agent-involved**: an agent login opened it or
   GitHub attributes an action on it to one
   (:func:`~vergil_tooling.lib.pr_provenance.pr_actors`,
-  :func:`~vergil_tooling.lib.agent_gates.agent_involved`), or its ready
+  :func:`~vergil_tooling.lib.agent_gates.agent_involved`; arming the PR,
+  and on a PR the one PR path accepts its merge, are not involvement:
+  :func:`~vergil_tooling.lib.pr_provenance.not_involvement`), or its ready
   state, on the relay ref ``refs/vergil/pr-workflow/<branch>``
   (:func:`ready_state`), says so. A ready state counts as agent-involved
   unless its commit's author is trusted and its ``recorded_by`` is an
@@ -467,8 +469,12 @@ def _pr_repo_and_number(snap: Snapshot) -> tuple[str, int]:
     return match.group(1), int(match.group(2))
 
 
-def _require_clone_of(clone: Path, repo: str, pr: str) -> None:
-    """Refuse unless *clone*'s ``origin`` is *repo*: the gates judge local git objects."""
+def require_clone_of(clone: Path, repo: str, pr: str) -> None:
+    """Refuse unless *clone*'s ``origin`` is *repo*: the gates judge local git objects.
+
+    The watch's re-check and the one PR path (:mod:`vergil_tooling.lib.pr_path`)
+    both check a clone they are given this way.
+    """
     try:
         url = git.remote_url("origin", repo=clone)
     except subprocess.CalledProcessError as exc:
@@ -479,7 +485,7 @@ def _require_clone_of(clone: Path, repo: str, pr: str) -> None:
         shown = origin or "not a GitHub repository"
         msg = (
             f"{pr}: the gates cannot be re-checked from {clone}, whose origin is {shown},"
-            f" not the PR's repository {repo}; run vrg-finalize-pr from a clone of {repo}"
+            f" not the PR's repository {repo}; run it from a clone of {repo}"
         )
         raise FinalizeWatchError(msg)
 
@@ -582,6 +588,43 @@ def _fetch_for_gates(clone: Path, head: str) -> str:
     return _git(clone, "rev-parse", "--verify", f"{tracking}^{{commit}}")
 
 
+def _fetch_develop_for_gates(clone: Path, head: str) -> str:
+    """Fetch ``develop`` into *clone*, which must already hold *head*; the fetched develop's SHA.
+
+    For a head not yet pushed (:func:`gates_before_push`): only
+    ``origin/develop`` moves, and a head missing from *clone* raises.
+    """
+    tracking = f"refs/remotes/origin/{_DEVELOP}"
+    _git(clone, "fetch", "--no-write-fetch-head", "origin", f"+refs/heads/{_DEVELOP}:{tracking}")
+    _git(clone, "cat-file", "-e", f"{head}^{{commit}}")
+    return _git(clone, "rev-parse", "--verify", f"{tracking}^{{commit}}")
+
+
+def _gates_at(
+    snap: Snapshot, branch: str, clone: Path, *, head: str, pushed: bool, pusher_is_agent: bool
+) -> str:
+    """Why *head* of *snap*'s PR does not pass the gates, ``""`` when it does.
+
+    *pushed* says whether *head* is on origin (fetched by its SHA) or only in
+    *clone*. *pusher_is_agent* makes the PR agent-involved whatever its
+    GitHub actors and ready state say.
+    """
+    repo, number = _pr_repo_and_number(snap)
+    require_clone_of(clone, repo, snap.url)
+    try:
+        authors = load_trusted_authors()
+        ready = ready_state(clone, repo, branch)
+        if not pusher_is_agent and not agent_involvement(snap.url, ready, authors):
+            return ""
+        refs = task_issue_refs(repo, number, ready)
+        fetch = _fetch_for_gates if pushed else _fetch_develop_for_gates
+        base = fetch(clone, head)
+        result = agent_gates.evaluate(clone, base=base, head=head, issue_refs=refs, authors=authors)
+    except _RECHECK_ERRORS as exc:
+        return f"the gates could not be re-checked at {head[:12]}: {error_text(exc)}"
+    return "" if result.ok else "; ".join(result.reasons)
+
+
 def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
     """Why *snap*'s head does not pass the gates, or ``""`` when it does.
 
@@ -590,21 +633,22 @@ def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
     A PR that is not agent-involved passes. Any read, fetch or parse
     failure is returned as the reason, never a pass.
     """
-    repo, number = _pr_repo_and_number(snap)
-    _require_clone_of(clone, repo, snap.url)
-    try:
-        authors = load_trusted_authors()
-        ready = ready_state(clone, repo, branch)
-        if not agent_involvement(snap.url, ready, authors):
-            return ""
-        refs = task_issue_refs(repo, number, ready)
-        base = _fetch_for_gates(clone, snap.head)
-        result = agent_gates.evaluate(
-            clone, base=base, head=snap.head, issue_refs=refs, authors=authors
-        )
-    except _RECHECK_ERRORS as exc:
-        return f"the gates could not be re-checked at {snap.head[:12]}: {error_text(exc)}"
-    return "" if result.ok else "; ".join(result.reasons)
+    return _gates_at(snap, branch, clone, head=snap.head, pushed=True, pusher_is_agent=False)
+
+
+def gates_before_push(
+    snap: Snapshot, branch: str, clone: Path, *, head: str, pusher_is_agent: bool
+) -> str:
+    """Why *head*, a commit in *clone* about to be pushed to *snap*'s PR, does not pass the gates.
+
+    The one PR path's push mode
+    (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`) judges a new head
+    before it pushes it, so *head* is read from *clone*, never fetched. The
+    rules are :func:`recheck_gates`', with one addition: when
+    *pusher_is_agent*, the push itself makes the PR agent-involved, so a PR
+    no agent has acted on yet is gated too. ``""`` when it passes.
+    """
+    return _gates_at(snap, branch, clone, head=head, pushed=False, pusher_is_agent=pusher_is_agent)
 
 
 @dataclass(frozen=True)
@@ -963,14 +1007,21 @@ class _Row:
     """One PR's row in the status table; *waited* is in seconds since the watch started."""
 
     number: str
+    branch: str
     title: str
     state: str
     waited: float
 
 
-def _row(snap: Snapshot, state: str, waited: float) -> _Row:
+def _row(snap: Snapshot, watched: _Watched, state: str, waited: float) -> _Row:
+    """*snap*'s row, its branch the one *watched* confirmed, ``-`` when none was.
+
+    ``gh``'s head ref is a candidate only, so a PR the trust layer did not
+    confirm is never named by its branch.
+    """
     number = f"#{snap.url.rsplit('/', 1)[-1]}"
-    return _Row(number=number, title=snap.title, state=state, waited=waited)
+    branch = watched.branch or "-"
+    return _Row(number=number, branch=branch, title=snap.title, state=state, waited=waited)
 
 
 def _duration(secs: float) -> str:
@@ -1000,14 +1051,18 @@ def _totals(results: Collection[PRResult], pending: int, left: float) -> str:
 
 
 def _status_lines(rows: Sequence[_Row], totals: str, elapsed: float) -> list[str]:
-    """The status table: a header, one line per PR, then the totals line."""
-    table = [("PR", "TITLE", "STATE", "WAITING")]
-    table += [(r.number, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
-    widths = [max(len(line[i]) for line in table) for i in range(3)]
+    """The status table: a header, one line per PR, then the totals line.
+
+    The branch sits between the PR and its title (vergil-tooling#5223):
+    branch names are easier to scan than titles.
+    """
+    table = [("PR", "BRANCH", "TITLE", "STATE", "WAITING")]
+    table += [(r.number, r.branch, _shorten(r.title), r.state, _duration(r.waited)) for r in rows]
+    widths = [max(len(line[i]) for line in table) for i in range(4)]
     lines = [f"Watch status after {_duration(elapsed)}:"]
     for line in table:
-        cells = [cell.ljust(width) for cell, width in zip(line[:3], widths, strict=True)]
-        lines.append(f"  {'  '.join([*cells, line[3]])}")
+        cells = [cell.ljust(width) for cell, width in zip(line[:4], widths, strict=True)]
+        lines.append(f"  {'  '.join([*cells, line[4]])}")
     lines.append(f"  {totals}")
     return lines
 
@@ -1085,10 +1140,10 @@ def watch(
         result = _judge(snap, watched, now=now)
         if result is None:
             pending[snap.url] = (watched, snap)
-            rows[snap.url] = _row(snap, _pending_state(snap, watched), now - start)
+            rows[snap.url] = _row(snap, watched, _pending_state(snap, watched), now - start)
             return
         results[snap.url] = result
-        rows[snap.url] = _row(snap, result.outcome, now - start)
+        rows[snap.url] = _row(snap, watched, result.outcome, now - start)
         pending.pop(snap.url, None)
         if result.outcome in _CHECK_OUTCOMES:
             recheck[snap.url] = watched
@@ -1128,7 +1183,7 @@ def watch(
             if failed is not None:
                 del recheck[url]
                 results[url] = failed
-                rows[url] = _row(snap, failed.outcome, time.monotonic() - start)
+                rows[url] = _row(snap, watched, failed.outcome, time.monotonic() - start)
         for url, (watched, _) in list(pending.items()):
             judge(snapshot(url), watched)
         now = time.monotonic()

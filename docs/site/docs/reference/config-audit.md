@@ -98,16 +98,19 @@ order:
    markers, for example) is reported and does not stop the others.
 4. **One sync PR.** Whatever the fixers changed is committed on a new
    `automation/repo-config-sync/<run-id>` branch and opened as one PR
-   against `develop`, with squash auto-merge turned on and read back.
+   against `develop`, then armed through the one PR path, which turns
+   squash auto-merge on, pinned to the pushed commit, and reads it back.
+   When GitHub refuses auto-merge because the PR can already merge, the
+   path merges it directly and `update` does not wait. A PR the path
+   refuses to arm fails the run, naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.
 5. **Wait until merged.** `update` then watches the PR until it has
-   merged. Auto-merge only speeds this up; the watch never depends on
-   it. When GitHub refuses auto-merge because the PR can already
-   merge, `update` merges it directly and does not wait. `develop`
-   does not require a branch to be up to date, so a PR whose checks
-   are green is merged by the watch itself, if auto-merge has not
-   merged it first. Only where `develop` still requires an up-to-date
+   merged. The watch never merges the PR itself: GitHub's auto-merge
+   merges it once its checks are green, and a PR whose auto-merge is
+   off is waited for until the deadline. `develop` does not require a
+   branch to be up to date, so a PR merges from its base once its own
+   checks pass. Only where `develop` still requires an up-to-date
    branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
    the deadline ends the watch, naming the PR and the reason. The

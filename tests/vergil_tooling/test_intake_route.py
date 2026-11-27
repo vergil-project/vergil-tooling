@@ -507,10 +507,22 @@ def test_route_defer_defaults_to_today(env: Env) -> None:
     assert _comment_calls(env)[0].args[-1].startswith("Deferred 2027-01-02: later\n")
 
 
-def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
+def test_route_defer_refresh_without_an_earlier_origin_says_so(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh with no earlier record to carry its origin from says so (#5224)."""
     env.parent = DEFERRED
     env.native_parent[ITEM] = DEFERRED
+    env.comments = [
+        # Not a deferral record, so its line is not taken.
+        "Deferred from: org/.github#99 is what the old record said",
+        "Deferred 2026-01-02: older\nRevisit when: later",
+    ]
     result = route(ITEM, Defer(reason="still waiting", revisit_when="Y ships"), today=TODAY)
+    assert capsys.readouterr().err.endswith(
+        "org/.github#352: no earlier deferral record of it carries a 'Deferred from:' "
+        "line, so the refreshed record has none\n"
+    )
     assert result == RouteResult(final=ITEM, moved_by="none")
     env.run.assert_called_once_with(
         "issue",
@@ -524,6 +536,26 @@ def test_route_defer_refresh_does_not_move_or_add_from_line(env: Env) -> None:
     env.ensure_deferred_epic.assert_not_called()
     assert env.calls("add") == []
     assert env.calls("reparent") == []
+
+
+def test_route_defer_refresh_carries_the_origin_forward(
+    env: Env, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh keeps the latest record's ``Deferred from:`` line, past one without (#5224)."""
+    env.parent = DEFERRED
+    env.native_parent[ITEM] = DEFERRED
+    env.comments = [
+        "Deferred 2026-01-02: first\nRevisit when: later\nDeferred from: org/.github#5",
+        "Deferred 2026-03-04: moved\nRevisit when: later\nDeferred from: org/.github#7",
+        # A refresh written before #5224, with no origin of its own.
+        "Deferred 2026-05-06: refreshed\nRevisit when: later",
+        "A note that is not a record.",
+    ]
+    route(ITEM, Defer(reason="still waiting", revisit_when="Y ships"), today=TODAY)
+    assert _comment_calls(env)[0].args[-1] == (
+        "Deferred 2026-10-23: still waiting\nRevisit when: Y ships\nDeferred from: org/.github#7"
+    )
+    assert "Deferred from:" not in capsys.readouterr().err
 
 
 def test_route_defer_from_planning_removes_in_progress(env: Env) -> None:
@@ -579,13 +611,10 @@ def _assert_untouched(env: Env) -> None:
     env.ensure_deferred_epic.assert_not_called()
 
 
-def test_route_parent_fallback_trusted_only(
-    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_route_parent_fallback_trusted_only(env: Env, capsys: pytest.CaptureFixture[str]) -> None:
     # With no native parent, the item's container comes from its body's
     # Parent: line, which counts only from a trusted body. Outside Actions,
     # so the skip is reported per item, not counted by cause.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     env.issue_view = {**env.issue_view, "body": f"It is slow.\n\nParent: {INTAKE.slug}\n"}
     with patch(f"{_MOD}.epics.parent_of", _REAL_PARENT_OF):
         route(ITEM, Drop(reason="not feasible"), today=TODAY)
@@ -727,12 +756,11 @@ def test_route_drop_planning_refuses_open_marker_epic(env: Env) -> None:
 
 
 def test_forged_epic_marker_does_not_block_drop(
-    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # An outsider's comment, a trusted one an outsider edited and a User named
     # like the agent App each name an open epic: none is a marker, so the drop
     # goes ahead and each is reported, metadata only.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _planning_item(env)
     forged = f"Epic: org/.github#600\n{trust_stubs.SPAM_TEXT}"
     env.comment_nodes = [
@@ -858,10 +886,9 @@ def test_route_defer_planning_refuses_open_epic_found_by_planning_line(env: Env)
 
 
 def test_route_defer_planning_ignores_an_untrusted_planning_line(
-    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A Planning: line counts only in a body the trust layer trusts, read again per hit."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _planning_item(env)
     env.search_results = [_epic_hit(648, "OPEN")]
     env.untrusted_hits = {648}
@@ -1293,10 +1320,9 @@ def _open_pr(env: Env, **kwargs: Any) -> None:
 
 
 def test_route_defer_adhoc_untrusted_closing_pr_does_not_hold_it(
-    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An outsider's open PR naming the item never blocks routing (GHSA-g68j-q2mw-jqf9)."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _open_pr(env, author=trust_stubs.OUTSIDER)
     route(ITEM, Defer(reason="r", revisit_when="w"), today=TODAY)
     assert env.calls("reparent") == [(DEFERRED, ITEM)]
@@ -3665,10 +3691,9 @@ def test_one_off_trusted_authors_error_propagates_before_the_move(env: Env) -> N
 
 
 def test_one_off_outsider_sizing_comment_posts_no_cleared_marker(
-    env: Env, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    env: Env, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # The skip report lists each skipped comment only outside GitHub Actions.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     env.parent = PLANNING
     env.native_parent[ITEM] = PLANNING
     env.labels = ["idea"]

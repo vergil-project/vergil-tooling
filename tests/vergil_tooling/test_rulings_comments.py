@@ -34,7 +34,6 @@ EDITED = trust_stubs.EDITED
 
 @pytest.fixture
 def items(monkeypatch: pytest.MonkeyPatch) -> FakeItems:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = trust_stubs.FakeItems(strict=True)
     monkeypatch.setattr(vergil_tooling.lib.github, "graphql", fake)
     return fake
@@ -105,8 +104,8 @@ def test_read_stream_keeps_trusted_and_reports_every_untrusted_comment(
         " (wrong-type)\n"
         f"skipped untrusted content: o/r#7 comment a deleted account at {CREATED} on comment 5"
         " (deleted)\n"
-        f"skipped untrusted content: o/r#7 comment o-automation at {CREATED} on comment 6"
-        " (not-accepted)\n"
+        "ignored content from a trusted role this reader does not accept:"
+        f" o/r#7 comment o-automation at {CREATED} on comment 6 (not-accepted)\n"
         f"skipped untrusted content: o/r#7 edit drive-by at {EDITED} on comment 7"
         " (untrusted)\n"
     )

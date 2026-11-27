@@ -24,7 +24,6 @@ def test_today_is_the_utc_date() -> None:
 @pytest.fixture(autouse=True)
 def _fixed_day(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vrg_npm_license_gate, "_today", lambda: datetime.date(2026, 11, 18))
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
 
 def _lockfile(tmp_path: Path, licenses: dict[str, Any]) -> Path:

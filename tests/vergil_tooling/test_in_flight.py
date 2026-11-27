@@ -261,11 +261,9 @@ def test_in_flight_open_pr_by_trusted_agent_counts(tmp_path: Path) -> None:
 def test_in_flight_fork_or_outsider_pr_marks_nothing(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     pr: dict[str, Any],
     cause: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     assert _marks(7, _FakeRemote(prs=[pr]), tmp_path) == ()
     err = capsys.readouterr().err
     assert f"skipped untrusted content: {_REPO}#90 pr" in err
@@ -284,9 +282,8 @@ def test_in_flight_skipped_pr_is_counted_only_under_actions(
 
 
 def test_in_flight_untrusted_body_keeps_only_the_head_mark(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     prs = [_pr(90, "feature/7-x", closes=(8,), edits=("mallory",))]
     signals = _signals(_FakeRemote(prs=prs), tmp_path)
     # The trusted author's head still marks 7; the closing line of a body an
@@ -296,9 +293,8 @@ def test_in_flight_untrusted_body_keeps_only_the_head_mark(
 
 
 def test_in_flight_hand_link_counts_only_by_a_trusted_linker(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     prs = [_pr(90, linked=(("human", 7), ("mallory", 8)))]
     signals = _signals(_FakeRemote(prs=prs), tmp_path)
     assert signals.open_pr_issues == frozenset({7})

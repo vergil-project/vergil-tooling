@@ -247,6 +247,18 @@ def test_records_posted_on_closed_and_reopened_issues(fake: _FakeGitHub) -> None
     assert "Released: o/r v2.1.2 on 2026-11-20" in first
 
 
+def test_records_name_each_issue_once(
+    fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One line per recorded issue, naming it and what happened (vergil-tooling#5221)."""
+    fake.comments["o/r#2"] = [_record()]
+    ctx = _ctx(_state(_issues(1, 2)))
+    post_records(ctx)
+    lines = capsys.readouterr().out.splitlines()
+    assert "posted: https://github.com/o/r/issues/1" in lines
+    assert "found existing: https://github.com/o/r/issues/2" in lines
+
+
 def test_records_say_none_configured_without_an_install(fake: _FakeGitHub) -> None:
     ctx = _ctx(_state(_issues(1), install_done=False))
     post_records(ctx)
@@ -308,13 +320,6 @@ def test_records_resume_posts_only_missing(fake: _FakeGitHub) -> None:
     assert (resumed.records_new, resumed.records_found) == (1, 1)
 
 
-@pytest.fixture
-def local(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Not under GitHub Actions, so the skip report lists each item, not counts."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-
-
-@pytest.mark.usefixtures("local")
 def test_foreign_marker_ignored_with_warning(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -323,12 +328,14 @@ def test_foreign_marker_ignored_with_warning(
     post_records(ctx)
     assert fake.posts == ["o/r#1"]
     err = capsys.readouterr().err
-    assert f"skipped untrusted content: o/r#1 comment {_AGENT} at {_CREATED} on comment 1" in err
-    assert "(not-accepted)" in err
+    assert (
+        "ignored content from a trusted role this reader does not accept:"
+        f" o/r#1 comment {_AGENT} at {_CREATED} on comment 1 (not-accepted)"
+    ) in err
+    assert "skipped untrusted content" not in err
     assert "the task body" not in err
 
 
-@pytest.mark.usefixtures("local")
 def test_edited_by_agent_record_does_not_count(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -348,7 +355,6 @@ def test_record_last_editor_rule_kept(fake: _FakeGitHub) -> None:
     assert ctx.records_found == 1
 
 
-@pytest.mark.usefixtures("local")
 def test_record_from_user_named_like_app_or_outsider_does_not_count(
     fake: _FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -370,7 +376,8 @@ def test_skip_report_counts_only_under_actions(
     fake.comments["o/r#1"] = [_record(author=_AGENT), Comment("drive-by", None, "x")]
     post_records(_ctx(_state(_issues(1))))
     err = capsys.readouterr().err
-    assert "skipped 2 untrusted item(s) (not-accepted: 1, untrusted: 1)" in err
+    assert "skipped 1 untrusted item(s) (untrusted: 1)\n" in err
+    assert "ignored 1 item(s) from trusted roles this reader does not accept\n" in err
     assert "drive-by" not in err
 
 

@@ -185,9 +185,17 @@ See [The develop-CD gate](../../guides/releasing.md#the-develop-cd-gate).
 
 ## Waiting for green
 
-The `merge-release` and `back-merge-bump` stages, and `vrg-update-deps`'s
-`merge` stage, wait for their PR's checks and merge it once everything is
-green and current. The wait is **bounded** by a deadline: it never blocks
+The `merge-release` stage waits for the release PR's checks and merges it
+into `main` once everything is green and current; it refuses a PR whose
+base is not `main`. A PR into `develop` merges only through the one PR
+path: the `back-merge-bump` stage arms its back-merge PR through it (with
+a merge commit, pinned to the pushed head) and waits the same way until
+GitHub merges it, never merging it itself, within 7200 seconds, a deadline
+fixed in the stage. A PR the path does not arm stops the stage, naming
+the outcome and why. `vrg-update-deps`'s `merge` stage (and so the
+release's `update-deps` stage) arms its PR through the path too, and
+waits within `$VRG_FINALIZE_DEADLINE` seconds (7200 by default). The
+wait is **bounded** by a deadline: it never blocks
 forever, and it never merges past a non-terminal check. Doomed outcomes
 abort immediately rather than after the wait: a draft PR, merge conflicts,
 a failed check (named in the error), or a branch still behind after five

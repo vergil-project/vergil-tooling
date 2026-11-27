@@ -83,8 +83,6 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run sees unless a test sets them.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.delenv("VRG_TRUSTED_AUTHORS", raising=False)
 
 
 def _vergil_dir(tmp_path: Path) -> Path:

@@ -1646,10 +1646,9 @@ _WINDOW_ERROR = (
 
 @pytest.mark.parametrize("command", ["audit", "diff", "apply"])
 def test_version_window_error_in_audit_exits_two_on_one_line(
-    command: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    command: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A [ci].versions pin outside the window is one ERROR line and exit 2 (#3670)."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     config = _make_config()
     # Integration tests on: the desired CI-gates ruleset resolves the versions.
     config.ci.integration_tests = True
@@ -1675,11 +1674,10 @@ def test_version_window_error_in_audit_exits_two_on_one_line(
 
 
 def test_version_window_error_in_apply_exits_two_on_one_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The same failure raised while applying is reported the same way (#3670)."""
     command = "apply"
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
         patch(f"{_MODULE}._resolve_config", return_value=_make_config()),
@@ -2293,7 +2291,7 @@ def test_update_undeclared_parameter_still_opens_pr_then_exits_1(
 @pytest.mark.parametrize(
     "failure",
     [
-        MechanizedPRError("mechanized PR for o/r: enabling auto-merge failed: boom"),
+        MechanizedPRError("mechanized PR for o/r: arming the PR failed: boom"),
         develop_clone.DevelopCloneError("Could not clone the 'develop' branch of o/r: boom"),
     ],
     ids=["pr", "clone"],
@@ -2322,6 +2320,18 @@ def test_update_pr_that_does_not_merge_exits_2_naming_it(
         assert main(["update", "--repo", "o/r"]) == 2
     err = capsys.readouterr().err
     assert f"mechanized PR for o/r: {_PR_URL} did not merge: Checks failed on PR x" in err
+
+
+def test_update_sync_pr_the_path_refused_exits_2_naming_why(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A refused arm fails the job with the path's reason (spec §5.4).
+    reason = "the one PR path did not arm it (refused): provenance violations found (x)"
+    stack, mocks = _update_env()
+    with stack:
+        mocks["sync"].side_effect = PRNotMergedError("o/r", _PR_URL, reason)
+        assert main(["update", "--repo", "o/r"]) == 2
+    assert f"mechanized PR for o/r: {_PR_URL} did not merge: {reason}" in capsys.readouterr().err
 
 
 def test_update_unmerged_pr_outranks_unfixable_drift() -> None:

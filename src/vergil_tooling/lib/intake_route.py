@@ -9,8 +9,10 @@ routes each container allows:
   close (not planned).
 - **defer** — move the item into its queue home's deferred epic and record why
   it waits and when to look again, plus the container it came ``from``; on an
-  item already deferred it is a **refresh**: a new record, no move, no
-  ``Deferred from:`` line. The link lands before the record, and a record that
+  item already deferred it is a **refresh**: a new record and no move,
+  carrying forward the ``Deferred from:`` line of the item's latest trusted
+  deferral record that has one, and saying on stderr when none has
+  (vergil-tooling#5224). The link lands before the record, and a record that
   fails after the move raises with the full intended comment.
 - **intake** — reparent a deferred item back onto its home's intake epic.
 - **one-off** — move the item into its target repo and link it under that
@@ -183,6 +185,9 @@ if TYPE_CHECKING:
 DROP_COMMENT = "Dropped in {queue} review: {reason}"
 DEFER_COMMENT = "Deferred {day}: {reason}\nRevisit when: {revisit_when}"
 DEFERRED_FROM_LINE = "Deferred from: {epic}"
+# A deferral record's first line, as DEFER_COMMENT writes it.
+_DEFER_RECORD_RE = re.compile(r"\ADeferred \d{4}-\d{2}-\d{2}: ")
+_DEFERRED_FROM_RE = re.compile(r"^Deferred from: \S+$", re.MULTILINE)
 SPLIT_COMMENT = "Split into: {refs}. {reason}"
 MOVED_TO_COMMENT = "Moved to {url}"
 MOVED_FROM_LINE = "Moved from {url}"
@@ -703,7 +708,16 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
         day=day.isoformat(), reason=action.reason, revisit_when=action.revisit_when
     )
     if kind == epics.DEFERRED.key:
-        _comment(ref, record)
+        origin = _deferred_from(ref)
+        if origin is None:
+            print(
+                f"{ref.slug}: no earlier deferral record of it carries a 'Deferred from:' "
+                "line, so the refreshed record has none",
+                file=sys.stderr,
+            )
+            _comment(ref, record)
+        else:
+            _comment(ref, f"{record}\n{origin}")
         return
     view = _view(ref, "labels")
     if kind == epics.PLANNING.key:
@@ -729,6 +743,23 @@ def _defer(ref: IssueRef, action: Defer, kind: str | None, parent: IssueRef, day
         raise RuntimeError(
             f"{stranded}: posting it failed ({' '.join(error_text(exc).split())}). {by_hand}"
         ) from exc
+
+
+def _deferred_from(ref: IssueRef) -> str | None:
+    """The ``Deferred from:`` line of *ref*'s latest deferral record that has one.
+
+    Only *ref*'s trusted comments are read (each skipped one is reported on
+    stderr), and only a deferral record counts: a comment whose first line is
+    ``Deferred <date>: ``. ``None`` when no such record has the line, as a
+    refresh written before vergil-tooling#5224 does not.
+    """
+    for body in reversed(trusted_comments.bodies(ref)):
+        if _DEFER_RECORD_RE.match(body) is None:
+            continue
+        found = _DEFERRED_FROM_RE.search(body)
+        if found is not None:
+            return found.group(0)
+    return None
 
 
 def _remove_in_progress(target: IssueRef, *, doing: str) -> None:

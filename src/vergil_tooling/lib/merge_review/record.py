@@ -176,7 +176,9 @@ def records(issue_ref: str, *, authors: TrustedAuthors) -> list[Record]:
 
     Read from the trust layer's comment stream narrowed to the agent role,
     so only a comment the agent login posted, with no edit by anyone, can be
-    a record. A read failure raises
+    a record. A comment of another trusted role, such as the human's scope
+    change, is left out by design and reported as ignored, not as untrusted
+    (#5199). A read failure raises
     (:class:`~vergil_tooling.lib.trust.TrustReadError`); it never returns
     ``[]``.
     """

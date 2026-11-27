@@ -82,7 +82,6 @@ def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[Calls]:
         yield
 
     monkeypatch.setattr(github, "target_org", target_org)
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     calls.answers["orgs"] = orgs
     yield calls
 

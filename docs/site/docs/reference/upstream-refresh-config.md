@@ -298,21 +298,24 @@ prepare worked in. In order, it:
    run commits as the human;
 7. hands the clone to the mechanized-PR building block, which closes an
    earlier run's open PR and deletes its branch, pushes the new branch,
-   opens the PR with squash auto-merge, and waits until it merges. A
+   opens the PR, arms it through the one PR path (which turns squash
+   auto-merge on, pinned to the pushed commit), and waits until it
+   merges. A PR the path refuses to arm fails the run with the path's
+   reason. A
    `gh pr create` that returns an error is never retried blindly: the
    open PR from the branch is adopted when its branch, base, title and
    head commit match what was pushed, and any other open PR fails the
    run, naming it. When
-   GitHub refuses auto-merge because the PR can already merge, it
-   merges the PR directly, with the same method and pinned to the
-   pushed commit, and does not wait.
+   GitHub refuses auto-merge because the PR can already merge, the
+   path merges the PR directly, with the same method and pinned to the
+   pushed commit, and the run does not wait.
 
 The PR's commit is parented on the recorded commit, so the patch lands
 on exactly the tree the hook ran against. `develop` does not require a
 branch to be up to date, so the PR merges from that base once its own
-checks pass, even if `develop` has moved since. The wait merges the PR
-itself once its checks are green, if auto-merge has not merged it
-first; a failed check, a conflict, a closed PR, the branch-update cap
+checks pass, even if `develop` has moved since. The wait never merges
+the PR itself: GitHub's auto-merge merges it once its checks are green;
+a failed check, a conflict, a closed PR, the branch-update cap
 (see the permissions below) or the deadline ends it unmerged. Under a token source the deadline is
 7200 seconds, counted from publish's own start: the clone and the patch
 come out of it, and the wait gets what is left. Closing an earlier
@@ -322,7 +325,8 @@ job's 140-minute timeout. A human's run keeps the building block's
 own deadline, `$VRG_MECHANIZED_PR_DEADLINE` seconds (2400 by default).
 
 The commit and the PR title are `chore(upstream): refresh upstream
-inputs`. The PR body says that the job merges it once CI passes, and
+inputs`. The PR body says that GitHub's auto-merge merges it once CI
+passes and the job watches it until it merges, and
 lists the changed files and the hook's notes.
 
 Every run ends in one of these outcomes:

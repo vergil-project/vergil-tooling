@@ -355,6 +355,23 @@ class TestClaudeMdTemplate:
         assert "not as a sweep" in section
         assert "old parse misread" in section
 
+    def test_template_states_the_managed_task_closes_upgrade(self) -> None:
+        # Report-ready records Ref, and vrg-submit-pr upgrades a managed task's
+        # linkage to Closes so its PR closes it on merge (#5191): the PR handoff
+        # section must say so beside its "leave --linkage at its default" line.
+        section = _TEMPLATE_TEXT.split("## PR handoff\n", 1)[1].split("\n## ", 1)[0]
+        assert "`--linkage` at its default (`Ref`)" in section
+        assert "upgrades it to `Closes` for a managed task" in section
+
+    def test_template_hands_human_steps_as_copy_paste_blocks(self) -> None:
+        # Steps the human runs are handed as plain copy-paste blocks for their
+        # own terminal, apart from the agent's narrative and without the `!`
+        # prefix (#5243).
+        section = _TEMPLATE_TEXT.split("## Git and GitHub\n", 1)[1].split("\n## ", 1)[0]
+        assert "copy-paste block" in section
+        assert "never with the `!` prefix" in section
+        assert "`! <command>`" not in _TEMPLATE_TEXT
+
     def test_previous_template_files_are_gone(self) -> None:
         assert not (_TEMPLATE_PATH.parent / "claude_md_consumer_previous.md").exists()
         assert not (_TEMPLATE_PATH.parent / "claude_settings_previous.json").exists()

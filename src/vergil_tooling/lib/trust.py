@@ -49,7 +49,9 @@ that is not read in full raises :class:`TrustReadError`, never "trusted",
 **Metadata only** (spec §5.3). Errors and reports carry repo, number, kind,
 login, time and field, never the untrusted text. Under GitHub Actions, whose
 logs are public, :func:`report_skipped` and :class:`BatchStops` print counts
-by cause, listing only read-failure stops by repo and number.
+by cause, listing only read-failure stops by repo and number. Content from a
+trusted role a reader does not accept (:data:`NOT_ACCEPTED`) is reported as
+ignored, never as untrusted.
 
 Every read here is GraphQL with ``__typename`` on each actor.
 """
@@ -2197,16 +2199,32 @@ def _counts(causes: Sequence[str]) -> str:
     return ", ".join(f"{cause}: {n}" for cause, n in sorted(Counter(causes).items()))
 
 
+_IGNORED = "ignored content from a trusted role this reader does not accept"
+
+
 def report_skipped(skipped: Sequence[Skipped], *, stream: TextIO) -> None:
-    """Report *skipped* on *stream*, metadata only; under Actions, counts by cause."""
-    if not skipped:
-        return
+    """Report *skipped* on *stream*, metadata only; under Actions, counts by cause.
+
+    A :data:`NOT_ACCEPTED` item is trusted content the reader leaves out by
+    design (its role is outside the reader's ``roles``), so it is reported
+    as ignored, never as untrusted; every other cause is untrusted content.
+    Under Actions the two are counted on lines of their own.
+    """
+    untrusted = [item for item in skipped if item.cause != NOT_ACCEPTED]
+    ignored = [item for item in skipped if item.cause == NOT_ACCEPTED]
     if _under_actions():
-        causes = [item.cause for item in skipped]
-        print(f"skipped {len(skipped)} untrusted item(s) ({_counts(causes)})", file=stream)
+        if untrusted:
+            causes = [item.cause for item in untrusted]
+            print(f"skipped {len(untrusted)} untrusted item(s) ({_counts(causes)})", file=stream)
+        if ignored:
+            print(
+                f"ignored {len(ignored)} item(s) from trusted roles this reader does not accept",
+                file=stream,
+            )
         return
     for item in skipped:
-        print(f"skipped untrusted content: {item.describe()} ({item.cause})", file=stream)
+        what = _IGNORED if item.cause == NOT_ACCEPTED else "skipped untrusted content"
+        print(f"{what}: {item.describe()} ({item.cause})", file=stream)
 
 
 class BatchStops:

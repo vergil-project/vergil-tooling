@@ -1097,10 +1097,7 @@ class TestResolveVersions:
         )
         assert _resolve_versions(toml) is None
 
-    def test_pin_outside_window_stops_the_wizard(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    def test_pin_outside_window_stops_the_wizard(self, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit) as exc:
             _resolved("python", ["3.11"])
         assert exc.value.code == 1
@@ -1116,9 +1113,8 @@ class TestResolveVersions:
         assert capsys.readouterr().err.startswith("::error")
 
     def test_unpinned_family_language_stops_the_wizard(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         with pytest.raises(SystemExit) as exc:
             _resolved("cpp")
         assert exc.value.code == 1
@@ -1139,10 +1135,7 @@ class TestResolveVersions:
         'vergil = "v2.1"\n'
     )
 
-    def test_app_multi_pin_stops_the_wizard(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    def test_app_multi_pin_stops_the_wizard(self, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit) as exc:
             _resolve_versions(self._APP_MULTI_PIN)
         assert exc.value.code == 1
@@ -1866,13 +1859,12 @@ class TestStepGenerateConfig:
         assert ctx.initial_version == "0.1.0"
 
     def test_interactive_yes_to_integration_tests_is_refused(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # Refused as soon as the answer is resolved: no vergil.toml is written,
         # nothing is committed and nothing pushed (#4448). run_wizard asks
         # before step 1 instead (#4462); should step 3 ever ask a new-repo run,
         # the refusal names the repository step 1 left behind.
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         ctx.completed_steps = {1, 2}
@@ -1949,9 +1941,8 @@ class TestStepGenerateConfig:
         assert "integration-tests = false\n" in (tmp_path / "vergil.toml").read_text()
 
     def test_adopted_toml_with_integration_tests_is_refused(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="dormant", adopt=True)
         ctx.work_dir = tmp_path
         ctx.non_interactive = True
@@ -1979,11 +1970,10 @@ class TestStepGenerateConfig:
         mock_git.assert_not_called()
 
     def test_integration_tests_flag_in_the_context_is_refused(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # parse_args refuses the flag first; a context built some other way
         # still never reaches the write (#4448).
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="dormant", adopt=True)
         ctx.work_dir = tmp_path
         ctx.non_interactive = True
@@ -2839,12 +2829,10 @@ class TestStepAuditMarkers:
     def test_marker_creation_failure_stops_init(
         self,
         marker_gh: _MarkerGitHub,
-        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # The ERROR: prefix is emit_error's local form; under GitHub Actions
         # it writes an ::error:: annotation instead.
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         marker_gh.refuse = "gh: Resource not accessible by integration (HTTP 403)"
         ctx = RepoInitContext(org="vergil-project", name="demo")
 
@@ -3255,13 +3243,11 @@ class TestStepGithubConfigExtended:
     def test_version_window_error_stops_cleanly_before_apply(
         self,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # A resumed run skips step 3's version check; a pin that has since left
         # the window must stop step 9 as a one-line error, not a traceback,
         # and before anything is applied (#3670).
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         failure = ResolutionError("[ci].versions pins 1.25, which is not in the go window")
@@ -3329,11 +3315,10 @@ class TestRunWizard:
         return order, prompts
 
     def test_interactive_yes_is_refused_before_step_1(
-        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # The answer is asked before step 1 creates the repository, so a yes
         # leaves nothing behind (#4462).
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="new-repo")
 
         with pytest.raises(SystemExit) as exc:
@@ -3359,10 +3344,9 @@ class TestRunWizard:
         assert ctx.answered_integration_tests is False
 
     def test_resumed_yes_names_the_repository_step_1_left(
-        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         # An earlier run's step 1 created the repository: the refusal says so.
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = RepoInitContext(org="vergil-project", name="new-repo")
 
         with pytest.raises(SystemExit):
@@ -3795,9 +3779,8 @@ class TestRestoreGeneratedConfig:
         assert ctx.package is True
 
     def test_missing_vergil_toml_refuses(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path)
         (tmp_path / "vergil.toml").unlink()
 
@@ -3822,11 +3805,9 @@ class TestRestoreGeneratedConfig:
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
         text: str,
         detail: str,
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path)
         (tmp_path / "vergil.toml").write_text(text)
 
@@ -3837,9 +3818,8 @@ class TestRestoreGeneratedConfig:
         assert detail in capsys.readouterr().err
 
     def test_missing_vergil_pin_is_invalid(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path)
         text = (tmp_path / "vergil.toml").read_text()
         (tmp_path / "vergil.toml").write_text(text.split("[dependencies]")[0])
@@ -3853,9 +3833,8 @@ class TestRestoreGeneratedConfig:
         assert "[dependencies] must contain 'vergil'" in err
 
     def test_contradicting_flags_refuse(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path)
         ctx.opt_primary_language = "go"
         ctx.opt_publish_docs = True
@@ -3891,13 +3870,11 @@ class TestRestoreGeneratedConfig:
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
         completed: set[int],
         state: str,
     ) -> None:
         # A step-3 commit from before #4448 can still carry the setting: the
         # resumed run refuses it before the later steps, not at step 9.
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path, integration_tests=True)
         ctx.completed_steps = completed
 
@@ -3929,9 +3906,8 @@ class TestRestoreGeneratedConfig:
         assert ctx.primary_language == "python"
 
     def test_moved_window_stops_cleanly(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path, ci_versions=["3.11"])
 
         with pytest.raises(SystemExit) as exc:
@@ -3941,9 +3917,8 @@ class TestRestoreGeneratedConfig:
         assert re.match(r"ERROR: .*3\.11", capsys.readouterr().err)
 
     def test_pending_step4_non_interactive_requires_license_and_version(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         ctx = _committed_ctx(tmp_path)
         ctx.completed_steps = {1, 3}
         ctx.non_interactive = True

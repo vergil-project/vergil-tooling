@@ -163,7 +163,6 @@ def test_closing_body_refuses(body: str, match: str) -> None:
 
 @pytest.fixture
 def items(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = trust_stubs.FakeItems(strict=True)
     monkeypatch.setattr(github, "graphql", fake)
     return fake
@@ -202,6 +201,39 @@ def test_records_narrow_the_stream_to_the_agent_role(
     items.items[KEY] = trust_stubs.item(nodes=[trust_stubs.comment(1, _closing(), AGENT)])
     assert len(records("o/r#7", authors=AUTHORS)) == 1
     assert seen == [frozenset({trust.Role.AGENTS})]
+
+
+def test_records_call_a_human_scope_change_ignored_and_the_issue_read_trusts_it(
+    items: trust_stubs.FakeItems, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#5199: submit's record read and vrg-issue-read agree on a human scope change.
+
+    The merge-review record read, which submit's gate runs, accepts only the
+    agent role, so the human's ``Scope change`` comment is ``not-accepted``
+    there: trusted, left out by design, and reported as ignored, never as
+    untrusted. vrg-issue-read's read (every role) prints it as the human's.
+    """
+    scope = "Scope change\n\nAlso cover the release path."
+    items.items[KEY] = trust_stubs.item(
+        nodes=[
+            trust_stubs.comment(1, scope, trust_stubs.HUMAN),
+            trust_stubs.comment(2, _closing(), AGENT),
+        ]
+    )
+    assert records("o/r#7", authors=AUTHORS) == [
+        Record(HEAD, FP, "eligible", comment_id=2, author="human-vergil-user")
+    ]
+    err = capsys.readouterr().err
+    assert err == (
+        "ignored content from a trusted role this reader does not accept:"
+        f" o/r#7 comment human at {trust_stubs.CREATED} on comment 1 (not-accepted)\n"
+    )
+    content = trust.read_issue("o/r", 7, roles=trust.ALL_ROLES, authors=AUTHORS)
+    assert [(c.id, c.role, c.body) for c in content.comments] == [
+        ("1", trust.Role.HUMAN, scope),
+        ("2", trust.Role.AGENTS, _closing()),
+    ]
+    assert content.skipped == ()
 
 
 @pytest.mark.parametrize("answer", [{}, {"repository": None}])

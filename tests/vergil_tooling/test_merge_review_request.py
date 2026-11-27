@@ -795,12 +795,10 @@ def test_request_carries_only_the_humans_comments(
 def test_request_leaves_out_an_impostors_comment(
     repo: Path,
     capsys: Cap,
-    monkeypatch: pytest.MonkeyPatch,
     comment_pages: list[Any],
     impostor: dict[str, str],
     cause: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     comment_pages.append(_page([_node(1, body="Kept."), _node(2, author=impostor, body=SPAM_TEXT)]))
     code, out, err = _run(_argv(repo), capsys)
     assert code == 0, err
@@ -816,9 +814,8 @@ def test_request_leaves_out_an_impostors_comment(
 
 
 def test_request_leaves_out_a_human_comment_an_outsider_edited(
-    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, comment_pages: list[Any]
+    repo: Path, capsys: Cap, comment_pages: list[Any]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     comment_pages.append(_page([_node(1, body=SPAM_TEXT, editor=OUTSIDER), _node(2, body="Kept.")]))
     code, out, err = _run(_argv(repo), capsys)
     assert code == 0, err
@@ -1065,12 +1062,10 @@ def test_request_takes_a_body_the_agent_wrote(
 def test_merge_review_request_untrusted_body_raises(
     repo: Path,
     capsys: Cap,
-    monkeypatch: pytest.MonkeyPatch,
     task_pages: dict[str, Any],
     item: dict[str, Any],
     who: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     task_pages["items"][42] = item
     code, out, err = _run(_argv(repo), capsys)
     assert code == 1
@@ -1975,13 +1970,11 @@ def test_open_pr_refusals(
 def test_open_pr_never_matches_a_fork_or_an_untrusted_pr(
     repo: Path,
     capsys: Cap,
-    monkeypatch: pytest.MonkeyPatch,
     pr_pages: dict[str, Any],
     graphql_calls: list[dict[str, object]],
     node: dict[str, Any],
     skipped: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _batch_branch(repo)
     pr_pages["pr"] = _open_pr(body=f"{BATCH_BODY}{SPAM_TEXT}\n", nodes=[node])
     code, out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
@@ -1996,9 +1989,8 @@ def test_open_pr_never_matches_a_fork_or_an_untrusted_pr(
 
 
 def test_open_pr_matches_the_same_repo_pr_beside_a_fork_on_the_branch(
-    repo: Path, capsys: Cap, monkeypatch: pytest.MonkeyPatch, pr_pages: dict[str, Any]
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _batch_branch(repo)
     fork = _pr_node(8, fork="drive-by", author=OUTSIDER, title=SPAM_TEXT)
     pr_pages["pr"] = _open_pr(nodes=[fork, _pr_node()])
@@ -2025,14 +2017,12 @@ def test_open_pr_matches_the_same_repo_pr_beside_a_fork_on_the_branch(
 def test_open_pr_closes_from_untrusted_body_ignored(
     repo: Path,
     capsys: Cap,
-    monkeypatch: pytest.MonkeyPatch,
     pr_pages: dict[str, Any],
     graphql_calls: list[dict[str, object]],
     task_calls: list[Any],
     editor: dict[str, str],
     who: str,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _batch_branch(repo)
     pr_pages["pr"] = _open_pr(body=f"{BATCH_BODY}Closes #44\n{SPAM_TEXT}\n", editor=editor)
     code, out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
@@ -2173,11 +2163,9 @@ def test_batch_pr_refuses_an_unreadable_other_issue(
 def test_batch_pr_refuses_an_untrusted_other_issue_body(
     repo: Path,
     capsys: Cap,
-    monkeypatch: pytest.MonkeyPatch,
     pr_pages: dict[str, Any],
     task_pages: dict[str, Any],
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _batch_branch(repo)
     pr_pages["pr"] = _open_pr()
     task_pages["items"][43] = _body_item(SPAM_TEXT, _page([]), editor=OUTSIDER)

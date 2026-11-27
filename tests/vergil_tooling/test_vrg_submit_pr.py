@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     OVERRIDE_MERGE_REVIEW_REMOVED,
     SubmitSummary,
     _create_pr,
+    _finish,
     _local_worktree_with_state,
     _metadata_from_state,
     _origin_has_branch,
@@ -58,10 +59,10 @@ from vergil_tooling.bin.vrg_submit_pr import (
 )
 from vergil_tooling.lib import (
     agent_gates,
-    auto_merge,
     epics,
     github,
     identity_mode,
+    pr_path,
     pr_provenance,
     progress,
     retry,
@@ -183,9 +184,15 @@ def _heads_match() -> Iterator[None]:
         yield
 
 
+def _armed(*, merged: bool = False) -> pr_path.ArmResult:
+    """What :func:`pr_path.arm` returns for a squash PR it armed (or merged directly)."""
+    outcome: pr_path.ArmOutcome = "merged" if merged else "armed"
+    return pr_path.ArmResult(outcome=outcome, pr_url="", head="", method="SQUASH")
+
+
 @pytest.fixture(autouse=True)
 def _auto_merge_on() -> Iterator[None]:
-    """Default every submit to a clean provenance check and auto-merge turned on.
+    """Default every submit to a clean provenance check and the one PR path arming it.
 
     Both would hit GitHub. The CLI mode pins the PR to the local HEAD, so
     ``git.commit_sha`` is neutralized too. Tests of the per-PR loop re-patch
@@ -193,10 +200,7 @@ def _auto_merge_on() -> Iterator[None]:
     """
     with (
         patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
-        patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            return_value=auto_merge.AutoMergeResult(merged_now=False),
-        ),
+        patch(_MOD + ".pr_path.arm", return_value=_armed()),
         patch(_MOD + ".git.commit_sha", return_value="c0ffee"),
     ):
         yield
@@ -1554,7 +1558,7 @@ def _cli_main(argv: list[str], *, finalize_rc: int = 0) -> tuple[int, MagicMock]
 
 def _refuse_first() -> list[object]:
     """Auto-merge refused on the first PR, turned on for the second."""
-    return [auto_merge.AutoMergeError("refused"), auto_merge.AutoMergeResult(merged_now=False)]
+    return [pr_path.PRPathError("refused"), _armed()]
 
 
 class TestFinalizeByDefault:
@@ -1603,26 +1607,27 @@ class TestFinalizeByDefault:
     def test_all_submits_failed_skips_finalize(self, capsys: pytest.CaptureFixture[str]) -> None:
         """With nothing opened, finalize never runs (so never prompts): exit 3."""
         with patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            side_effect=auto_merge.AutoMergeError("refused"),
+            _MOD + ".pr_path.arm",
+            side_effect=pr_path.PRPathError("refused"),
         ):
             rc, calls = _run_batch([_batch_wt("issue-1-a")], ["--release"], urls=[_URL1])
         assert rc == 3
         assert calls == []
         err = capsys.readouterr().err
-        assert f"{_URL1} — refused" in err
-        assert "No PR opened, so nothing was finalized." in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
+        assert "Nothing was finalized: 1 PR(s) opened but a later step failed" in err
+        assert "No PR opened" not in err
 
     def test_release_skipped_after_failed_submit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """A failed submit drops --release from finalize and says so; exit at least 3."""
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             rc, calls = _run_batch([a, b], ["--release"], urls=[_URL1, _URL2])
         assert rc == 3
         assert calls == [("vrg-finalize-pr", _URL2)]
         err = capsys.readouterr().err
         assert "Release skipped: 1 PR(s) failed to submit." in err
-        assert f"{_URL1} — refused" in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
 
     def test_failed_submits_printed_after_finalize_report(
         self, capsys: pytest.CaptureFixture[str]
@@ -1633,7 +1638,7 @@ class TestFinalizeByDefault:
             print("FINALIZE REPORT", file=sys.stderr)
             return 0
 
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             _run_batch([a, b], [], urls=[_URL1, _URL2], run=finalize)
         err = capsys.readouterr().err
         assert err.index("FINALIZE REPORT") < err.index("Failed to submit:")
@@ -1641,7 +1646,7 @@ class TestFinalizeByDefault:
     def test_exit_precedence_tool_error_wins(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Finalize's 1 plus a failed submit is 1, with the rerun command named."""
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: 1)
         assert rc == 1
         err = capsys.readouterr().err
@@ -1652,7 +1657,7 @@ class TestFinalizeByDefault:
     def test_exit_undefined_finalize_code_passes_through(self, code: int) -> None:
         """A code finalize does not define as an outcome is a tool error and wins too."""
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: code)
         assert rc == code
 
@@ -1665,12 +1670,12 @@ class TestFinalizeByDefault:
         """
         a, b, c = _batch_wt("issue-1-a"), _batch_wt("issue-2-b"), _batch_wt("issue-3-c")
         enable = [
-            auto_merge.AutoMergeError("refused"),
-            auto_merge.AutoMergeResult(merged_now=False),
-            auto_merge.AutoMergeResult(merged_now=False),
+            pr_path.PRPathError("refused"),
+            _armed(),
+            _armed(),
         ]
         url3 = "https://x/pull/3"
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=enable):
+        with patch(_MOD + ".pr_path.arm", side_effect=enable):
             rc, calls = _run_batch(
                 [a, b, c], ["--release"], urls=[_URL1, _URL2, url3], run=lambda _c: 4
             )
@@ -1679,20 +1684,20 @@ class TestFinalizeByDefault:
         assert not any("vrg-release" in cmd for cmd in calls)
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
-        assert f"{_URL1} — refused" in err
+        assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
         assert "Release skipped: 1 PR(s) failed to submit." in err
 
     @pytest.mark.parametrize(("finalize_rc", "expected"), [(0, 3), (3, 3)])
     def test_exit_failed_submit_at_least_3(self, finalize_rc: int, expected: int) -> None:
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: finalize_rc)
         assert rc == expected
 
     @pytest.mark.parametrize("finalize_rc", [4, 5])
     def test_exit_finalize_4_wins_over_3(self, finalize_rc: int) -> None:
         a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
-        with patch(_MOD + ".auto_merge.enable_auto_merge", side_effect=_refuse_first()):
+        with patch(_MOD + ".pr_path.arm", side_effect=_refuse_first()):
             rc, _calls = _run_batch([a, b], [], urls=[_URL1, _URL2], run=lambda _c: finalize_rc)
         assert rc == finalize_rc
 
@@ -1937,9 +1942,9 @@ def test_submit_all_pushes_creates_records_and_turns_auto_merge_on() -> None:
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + "._create_pr", return_value="https://example/pull/9") as create,
         patch(_MOD + ".submission.record_submission") as record,
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         summary = _submit_all([sub], _ARGS)
     assert summary == SubmitSummary(opened=["https://example/pull/9"], failed=[])
     push.assert_called_once_with("feature/1673-x")
@@ -1947,7 +1952,7 @@ def test_submit_all_pushes_creates_records_and_turns_auto_merge_on() -> None:
         target_branch="develop", title="T", pr_body="BODY", head="feature/1673-x"
     )
     record.assert_called_once_with(sub.record_in, pr_url="https://example/pull/9")
-    enable.assert_called_once_with("https://example/pull/9", head="h0", method="SQUASH")
+    enable.assert_called_once_with("https://example/pull/9", head="h0", clone=ANY)
 
 
 _PR21 = "https://github.com/o/r/pull/21"
@@ -1988,9 +1993,9 @@ def _submit_with_create(
         patch("vergil_tooling.lib.pr_create.time.sleep") as sleep,
         patch(_MOD + ".submission.record_submission") as record,
         patch(_MOD + ".pr_provenance.check_pr", return_value=pr_provenance.ProvenanceResult()),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         summary = _submit_all([_submission()], _ARGS)
     return summary, create, lookup, record, enable, sleep
 
@@ -2006,7 +2011,7 @@ def test_create_that_landed_is_adopted_not_retried(capsys: pytest.CaptureFixture
     assert (spec.head, spec.base) == ("feature/1673-x", "develop")
     sleep.assert_not_called()
     record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=_PR21)
-    enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
+    enable.assert_called_once_with(_PR21, head="h0", clone=ANY)
     assert f"adopting {_PR21}" in capsys.readouterr().out
 
 
@@ -2019,7 +2024,7 @@ def test_already_exists_on_retry_is_adopted() -> None:
     assert create.call_count == 2
     assert lookup.call_count == 2
     sleep.assert_called_once()
-    enable.assert_called_once_with(_PR21, head="h0", method="SQUASH")
+    enable.assert_called_once_with(_PR21, head="h0", clone=ANY)
 
 
 @pytest.mark.parametrize(
@@ -2068,7 +2073,7 @@ def test_create_that_really_failed_is_retried() -> None:
     lookup.assert_called_once()
     sleep.assert_called_once()
     record.assert_called_once_with(Path("/repo/.worktrees/issue-1673-x"), pr_url=url)
-    enable.assert_called_once_with(url, head="h0", method="SQUASH")
+    enable.assert_called_once_with(url, head="h0", clone=ANY)
 
 
 def test_non_transient_create_failure_is_not_retried() -> None:
@@ -2119,30 +2124,33 @@ def test_create_pr_is_run_once_without_gh_retry() -> None:
 
 
 def test_auto_merge_squash_single() -> None:
-    """A single-issue PR auto-merges with squash, pinned to its expected head."""
+    """A single-issue PR is armed through the one PR path, pinned to its expected head."""
     with (
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
         patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         _submit_all([_submission(head="abc123")], _ARGS)
-    enable.assert_called_once_with("https://x/pull/1", head="abc123", method="SQUASH")
+    enable.assert_called_once_with("https://x/pull/1", head="abc123", clone=ANY)
 
 
 def test_auto_merge_rebase_batch() -> None:
-    """A batch PR (several issues, one commit each) auto-merges with rebase."""
+    """A batch PR is armed through the path at its head; the path works out its rebase method.
+
+    The method is the path's, read from the PR's body (``test_pr_path``).
+    """
     with (
         patch(_MOD + "._recheck_batch"),
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
         patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         _submit_all([_submission(issues=("#10", "#11"), head="def456")], _ARGS)
-    enable.assert_called_once_with("https://x/pull/1", head="def456", method="REBASE")
+    enable.assert_called_once_with("https://x/pull/1", head="def456", clone=ANY)
 
 
 def test_already_mergeable_pr_counts_as_opened(capsys: pytest.CaptureFixture[str]) -> None:
@@ -2152,8 +2160,8 @@ def test_already_mergeable_pr_counts_as_opened(capsys: pytest.CaptureFixture[str
         patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
         patch(_MOD + ".submission.record_submission"),
         patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            return_value=auto_merge.AutoMergeResult(merged_now=True),
+            _MOD + ".pr_path.arm",
+            return_value=_armed(merged=True),
         ),
     ):
         summary = _submit_all([_submission()], _ARGS)
@@ -2175,10 +2183,8 @@ def test_provenance_runs_before_auto_merge() -> None:
             ),
         ),
         patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            side_effect=lambda pr, **_kw: (
-                calls.append(f"auto-merge {pr}") or auto_merge.AutoMergeResult(merged_now=False)
-            ),
+            _MOD + ".pr_path.arm",
+            side_effect=lambda pr, **_kw: calls.append(f"auto-merge {pr}") or _armed(),
         ),
     ):
         _submit_all([_submission()], _ARGS)
@@ -2206,9 +2212,9 @@ def test_provenance_violation_fails_pr_others_continue(
             _MOD + ".pr_provenance.check_pr",
             side_effect=[_violation(), pr_provenance.ProvenanceResult()],
         ),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert len(summary.failed) == 1
@@ -2216,10 +2222,10 @@ def test_provenance_violation_fails_pr_others_continue(
     assert label == "https://x/pull/1"
     assert "bot-vergil-user (user): auto_merge_enabled" in reason
     assert "auto-merge was left off" in reason
-    enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
+    enable.assert_called_once_with("https://x/pull/2", head="h0", clone=ANY)
     out = capsys.readouterr().out
     assert "✗ feature/1-a" in out
-    assert "PR #1 opened, submit failed: provenance violations found" in out
+    assert "PR #1 opened at h0; the provenance check failed: provenance violations found" in out
     assert "✓ feature/2-b" in out
     assert "PR #2 auto-merge on (squash, pinned to h0)" in out
 
@@ -2234,7 +2240,7 @@ def test_provenance_check_that_cannot_run_fails_pr() -> None:
             _MOD + ".pr_provenance.check_pr",
             side_effect=subprocess.CalledProcessError(1, ["gh", "api"]),
         ),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
         summary = _submit_all([_submission()], _ARGS)
     assert summary.opened == []
@@ -2257,13 +2263,19 @@ def test_provenance_without_trusted_authors_fails_pr_others_continue() -> None:
                 pr_provenance.ProvenanceResult(),
             ],
         ),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
-    assert summary.failed == [("https://x/pull/1", "no trusted authors are configured")]
-    enable.assert_called_once_with("https://x/pull/2", head="h0", method="SQUASH")
+    assert summary.failed == [
+        (
+            "https://x/pull/1",
+            "opened at h0; the provenance check failed: no trusted authors are configured",
+        )
+    ]
+    assert summary.left_open == ["https://x/pull/1"]
+    enable.assert_called_once_with("https://x/pull/2", head="h0", clone=ANY)
 
 
 def test_auto_merge_refusal_fails_pr_others_continue() -> None:
@@ -2274,18 +2286,23 @@ def test_auto_merge_refusal_fails_pr_others_continue() -> None:
         patch(_MOD + "._push_branch"),
         patch(_MOD + "._create_pr", side_effect=["https://x/pull/1", "https://x/pull/2"]),
         patch(
-            _MOD + ".auto_merge.enable_auto_merge",
+            _MOD + ".pr_path.arm",
             side_effect=[
-                auto_merge.AutoMergeError("https://x/pull/1: enabling auto-merge failed: nope"),
-                auto_merge.AutoMergeResult(merged_now=False),
+                pr_path.PRPathError("https://x/pull/1: enabling auto-merge failed: nope"),
+                _armed(),
             ],
         ),
     ):
         summary = _submit_all([a, b], _ARGS)
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [
-        ("https://x/pull/1", "https://x/pull/1: enabling auto-merge failed: nope")
+        (
+            "https://x/pull/1",
+            "opened at h0; turning auto-merge on failed: "
+            "https://x/pull/1: enabling auto-merge failed: nope",
+        )
     ]
+    assert summary.left_open == ["https://x/pull/1"]
 
 
 def test_open_failure_names_the_branch_others_continue() -> None:
@@ -2303,6 +2320,87 @@ def test_open_failure_names_the_branch_others_continue() -> None:
     assert summary.opened == ["https://x/pull/2"]
     assert summary.failed == [("feature/1-a", "pushing 'feature/1-a' failed")]
     create.assert_called_once()
+    assert summary.left_open == []
+
+
+def test_failure_before_the_pr_opens_says_no_pr_opened(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A submit that fails before ``gh pr create`` says no PR was opened (#5198)."""
+    with (
+        patch(_MOD + "._push_branch", side_effect=SystemExit("vrg-submit-pr: push failed")),
+        patch(_MOD + "._create_pr") as create,
+    ):
+        summary = _submit_all([_submission(record_in=None)], _ARGS)
+        rc = _finish(summary, _ARGS)
+    create.assert_not_called()
+    assert rc == 3
+    assert summary.left_open == []
+    out, err = capsys.readouterr()
+    assert "no PR opened: push failed" in out
+    assert "No PR opened, so nothing was finalized." in err
+
+
+@pytest.mark.parametrize(
+    ("failing", "step"),
+    [
+        ("record", "recording the submission"),
+        ("provenance", "the provenance check"),
+        ("auto_merge", "turning auto-merge on"),
+    ],
+)
+def test_failure_after_the_pr_opens_reports_the_pr_head_and_step(
+    failing: str, step: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A step that fails after the PR opened names its URL, head and the step (#5198)."""
+
+    def fail_if(name: str, value: object = None) -> MagicMock:
+        if failing == name:
+            return MagicMock(side_effect=ValueError("server error"))
+        return MagicMock(return_value=value)
+
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".submission.record_submission", fail_if("record")),
+        patch(
+            _MOD + ".pr_provenance.check_pr",
+            fail_if("provenance", pr_provenance.ProvenanceResult()),
+        ),
+        patch(
+            _MOD + ".pr_path.arm",
+            fail_if("auto_merge", _armed()),
+        ),
+    ):
+        summary = _submit_all([_submission(record_in=tmp_path)], _ARGS)
+        rc = _finish(summary, _ARGS)
+    reason = f"opened at h0; {step} failed: server error"
+    assert rc == 3
+    assert summary.opened == []
+    assert summary.failed == [("https://x/pull/9", reason)]
+    assert summary.left_open == ["https://x/pull/9"]
+    out, err = capsys.readouterr()
+    assert f"PR #9 {reason}" in out
+    assert f"https://x/pull/9 — {reason}" in err
+    assert "Nothing was finalized: 1 PR(s) opened but a later step failed" in err
+    assert "No PR opened" not in err
+
+
+def test_unexpected_error_after_the_pr_opens_names_the_pr() -> None:
+    """An error outside the per-PR set after the PR opened still names it (#5198)."""
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".pr_provenance.check_pr", side_effect=KeyError("boom")),
+        patch(_MOD + ".pr_path.arm") as enable,
+        pytest.raises(KeyError) as raised,
+    ):
+        _submit_all([_submission(record_in=None)], _ARGS)
+    enable.assert_not_called()
+    assert raised.value.__notes__ == [
+        "https://x/pull/9 was opened at h0; the provenance check failed, "
+        "so its auto-merge is not on."
+    ]
 
 
 def test_submission_recorded_when_auto_merge_fails() -> None:
@@ -2312,12 +2410,41 @@ def test_submission_recorded_when_auto_merge_fails() -> None:
         patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
         patch(_MOD + ".submission.record_submission") as record,
         patch(
-            _MOD + ".auto_merge.enable_auto_merge",
-            side_effect=auto_merge.AutoMergeError("refused"),
+            _MOD + ".pr_path.arm",
+            side_effect=pr_path.PRPathError("refused"),
         ),
     ):
         _submit_all([_submission()], _ARGS)
     record.assert_called_once()
+
+
+def test_arm_refused_fails_the_pr_with_its_reason() -> None:
+    """A PR the one PR path refuses fails its submit with the path's reason, left open."""
+    refused = pr_path.ArmResult(
+        outcome="refused",
+        pr_url="https://x/pull/1",
+        head="h0",
+        method="SQUASH",
+        detail="the gates refused its head h0: merge review: no record covers it",
+    )
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/1"),
+        patch(_MOD + ".submission.record_submission"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_path.arm", return_value=refused) as arm,
+    ):
+        summary = _submit_all([_submission()], _ARGS)
+    arm.assert_called_once_with("https://x/pull/1", clone=Path("/repo"), head="h0")
+    assert summary.opened == []
+    assert summary.left_open == ["https://x/pull/1"]
+    assert summary.failed == [
+        (
+            "https://x/pull/1",
+            "opened at h0; turning auto-merge on failed: "
+            "the gates refused its head h0: merge review: no record covers it",
+        )
+    ]
 
 
 class TestSubmitRollup:
@@ -2334,10 +2461,10 @@ class TestSubmitRollup:
             patch(_MOD + "._push_branch"),
             patch(_MOD + "._create_pr", side_effect=["https://x/pull/11", "https://x/pull/12"]),
             patch(
-                _MOD + ".auto_merge.enable_auto_merge",
+                _MOD + ".pr_path.arm",
                 side_effect=[
-                    auto_merge.AutoMergeResult(merged_now=False),
-                    auto_merge.AutoMergeResult(merged_now=True),
+                    _armed(),
+                    _armed(merged=True),
                 ],
             ),
         ):
@@ -2549,9 +2676,9 @@ def test_no_rebase_at_submit() -> None:
     with (
         patch(_MOD + ".git.run") as git_run,
         patch(_MOD + ".git.read_output") as read_output,
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         rc, _calls = _run_batch([a, b], [], urls=["https://x/pull/1", "https://x/pull/2"])
     assert rc == 0
     for call in (*git_run.call_args_list, *read_output.call_args_list):
@@ -2913,7 +3040,6 @@ def test_task_linkage_noop_when_ref_unresolvable() -> None:
 
 def _linkage_through_layer(layer: trust_stubs.FakeItems, monkeypatch: pytest.MonkeyPatch) -> str:
     """:func:`_task_linkage` for org/repo#42, with no native parent, through the real layer."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
 
     def graphql(query: str, **variables: Any) -> object:
@@ -3002,10 +3128,8 @@ def test_submit_linkage_ignores_untrusted_parent_line(
 def test_trust_failure_before_any_pr_is_one_line(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     # A trust-layer failure in the per-issue checks is one line, never a traceback.
     _write_workflow_state(tmp_path)
     with (
@@ -3022,10 +3146,7 @@ def test_trust_failure_before_any_pr_is_one_line(
     assert capsys.readouterr().err == f"vrg-submit-pr: {error}\n"
 
 
-def test_relay_untrusted_payload_opens_no_pr(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_relay_untrusted_payload_opens_no_pr(capsys: pytest.CaptureFixture[str]) -> None:
     stop = trust.UntrustedContentError(
         trust.Skipped("org/repo", 0, "commit", "drive-by", "t", "the relay ref", "untrusted"),
         "the commit's author is untrusted",
@@ -3636,9 +3757,9 @@ class TestRelayBranchPath:
                 _MOD + ".github.create_pr",
                 side_effect=["https://github.com/pr/1", "https://github.com/pr/2"],
             ) as create,
-            patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+            patch(_MOD + ".pr_path.arm") as enable,
         ):
-            enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+            enable.return_value = _armed()
             rc = main(["feature/a", "feature/b"])
         assert rc == 0
         assert create.call_count == 2
@@ -3694,14 +3815,17 @@ class TestRelayBranchPath:
             patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
             patch(_MOD + ".github.create_pr", return_value="https://x/pull/7"),
             patch(
-                _MOD + ".auto_merge.enable_auto_merge",
-                side_effect=auto_merge.AutoMergeError("https://x/pull/7: refused"),
+                _MOD + ".pr_path.arm",
+                side_effect=pr_path.PRPathError("https://x/pull/7: refused"),
             ),
         ):
             assert main(["feature/x"]) == 3
         err = capsys.readouterr().err
         assert "Failed to submit:" in err
-        assert "https://x/pull/7 — https://x/pull/7: refused" in err
+        assert (
+            "https://x/pull/7 — opened at abc123; turning auto-merge on failed: "
+            "https://x/pull/7: refused"
+        ) in err
 
     def test_relay_dry_run_skips_verify_and_create(
         self, capsys: pytest.CaptureFixture[str]
@@ -4514,16 +4638,16 @@ def test_batch_checks_the_reported_head_without_rebasing(
         patch(_MOD + "._push_branch") as push,
         patch(_MOD + "._create_pr", return_value="https://x/pull/1") as create,
         patch(_MOD + ".submission.record_submission"),
-        patch(_MOD + ".auto_merge.enable_auto_merge") as enable,
+        patch(_MOD + ".pr_path.arm") as enable,
     ):
-        enable.return_value = auto_merge.AutoMergeResult(merged_now=False)
+        enable.return_value = _armed()
         assert _run_submit_batch([wt], parse_args(["--select", "10"])) == 0
     assert _run_git(clone, "rev-parse", "HEAD") == reported
     assert checked == [reported]
     rules.assert_called_once_with(["#10", "#11"], repo="acme/tools")
     push.assert_called_once_with("feature/10-x")
     create.assert_called_once()
-    enable.assert_called_once_with("https://x/pull/1", head=reported, method="REBASE")
+    enable.assert_called_once_with("https://x/pull/1", head=reported, clone=ANY)
 
 
 # -- the selection table (vergil-tooling#4744) ---------------------------------
@@ -4863,3 +4987,211 @@ class TestGateStep:
         with patch(_MOD + ".github.current_repo", return_value="no-slash"):
             _submit_all([_gate_sub()], _ARGS)
         assert real_gates["evaluate"].call_args.kwargs["issue_refs"] == ["#42"]
+
+
+# --- push mode (epic vergil-project/.github#1664, spec §5.4) ----------------------------
+
+_PUSH_PR = "https://github.com/o/r/pull/7"
+_PUSH_BRANCH = "feature/7-fix"
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def push_worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A clone on the PR's branch, as the user agent, with a remote-tracking ref for it."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for var in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{var}_NAME", "Test")
+        monkeypatch.setenv(f"GIT_{var}_EMAIL", "test@example.com")
+    repo = tmp_path / "wt"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", _PUSH_BRANCH)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_PUSH_BRANCH}", "HEAD")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "fix")
+    monkeypatch.chdir(repo)
+    _as_mode(monkeypatch, "user")
+    return repo
+
+
+def _pushed(detail: str = "pushed it") -> pr_path.PushResult:
+    return pr_path.PushResult(pushed=True, pr_url=_PUSH_PR, detail=detail)
+
+
+class TestPushMode:
+    """``vrg-submit-pr --push [--force-with-lease]``: a push to an open PR's branch."""
+
+    def test_push_mode_pushes_passing_head(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push,
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main(["--push"]) == 0
+        head = _git(push_worktree, "rev-parse", "HEAD")
+        push.assert_called_once_with(_PUSH_BRANCH, head=head, lease=None)
+        template.assert_not_called()
+        assert "auto-merge stays on" in capsys.readouterr().out
+
+    def test_push_mode_rebased_head_uses_lease(self, push_worktree: Path) -> None:
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--force-with-lease"]) == 0
+        lease = _git(push_worktree, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        assert push.call_args.kwargs["lease"] == lease
+        assert lease != _git(push_worktree, "rev-parse", "HEAD")
+
+    def test_push_mode_lease_with_no_tracking_ref_is_refused(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _git(push_worktree, "update-ref", "-d", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", "--force-with-lease"]) == 1
+        push.assert_not_called()
+        assert "run `vrg-git fetch origin` first" in capsys.readouterr().err
+
+    def test_push_mode_refuses_head_failing_gates(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        refused = pr_path.PushResult(
+            pushed=False, pr_url=_PUSH_PR, detail="the gates refused the head abc: no record"
+        )
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=refused):
+            assert main(["--push"]) == 1
+        err = capsys.readouterr().err
+        assert f"refused ({_PUSH_PR}): the gates refused the head abc: no record" in err
+
+    def test_push_mode_refuses_branch_with_no_open_develop_pr(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        none = pr_path.PushResult(pushed=False, pr_url="", detail=f"{_PUSH_BRANCH} has no open PR")
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=none):
+            assert main(["--push"]) == 1
+        assert f"refused: {_PUSH_BRANCH} has no open PR" in capsys.readouterr().err
+
+    def test_push_mode_path_error_exits_one(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            _MOD + ".pr_path.push_to_open_pr", side_effect=pr_path.PRPathError("push failed")
+        ):
+            assert main(["--push"]) == 1
+        assert "push failed; nothing was pushed" in capsys.readouterr().err
+
+    def test_push_mode_leaves_auto_merge_on(self, push_worktree: Path) -> None:
+        """Push mode neither arms, disarms nor finalizes: it only pushes through the path."""
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+            patch(_MOD + ".pr_path.arm") as arm,
+            patch(_MOD + "._chain_finalize") as finalize,
+        ):
+            assert main(["--push"]) == 0
+        arm.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_push_mode_refuses_a_frozen_branch(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        frozen = freeze.FreezeCheck(frozen=True, message="the branch is frozen")
+        with (
+            patch(_MOD + ".freeze.check_worktree", return_value=frozen),
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+        ):
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "the branch is frozen" in capsys.readouterr().err
+
+    def test_push_mode_warns_on_an_unreadable_state_file(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        unreadable = freeze.FreezeCheck(frozen=False, read_error="a corrupt state file")
+        with (
+            patch(_MOD + ".freeze.check_worktree", return_value=unreadable),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+        ):
+            assert main(["--push"]) == 0
+        assert "warning: a corrupt state file" in capsys.readouterr().err
+
+    def test_push_mode_outside_a_worktree_is_refused(
+        self,
+        push_worktree: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        monkeypatch.chdir(plain)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "cannot read the worktree's branch" in capsys.readouterr().err
+
+    def test_push_mode_refuses_a_detached_head(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _git(push_worktree, "checkout", "-q", "--detach")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()
+        assert "HEAD is detached" in capsys.readouterr().err
+
+    def test_lease_without_push_is_refused(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main(["--force-with-lease"]) == 1
+        push.assert_not_called()
+        template.assert_not_called()
+        assert "pass it with --push" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("extra", "named"),
+        [
+            (["--all"], "--all"),
+            (["--select", "7"], "--select"),
+            (["--dry-run"], "--dry-run"),
+            (["--base", "develop"], "--base"),
+        ],
+    )
+    def test_push_mode_takes_no_other_modes_arguments(
+        self,
+        push_worktree: Path,
+        capsys: pytest.CaptureFixture[str],
+        extra: list[str],
+        named: str,
+    ) -> None:
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", *extra]) == 1
+        push.assert_not_called()
+        assert f"takes no other mode's arguments, got {named}" in capsys.readouterr().err
+
+    def test_push_mode_human_may_push(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _as_mode(monkeypatch, "human")
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--release"]) == 1
+            assert main(["--push"]) == 0
+        push.assert_called_once()
+
+    def test_push_mode_audit_agent_is_refused(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _as_mode(monkeypatch, "audit")
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push"]) == 1
+        push.assert_not_called()

@@ -108,7 +108,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Callable[..., _GitHub]:
         monkeypatch.setattr(planning_close.github, "graphql", gh.graphql)
         return gh
 
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(planning_close.epics, "parent_of", lambda _task: EPIC)
     monkeypatch.setattr(planning_close.epics, "native_parent_of", lambda _ref: QUEUE)
     monkeypatch.setattr(

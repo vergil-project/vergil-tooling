@@ -1138,7 +1138,6 @@ def test_operational_pending_collects_only_epics_with_open_validations() -> None
 
 
 def _run_closed_operational(
-    monkeypatch: pytest.MonkeyPatch,
     search: list[dict[str, Any]],
     comments: dict[int, list[dict[str, Any]]],
 ) -> list[str]:
@@ -1147,7 +1146,6 @@ def _run_closed_operational(
     Each issue's comments are read through the trust layer, *comments* giving
     each issue's comment nodes.
     """
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     items = trust_stubs.FakeItems(
         {
             (str(row["repository"]["nameWithOwner"]), int(row["number"])): trust_stubs.item(
@@ -1174,9 +1172,7 @@ def _run_closed_operational(
     return result
 
 
-def test_closed_operational_without_success_flags_missing_pass(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_closed_operational_without_success_flags_missing_pass() -> None:
     search = [
         {"number": 120, "repository": {"nameWithOwner": "org/.github"}},  # has PASS -> ok
         {"number": 55, "repository": {"nameWithOwner": "org/repo"}},  # no PASS -> flagged
@@ -1186,19 +1182,17 @@ def test_closed_operational_without_success_flags_missing_pass(
         120: trust_stubs.comments("ran it\n- Outcome: PASS"),
         55: trust_stubs.comments("closed early; no result recorded"),
     }
-    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#55"]
+    assert _run_closed_operational(search, comments) == ["org/repo#55"]
 
 
-def test_closed_validation_pass_marker_excludes_unresolved_template(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_closed_validation_pass_marker_excludes_unresolved_template() -> None:
     # The scaffold's unresolved "Outcome: PASS / FAIL" line must NOT read as a pass.
     search = [{"number": 1, "repository": {"nameWithOwner": "org/repo"}}]
     comments = {1: trust_stubs.comments("- Outcome: PASS / FAIL")}
-    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#1"]
+    assert _run_closed_operational(search, comments) == ["org/repo#1"]
 
 
-def test_success_marker_accepts_success_and_legacy_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_success_marker_accepts_success_and_legacy_pass() -> None:
     search = [
         {"number": 1, "repository": {"nameWithOwner": "org/repo"}},  # SUCCESS -> ok
         {"number": 2, "repository": {"nameWithOwner": "org/repo"}},  # legacy PASS -> ok
@@ -1209,12 +1203,10 @@ def test_success_marker_accepts_success_and_legacy_pass(monkeypatch: pytest.Monk
         2: trust_stubs.comments("- Outcome: PASS"),
         3: trust_stubs.comments("closed early"),
     }
-    assert _run_closed_operational(monkeypatch, search, comments) == ["org/repo#3"]
+    assert _run_closed_operational(search, comments) == ["org/repo#3"]
 
 
-def test_forged_outcome_does_not_hide_hand_closed_task(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_forged_outcome_does_not_hide_hand_closed_task(capsys: pytest.CaptureFixture[str]) -> None:
     # A success line from an outsider, in a trusted comment an outsider edited,
     # or from a User named like the agent App is no outcome: each task is flagged.
     forged = f"- Outcome: SUCCESS\n{trust_stubs.SPAM_TEXT}"
@@ -1226,7 +1218,7 @@ def test_forged_outcome_does_not_hide_hand_closed_task(
         # The agent's own record still counts.
         4: [trust_stubs.comment(14, "- Outcome: SUCCESS", trust_stubs.AGENT)],
     }
-    result = _run_closed_operational(monkeypatch, search, comments)
+    result = _run_closed_operational(search, comments)
     assert result == ["org/repo#1", "org/repo#2", "org/repo#3"]
     err = capsys.readouterr().err
     created, edited = trust_stubs.CREATED, trust_stubs.EDITED
@@ -1582,10 +1574,9 @@ def test_orphan_drift_skips_release_tracking_issue() -> None:
 
 
 def test_orphan_drift_untrusted_release_issue_is_an_orphan(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # A forged release title and marker from an outsider never hide the issue from the sweep.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     body = f"{trust_stubs.SPAM_TEXT}\n<!-- vrg-release:progress -->\n"
     issues = [_issue("org/tool", 9, title="release: 2.1.258", body=body)]
     layer = trust_stubs.FakeItems(
@@ -3400,10 +3391,7 @@ def test_standalone_confirmed_suppresses(login: str) -> None:
     assert found == []
 
 
-def test_standalone_confirmed_untrusted_ignored(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_standalone_confirmed_untrusted_ignored(capsys: pytest.CaptureFixture[str]) -> None:
     comments = {
         8: [
             trust_stubs.comment(1, "Standalone-confirmed", trust_stubs.OUTSIDER),
@@ -3431,7 +3419,6 @@ def test_standalone_confirmed_untrusted_ignored(
     ids=["user-named-like-app", "edited-by-outsider"],
 )
 def test_standalone_confirmed_from_impostor_does_not_drop_the_task(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     author: Any,
     editor: Any,
@@ -3443,7 +3430,6 @@ def test_standalone_confirmed_from_impostor_does_not_drop_the_task(
     # A Standalone-confirmed line counts only from a comment the layer trusts:
     # a User account named like the agent App (or an outsider's edit of a
     # trusted comment) leaves the misplaced task reported, metadata only.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     forged = f"{trust_stubs.SPAM_TEXT}\nStandalone-confirmed\n"
     comments = {14: [trust_stubs.comment(41, forged, author, editor=editor)]}
     found, _, _ = _misplaced([_adhoc_child(14, title="Logbook: x")], comments=comments)
@@ -3549,11 +3535,10 @@ def _open_tasks(prs: list[dict[str, Any]], *numbers: int) -> Any:
     ids=["outsider", "user-named-like-app"],
 )
 def test_task_drift_ignores_untrusted_closing_line(
-    author: Any, cause: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    author: Any, cause: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # A linkage line counts only from a trusted PR body: an untrusted one is
     # reported, metadata only, and closes nothing; the run carries on clean.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     body = f"Ref #1947\n{_SPAM}\n"
     prs = [_pr_reffing(1948, body)]
     stops = trust.BatchStops()
@@ -3575,11 +3560,10 @@ def test_task_drift_ignores_untrusted_closing_line(
 
 
 def test_task_drift_ignores_body_edited_after_merge_by_outsider(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Every editor counts: an outsider who edits a trusted PR body after its
     # merge to add a linkage line makes the whole body untrusted.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     body = f"Ref #1947\nCloses #2000\n{_SPAM}\n"
     prs = [_pr_reffing(1948, body)]
     edited = trust_stubs.item(body=body, editor=trust_stubs.OUTSIDER, typename="PullRequest")
@@ -3635,12 +3619,9 @@ def test_task_drift_counts_only_the_closing_roles() -> None:
     assert result == []
 
 
-def test_task_drift_unreadable_pr_body_is_per_item_stop(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_task_drift_unreadable_pr_body_is_per_item_stop(capsys: pytest.CaptureFixture[str]) -> None:
     # A PR body the layer cannot read in full stops that PR alone; the other
     # PR's drift is still found.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     prs = [_pr_reffing(70, "Ref #69\n"), _pr_reffing(72, "Ref #71\n")]
     stops = trust.BatchStops()
     truncated = trust_stubs.item(body="Ref #69\n", typename="PullRequest")
@@ -3679,7 +3660,6 @@ def test_nativize_skips_untrusted_body_parent(
     # A Parent: line counts only from a trusted body: #5 (an outsider's body)
     # and #6 (a trusted body an outsider edited) are reported and never
     # nativized, so each is an orphan; #7's trusted line is nativized.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     line = f"Parent: org/.github#40\n{_SPAM}\n"
     issues = [_issue("org/tool", n, body=line) for n in (5, 6, 7)]
     items = {
@@ -3796,9 +3776,8 @@ def test_unlabelled_advisory_lines_takes_the_line_from_the_trusted_body() -> Non
 
 
 def test_unlabelled_advisory_lines_never_trusts_an_outsider_body(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     issues = [_issue("org/tool", 5, body=_ADVISORY_LINE)]
     items = {("org/tool", 5): trust_stubs.item(body=_ADVISORY_LINE, author=trust_stubs.OUTSIDER)}
     found, _ = _judged_unlabelled(issues, items=items)
@@ -3848,12 +3827,9 @@ def _children(epic: epics.IssueRef) -> list[epics.ChildState]:
     ]
 
 
-def test_epic_drift_outsider_close_is_per_item_stop(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_epic_drift_outsider_close_is_per_item_stop(capsys: pytest.CaptureFixture[str]) -> None:
     # A child closed by an outsider is not closed: its epic is a stop on that
     # epic alone, and the other all-closed epic is still drift.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     stops = trust.BatchStops()
     items = trust_stubs.FakeItems(closers={("org/tool", 42): trust_stubs.OUTSIDER})
     with (

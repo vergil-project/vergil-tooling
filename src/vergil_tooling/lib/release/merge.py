@@ -1,4 +1,4 @@
-"""Wait-poll-merge logic shared by Phases 2 and 3.
+"""Wait-poll-merge logic for the release PR's merge into main (merge-release).
 
 Thin wrapper over the shared engine in ``vergil_tooling.lib.pr_merge``
 — release keeps its public interface (``ReleaseError`` on failure,
@@ -21,13 +21,16 @@ the local branch never sees. :func:`sync_local_branch` fast-forwards the local
 branch (and the worktree it is checked out in) to the merged PR's head, so the
 release worktree matches what actually merged (#3175).
 
-The release PR's merge into ``main`` (``into_main``) uses the caller's bypass
-of the "Main updates" ruleset, whose ``update`` rule lets only its bypass actor,
-the human through the repository admin role, update ``main``
-(vergil-project/vergil-tooling#5095). It is the only bypassed merge: the
-back-merge into ``develop`` is a plain one. The engine re-checks the checks and
-reviews the bypass would skip before it merges, and this wrapper refuses it for
-any identity but the human's and for a PR whose base is not ``main``.
+:func:`wait_and_merge` serves the release PR's merge into ``main`` and nothing
+else: nothing but the one PR path (:mod:`vergil_tooling.lib.pr_path`) merges a
+PR into ``develop`` (epic vergil-project/.github#1664, spec §5.4), so the
+back-merge arms through the path instead (:mod:`vergil_tooling.lib.release.bump`).
+The merge into ``main`` uses the caller's bypass of the "Main updates"
+ruleset, whose ``update`` rule lets only its bypass actor, the human through
+the repository admin role, update ``main`` (vergil-project/vergil-tooling#5095).
+The engine re-checks the checks and reviews the bypass would skip before it
+merges, and this wrapper refuses a PR whose base is not ``main`` and any
+identity but the human's.
 """
 
 from __future__ import annotations
@@ -59,14 +62,26 @@ def known_pr_state(pr_url: str) -> str:
 
 
 def _refuse_bypass(pr_url: str, *, phase: str) -> None:
-    """Refuse the ruleset-bypassed merge into ``main`` unless it is the human's, into main.
+    """Refuse the ruleset-bypassed merge unless it is the human's, into main.
 
+    The PR's base must be ``main``, so neither a merge into ``develop`` (the
+    one PR path's alone) nor the bypass is ever spent on any other branch.
     ``vrg-release`` already refuses every agent identity before any side
     effect; this is the same fail-closed test again, at the one merge that
     uses a bypass, plus the automation identity, which is not a bypass actor
-    (``APP_MERGES_RELEASES`` is false). The PR's base must be ``main``, so the
-    bypass is never spent on any other branch.
+    (``APP_MERGES_RELEASES`` is false).
     """
+    base = github.base_ref(pr_url)
+    if base != "main":
+        raise ReleaseError(
+            phase=phase,
+            command="pr_merge.wait_and_merge",
+            message=(
+                f"Refusing to merge {pr_url}: its base is {base!r}, not 'main'. This merge "
+                "serves the release PR into main only; a PR into develop merges only "
+                "through the one PR path."
+            ),
+        )
     if (
         identity_mode.current_mode() is not identity_mode.IdentityMode.HUMAN
         or identity_mode.any_agent_signal()
@@ -79,16 +94,6 @@ def _refuse_bypass(pr_url: str, *, phase: str) -> None:
                 "ruleset bypass: only the human maintainer merges a release PR."
             ),
         )
-    base = github.base_ref(pr_url)
-    if base != "main":
-        raise ReleaseError(
-            phase=phase,
-            command="pr_merge.wait_and_merge",
-            message=(
-                f"Refusing the {MAIN_UPDATE_RULESET_NAME!r} ruleset bypass for {pr_url}: "
-                f"its base is {base!r}, not 'main'."
-            ),
-        )
 
 
 def wait_and_merge(
@@ -96,31 +101,24 @@ def wait_and_merge(
     *,
     phase: str,
     on_branch_updated: Callable[[], None] | None = None,
-    into_main: bool = False,
 ) -> None:
-    """Wait for checks, handle behind-base, then merge with a merge commit.
+    """Wait for checks, handle behind-base, then merge the release PR into ``main``.
 
     *pr_url* must have just come from GitHub (created or listed): the PR is
-    first confirmed readable via :func:`known_pr_state`. *on_branch_updated*
-    is forwarded to the engine, which calls it after each server-side
-    update-branch.
-
-    *into_main* marks the release PR's merge into ``main``: it is refused
-    for any identity but the human's and for a PR whose base is not
-    ``main``, then merged with the "Main updates" ruleset bypass, once the
-    engine's own checks pass (#5095).
+    first confirmed readable via :func:`known_pr_state`. It is refused for a
+    base other than ``main`` and for any identity but the human's, then
+    merged with a merge commit and the "Main updates" ruleset bypass, once
+    the engine's own checks pass (#5095). *on_branch_updated* is forwarded
+    to the engine, which calls it after each server-side update-branch.
     """
     known_pr_state(pr_url)
-    bypass: str | None = None
-    if into_main:
-        _refuse_bypass(pr_url, phase=phase)
-        bypass = MAIN_UPDATE_RULESET_NAME
+    _refuse_bypass(pr_url, phase=phase)
     try:
         pr_merge.wait_and_merge(
             pr_url,
             strategy="merge",
             on_branch_updated=on_branch_updated,
-            bypass_ruleset=bypass,
+            bypass_ruleset=MAIN_UPDATE_RULESET_NAME,
         )
     except pr_merge.MergeConflictError as exc:
         raise ReleaseConflictError(

@@ -51,6 +51,31 @@ if TYPE_CHECKING:
 _MAX_CONFLICT_HEALS = 3
 _CONFLICT_SETTLE_SECS = 10
 
+# The stage that removes the release worktree by design; from it on, a
+# missing worktree is expected (spec §5.8 of epic vergil-project/.github#1664).
+_TEARDOWN_STAGE = "teardown-worktree"
+
+
+class ReleaseWorktreeVanished(ReleaseError):  # noqa: N818 - the name the plan gives it
+    """The release worktree is gone at a stage before ``teardown-worktree`` (#5187).
+
+    Something outside the release removed it. The release stops here, naming
+    the path, rather than failing later on an obscure ``git`` error in a
+    directory that no longer exists.
+    """
+
+    def __init__(self, phase: str, path: Path, version: str) -> None:
+        super().__init__(
+            phase=phase,
+            command=f"test -d {path}",
+            message=(
+                f"Release worktree vanished: {path} is gone before the {phase} stage, "
+                "removed by something outside the release. Find out what removed it, "
+                f"then finish the release with `vrg-release --resume {version}`."
+            ),
+        )
+        self.path = path
+
 
 @dataclass
 class ReleaseState:
@@ -151,6 +176,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             mark_warn(reason)
             return
         try:
+            _check_worktree_present(ctx, name)
             fn(ctx)
             _record_done(ctx, name)
         except TrackingIssueBreach:
@@ -177,6 +203,23 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         tick_stage(ctx, name)
 
     return stage
+
+
+def _check_worktree_present(ctx: ReleaseContext, name: str) -> None:
+    """Raise :class:`ReleaseWorktreeVanished` if stage *name* needs a worktree that is gone.
+
+    Every stage before ``teardown-worktree`` runs in the release worktree
+    when the run has one. A run with none (a resume that runs in the root
+    checkout, #4889) and every stage from ``teardown-worktree`` on are not
+    checked: there the worktree is gone by design.
+    """
+    if ctx.worktree_path is None:
+        return
+    names = _stage_names()
+    if names.index(name) >= names.index(_TEARDOWN_STAGE):
+        return
+    if not ctx.worktree_path.is_dir():
+        raise ReleaseWorktreeVanished(name, ctx.worktree_path, ctx.version)
 
 
 def _record_done(ctx: ReleaseContext, name: str) -> None:
@@ -353,7 +396,6 @@ def merge_release(ctx: ReleaseContext) -> None:
                 ctx.release_pr_url,
                 phase="merge-release",
                 on_branch_updated=lambda: updates.append(None),
-                into_main=True,
             )
             break
         except ReleaseConflictError as exc:

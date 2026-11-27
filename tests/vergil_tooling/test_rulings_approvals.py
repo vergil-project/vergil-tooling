@@ -145,7 +145,6 @@ def _exemption(request_id: int) -> Approval:
 
 @pytest.fixture
 def items(monkeypatch: pytest.MonkeyPatch) -> trust_stubs.FakeItems:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     fake = trust_stubs.FakeItems(strict=True)
     monkeypatch.setattr(github, "graphql", fake)
     return fake

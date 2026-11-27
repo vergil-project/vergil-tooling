@@ -274,9 +274,7 @@ def test_review_comments_omit_outsider_and_report(
     paginated: MagicMock,
     reviews: MagicMock,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     paginated.return_value = [
         _api_comment(),
         _api_comment(id=12, user={"login": "drive-by"}, body=_SPAM),

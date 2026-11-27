@@ -28,6 +28,19 @@ creating it, so ``edited`` stays forbidden on its own PR too. GitHub records
 a ``closed`` event, by the merging actor, for every merge; that one closing
 is part of the merge and is allowed with it (:func:`_merge_close`), while any
 other close stays a violation (vergil-tooling#5140, vergil-tooling#5178).
+
+**The one PR path** (epic vergil-project/.github#1664, its spec's §5.1).
+Any trusted identity with write access may arm a PR the path accepts,
+whoever authored it: a same-repo PR whose branch has a trusted author (the
+watch's ``confirmed_head`` rule). So on such a PR the user identity may also
+turn auto-merge on for, and merge, a PR it did not author, and the closing
+GitHub records with that merge is allowed with it. Nothing else is relaxed:
+on a fork PR, or one whose author is untrusted, both stay violations, as do
+the user identity's other forbidden actions everywhere and the audit
+identity's, which holds no write access. :func:`check_pr` reads whether the
+PR is such a PR from the PR itself (:func:`trust.is_same_repo` and the
+author's role) and hands it to :func:`evaluate`.
+
 An action is either allowed or a violation, and a violation always fails:
 there is no override
 (vergil-tooling#4695). It is either a real problem to investigate or a bug
@@ -39,8 +52,14 @@ gap the coarse GitHub permission model cannot enforce server-side
 (notably the audit identity's ``pull_requests: write`` scope, which
 GitHub cannot narrow to "review but never author/close/merge").
 Turning auto-merge on merges a PR, so an agent's auto-merge enable event,
-under any method's event name, is a forbidden action too; turning it off is
-not.
+under any method's event name, is a forbidden action too, bar the path's
+relaxation above; turning it off is not.
+
+**Involvement** (:func:`pr_actors`) leaves out the actors of the events that
+change no content: every auto-merge enable and disable, and, on a PR the
+path accepts, the merge and the closing GitHub records with it (the path's
+direct merge at clean status is the same decision as an arm). So arming a
+PR, or merging one that can already merge, never makes it agent-involved.
 
 Read-only ``gh api`` GET calls back this check. They run in the human
 context where the API is available; the same endpoints are reachable
@@ -63,7 +82,7 @@ from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.trusted_authors import load_trusted_authors
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
@@ -132,6 +151,17 @@ _FORBIDDEN: dict[Role, frozenset[str]] = {
 # (:func:`_merge_close`).
 _USER_OWN_PR = frozenset({"created", "merged", _AUTO_MERGE_ENABLED})
 
+# The forbidden actions the user identity may perform on a PR the one PR path
+# accepts, whoever authored it (spec §5.1): turn auto-merge on, and merge it
+# at clean status. The close GitHub records with that merge is judged apart
+# (:func:`_merge_close`), as on its own PR.
+_USER_PATH_PR = frozenset({"merged", _AUTO_MERGE_ENABLED})
+
+# The events whose actor is not counted as involvement on any PR: turning
+# auto-merge on (any method's name, see ``_map_event``) or off changes no
+# content (spec §5.1).
+_AUTO_MERGE_DISABLED = "auto_merge_disabled"
+
 
 @dataclass(frozen=True)
 class Action:
@@ -172,6 +202,18 @@ def _own_pr(act: Action, author: trust.Identity | None) -> bool:
         and author is not None
         and _same_identity(act.identity, author)
     )
+
+
+def _path_pr(act: Action, *, on_path: bool) -> bool:
+    """Whether *act* is the user identity acting on a PR the one PR path accepts.
+
+    *on_path* is whether the PR is one: a same-repo PR whose branch has a
+    trusted author. The human and the automation App are never forbidden
+    an action, so only the user identity's need relaxing; the audit
+    identity holds no write access and an untrusted one is no trusted
+    writer, so neither is relaxed (spec §5.1).
+    """
+    return on_path and act.role is Role.USER
 
 
 def _identity(user: object, *, typename_key: str = "type") -> trust.Identity:
@@ -234,19 +276,28 @@ def _map_event(name: str) -> str | None:
     return mapped
 
 
+# What :func:`_collect_actions` reads with ``gh pr view``: the author, and
+# what :func:`trust.is_same_repo` needs (``trust.SAME_REPO_FIELDS``, named as
+# ``gh pr view --json`` names them).
+_VIEW_FIELDS = "author,isCrossRepository,headRepositoryOwner,headRepository"
+
+
 @dataclass(frozen=True)
 class _History:
     """What :func:`_collect_actions` read of a PR.
 
     *actions* are the attributed actions the provenance check judges.
-    *actors* are every identity GitHub records acting on the PR: its author,
-    the author of every review (whatever its state, an untrusted one
-    included) and the actor or user of every timeline event that names one.
+    *actors* are every identity counted as involvement on the PR
+    (:func:`pr_actors`). *same_repo* is whether the PR's head is in its own
+    repo, and *branch_trusted* whether its author holds a trusted role: both
+    together make it a PR the one PR path accepts.
     """
 
     author: trust.Identity
     actions: list[Action]
     actors: tuple[trust.Identity, ...]
+    same_repo: bool
+    branch_trusted: bool
 
 
 def _collect_actions(pr: str) -> _History:
@@ -273,8 +324,9 @@ def _collect_actions(pr: str) -> _History:
 
     # ``gh pr view`` names the author's account type by ``is_bot``; an App
     # author's login is ``app/<slug>``, which the trust layer normalises.
-    viewed = github.read_json("pr", "view", pr, "--json", "author")
-    raw_author = viewed.get("author") if isinstance(viewed, dict) else None
+    viewed = github.read_json("pr", "view", pr, "--json", _VIEW_FIELDS)
+    view = cast("Mapping[str, object]", viewed) if isinstance(viewed, dict) else {}
+    raw_author = view.get("author")
     author_data = cast("Mapping[str, object]", raw_author) if isinstance(raw_author, dict) else {}
     login = author_data.get("login")
     author = trust.Identity(
@@ -282,6 +334,13 @@ def _collect_actions(pr: str) -> _History:
         "Bot" if author_data.get("is_bot") is True else "User",
     )
     add(author, "created")
+    try:
+        same_repo = trust.is_same_repo(repo, view)
+    except trust.TrustReadError as exc:
+        raise github.GitHubAPIError(
+            1, ("gh", "pr", "view", pr), stderr=f"the provenance check: {exc}"
+        ) from exc
+    branch_trusted = classify(author, org=org, authors=authors) is not Role.UNTRUSTED
 
     # Both lists are paginated (issue #3162): a single ``gh api`` call returns
     # only the first 30 items, so a forbidden action past page 1 was never
@@ -321,13 +380,18 @@ def _collect_actions(pr: str) -> _History:
         "list[dict[str, Any]]",
         github.read_json_paginated(f"repos/{repo}/issues/{number}/timeline"),
     )
+    uninvolved = not_involvement(timeline, on_path=same_repo and branch_trusted)
     for position, event in enumerate(timeline):
         # An event's actor, and the user of an event that names one instead
         # (a review or a comment), acted on the PR. An event naming neither
-        # (a commit, whose pusher GitHub does not record) adds no actor.
-        actors.extend(
-            _identity(event[key]) for key in ("actor", "user") if isinstance(event.get(key), dict)
-        )
+        # (a commit, whose pusher GitHub does not record) adds no actor, and
+        # nor does one whose action is not involvement.
+        if position not in uninvolved:
+            actors.extend(
+                _identity(event[key])
+                for key in ("actor", "user")
+                if isinstance(event.get(key), dict)
+            )
         mapped = _map_event(event.get("event", ""))
         if mapped is None:
             continue
@@ -339,7 +403,13 @@ def _collect_actions(pr: str) -> _History:
             position,
         )
 
-    return _History(author=author, actions=actions, actors=tuple(actors))
+    return _History(
+        author=author,
+        actions=actions,
+        actors=tuple(actors),
+        same_repo=same_repo,
+        branch_trusted=branch_trusted,
+    )
 
 
 # How long after the merge GitHub may record the ``closed`` it writes with it.
@@ -368,7 +438,17 @@ def _timestamp(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def _merge_close(actions: list[Action]) -> int | None:
+@dataclass(frozen=True)
+class _Event:
+    """A timeline event as :func:`not_involvement` judges it: no role needed."""
+
+    action: str
+    identity: trust.Identity | None
+    at: str | None
+    position: int
+
+
+def _merge_close(actions: Sequence[Action | _Event]) -> int | None:
     """The index in *actions* of the ``closed`` event that accompanied the merge.
 
     GitHub records a ``closed`` event, by the merging actor, for every merge
@@ -423,14 +503,27 @@ def _merge_close(actions: list[Action]) -> int | None:
     return close_at
 
 
-def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> ProvenanceResult:
+def evaluate(
+    actions: list[Action],
+    *,
+    author: trust.Identity | None = None,
+    same_repo: bool,
+    branch_trusted: bool,
+) -> ProvenanceResult:
     """The violations among *actions* on a PR *author* opened. Pure.
 
     Each action its role forbids is a violation, except the user identity's
     opening, auto-merging and merging of its own PR, and the closing GitHub
     records with that merge (:func:`_merge_close`). With no *author*, no PR
     is anyone's own. *actions* keep the timeline's order.
+
+    *same_repo* (the PR's head is in its own repo) and *branch_trusted* (its
+    author holds a trusted role) together make it a PR the one PR path
+    accepts, on which the user identity's auto-merge enable and merge, and
+    the closing with that merge, are allowed whoever authored it (spec
+    §5.1). Both are required: every caller reads them from the PR.
     """
+    on_path = same_repo and branch_trusted
     result = ProvenanceResult()
     merge_close = _merge_close(actions)
     for index, act in enumerate(actions):
@@ -438,7 +531,9 @@ def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> 
             continue
         if act.action in _USER_OWN_PR and _own_pr(act, author):
             continue
-        if index == merge_close and _own_pr(act, author):
+        if act.action in _USER_PATH_PR and _path_pr(act, on_path=on_path):
+            continue
+        if index == merge_close and (_own_pr(act, author) or _path_pr(act, on_path=on_path)):
             continue
         result.violations.append(act)
     return result
@@ -447,7 +542,53 @@ def evaluate(actions: list[Action], *, author: trust.Identity | None = None) -> 
 def check_pr(pr: str) -> ProvenanceResult:
     """Verify PR provenance by fetching and evaluating its action history."""
     history = _collect_actions(pr)
-    return evaluate(history.actions, author=history.author)
+    return evaluate(
+        history.actions,
+        author=history.author,
+        same_repo=history.same_repo,
+        branch_trusted=history.branch_trusted,
+    )
+
+
+def not_involvement(timeline: Sequence[Mapping[str, object]], *, on_path: bool) -> frozenset[int]:
+    """The positions in *timeline* whose actors are not counted as involvement. Pure.
+
+    *timeline* is a PR's whole timeline, oldest first, each event with its
+    ``event`` name and, where GitHub gives them, its ``actor`` (a REST user
+    object) and ``created_at``. Every auto-merge enable (under any method's
+    name) and disable changes no content, so it is not involvement. On a PR
+    the one PR path accepts (*on_path*: a same-repo PR whose branch has a
+    trusted author), neither is its merge, the path's direct merge at clean
+    status being the same decision as an arm, nor the closing GitHub records
+    with it (:func:`_merge_close`). The finalize watch (through
+    :func:`pr_actors`) and the daily agent audit both judge involvement by
+    this rule (spec §5.1, §5.9).
+    """
+    left_out: set[int] = set()
+    events: list[_Event] = []
+    for position, event in enumerate(timeline):
+        name = event.get("event")
+        name = name if isinstance(name, str) else ""
+        if name == _AUTO_MERGE_DISABLED or _map_event(name) == _AUTO_MERGE_ENABLED:
+            left_out.add(position)
+            continue
+        if name not in ("merged", "closed"):
+            continue
+        created_at = event.get("created_at")
+        events.append(
+            _Event(
+                action=name,
+                identity=_identity(event.get("actor")) if "actor" in event else None,
+                at=created_at if isinstance(created_at, str) and created_at else None,
+                position=position,
+            )
+        )
+    if on_path:
+        left_out.update(e.position for e in events if e.action == "merged")
+        close = _merge_close(events)
+        if close is not None:
+            left_out.add(events[close].position)
+    return frozenset(left_out)
 
 
 def pr_actors(pr: str) -> tuple[trust.Identity, ...]:
@@ -455,7 +596,9 @@ def pr_actors(pr: str) -> tuple[trust.Identity, ...]:
 
     The evidence :func:`vergil_tooling.lib.agent_gates.agent_involved` takes
     for an open or merged PR: the author, the author of every review (any
-    state) and the actor or user of every timeline event naming one. Read
+    state) and the actor or user of every timeline event naming one, bar
+    the events :func:`not_involvement` leaves out (arming, and on a PR the
+    one PR path accepts its merge and the merge's closing). Read
     as :func:`check_pr` reads the PR, every page; a failed or malformed read
     raises, never an empty answer.
     """

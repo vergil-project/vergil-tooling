@@ -180,7 +180,14 @@ first `closed` event after the PR's one `merged` event, by the same
 actor, with no other timeline event between them, timed at most 5 seconds
 after the merge (GitHub times both to the second and sometimes gives the
 close the next one). Any other close, a close and reopen before the merge
-included, stays a violation (issues #5140 and #5178). An untrusted
+included, stays a violation (issues #5140 and #5178). On a PR the one
+PR path accepts, a same-repo PR whose branch has a trusted author, any
+trusted identity with write access may arm it, whoever authored it
+(epic vergil-project/.github#1664, spec §5.1): the user identity may turn
+auto-merge on and merge it at clean status, with the closing GitHub
+records with that merge, on anyone's such PR. On a fork PR, or one an
+untrusted identity opened, those stay violations, and so does every other
+forbidden action. An untrusted
 approval counts for nothing: it is
 reported on stderr, metadata only, and is no violation. What it does
 depends on whether the PR has merged:
@@ -208,7 +215,9 @@ re-runs the gates `vrg-submit-pr` ran before it opened the PR:
 - **It asks whether the PR is agent-involved.** It is when an agent login
   opened it, reviewed it, or is the actor of any event on it, or when its
   ready state, on the relay ref `refs/vergil/pr-workflow/<branch>`, says
-  so. GitHub does not record who pushed a commit, so a ready state counts
+  so. Turning auto-merge on or off is not involvement, and nor, on a PR
+  the one PR path accepts, is its merge and the closing GitHub records
+  with it: the actors of those events are not counted. GitHub does not record who pushed a commit, so a ready state counts
   as agent-involved unless its commit's author is trusted and its
   `recorded_by` names an identity that is not an agent; a ready state with
   no `recorded_by`, or a value finalize does not recognise, counts. The
@@ -237,15 +246,16 @@ the batch:
 
 ```text
 Watch status after 0m30s:
-  PR     TITLE                                     STATE               WAITING
-  #4661  feat(finalize): watch a batch of PRs      merged              0m15s
-  #4662  fix(provenance): flag a merged violation  checks pending (2)  0m30s
-  #4663  docs: describe the watch                  failed: CI          0m15s
+  PR     BRANCH                    TITLE                                     STATE               WAITING
+  #4661  feature/4655-batch-watch  feat(finalize): watch a batch of PRs      merged              0m15s
+  #4662  feature/4656-merged-flag  fix(provenance): flag a merged violation  checks pending (2)  0m30s
+  #4663  feature/4657-watch-docs   docs: describe the watch                  failed: CI          0m15s
   1 merged, 1 pending, 1 failed; 1h59m30s left before the batch deadline
 ```
 
-- **PR** and **TITLE**: the PR number and its title, cut to 50
-  characters with `...`.
+- **PR**, **BRANCH** and **TITLE**: the PR number, its head branch (`-`
+  for a PR the trust layer did not confirm on its branch), and its
+  title, cut to 50 characters with `...`.
 - **STATE**: while the PR is pending, `conflict reported, waiting for
   GitHub to settle it` (a conflict not yet reported for two minutes),
   `checks pending (<n>)` (checks not

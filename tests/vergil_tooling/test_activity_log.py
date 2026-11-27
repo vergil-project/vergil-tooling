@@ -67,7 +67,6 @@ class FakeSearch:
 
 @pytest.fixture
 def search(monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
 
     def install(*nodes: dict[str, Any]) -> FakeSearch:
@@ -131,7 +130,6 @@ def _search_and_reads(
     monkeypatch: pytest.MonkeyPatch, layer: trust_stubs.FakeItems, *nodes: dict[str, Any]
 ) -> FakeSearch:
     """Answer the close-judging search with *nodes* and every item re-read from *layer*."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     fake = FakeSearch((list(nodes), None, len(nodes)))
 
@@ -212,7 +210,6 @@ def test_gather_graphql_calls_bounded_by_result_pages(
 ) -> None:
     # A window over the search cap is halved once; then 1,150 results take 12
     # pages. 13 calls in all: one per page and one per halving, never per issue.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS)
     issues = [_closed(n) for n in range(1, 1151)]
     first, second = issues[:600], issues[600:]

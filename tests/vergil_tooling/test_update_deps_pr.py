@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from vergil_tooling.lib import github, pr_create, pr_merge, trust
+from vergil_tooling.lib import (
+    auto_merge,
+    finalize_watch,
+    github,
+    pr_create,
+    pr_merge,
+    pr_path,
+    trust,
+)
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
@@ -224,20 +232,167 @@ def test_prepare_pr_raises_without_branch() -> None:
         pr.prepare_pr(ctx)
 
 
-def test_merge_pr_calls_wait_and_merge_and_marks_merged(monkeypatch) -> None:
-    seen: dict[str, str] = {}
-    monkeypatch.setattr(
-        _MOD + ".pr_merge.wait_and_merge",
-        lambda url, *, strategy, wait_checks=None: seen.update(pr=url, strategy=strategy),
+_PR_URL = "https://github.com/o/r/pull/9"
+_HEAD = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _snapshot(labels: tuple[str, ...]) -> finalize_watch.Snapshot:
+    return finalize_watch.Snapshot(
+        node_id="PR_kw9",
+        url=_PR_URL,
+        title="chore(deps): dependency update for 2.1.243",
+        state="OPEN",
+        base="develop",
+        head_ref="deps/update-2.1.243",
+        head=_HEAD,
+        auto_merge_on=False,
+        merge_state="BLOCKED",
+        rollup=(),
+        merge_commit="",
+        labels=labels,
     )
+
+
+class _Path:
+    """A stand-in for ``pr_path.arm`` returning *outcome*, recording each call."""
+
+    def __init__(self, outcome: pr_path.ArmOutcome, detail: str = "") -> None:
+        self.outcome = outcome
+        self.detail = detail
+        self.calls: list[tuple[str, Path | None, str | None]] = []
+
+    def __call__(
+        self, pr_url: str, *, clone: Path | None = None, head: str | None = None
+    ) -> pr_path.ArmResult:
+        self.calls.append((pr_url, clone, head))
+        return pr_path.ArmResult(
+            outcome=self.outcome, pr_url=pr_url, head=_HEAD, method="MERGE", detail=self.detail
+        )
+
+
+def _arm_ctx(monkeypatch) -> UpdateDepsContext:
+    monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: _HEAD)  # noqa: ARG005
+    # The update never merges its PR itself: GitHub's auto-merge does (spec §5.4).
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_and_merge", _never("wait_and_merge"))
+    monkeypatch.setattr("vergil_tooling.lib.github.merge", _never("github.merge"))
     # The branch is deleted by finalize, once the worktree holding it is gone (#4952).
-    monkeypatch.setattr(_MOD + ".delete_merged_branch", lambda ctx: pytest.fail("deleted"))  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".delete_merged_branch", _never("delete_merged_branch"))
     ctx = _ctx()
-    ctx.pr_url = "https://x/pr/1"
-    pr.merge_pr(ctx)
-    assert seen == {"pr": "https://x/pr/1", "strategy": "merge"}
+    ctx.pr_url = _PR_URL
+    return ctx
+
+
+def _never(name: str):
+    def _fail(*a: object, **k: object) -> None:
+        pytest.fail(f"{name} called with {a} {k}")
+
+    return _fail
+
+
+def test_deps_pr_armed_with_merge_method(monkeypatch) -> None:
+    """The path works MERGE out from the dependency-update label, pinned to the pushed head."""
+    snap = _snapshot(("dependency-update",))
+    read = pr_path._PR(snap=snap, draft=False, repo="o/r", number=9, branch=snap.head_ref)  # noqa: SLF001
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._read", lambda url: read)  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._require_clone", lambda clone, pr: None)  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._violations", lambda url: "")  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._gates", lambda pr, branch, clone: "")  # noqa: ARG005
+    enabled: list[tuple[str, str, str]] = []
+
+    def _enable(url: str, *, head: str, method: str) -> auto_merge.AutoMergeResult:
+        enabled.append((url, head, method))
+        return auto_merge.AutoMergeResult(merged_now=False)
+
+    monkeypatch.setattr("vergil_tooling.lib.auto_merge._enable", _enable)
+    waits: list[str] = []
+    monkeypatch.setattr(
+        _MOD + ".pr_merge.wait_until_merged",
+        lambda url, *, deadline_secs: waits.append(url),  # noqa: ARG005
+    )
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
+    assert enabled == [(_PR_URL, _HEAD, "MERGE")]
+    assert waits == [_PR_URL]
+    assert ctx.merged is True
+
+
+def test_deps_pr_waits_and_never_merges(monkeypatch) -> None:
+    """``armed``: wait until GitHub merges it, with the finalize deadline; no merge call."""
+    path = _Path("armed")
+    monkeypatch.setattr(_MOD + ".pr_path.arm", path)
+    monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "1234")
+    waits: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        _MOD + ".pr_merge.wait_until_merged",
+        lambda url, *, deadline_secs: waits.append((url, deadline_secs)),
+    )
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
+    assert path.calls == [(_PR_URL, ctx.repo_root, _HEAD)]
+    assert waits == [(_PR_URL, 1234)]
     assert ctx.failure is None
     assert ctx.merged is True
+
+
+def test_deps_pr_merged_by_the_path_returns_without_waiting(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _Path("merged"))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
+    assert ctx.failure is None
+    assert ctx.merged is True
+
+
+def test_deps_pr_refused_recorded_with_reason_no_wait(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _Path("refused", "provenance violations found"))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    recorded: list[str] = []
+    monkeypatch.setattr(_MOD + ".record_merge_failure", lambda ctx, msg: recorded.append(msg))
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
+    assert recorded == [f"The one PR path refused {_PR_URL}: provenance violations found"]
+    # A PR that did not merge keeps its branch for a resume (#4952).
+    assert ctx.merged is False
+
+
+def test_deps_pr_unknown_outcome_raises(monkeypatch) -> None:
+    """An outcome the update does not handle yet (``held``, Task 19) is never read as merged."""
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _Path("held", "held for release 2.1.244"))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    ctx = _arm_ctx(monkeypatch)
+    with pytest.raises(UpdateDepsError, match="returned 'held'"):
+        pr.arm_and_wait(ctx)
+    assert ctx.merged is False
+
+
+def test_deps_pr_path_error_raises(monkeypatch) -> None:
+    def _broken(url, *, clone=None, head=None):  # noqa: ARG001
+        msg = f"{url}: reading the PR failed: boom"
+        raise pr_path.PRPathError(msg)
+
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _broken)
+    ctx = _arm_ctx(monkeypatch)
+    with pytest.raises(UpdateDepsError, match="reading the PR failed: boom") as info:
+        pr.arm_and_wait(ctx)
+    assert info.value.phase == "merge"
+    assert ctx.failure is None
+    assert ctx.merged is False
+
+
+def test_deps_pr_bad_deadline_refuses_before_arming(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _never("pr_path.arm"))
+    monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "soon")
+    ctx = _arm_ctx(monkeypatch)
+    with pytest.raises(UpdateDepsError, match="VRG_FINALIZE_DEADLINE"):
+        pr.arm_and_wait(ctx)
+
+
+def test_deps_pr_raises_without_branch(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _never("pr_path.arm"))
+    ctx = _arm_ctx(monkeypatch)
+    ctx.branch = None
+    with pytest.raises(UpdateDepsError, match="No branch"):
+        pr.arm_and_wait(ctx)
 
 
 @pytest.mark.parametrize(
@@ -344,24 +499,24 @@ def test_delete_merged_branch_raises_without_branch() -> None:
         pr.delete_merged_branch(ctx)
 
 
-def test_merge_pr_raises_without_pr_url() -> None:
+def test_arm_and_wait_raises_without_pr_url() -> None:
     ctx = _ctx()
     ctx.pr_url = None
     with pytest.raises(UpdateDepsError, match="No PR URL"):
-        pr.merge_pr(ctx)
+        pr.arm_and_wait(ctx)
 
 
-def test_merge_pr_records_abort_instead_of_raising(monkeypatch) -> None:
-    def _abort(url, *, strategy, wait_checks=None):  # noqa: ARG001
+def test_arm_and_wait_records_a_failed_wait_instead_of_raising(monkeypatch) -> None:
+    def _abort(url, *, deadline_secs):  # noqa: ARG001
         msg = "nope"
         raise pr_merge.MergeAbortError(msg)
 
     recorded: list[str] = []
-    monkeypatch.setattr(_MOD + ".pr_merge.wait_and_merge", _abort)
+    monkeypatch.setattr(_MOD + ".pr_path.arm", _Path("armed"))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _abort)
     monkeypatch.setattr(_MOD + ".record_merge_failure", lambda ctx, msg: recorded.append(msg))
-    ctx = _ctx()
-    ctx.pr_url = "https://x/pr/1"
-    pr.merge_pr(ctx)
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
     assert recorded == ["nope"]
     # A PR that did not merge keeps its branch for a resume (#4952).
     assert ctx.merged is False
@@ -585,7 +740,7 @@ def test_cleanup_worktree_chdir_remove_delete(monkeypatch) -> None:
     removed: list[Path] = []
     runs: list[tuple[str, ...]] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: chdirs.append(Path(p)))
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
     ctx = _ctx()
     pr.cleanup_worktree(ctx)
@@ -604,7 +759,7 @@ def test_cleanup_worktree_skips_branch_delete_when_none(monkeypatch) -> None:
     removed: list[Path] = []
     runs: list[tuple[str, ...]] = []
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)
-    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p: removed.append(p))
+    monkeypatch.setattr(_MOD + ".remove_worktree", lambda p, **_kw: removed.append(p))
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
     ctx = _ctx()
     ctx.branch = None
@@ -684,7 +839,6 @@ _TITLE = "Fix failed dependency update for 2.1.243"
 
 def test_fix_task_by_outsider_not_adopted(monkeypatch, capsys) -> None:
     """An outsider's look-alike fix task is never adopted, and it is reported."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     rows = [_task(27, _TITLE, "update")]
     _BODIES[27] = None
     rows[0]["body"] = f"{_SPAM}\n\n## Failure: update\n"

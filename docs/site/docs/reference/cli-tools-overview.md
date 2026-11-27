@@ -49,6 +49,12 @@ which cannot reword. It is bounded:
 - **Force-with-lease**: when the branch is already on origin, the rewrite is
   pushed with `--force-with-lease`, never a bare `--force`. `--no-push`
   skips the push and prints the command to run.
+- **Through the one PR path on an open PR's branch**: when the branch has an
+  open PR into `develop`, the rewrite is pushed through the same path as
+  `vrg-submit-pr --push`, with the same lease, so the rewritten head is
+  judged before it is pushed and a head the path refuses is not pushed. If
+  it cannot tell whether the branch has an open PR, it pushes nothing (epic
+  vergil-project/.github#1664).
 
 Rewording a mid-chain commit re-applies the commits after it, which changes
 their committer (the author is kept), so the tool first prints a note on
@@ -110,7 +116,11 @@ names it in (`-R`/`--repo`, `--owner`, a positional repo, owner or URL, a
 search qualifier, an `api` endpoint), and refusing a command that names more
 than one owner (see
 [Credential management](../guides/credential-management.md)). Raw `gh issue create`, `gh auth`,
-`pr close`, `repo edit/create/delete` and `workflow run` are denied outright;
+`pr close`, `repo edit/create/delete` and `workflow run` are denied outright,
+as are `issue edit`'s raw sub-issue flags (`--parent`, `--add-sub-issue`,
+`--remove-sub-issue`), since an epic's
+[chain](../standards/github-issues.md#chained-epics) owns its links: use
+`vrg-epic-link` or `vrg-epic-move`;
 `gh api` is full for a human, read-only `GET` for the audit identity, and
 denied for the user identity. An agent's `issue close` of an operational
 task as completed is refused until a trusted comment on it records
@@ -234,7 +244,11 @@ such a failure, in `report-ready` and in `vrg-git push` alike: the App lacks
 `workflows: write` in the repository's installation, and the human must accept
 that permission on the installation (#5176). A branch
 with no commits ahead of `--base` is refused before any push, with nothing
-recorded and no freeze (#3870). A re-run on
+recorded and no freeze (#3870). A branch that already has an open PR into
+`develop` is refused before any push too, with nothing recorded: a new head
+for it goes through `vrg-submit-pr --push`. If `report-ready` cannot tell
+whether the branch has one, it refuses the same way (epic
+vergil-project/.github#1664). A re-run on
 a frozen branch whose HEAD has drifted past the reported commit is refused
 before any push. After a deliberate `unfreeze`, a re-run pushes with
 `--force-with-lease=refs/heads/<branch>:<recorded head_sha>`, so a rebased
@@ -331,7 +345,7 @@ otherwise.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
@@ -891,6 +905,10 @@ also carries `linked_issues`, the issues its trusted body links by a `Ref`
 or `Closes` line (`{"repo", "number", "keyword"}`).
 
 `--roles human,agents,automation` narrows the roles trusted, in both modes.
+An item from a trusted role left out this way is reported on stderr as
+`ignored content from a trusted role this reader does not accept: …
+(not-accepted)`, never as untrusted content; under GitHub Actions it is
+counted on a line of its own.
 
 | Attribute | Value |
 |---|---|
@@ -1145,7 +1163,7 @@ the current list's order, `removed` in the block's.
 | Source | `vergil_tooling.bin.vrg_checkpoint` (stage lists, format and parser: `lib/checkpoint.py`) |
 | Args | `init`, `status`, `tick`, `reset`, `reconcile`, each with `REF` and `--workflow NAME` (required); `init`: `--tick STAGE` (repeatable); `status`: `--json`; `tick`: `STAGE`; `reconcile`: `--tick STAGE` (repeatable, new stages only) |
 | Preconditions | GitHub App credentials for the issue's org; trusted authors configured |
-| Failure mode | Error on stderr, nothing written; a failed write says the edit may have been applied, to confirm with `status`; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
+| Failure mode | Error on stderr, nothing written; a failed write says the edit may not have been applied, and to re-run `status` to confirm; a `reconcile` whose comment failed says the block was written and prints the comment to post by hand |
 | Exit codes | 0 success (including a tick already made and a reset with no block); 1 failure or refusal (a read or write error, an existing block on `init`, a `--tick` that is not the first stages, a refused tick, a `reconcile` with no skew or a `--tick` of a stage that is not new, a failed `reconcile` comment); 2 bad arguments (an unknown workflow included); 3 untrusted body; 4 block missing; 5 skew; 6 malformed block |
 | Status | Active |
 
@@ -1218,8 +1236,14 @@ tasks are closed. A no-op for any other issue (a standing epic such as
 [proxy epic](../standards/github-issues.md#proxy-epics) stays open until its
 primary closes), so it is safe on every issue close. It acts on a close only
 when its actor is trusted: an untrusted close of the task, or of a task the
-epic's close relies on, is a stop before any write. Run by the `epic-rollup`
-workflow on `issues.closed`.
+epic's close relies on, is a stop before any write. It reads through the
+epic's [chain](../standards/github-issues.md#chained-epics): the epic is the
+head of the chain the task is linked in, it closes only when every item
+across the chain is closed, and it then closes the head first, then each
+continuation. Before judging it adopts each orphaned continuation of the
+head, and it refuses to close the epic while one it cannot adopt exists. A
+continuation closing rolls nothing up. Run by the `epic-rollup` workflow on
+`issues.closed`.
 
 | Attribute | Value |
 |---|---|
@@ -1293,9 +1317,11 @@ deferral or an estimated epic size — so no review skill hand-rolls them. Route
   `--date` stamps an original deferral date instead of today. The item is
   linked before the record is posted, and a planning item's `in-progress`
   label is removed. On an item already deferred, `defer` is a **refresh**: a
-  new record, no move, and no `Deferred from:` line. If the record fails after
-  the move, the command fails loudly and prints the full intended comment to
-  post by hand.
+  new record and no move. The record carries forward the `Deferred from:`
+  line of the item's latest trusted deferral record that has one; when none
+  has, the record has no such line and the route says so on stderr. If the
+  record fails after the move, the command fails loudly and prints the full
+  intended comment to post by hand.
 - `intake` — reparent a deferred item back onto its home's intake epic.
 - `one-off --repo OWNER/REPO [--epic REF]` — move the item into the target
   repo (transfer, or recreate with a link back when GitHub refuses the
@@ -2177,18 +2203,33 @@ org is read under its own App token.
 1. Close the drifted tasks and rolled-up epics. Then close each open proxy
    epic in the home whose primary has closed and which has no open task; a
    proxy that still has an open task is reported and left open, never closed
-   silently. Each close carries an explanatory comment. An epic closed while a
-   child is still open is reported for a human and never reopened.
-2. Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
+   silently. Each close carries an explanatory comment, and each epic closes
+   with its whole [chain](../standards/github-issues.md#chained-epics), head
+   first. An epic closed while a child is still open is reported for a human
+   and never reopened.
+2. Heal the chain drift of the home's epics (see
+   [The chain heals](../standards/github-issues.md#the-chain-heals)): a full
+   last container with no continuation, two continuations under one
+   container, a closed epic's open continuations, and each orphaned
+   continuation of an open epic, adopted and then rolled up again. Each heal
+   is listed under **Chains healed**; drift it cannot heal is listed under
+   **Needs a human**, named on stderr, and the run exits 1 at the end. Each
+   open development or proxy epic with a continuation is listed under
+   **Chained epics**, every run, as a prompt to consider splitting it.
+3. Drain the closed children of the ad-hoc, intake, planning, deferred, hoshin
    and operations epics into per-quarter archives, and close past archives (see
    [Ad-hoc epic archiving](../standards/github-issues.md#ad-hoc-epic-archiving)).
-3. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
+4. Run the [orphan pass](../standards/github-issues.md#the-orphan-pass-auto-heal):
    nativize body-only `Parent:` links, strip the retired kind labels, and
    attach every orphan to its home's intake epic (never one an outsider
-   opened, which is reported). An item whose epic is closed (a `Parent:` line
-   naming a closed epic, or a home whose only intake epic is closed) is named
-   on stderr with that epic and left unlinked; the pass goes on and the run
-   exits 1 at the end.
+   opened, which is reported). Every link goes into the epic's chain by first
+   fit, so a full intake epic rolls over rather than stopping the pass; an
+   intake queue holding 95 open items or more once the pass is done prints
+   `intake queue <head> holds <n> open items; run epic-review intake`, a
+   report line, not a failure. An item whose epic refuses it (a `Parent:`
+   line naming a closed epic, a home whose only intake epic is closed, or
+   GitHub's nesting limit) is named on stderr with that epic and left
+   unlinked; the pass goes on and the run exits 1 at the end.
 
 `--close` makes no security-advisory call: it neither syncs advisory states
 nor checks advisory/issue pairs. That is `vrg-security-record sync`, run by
@@ -2203,7 +2244,7 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 | Source | `vergil_tooling.bin.vrg_epic_audit` (checks and passes: `lib/epic_audit.py`; security pass: `lib/security_records.py`; outsider report: `lib/outsider_report.py`) |
 | Args | `--window-days N` (positive; default 30), `--epic REF`, `--close`, `--untrusted --since ISO [--org ORG]` |
 | Preconditions | Run inside a repo in the target org; GitHub App credentials for that org; the Vergil configuration (under GitHub Actions, the delivered copy), with or without `--close`. `--close` needs a human identity or `VRG_EPIC_SWEEP=1`. The read-only report's security-records preview needs Repository security advisories: Read; `--close` needs no advisories access. `--untrusted` runs anywhere: it needs the Vergil configuration and App credentials for each listed org it reads |
-| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic stops the orphan pass, listing what it did not attach. An item the orphan pass cannot link because its epic is closed is named on stderr, the pass goes on, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, proxy link drift, a native blocked-by list that cannot be read in full, or an open child's body that is untrusted or unreadable exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
+| Failure mode | `--close` in an agent session is refused before any network call; an org that cannot be detected, an org with no `.github` home, or a configuration that is missing or invalid exits 1, and an org with no stanza in it is reported and exits 0 unswept. An item stopped on untrusted content or a read failure leaves every other item and pass whole and exits 1 at the end, its stops on stderr, with or without `--close`. A full intake epic never stops the orphan pass: it rolls over into a continuation. An item the orphan pass cannot link because its epic is closed or at GitHub's nesting limit is named on stderr, the pass goes on, and the run exits 1. With `--close`, chain drift the sweep cannot heal is named on stderr, every other pass still runs, and the run exits 1. A failed security-records preview exits 1 after the rest of the report. A proxy whose `Primary:` link cannot be parsed or read is named on stderr and in the report, every other pass still runs, and the run then exits 1, with or without `--close`. Without `--close`, an operational task stopped on an untrusted or unreadable body leaves the rest of the report whole and exits 1 after it, its stops on stderr. With `--epic`, a ref that is not an epic, proxy link drift, a native blocked-by list that cannot be read in full, or an open child's body that is untrusted or unreadable exits 1. With `--untrusted`, an `--org` with no stanza, a configuration that is missing or invalid, a read failure, or a search past GitHub's 1,000-result cap exits 1 with nothing on stdout |
 | Exit codes | 0 success (the read-only report exits 0 even when it finds drift), 1 refused, a pass failed, an untrusted `security` issue body found by the security-records preview, or error, 2 bad arguments |
 | Status | Active |
 
@@ -2540,8 +2581,14 @@ spec §4.8). It checks every merge into `develop` and `main` since the
 audit's markers, the `vergil/agent-audit/develop` and
 `vergil/agent-audit/main` branches. For every PR, whoever merged it or
 turned auto-merge on must be the human, or the user agent or the
-automation App on its own PR (into `main`, the human only), and its
-provenance must be clean. For an agent-involved PR merged into `develop`,
+automation App on its own PR or on any same-repo PR whose branch has a
+trusted author, the PRs the one PR path accepts (into `main`, the human
+only), and its provenance must be clean. Turning auto-merge on or off,
+and on such a PR its merge, are not involvement. A PR is agent-involved
+when an agent authored it, acted on it, or pushed, created or
+force-pushed its head branch (on a same-repo PR, read from the
+repository activity). For an agent-involved
+PR merged into `develop`,
 its change must be covered by a merge-review record or an approved
 merge-review exemption. It then moves each
 marker to where its audit reached; a read failure stops there, so the next
@@ -3006,7 +3053,9 @@ specific commit: a branch such as `develop` (to work around a tooling bug),
 another tag, or a full 40-character commit SHA. A branch or tag is resolved
 with one `git ls-remote` among the vergil-tooling remote's branches and tags
 only (a name that is both is refused: name `refs/heads/<name>` or
-`refs/tags/<name>`), and a SHA names itself. The commit it resolves to is
+`refs/tags/<name>`), and a SHA names itself, once a fetch of the commit
+history of the remote's branches and tags shows one of them reaches it (any
+other SHA is refused). The commit it resolves to is
 fetched by its SHA and installed the same way, locked to that commit's own
 `uv.lock`, and reported with the ref as given. The argument is a ref name
 only: anything starting with `-`, a URL, a refspec or anything else git's

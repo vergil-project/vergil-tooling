@@ -64,7 +64,8 @@ META_FILE = "meta.json"
 KEY_ENV = "VRG_AUTOMATION_PRIVATE_KEY"
 
 _BODY_INTRO = (
-    "Automated upstream refresh. The upstream-refresh job merges this PR itself once CI passes."
+    "Automated upstream refresh. GitHub's auto-merge merges this PR once CI passes, and "
+    "the upstream-refresh job watches it until it merges."
 )
 
 #: Variables the hook never sees: GitHub tokens, the App's credentials, the

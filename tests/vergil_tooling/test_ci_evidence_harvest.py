@@ -126,7 +126,6 @@ def test_evidence_ignores_fork_pr_for_commit(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A merged fork PR is never the release PR, and it is reported, metadata only."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # per-item report, not counts
     monkeypatch.setattr(
         github, "read_json_paginated", lambda *a, **k: [_rest_pr(6, "release/1.2.3")]
     )

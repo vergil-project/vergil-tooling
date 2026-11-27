@@ -25,8 +25,7 @@ def test_is_ci_true_under_github_actions(monkeypatch: pytest.MonkeyPatch) -> Non
     assert is_ci() is True
 
 
-def test_is_ci_false_when_merely_piped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_is_ci_false_when_merely_piped() -> None:
     with patch("sys.stdout") as mock_stdout:
         mock_stdout.isatty.return_value = False
         assert is_ci() is False

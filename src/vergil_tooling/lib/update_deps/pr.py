@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github, pr_create, pr_merge, trust
+from vergil_tooling.lib import finalize_watch, git, github, pr_create, pr_merge, pr_path, trust
 from vergil_tooling.lib.labels import ensure_labels
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.process_errors import error_text
@@ -123,18 +123,65 @@ def _require_pr_url(ctx: UpdateDepsContext, phase: str) -> str:
     return ctx.pr_url
 
 
-def merge_pr(ctx: UpdateDepsContext) -> None:
-    """Wait for checks and merge; a merge abort is recorded, not raised (spec §5.2).
+def arm_and_wait(ctx: UpdateDepsContext) -> None:
+    """Arm the PR through the one PR path, then wait for GitHub to merge it (spec §5.4).
 
-    A merged PR is marked on *ctx*: the finalize stage deletes its branch once
-    the worktree holding it is gone (:func:`delete_merged_branch`).
+    :func:`pr_path.arm` works the merge method out itself (``MERGE``, from the
+    ``dependency-update`` label) and pins it to the head this run pushed. Then:
+
+    - ``armed``: auto-merge is on, and :func:`pr_merge.wait_until_merged`
+      watches the PR until it merges.
+    - ``merged``: the path merged it directly (it could already merge); no wait.
+    - ``refused``: nothing was turned on. The path's reason is recorded as a
+      merge failure (:func:`record_merge_failure`), with no wait.
+
+    A wait that ends without a merge (a closed PR, a failed check, a conflict,
+    the deadline) is recorded the same way, not raised (spec §5.2). A step of
+    the path that cannot be completed raises :class:`UpdateDepsError`.
+
+    The wait's deadline is ``$VRG_FINALIZE_DEADLINE`` (7200 seconds by
+    default), the watch deadline of every other armed PR; a malformed value
+    raises before anything is armed. A merged PR is marked on *ctx*: the
+    finalize stage deletes its branch once the worktree holding it is gone
+    (:func:`delete_merged_branch`).
     """
     pr_url = _require_pr_url(ctx, "merge")
+    if ctx.branch is None:
+        raise UpdateDepsError(
+            phase="merge",
+            command="arm_and_wait",
+            message="No branch on context — preflight did not run.",
+        )
     try:
-        pr_merge.wait_and_merge(pr_url, strategy="merge")
-    except pr_merge.MergeAbortError as exc:
-        record_merge_failure(ctx, str(exc))
+        deadline = finalize_watch.deadline_secs()
+    except ValueError as exc:
+        raise UpdateDepsError(phase="merge", command="arm_and_wait", message=str(exc)) from exc
+    head = git.read_output("rev-parse", ctx.branch)
+    try:
+        result = pr_path.arm(pr_url, clone=ctx.repo_root, head=head)
+    except pr_path.PRPathError as exc:
+        raise UpdateDepsError(
+            phase="merge",
+            command="pr_path.arm",
+            message=f"Arming the dependency-update PR failed: {exc}",
+        ) from exc
+    if result.outcome == "refused":
+        record_merge_failure(ctx, f"The one PR path refused {result.pr_url}: {result.detail}")
         return
+    if result.outcome == "armed":
+        try:
+            pr_merge.wait_until_merged(pr_url, deadline_secs=deadline)
+        except pr_merge.MergeAbortError as exc:
+            record_merge_failure(ctx, str(exc))
+            return
+    elif result.outcome != "merged":
+        # ``held`` arrives with the arming gate (plan Task 19). Until then any
+        # other outcome breaks the path's contract and is never read as a merge.
+        raise UpdateDepsError(
+            phase="merge",
+            command="pr_path.arm",
+            message=f"The one PR path returned {result.outcome!r} for {pr_url}: {result.detail}",
+        )
     ctx.merged = True
 
 
@@ -477,6 +524,10 @@ def cleanup_worktree(ctx: UpdateDepsContext) -> None:
     if ctx.worktree_path is None:
         return
     os.chdir(ctx.repo_root)
-    remove_worktree(ctx.worktree_path)
+    remove_worktree(
+        ctx.worktree_path,
+        branch=ctx.branch or "(no branch recorded)",
+        reason="the vrg-update-deps run is finished",
+    )
     if ctx.branch is not None:
         git.run("branch", "-D", ctx.branch)

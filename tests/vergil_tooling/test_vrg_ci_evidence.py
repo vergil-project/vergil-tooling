@@ -223,7 +223,6 @@ def test_version_window_error_is_one_line_exit_one(
     command: str,
 ) -> None:
     """A [ci].versions pin outside the window is one ERROR line, not a traceback (#3670)."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     _wire_github_stages(
         monkeypatch,
         required=(),
@@ -507,10 +506,9 @@ def test_harvest_then_assemble_matches_bundle(
 
 
 def test_assemble_missing_state_errors_without_traceback(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # Issue #3119: the pre-publish harvest failed, so no harvest-state.json exists.
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     staging = tmp_path / "staging"
     staging.mkdir()
 
@@ -540,10 +538,7 @@ def test_assemble_missing_state_emits_gha_annotation(
     assert "Traceback" not in err
 
 
-def test_assemble_corrupt_state_errors(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+def test_assemble_corrupt_state_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "harvest-state.json").write_text("{not json", encoding="utf-8")
@@ -557,9 +552,8 @@ def test_assemble_corrupt_state_errors(
 
 
 def test_assemble_wrong_shape_state_errors(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "harvest-state.json").write_text("[]", encoding="utf-8")
@@ -575,7 +569,6 @@ def test_assemble_wrong_shape_state_errors(
 def test_harvest_unresolvable_release_pr_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(github, "read_json_paginated", lambda *a, **k: [])
     monkeypatch.setattr(github, "read_output", lambda *a, **k: "")
     staging = tmp_path / "staging"
@@ -606,7 +599,6 @@ def test_harvest_trust_failure_is_one_line_exit_one(
     message: str,
 ) -> None:
     """A trust-layer read or configuration failure is a single-line error, never a traceback."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
     def fail(*_a: object, **_k: object) -> int:
         raise error
@@ -845,7 +837,6 @@ def test_missing_remote_config_fails_loudly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """No vergil.toml at the head → one-line actionable error; no cwd fallback."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     (tmp_path / "vergil.toml").write_bytes(_vergil_toml("python"))
     monkeypatch.chdir(tmp_path)
     not_found = GitHubAPIError(
@@ -867,7 +858,6 @@ def test_missing_remote_config_fails_loudly(
 def test_unparseable_remote_config_fails_loudly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.chdir(tmp_path)
     _wire_remote_config(monkeypatch, {"content": base64.b64encode(b"[project").decode()})
 

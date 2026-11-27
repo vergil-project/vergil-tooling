@@ -88,6 +88,7 @@ from vergil_tooling.lib import (
     identity_mode,
     local_settings,
     planning_close,
+    pr_path,
     trust,
 )
 from vergil_tooling.lib.cli import cli_main
@@ -164,7 +165,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_ready.add_argument("--title", required=True)
     p_ready.add_argument("--summary", required=True)
     p_ready.add_argument("--notes", required=True)
-    p_ready.add_argument("--linkage", default="Ref")
+    p_ready.add_argument(
+        "--linkage",
+        default="Ref",
+        help=(
+            "The PR-body linkage keyword to record (default: Ref). vrg-submit-pr "
+            "upgrades it to Closes for a managed task (an issue with an epic "
+            "parent), so the PR closes the task on merge; any other issue keeps it."
+        ),
+    )
     p_ready.set_defaults(func=cmd_report_ready)
 
     p_unfreeze = sub.add_parser(
@@ -403,6 +412,30 @@ def _lease_sha(state: WorkflowState) -> str | None:
     return str(recorded) if recorded else None
 
 
+def _refuse_open_pr_branch(branch: str) -> None:
+    """Refuse report-ready's push when *branch* has an open PR into ``develop``.
+
+    Spec §5.4 of epic vergil-project/.github#1664: every push the tooling
+    makes to an open PR's branch goes through the one PR path, which judges
+    the head before it pushes it. Report-ready's push does not, so it never
+    pushes to one: the new head goes through ``vrg-submit-pr --push``. The
+    lookup fails closed: when it cannot be told, nothing is pushed.
+    """
+    try:
+        pr_url = pr_path.open_develop_pr_url(branch)
+    except pr_path.PRPathError as exc:
+        raise WorkflowError(
+            f"report-ready: could not tell whether {branch} has an open PR into develop "
+            f"({exc}); nothing was pushed or recorded. Fix the cause and re-run report-ready."
+        ) from exc
+    if pr_url is not None:
+        raise WorkflowError(
+            f"report-ready: {branch} has an open PR into develop ({pr_url}); report-ready "
+            "does not push to an open PR's branch, so nothing was pushed or recorded. Push "
+            "a new head with `vrg-submit-pr --push` (add --force-with-lease for a rebased head)."
+        )
+
+
 def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
     """Publish *branch* at the reported commit to origin, setting its upstream.
 
@@ -422,7 +455,12 @@ def _push_branch(branch: str, *, lease_sha: str | None = None) -> None:
     after an unfreeze replaces the reported commit without a manual force-push
     (#3783). A branch absent from origin (deleted there since the first report)
     has nothing to overwrite, so it gets the plain push.
+
+    The branch of an open PR into ``develop`` is refused before anything is
+    pushed (:func:`_refuse_open_pr_branch`): a new head for it goes through
+    the one PR path, ``vrg-submit-pr --push``.
     """
+    _refuse_open_pr_branch(branch)
     ref = f"refs/heads/{branch}"
     lease = lease_sha is not None and branch in git.remote_branches("origin")
     lease_args = (f"--force-with-lease={ref}:{lease_sha}",) if lease else ()

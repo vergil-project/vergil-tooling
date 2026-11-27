@@ -28,7 +28,9 @@ The main modules under `src/vergil_tooling/lib/`:
   or comment is trusted when its author and its editors hold a role; a
   close or reopen when its actor does. Readers return the trusted items
   and report each untrusted one as metadata only, or, where the content
-  is load-bearing, stop. A read it cannot complete fails loudly, never
+  is load-bearing, stop. An item from a trusted role the reader does not
+  accept (`not-accepted`) is reported as ignored, never as untrusted.
+  A read it cannot complete fails loudly, never
   as "trusted" or "nothing found", and a batch run stops the one item,
   not the run. `trusted_authors.py` loads the configuration,
   `trust_publish.py` publishes and checks its GitHub Actions copies, and
@@ -53,6 +55,14 @@ The main modules under `src/vergil_tooling/lib/`:
   and the parent-based check that `vrg-pr-workflow report-ready` and
   `vrg-submit-pr` use to refuse intake, planning and deferred items and the
   ops issues under an operations epic.
+- **`epic_chain.py`**: an epic's
+  [chain](../standards/github-issues.md#chained-epics) of containers past
+  GitHub's 100-sub-issue limit: walking it to its head, first-fit linking,
+  moving and unlinking with rollover, the capacity and depth checks,
+  orphaned continuations, the race heals and closing a whole chain. Every
+  caller outside `epics.py` and `epic_chain.py` links, moves and unlinks
+  through it; the raw per-container reads and writes are private to the two
+  modules.
 - **`proxies.py`**: the proxy epic's link to its primary, read from the
   proxy's `Primary:` body line (from a body the trust layer trusts) and the
   primary's trusted `Proxy:` comments (`epics.is_proxy` is the label test every development-epic check skips).
