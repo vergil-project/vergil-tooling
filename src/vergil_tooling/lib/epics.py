@@ -990,6 +990,25 @@ def task_epic(task: IssueRef) -> TaskEpic:
     return TaskEpic(task=task, epic=head, kind=_head_kind(head, head_labels), container=container)
 
 
+def epic_kind(epic: IssueRef) -> tuple[IssueRef, str]:
+    """*epic*'s chain head and that head's kind, read from the labels of *epic* and its head.
+
+    The kind is :data:`ARCHIVE_KIND` for an archive, :data:`NOT_EPIC_KIND` for an issue
+    with neither the ``epic`` nor the ``continuation`` label, and otherwise the kind
+    :func:`task_epic` gives its head: ``development``, ``proxy`` or a standing kind's
+    key. A continuation is walked to its head through the chain; chain drift, a head
+    with no single kind and a failed read raise.
+    """
+    labels = _labels(epic)
+    if ARCHIVE_KIND in labels:
+        return epic, ARCHIVE_KIND
+    if "epic" not in labels and CONTINUATION_LABEL not in labels:
+        return epic, NOT_EPIC_KIND
+    head = _chain_head(epic, labels)
+    head_labels = labels if head == epic else _labels(head)
+    return head, _head_kind(head, head_labels)
+
+
 class EpicRefusalError(Exception):
     """The base of every refusal to write to an epic (epic vergil-project/.github#1609).
 
