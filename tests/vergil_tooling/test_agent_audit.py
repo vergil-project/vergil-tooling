@@ -356,7 +356,9 @@ def gates(monkeypatch: pytest.MonkeyPatch) -> Gates:
 
 _NOW = datetime(2026, 11, 27, 12, 0, 0, tzinfo=UTC)
 _LOCK_SHA = "c" * 40
-_LIVE = Staleness(stale=False, live=True, reason="running with a fresh heartbeat", tracking_issue="")
+_LIVE = Staleness(
+    stale=False, live=True, reason="running with a fresh heartbeat", tracking_issue=""
+)
 
 
 def _lock_record(**changes: str) -> LockRecord:
@@ -1580,9 +1582,7 @@ def test_audit_reports_outsider_prs_on_own_line_not_breach(lock: FakeLock) -> No
     assert line == f"outsider-pr: {REPO} develop: PR #25: {refusal}"
 
 
-def test_audit_never_arms(
-    lock: FakeLock, gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_never_arms(lock: FakeLock, gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*args: object, **kwargs: object) -> None:
         raise AssertionError("the backstop audit never arms, merges or writes")
 
