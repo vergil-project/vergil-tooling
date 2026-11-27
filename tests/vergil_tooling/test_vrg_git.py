@@ -1269,21 +1269,90 @@ def test_pr_lookup_failure_refuses(open_prs: _OpenPRs, capsys: pytest.CaptureFix
     assert "HTTP 502" in err
 
 
-def test_push_to_another_github_repository_refused(
+@pytest.mark.parametrize(
+    "target",
+    [
+        _ORIGIN_URL,  # even origin's own URL: only a configured remote is judged
+        "https://github.com/org/other.git",
+        "git@github.com:org/repo.git",
+        "gh:org/repo",
+        ".",
+    ],
+)
+def test_push_to_a_url_or_path_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], target: str
+) -> None:
+    # A directory named after the URL, as pathlib reads it, changes nothing.
+    Path(target.replace("//", "/")).mkdir(parents=True, exist_ok=True)
+
+    err = _refused(["push", target, "HEAD:feature/9-z"], open_prs, capsys)
+    assert "name a configured remote" in err
+    assert open_prs.lookups == []
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        [("remote.fork.url", "https://github.com/org/other.git")],
+        [("remote.fork.url", "/srv/git/repo.git")],
+        # A first push URL that is origin's, then another: git pushes to both.
+        [
+            ("remote.fork.url", _ORIGIN_URL),
+            ("remote.fork.pushurl", _ORIGIN_URL),
+            ("remote.fork.pushurl", "/srv/git/repo.git"),
+        ],
+    ],
+)
+def test_push_to_a_remote_not_only_origins_repository_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], config: list[tuple[str, str]]
+) -> None:
+    for key, value in config:
+        _git(Path.cwd(), "config", "--add", key, value)
+
+    err = _refused(["push", "fork", "HEAD:feature/9-z"], open_prs, capsys)
+    assert "does not push only to origin's GitHub repository" in err
+    assert open_prs.lookups == []
+
+
+def test_push_rewritten_to_origin_by_environment_config_is_judged(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A remote that names a path but that git, through config from the
+    # environment, pushes to origin's repository is judged where git pushes.
+    _git(Path.cwd(), "remote", "add", "mirror", "/srv/git/repo.git")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", f"url.{_ORIGIN_URL}.pushInsteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/srv/git/repo.git")
+    open_prs.prs["feature/1-a"] = ("OPEN", "develop")
+
+    err = _refused(["push", "mirror", "feature/1-a"], open_prs, capsys)
+    assert "vrg-submit-pr --push" in err
+    assert open_prs.lookups == ["feature/1-a"]
+
+
+def test_push_to_another_remote_of_origins_repository_is_judged(open_prs: _OpenPRs) -> None:
+    _git(Path.cwd(), "remote", "add", "upstream", "git@github.com:org/repo.git")
+
+    assert main(["push", "upstream", "HEAD:feature/1-a"]) == 0
+    assert open_prs.lookups == ["feature/1-a"]
+
+
+def test_push_with_origin_off_github_refused(
     open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for remote in ("https://github.com/org/other.git", "gh:org/repo"):
-        err = _refused(["push", remote, "HEAD:feature/9-z"], open_prs, capsys)
-        assert "not origin's GitHub repository" in err
-    assert open_prs.lookups == []
+    _git(Path.cwd(), "remote", "set-url", "origin", "/srv/git/repo.git")
+
+    err = _refused(["push", "origin", "HEAD:feature/1-a"], open_prs, capsys)
+    assert "does not push only to origin's GitHub repository" in err
 
 
-def test_push_to_a_local_target_makes_no_lookup(open_prs: _OpenPRs, tmp_path: Path) -> None:
-    bare = tmp_path / "bare.git"
-    _git(tmp_path, "init", "-q", "--bare", str(bare))
+def test_push_with_no_origin_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(Path.cwd(), "remote", "rename", "origin", "github")
 
-    assert main(["push", str(bare), "HEAD:feature/1-a"]) == 0
-    assert open_prs.lookups == []
+    err = _refused(["push", "github", "HEAD:feature/1-a"], open_prs, capsys)
+    assert "its destination could not be read" in err
 
 
 @pytest.mark.parametrize(
@@ -1516,17 +1585,6 @@ def test_bare_push_of_an_unborn_branch_refused(
 
     err = _refused(["push"], open_prs, capsys)
     assert "push target of feature/3-c cannot be read" in err
-
-
-def test_unreadable_destination_refuses(
-    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # With no origin, the push's repository cannot be compared with it.
-    _git(Path.cwd(), "remote", "remove", "origin")
-
-    err = _refused(["push", _ORIGIN_URL, "HEAD:feature/1-a"], open_prs, capsys)
-    assert "its destination could not be read" in err
-    assert open_prs.lookups == []
 
 
 def test_rebase_normal_allowed() -> None:

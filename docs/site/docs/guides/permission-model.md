@@ -136,10 +136,11 @@ rebased head.
   that pushes refs no refspec names (`--all`, `--mirror`, `--prune`), a
   bare push whose destination cannot be resolved (a detached HEAD, no
   push target or upstream, `remote.<name>.push` set,
-  `push.default=matching`) and a push to a GitHub repository other than
-  origin's. The PR is looked up on origin's repository, and a lookup that
-  fails refuses the push, naming the error. A push to a local path holds
-  no PR and is not looked up.
+  `push.default=matching`), and a push that may go anywhere but origin's
+  GitHub repository: a URL or path typed in place of a configured remote,
+  or a remote any of whose push URLs, as git resolves them (rewrites
+  included), is not origin's repository. The PR is looked up on origin's
+  repository, and a lookup that fails refuses the push, naming the error.
 - It always refuses a push under `refs/vergil/release-lock`: the release
   lock, `refs/vergil/release-lock-history` and every
   `refs/vergil/release-lock-arming/*` ref, a delete and a lease create

@@ -1699,32 +1699,33 @@ def _bare_push_destination(repository: str | None) -> tuple[str, str] | str:
     return resolved
 
 
-def _is_local_target(url: str) -> bool:
-    """True for a push target on this machine, where no PR lives."""
-    return url == "." or url.startswith(("file://", "/")) or Path(url).is_dir()
+def _push_target_refusal(remote: str | None) -> str | None:
+    """Refuse a push that may go anywhere but origin's GitHub repository.
 
-
-def _push_target(remote: str | None) -> str | None:
-    """Where the push goes: ``"origin"``, ``"local"``, or a refusal for anywhere else.
-
-    The open-PR lookup reads ``origin``'s repository, so a push to another
-    GitHub repository, or to a URL that names no repository vrg-git can
-    recognize, cannot be judged and is refused. A local target holds no PR.
+    The open-PR lookup reads origin's repository, so the push is judged
+    only when it goes there. Its repository must be a configured remote,
+    never a URL typed on the command line, and every push URL of that
+    remote, as git itself resolves it (remote get-url --push --all,
+    with any insteadOf and pushInsteadOf rewrite applied, from the
+    environment's config too), must be origin's repository on GitHub. A
+    local path is refused like any other target: what vrg-git takes for a
+    path may be a URL to git, so no target escapes the lookup.
     """
     remote = remote or "origin"
-    names = _git_read("remote").split()
-    url = _git_read("remote", "get-url", "--push", remote) if remote in names else remote
-    if _is_local_target(url):
-        return "local"
-    target = github.github_remote_repo(url)
-    if target is not None and target == github.github_remote_repo(
-        _git_read("remote", "get-url", "origin")
-    ):
-        return "origin"
-    return (
-        f"vrg-git: the push to {remote} is refused: it is not origin's GitHub repository, "
-        "so vrg-git cannot tell whether its destination is an open PR's branch."
-    )
+    if remote not in _git_read("remote").split():
+        return (
+            f"vrg-git: the push to {remote} is refused: name a configured remote (origin), "
+            "not a URL or path, so vrg-git can judge where it goes."
+        )
+    origin = github.github_remote_repo(_git_read("remote", "get-url", "origin"))
+    urls = _git_read("remote", "get-url", "--push", "--all", remote).splitlines()
+    if origin is None or not urls or any(github.github_remote_repo(u) != origin for u in urls):
+        return (
+            f"vrg-git: the push to {remote} is refused: it does not push only to origin's "
+            "GitHub repository, so vrg-git cannot tell whether its destination is an open "
+            "PR's branch."
+        )
+    return None
 
 
 def _resolve_destinations(spec: _PushArgs) -> tuple[str | None, list[str]] | str:
@@ -1809,15 +1810,13 @@ def _check_open_pr_push(spec: _PushArgs) -> str | None:
             branches |= _branch_candidates(dst)
         if not branches:
             return None
-        target = _push_target(remote)
+        elsewhere = _push_target_refusal(remote)
     except (subprocess.CalledProcessError, OSError) as exc:
         return (
             f"vrg-git: the push is refused: its destination could not be read ({error_text(exc)})."
         )
-    if target == "local":
-        return None
-    if target != "origin":
-        return target
+    if elsewhere is not None:
+        return elsewhere
     return _open_pr_refusal(branches)
 
 
