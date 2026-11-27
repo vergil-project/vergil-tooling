@@ -17,7 +17,7 @@ import pytest
 
 from tests.vergil_tooling.release_lock_stubs import REPO, Origin, make_origin
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release_lock import RefWriteError, history, holder, refs
+from vergil_tooling.lib.release_lock import RefReadError, RefWriteError, history, holder, refs
 from vergil_tooling.lib.release_lock.holder import LockLost, LockOwner
 from vergil_tooling.lib.release_lock.model import LockRecord, from_json, to_json
 
@@ -72,7 +72,7 @@ def _record(token: str = "caller-token", **fields: str) -> LockRecord:  # noqa: 
         heartbeat_at="2026-11-27T10:00:00Z",
         token=token,
     )
-    return dataclasses.replace(base, **fields)
+    return dataclasses.replace(base, **cast("dict[str, Any]", fields))
 
 
 def _on_origin(origin: Origin) -> LockRecord:
@@ -215,9 +215,7 @@ def test_own_write_cas_failure_retried(
     assert origin.sha(refs.LOCK_REF) == owner.sha
 
 
-def test_same_fields_other_writer_raises_lock_lost(
-    origin: Origin, owners: list[LockOwner]
-) -> None:
+def test_same_fields_other_writer_raises_lock_lost(origin: Origin, owners: list[LockOwner]) -> None:
     owner = _take(owners)
     owner.stop_heartbeat()
     ours = _on_origin(origin)
@@ -266,6 +264,64 @@ def test_adopt_of_a_lock_changed_since_read_raises_lock_lost(
     assert _on_origin(origin).stage == "elsewhere"
 
 
+def test_takeover_refuses_an_absent_lock(origin: Origin) -> None:
+    with pytest.raises(ValueError, match="absent"):
+        LockOwner.takeover(REPO, refs.read_lock(REPO), _record())
+
+
+def test_takeover_of_an_unreadable_lock(origin: Origin, owners: list[LockOwner]) -> None:
+    origin.set_ref(refs.LOCK_REF, origin.commit(refs.LOCK_FILE, "{not json"))
+    owner = LockOwner.takeover(REPO, refs.read_lock(REPO), _record(holder_host="linux"))
+    owners.append(owner)
+    assert owner.record.holder_host == "linux"
+    assert _on_origin(origin).token == owner.token
+
+
+def test_start_heartbeat_twice_is_refused(origin: Origin, owners: list[LockOwner]) -> None:
+    owner = _take(owners)
+    with pytest.raises(RuntimeError, match="already running"):
+        owner.start_heartbeat()
+
+
+def test_heartbeat_stopped_while_it_waited_writes_nothing(
+    origin: Origin, owners: list[LockOwner]
+) -> None:
+    owner = _take(owners)
+    sha = owner.sha
+    with owner._write_lock:  # noqa: SLF001 - hold the writer so the heartbeat waits on it
+        time.sleep(_TICK * 6)
+        owner._stop.set()  # noqa: SLF001
+    _wait_for(lambda: not owner.heartbeat_running)
+    assert origin.sha(refs.LOCK_REF) == sha
+
+
+def test_writes_bounded_against_own_writes(
+    origin: Origin, owners: list[LockOwner], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _take(owners)
+    owner.stop_heartbeat()
+    monkeypatch.setattr(refs, "write_ref", lambda *_a, **_k: False)
+    monkeypatch.setattr(refs, "remote_sha", lambda *_a: owner._sha)  # noqa: SLF001
+    with pytest.raises(RefWriteError, match="own earlier writes"):
+        owner.update(stage="cut")
+
+
+def test_failed_reread_after_rejection_raises(
+    origin: Origin, owners: list[LockOwner], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = _take(owners)
+    owner.stop_heartbeat()
+
+    def unreadable(*_args: object) -> str | None:
+        msg = "ls-remote broke"
+        raise RefReadError(msg)
+
+    monkeypatch.setattr(refs, "write_ref", lambda *_a, **_k: False)
+    monkeypatch.setattr(refs, "remote_sha", unreadable)
+    with pytest.raises(RefWriteError, match="re-reading .* ls-remote broke"):
+        owner.update(stage="cut")
+
+
 def test_broken_lock_raises_lock_lost_on_next_update(
     origin: Origin, owners: list[LockOwner]
 ) -> None:
@@ -280,9 +336,7 @@ def test_broken_lock_raises_lock_lost_on_next_update(
         owner.update(stage="publish")
 
 
-def test_heartbeat_stops_on_loss_and_never_retakes(
-    origin: Origin, owners: list[LockOwner]
-) -> None:
+def test_heartbeat_stops_on_loss_and_never_retakes(origin: Origin, owners: list[LockOwner]) -> None:
     owner = _take(owners)
     origin.git("update-ref", "-d", refs.LOCK_REF)
     _wait_for(lambda: not owner.heartbeat_running)
@@ -402,6 +456,18 @@ def test_loss_with_history_entry_names_cause(
     ours = _on_origin(origin)
     _append("reclaim", _record(token="some-other-release"), actor="someone-else")
     _append(action, ours)
+    _append("reclaim-rearm", ours, actor="not-the-cause")  # a record only: never the cause
+    history.append(  # an old lock that does not parse names no token
+        REPO,
+        history.HistoryEntry(
+            action="break",
+            old="{not json",
+            actor="x",
+            at="2026-11-27T13:00:00Z",
+            reason="",
+            rearmed=(),
+        ),
+    )
     origin.git("update-ref", "-d", refs.LOCK_REF)
     with pytest.raises(LockLost) as caught:
         owner.update(stage="cut")

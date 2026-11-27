@@ -31,7 +31,7 @@ from __future__ import annotations
 import dataclasses
 import sys
 import threading
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release_lock import history, refs
@@ -61,7 +61,7 @@ _WRITE_ATTEMPTS: Final = 5
 _COMMAND: Final = "release-lock"
 
 
-class LockLost(ReleaseError):
+class LockLost(ReleaseError):  # noqa: N818 - the name is the plan's interface
     """The holder's lock was broken, reclaimed, taken over or changed outside the tooling.
 
     *cause* is the history entry that names the loss, or ``None``.
@@ -262,7 +262,8 @@ class LockOwner:
             raise ValueError(msg)
         with self._write_lock:
             self._check()
-            self._cas(dataclasses.replace(self._record, **fields, heartbeat_at=utc_now()))
+            changed = cast("dict[str, Any]", fields)
+            self._cas(dataclasses.replace(self._record, **changed, heartbeat_at=utc_now()))
 
     def release(self) -> None:
         """Stop the heartbeat, then delete the lock by compare-and-swap on the last write."""
@@ -331,7 +332,7 @@ class LockOwner:
     def _beat(self) -> None:
         while not self._stop.wait(HEARTBEAT_INTERVAL_SECS):
             with self._write_lock:
-                if self._stop.is_set() or self._lost is not None:
+                if self._stop.is_set():  # stopped, or lost by an update, while it waited
                     return
                 try:
                     self._cas(dataclasses.replace(self._record, heartbeat_at=utc_now()))
