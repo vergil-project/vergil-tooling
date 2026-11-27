@@ -1504,6 +1504,8 @@
       
         
       
+        
+      
     
     
     
@@ -1556,6 +1558,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.354/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.354
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19709,7 +19739,8 @@ open. <code>vrg-pr-workflow report-ready</code> previews the result in its respo
 <code>planning_close</code>.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <p>Submit returns finalize's exit status, with two adjustments: when any PR
-failed to submit it returns at least 3, and a tool error from finalize
+failed to submit it returns at least 3 (3 in place of finalize's 6, since a
+failed submit is not held by a release), and a tool error from finalize
 (1, or any code finalize does not define) always wins.</p>
 <table>
 <thead>
@@ -19738,6 +19769,10 @@ failed to submit it returns at least 3, and a tool error from finalize
 <tr>
 <td>5</td>
 <td>Every PR merged and develop validated, but the chained release failed</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Every PR finalize watched that did not merge is held by release (finalize's 6): the release lock still held it at the deadline. Not a failure: run <code>vrg-finalize-pr</code> on the PRs again</td>
 </tr>
 </tbody>
 </table>

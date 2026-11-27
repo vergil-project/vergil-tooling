@@ -1506,6 +1506,8 @@
       
         
       
+        
+      
     
     
     
@@ -1558,6 +1560,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.354/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.354
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20360,7 +20390,8 @@ hazard between the code landing and this sweep running.</p>
 <ul>
 <li><strong>Steady state — on close.</strong> When a child of a <em>live</em> ad-hoc epic closes, the
   <code>issues.closed</code> rollup path (<code>vrg-epic-rollup</code>) archives just that child into
-  its close-quarter archive.</li>
+  its close-quarter archive. A child whose repo is archived is read-only, so
+  the rollup leaves it where it is, says so, and succeeds.</li>
 <li><strong>Backstop + backfill.</strong> The daily <code>vrg-epic-audit --close</code> sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
   deferred, hoshin, operations): it
