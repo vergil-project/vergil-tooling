@@ -96,6 +96,7 @@ def test_take_lock_create_only_second_take_returns_none(origin: Origin) -> None:
     assert state.sha == sha
     assert state.record == _record()
     assert state.error == ""
+    assert state.text == origin.file(refs.LOCK_REF, refs.LOCK_FILE)
     assert json.loads(origin.file(refs.LOCK_REF, refs.LOCK_FILE))["token"] == "t1"
 
 
@@ -148,6 +149,8 @@ def test_unparseable_lock_reads_as_held(origin: Origin, text: str | None, match:
     assert state.sha == sha
     assert state.record is None
     assert match in state.error
+    # The text is kept as read, so a break can record it; an unreadable file has none.
+    assert state.text == (text or "")
     # Nothing takes or overwrites it.
     assert refs.take_lock(REPO, _record()) is None
     assert origin.sha(refs.LOCK_REF) == sha

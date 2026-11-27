@@ -1,4 +1,4 @@
-"""``vrg-release-lock status`` and the lock status it reports (epic .github#1664, Task 18)."""
+"""``vrg-release-lock``: ``status`` (epic .github#1664, Task 18) and ``break`` (Task 22)."""
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ from vergil_tooling.bin import vrg_release_lock
 from vergil_tooling.lib.pr_path import PRPathError
 from vergil_tooling.lib.release_lock import status as lock_status
 from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.reclaim import ReclaimError, ReclaimResult
 from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.release_lock.stale import IssueReadError, Staleness
 from vergil_tooling.lib.release_lock.status import HeldPR, LockStatus, StatusError
+from vergil_tooling.lib.release_lock.sweeps import RearmResult
 
 _REPO = "vergil-project/vergil-tooling"
 _SHA = "b" * 40
@@ -391,3 +393,108 @@ def test_status_origin_read_failure_exits_1(capsys: pytest.CaptureFixture[str]) 
     assert rc == 1
     gather.assert_not_called()
     assert "could not read the origin remote" in capsys.readouterr().err
+
+
+# -- break ----------------------------------------------------------------------------
+
+
+def _broken(**changes: object) -> ReclaimResult:
+    fields: dict[str, Any] = {
+        "repo": _REPO,
+        "action": "break",
+        "old_sha": _SHA,
+        "tracking_issue": f"{_REPO}#5300",
+        "reason": "the laptop died",
+        "rearm": RearmResult(
+            armed=[f"https://github.com/{_REPO}/pull/7"],
+            merged=[],
+            held=[],
+            refused=[(f"https://github.com/{_REPO}/pull/8", "it is a fork PR")],
+        ),
+    }
+    fields.update(changes)
+    return ReclaimResult(**fields)
+
+
+def _break(
+    argv: list[str], *, result: ReclaimResult | Exception | None = None
+) -> tuple[int, MagicMock]:
+    outcome = _broken() if result is None else result
+    break_lock = MagicMock(
+        side_effect=outcome if isinstance(outcome, Exception) else None,
+        return_value=None if isinstance(outcome, Exception) else outcome,
+    )
+    with (
+        patch(f"{_BIN}.reclaim.break_lock", break_lock),
+        patch(f"{_STATUS}.git.remote_url", return_value=f"https://github.com/{_REPO}.git"),
+        patch(f"{_BIN}.socket.gethostname", return_value="mac.local"),
+    ):
+        rc = vrg_release_lock.main(argv)
+    return rc, break_lock
+
+
+def test_break_breaks_and_reports(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, break_lock = _break(["break", "--reason", "  the laptop died  "])
+    assert rc == 0
+    assert break_lock.call_args.args == (_REPO,)
+    assert break_lock.call_args.kwargs == {
+        "actor": "human on mac.local",
+        "reason": "the laptop died",
+    }
+    out = capsys.readouterr().out
+    assert f"broke the release lock on {_REPO} (was at {_SHA})" in out
+    assert f"tracking issue: {_REPO}#5300" in out
+    assert f"re-armed: https://github.com/{_REPO}/pull/7" in out
+    assert f"refused: https://github.com/{_REPO}/pull/8 (it is a fork PR)" in out
+
+
+def test_break_json(capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _break(["break", "--reason", "stuck", "--json", "--repo", _REPO])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == _broken().as_json()
+
+
+@pytest.mark.parametrize("mode", ["user", "audit"])
+def test_break_refused_for_agent_identity(
+    mode: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", mode)
+    rc, break_lock = _break(["break", "--reason", "stuck"])
+    assert rc == 1
+    break_lock.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "human" in captured.err
+
+
+def test_break_refused_with_agent_signal(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "human")  # cannot talk the guard out of it
+    with patch(f"{_BIN}.identity_mode.any_agent_signal", return_value=True):
+        rc, break_lock = _break(["break", "--reason", "stuck"])
+    assert rc == 1
+    break_lock.assert_not_called()
+    assert "human" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["break"], ["break", "--reason", ""], ["break", "--reason", " "]])
+def test_break_requires_reason(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _break(argv)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ReclaimError("the break of the release lock on x did not land: lost 3 times"),
+        RefReadError("reading refs/vergil/release-lock from origin failed: HTTP 502"),
+    ],
+)
+def test_break_failure_exits_1(error: Exception, capsys: pytest.CaptureFixture[str]) -> None:
+    rc, _ = _break(["break", "--reason", "stuck", "--json"], result=error)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert str(error) in captured.err
