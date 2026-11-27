@@ -216,9 +216,19 @@ def read_lock(repo: str) -> LockState:
             return LockState(sha=sha, record=None, error=f"{LOCK_REF} is unreadable: {exc}")
 
 
+def build_lock(where: Path, rec: LockRecord) -> str:
+    """Build the lock commit for *rec* in the scratch repository *where*; its sha.
+
+    A writer that must know its write's sha before pushing it (the lock
+    owner, which tells its own writes by sha) builds with this and pushes
+    with :func:`write_ref`.
+    """
+    return build(where, to_json(rec), LOCK_FILE, _LOCK_MESSAGE)
+
+
 def _write_lock(repo: str, rec: LockRecord, expected: str | None) -> str | None:
     with scratch(repo, RefWriteError) as where:
-        sha = build(where, to_json(rec), LOCK_FILE, _LOCK_MESSAGE)
+        sha = build_lock(where, rec)
         return sha if write_ref(where, LOCK_REF, new=sha, expected=expected) else None
 
 
