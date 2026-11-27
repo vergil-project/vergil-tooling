@@ -33,7 +33,9 @@ _ALLOWED: dict[str, set[str]] = {
     # `update-branch` (optionally `--rebase`) brings a PR branch up to date
     # with its base server-side, with no checkout or force-push, and crosses
     # no human gate. It writes, so it stays off the audit allowlist. See
-    # issue #3542.
+    # issue #3542. An agent's update of a PR into develop is refused: every
+    # new head of such a PR is made through the one PR path (epic
+    # vergil-project/.github#1664; see _update_branch_refusal).
     "pr": {
         "view",
         "checks",
@@ -301,6 +303,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-gh: issue close is refused. {refused}", file=sys.stderr)
             return 1
 
+    if top == "pr" and sub == "update-branch" and identity_mode.is_agent():
+        refused = _update_branch_refusal(argv[2:])
+        if refused is not None:
+            print(f"vrg-gh: pr update-branch is refused. {refused}", file=sys.stderr)
+            return 1
+
     rc = _exec_gh(argv)
     # `--help` forwards to gh's own help and exits 0 with no rerun requested.
     if (
@@ -459,6 +467,60 @@ def _operational_close_refusal(args: list[str]) -> str | None:
             "vrg-gh could not check whether the issue is an operational task with a "
             f"recorded 'Outcome: SUCCESS', so it does not close it: {exc}"
         )
+
+
+_DEVELOP = "develop"
+
+
+def _update_branch_refusal(args: list[str]) -> str | None:
+    """Why an agent's ``pr update-branch`` *args* must not run, or ``None`` when they may.
+
+    Spec §5.4 of epic vergil-project/.github#1664: every new head of an open
+    PR into ``develop`` is made through the one PR path, and a server-side
+    update (merging the base in, or ``--rebase``) makes a new head outside
+    it. So the PR's base is read first, with ``gh pr view`` on the same
+    target and ``--repo`` and under the target owner's installation, and an
+    update of a PR into ``develop`` is refused, naming the path. A PR into
+    any other base is updated as before, and ``--help`` is not gated. The
+    lookup fails closed: a target it cannot resolve, a read that fails, or
+    a response with no base refuses the update.
+    """
+    if any(arg in ("-h", "--help") for arg in args):
+        return None
+    parsed = _parse_args(args, _VALUE_FLAGS[("pr", "update-branch")])
+    owners = _target_owners(["pr", "update-branch", *args])
+    unreadable = "vrg-gh could not read the PR's base, so it does not update its branch: "
+    if len(parsed.positionals) > 1:
+        return f"{unreadable}update-branch takes at most one PR number, URL or branch"
+    if len(owners) > 1:
+        return f"{unreadable}the command names more than one owner ({', '.join(owners)})"
+    view = ["pr", "view", *parsed.positionals, "--json", "baseRefName"]
+    if parsed.repo_values:
+        view += ["--repo", parsed.repo_values[-1]]
+    try:
+        with github.target_org(owners[0] if owners else None):
+            data = github.read_json(*view)
+    except (
+        subprocess.CalledProcessError,
+        github.NoInstallationError,
+        github.AppAuthError,
+        gh_version.GhVersionError,
+        ValueError,
+        OSError,
+    ) as exc:
+        return f"{unreadable}{exc}"
+    base = data.get("baseRefName") if isinstance(data, dict) else None
+    if not isinstance(base, str) or not base:
+        return f"{unreadable}gh pr view returned no base branch: {data!r}"
+    if base != _DEVELOP:
+        return None
+    return (
+        f"The PR is into {_DEVELOP}, and every new head of an open PR into {_DEVELOP} "
+        "is made through the one PR path, never by GitHub updating the branch "
+        "server-side (epic vergil-project/.github#1664). Bring the branch up to date "
+        "locally (vrg-git fetch origin, then vrg-git rebase origin/develop) and push "
+        "it with 'vrg-submit-pr --push'."
+    )
 
 
 _RAW_SUBISSUE_FLAGS = ("--parent", "--add-sub-issue", "--remove-sub-issue")
@@ -1065,6 +1127,9 @@ def _print_help() -> None:
         "    refused until a trusted comment on it records 'Outcome: SUCCESS'.\n"
         "  - issue edit's raw sub-issue flags (--parent, --add-sub-issue,\n"
         "    --remove-sub-issue) are refused: use vrg-epic-link or vrg-epic-move.\n"
+        "  - An agent's pr update-branch (with or without --rebase) of a PR into\n"
+        "    develop is refused: update the branch locally and push it with\n"
+        "    'vrg-submit-pr --push'.\n"
         "  - run job-log --repo <owner>/<repo> --job <id> prints one Actions\n"
         "    job's log from the read-only per-job log endpoint, for every identity.\n"
         "\n"

@@ -1062,13 +1062,18 @@ class TestAgentDenials:
 
     @pytest.mark.parametrize("extra", [[], ["--rebase"]])
     def test_pr_update_branch_allowed_for_user_agent(self, extra: list[str]) -> None:
-        # Allowed for USER: a server-side update of a PR branch onto its base
-        # needs no checkout or force-push and crosses no human gate (issue
-        # #3542). AUDIT stays barred (see TestAuditAllowlist).
+        # Allowed for USER on a PR into any base but develop: a server-side
+        # update of a PR branch onto its base needs no checkout or force-push
+        # and crosses no human gate (issue #3542). A PR into develop is
+        # refused (see TestUpdateBranchGate). AUDIT stays barred (see
+        # TestAuditAllowlist).
         with (
             patch(
                 "vergil_tooling.bin.vrg_gh.github.get_installation_token",
                 return_value=None,
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.read_json", return_value={"baseRefName": "main"}
             ),
             patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
@@ -1296,6 +1301,163 @@ class TestOperationalCloseGate:
         with patch("vergil_tooling.bin.vrg_gh.operational_close.refusal") as gate:
             assert main(["issue", "close", "42", "--repo", "org/repo"]) == 0
         gate.assert_not_called()
+
+
+class TestUpdateBranchGate:
+    """An agent never has GitHub update an open develop PR's branch (epic .github#1664).
+
+    Spec §5.4: every new head of an open PR into ``develop`` is made through
+    the one PR path, so an agent's ``pr update-branch`` on such a PR is
+    refused, naming the path. The base is read first, and a read that fails
+    refuses the update.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+
+    @pytest.fixture
+    def gh(self) -> Iterator[MagicMock]:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            yield mock_run
+
+    @pytest.mark.parametrize("extra", [[], ["--rebase"]])
+    @pytest.mark.parametrize(
+        ("target", "view"),
+        [
+            (["42"], ["pr", "view", "42", "--json", "baseRefName"]),
+            (
+                ["42", "--repo", "org/repo"],
+                ["pr", "view", "42", "--json", "baseRefName", "--repo", "org/repo"],
+            ),
+            (
+                ["https://github.com/org/repo/pull/42"],
+                ["pr", "view", "https://github.com/org/repo/pull/42", "--json", "baseRefName"],
+            ),
+            ([], ["pr", "view", "--json", "baseRefName"]),
+        ],
+    )
+    def test_agent_update_branch_on_develop_pr_refused_names_path(
+        self,
+        gh: MagicMock,
+        extra: list[str],
+        target: list[str],
+        view: list[str],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json", return_value={"baseRefName": "develop"}
+        ) as read:
+            assert main(["pr", "update-branch", *target, *extra]) == 1
+        read.assert_called_once_with(*view)
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "pr update-branch is refused" in err
+        assert "vrg-submit-pr --push" in err
+        assert "develop" in err
+
+    @pytest.mark.parametrize("extra", [[], ["--rebase"]])
+    def test_agent_update_branch_on_main_pr_unchanged(
+        self, gh: MagicMock, extra: list[str]
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json", return_value={"baseRefName": "main"}
+        ):
+            assert main(["pr", "update-branch", "42", *extra]) == 0
+        assert gh.call_args[0][0] == ["gh", "pr", "update-branch", "42", *extra]
+
+    def test_lookup_uses_the_target_owners_installation(self, gh: MagicMock) -> None:
+        seen: list[str | None] = []
+
+        def read(*_args: str) -> dict[str, object]:
+            seen.append(github._target_org.get())  # noqa: SLF001 - the scoped owner
+            return {"baseRefName": "main"}
+
+        with patch("vergil_tooling.bin.vrg_gh.github.read_json", side_effect=read):
+            assert main(["pr", "update-branch", "42", "-R", "other-org/repo"]) == 0
+        assert seen == ["other-org"]
+
+    @pytest.mark.parametrize("extra", [[], ["--rebase"]])
+    def test_human_update_branch_unchanged(
+        self, gh: MagicMock, extra: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with patch("vergil_tooling.bin.vrg_gh.github.read_json") as read:
+            assert main(["pr", "update-branch", "42", *extra]) == 0
+        read.assert_not_called()
+        assert gh.call_args[0][0] == ["gh", "pr", "update-branch", "42", *extra]
+
+    @pytest.mark.parametrize(
+        ("effect", "detail"),
+        [
+            (
+                subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502"),
+                "returned non-zero exit status 1",
+            ),
+            (github.NoInstallationError("org", ["other"]), "no App installation for owner 'org'"),
+            (
+                github.AppAuthError("org", "1", Path("/k.pem"), "token mint failed"),
+                "token mint failed",
+            ),
+            (ValueError("Expecting value"), "Expecting value"),
+            ([{"baseRefName": "develop"}], "no base branch"),
+            ({"baseRefName": ""}, "no base branch"),
+            ({}, "no base branch"),
+        ],
+    )
+    def test_update_branch_base_lookup_failure_refuses(
+        self,
+        gh: MagicMock,
+        effect: object,
+        detail: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        if isinstance(effect, BaseException):
+            reader = patch("vergil_tooling.bin.vrg_gh.github.read_json", side_effect=effect)
+        else:
+            reader = patch("vergil_tooling.bin.vrg_gh.github.read_json", return_value=effect)
+        with reader:
+            assert main(["pr", "update-branch", "42", "--rebase"]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "pr update-branch is refused" in err
+        assert "could not read the PR's base" in err
+        assert detail in err
+
+    @pytest.mark.parametrize(
+        ("args", "detail"),
+        [
+            (["1", "2"], "at most one PR"),
+            (["https://github.com/b/y/pull/42", "-R", "a/x"], "more than one owner"),
+        ],
+    )
+    def test_unresolvable_target_refused(
+        self,
+        gh: MagicMock,
+        args: list[str],
+        detail: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_gh.github.read_json") as read:
+            assert main(["pr", "update-branch", *args]) == 1
+        read.assert_not_called()
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "could not read the PR's base" in err
+        assert detail in err
+
+    def test_help_not_gated(self, gh: MagicMock) -> None:
+        with patch("vergil_tooling.bin.vrg_gh.github.read_json") as read:
+            assert main(["pr", "update-branch", "--help"]) == 0
+        read.assert_not_called()
 
 
 class TestHumanAllowlist:
