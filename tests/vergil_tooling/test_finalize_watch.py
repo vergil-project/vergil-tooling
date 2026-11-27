@@ -3,9 +3,10 @@
 A fake GitHub scripts each PR's state sequence: every ``gh pr view`` snapshot
 read takes the PR's next scripted state, and the last one repeats. The fake
 also stands in for the provenance check, the required-check lookup, the
-failed-check confirmation and the GraphQL auto-merge disable, and records
-every call. A fake clock replaces ``time.monotonic`` and ``time.sleep``, so a
-deadline passes without waiting.
+failed-check confirmation and GraphQL, and records every call: the watch
+makes no GraphQL call, and never turns auto-merge on or off. A fake clock
+replaces ``time.monotonic`` and ``time.sleep``, so a deadline passes
+without waiting.
 """
 
 from __future__ import annotations
@@ -16,15 +17,13 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from vergil_tooling.lib import (
     agent_gates,
-    auto_merge,
     finalize_watch,
     git,
     github,
@@ -43,15 +42,16 @@ from vergil_tooling.lib.finalize_watch import (
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
-# The re-check's real functions, before any fixture stubs them.
-REAL_RECHECK = finalize_watch.recheck_gates
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# The gates' real functions, before any fixture stubs them.
 REAL_FETCH = finalize_watch._fetch_for_gates
 REAL_READY_STATE = finalize_watch.ready_state
 
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 REQUIRED = frozenset({"test / unit", "CodeQL"})
-CLONE = Path("/clones/o/r")
 AGENT_ENABLE = Action("x-vergil-user", Role.USER, "auto_merge_enabled")
 
 
@@ -113,26 +113,16 @@ class FakeGitHub:
     violations: dict[tuple[str, str], list[Action]] = field(default_factory=dict)
     required: frozenset[str] | None = REQUIRED
     failed: dict[str, list[str]] = field(default_factory=dict)
-    disable_works: bool = True
     clock: float = 0.0
     views: list[str] = field(default_factory=list)
     provenance_checks: list[tuple[str, str]] = field(default_factory=list)
     disables: list[str] = field(default_factory=list)
     graphql_queries: list[str] = field(default_factory=list)
     sleeps: list[float] = field(default_factory=list)
-    auto_merge_off: set[str] = field(default_factory=set)
     last: dict[str, dict[str, Any]] = field(default_factory=dict)
     run_reads: list[tuple[str, str]] = field(default_factory=list)
     last_pr: str = ""
     branch_lookups: list[tuple[str, str, str]] = field(default_factory=list)
-    gate_failures: dict[tuple[str, str], str] = field(default_factory=dict)
-    gate_checks: list[tuple[str, str, str]] = field(default_factory=list)
-
-    def recheck_gates(self, snap: finalize_watch.Snapshot, branch: str, clone: Path) -> str:
-        """The gates' answer for the PR's head: ``gate_failures``, else a pass."""
-        assert clone == CLONE
-        self.gate_checks.append((snap.url, snap.head, branch))
-        return self.gate_failures.get((snap.url, snap.head), "")
 
     def prs_for_branch(
         self, repo: str, branch: str, *, state: str
@@ -171,8 +161,6 @@ class FakeGitHub:
         self.views.append(pr)
         sequence = self.states[pr]
         state = sequence.pop(0) if len(sequence) > 1 else sequence[0]
-        if pr in self.auto_merge_off:
-            state = {**state, "autoMergeRequest": None}
         self.last[pr] = state
         self.last_pr = pr
         return {k: v for k, v in state.items() if not k.startswith("_")}
@@ -198,17 +186,11 @@ class FakeGitHub:
         return {run.run_id: run for run in state.get("_runs", [])}
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
+        """Record the query; a disable is recorded on *disables* by the PR it names."""
         self.graphql_queries.append(query)
-        assert "disablePullRequestAutoMerge" in query, query
-        node_id = str(variables["id"])
-        pr = url(int(node_id.removeprefix("PR_")))
-        self.disables.append(pr)
-        if self.disable_works:
-            self.auto_merge_off.add(pr)
-        return {"disablePullRequestAutoMerge": {"pullRequest": {"number": 1}}}
-
-    def auto_merge_enabled(self, pr: str) -> bool:
-        return pr not in self.auto_merge_off and self._current(pr)["autoMergeRequest"] is not None
+        if "disablePullRequestAutoMerge" in query:
+            self.disables.append(url(int(str(variables["id"]).removeprefix("PR_"))))
+        return {}
 
     def monotonic(self) -> float:
         return self.clock
@@ -232,15 +214,13 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
         monkeypatch.setattr(github, name, getattr(api, name))
     monkeypatch.setattr(pr_provenance, "check_pr", api.check_pr)
     monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
-    monkeypatch.setattr(auto_merge, "auto_merge_enabled", api.auto_merge_enabled)
-    monkeypatch.setattr(finalize_watch, "recheck_gates", api.recheck_gates)
     clock = SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep)
     monkeypatch.setattr(finalize_watch, "time", clock)
     return api
 
 
 def run(prs: list[str], *, poll: float = 15.0) -> list[PRResult]:
-    return watch(prs, clone=CLONE, poll_interval=poll)
+    return watch(prs, poll_interval=poll)
 
 
 # --- start-up ------------------------------------------------------------------
@@ -352,24 +332,6 @@ def test_auto_merge_off_at_start_is_exception(fake: FakeGitHub) -> None:
     assert "investigate" in result.detail
     # Never turned back on: no GraphQL call at all, so no enable.
     assert fake.graphql_queries == []
-
-
-def test_startup_violation_disables_and_fails(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)])
-
-    assert result == PRResult(
-        pr=url(1),
-        outcome="failed: provenance",
-        detail="x-vergil-user (user): auto_merge_enabled",
-        head=HEAD_A,
-        **_meta(1),
-        provenance_violation=True,
-    )
-    assert fake.disables == [url(1)]
-    assert fake.sleeps == []
 
 
 def test_closed_at_start(fake: FakeGitHub) -> None:
@@ -568,7 +530,7 @@ def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub
         ),
     )
 
-    [result] = watch([url(1)], clone=CLONE, cancel_grace=60)
+    [result] = watch([url(1)], cancel_grace=60)
 
     assert result.outcome == "failed: cancelled"
     assert result.detail == (
@@ -608,7 +570,7 @@ def test_cancelled_check_on_a_run_not_yet_completed_is_pending(fake: FakeGitHub)
     )
     fake.script(1, rerun, rerun, rerun, merged(1))
 
-    [result] = watch([url(1)], clone=CLONE, cancel_grace=1)
+    [result] = watch([url(1)], cancel_grace=1)
 
     assert result.outcome == "merged"
 
@@ -714,7 +676,7 @@ def test_a_pr_failed_on_its_checks_that_then_merges_is_merged(fake: FakeGitHub) 
 
     assert [r.outcome for r in results] == ["merged", "merged"]
     # The merged read ran the provenance check on it, as for any merged PR.
-    assert fake.provenance_checks.count((url(1), HEAD_A)) == 2
+    assert fake.provenance_checks.count((url(1), HEAD_A)) == 1
 
 
 def test_a_pr_failed_on_its_checks_that_stays_open_stays_failed(fake: FakeGitHub) -> None:
@@ -728,58 +690,7 @@ def test_a_pr_failed_on_its_checks_that_stays_open_stays_failed(fake: FakeGitHub
     assert fake.views.count(url(1)) == 2
 
 
-def test_new_head_of_a_pr_failed_on_its_checks_failing_the_gates_disarms(
-    fake: FakeGitHub,
-) -> None:
-    """A fix pushed to a PR that ended on its checks gets the gates while the watch goes on."""
-    failing = [failing_check("test / unit")]
-    fake.script(
-        1,
-        pr_state(1, statusCheckRollup=failing),
-        pr_state(1, statusCheckRollup=failing),
-        pr_state(1, headRefOid=HEAD_B),
-    )
-    fake.failed[url(1)] = ["test / unit"]
-    fake.gate_failures[url(1), HEAD_B] = (
-        "merge review: no merge-review record or approved exemption covers it"
-    )
-    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
-
-    results = run([url(1), url(2)])
-
-    assert [r.outcome for r in results] == ["failed: gates", "merged"]
-    assert results[0].head == HEAD_B
-    assert (
-        results[0].detail == "merge review: no merge-review record or approved exemption covers it"
-    )
-    assert fake.disables == [url(1)]
-    assert (url(1), HEAD_B, "feature/1-thing") in fake.gate_checks
-
-
-def test_new_head_of_a_pr_failed_on_its_checks_with_a_violation_disarms(
-    fake: FakeGitHub,
-) -> None:
-    failing = [failing_check("test / unit")]
-    fake.script(
-        1,
-        pr_state(1, statusCheckRollup=failing),
-        pr_state(1, statusCheckRollup=failing),
-        pr_state(1, headRefOid=HEAD_B),
-    )
-    fake.failed[url(1)] = ["test / unit"]
-    fake.violations[url(1), HEAD_B] = [AGENT_ENABLE]
-    fake.script(2, pr_state(2), pr_state(2), pr_state(2), merged(2))
-
-    results = run([url(1), url(2)])
-
-    assert [r.outcome for r in results] == ["failed: provenance", "merged"]
-    assert results[0].provenance_violation is True
-    assert fake.disables == [url(1)]
-
-
-def test_new_head_of_a_pr_failed_on_its_checks_passing_the_gates_can_still_merge(
-    fake: FakeGitHub,
-) -> None:
+def test_new_head_of_a_pr_failed_on_its_checks_can_still_merge(fake: FakeGitHub) -> None:
     failing = [failing_check("test / unit")]
     fake.script(
         1,
@@ -794,12 +705,8 @@ def test_new_head_of_a_pr_failed_on_its_checks_passing_the_gates_can_still_merge
     results = run([url(1), url(2)])
 
     assert [r.outcome for r in results] == ["merged", "merged"]
+    assert results[0].head == HEAD_B
     assert fake.disables == []
-    # The new head was checked once while open, never again until it merged.
-    assert [c for c in fake.gate_checks if c[0] == url(1)] == [
-        (url(1), HEAD_A, "feature/1-thing"),
-        (url(1), HEAD_B, "feature/1-thing"),
-    ]
 
 
 def test_conflict(fake: FakeGitHub) -> None:
@@ -829,7 +736,7 @@ def test_a_new_head_starts_the_conflict_settle_again(fake: FakeGitHub) -> None:
     dirty_b = pr_state(1, mergeStateStatus="DIRTY", headRefOid=HEAD_B)
     fake.script(1, dirty_a, dirty_a, dirty_b)
 
-    [result] = watch([url(1)], clone=CLONE, conflict_settle=30)
+    [result] = watch([url(1)], conflict_settle=30)
 
     assert result.outcome == "failed: conflict"
     assert result.head == HEAD_B
@@ -877,79 +784,16 @@ def test_base_changed_midwatch_not_a_develop_pr(fake: FakeGitHub) -> None:
     assert result.outcome == "failed: not a develop PR"
 
 
-def test_provenance_rechecked_on_new_head(fake: FakeGitHub) -> None:
-    fake.script(
-        1,
-        pr_state(1),
-        pr_state(1),
-        pr_state(1, headRefOid=HEAD_B),
-        pr_state(1, headRefOid=HEAD_B),
-        merged(1, headRefOid=HEAD_B),
-    )
-
-    [result] = run([url(1)])
-
-    assert result.outcome == "merged"
-    # Start-up, the new head, and the merge: never twice for one unmerged head.
-    assert fake.provenance_checks == [(url(1), HEAD_A), (url(1), HEAD_B), (url(1), HEAD_B)]
-
-
-def test_provenance_violation_disables_auto_merge(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1), pr_state(1, headRefOid=HEAD_B))
-    fake.violations[url(1), HEAD_B] = [AGENT_ENABLE]
-
-    [result] = run([url(1)])
-
-    assert result.outcome == "failed: provenance"
-    assert result.head == HEAD_B
-    assert result.provenance_violation is True
-    assert fake.disables == [url(1)]
-
-
-def test_violation_found_at_merge_is_flagged(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_violation_found_at_merge_is_flagged(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1), merged(1))
-    # The start-up check is clean; the check at merge finds the action.
-    checks = iter([ProvenanceResult(), ProvenanceResult(violations=[AGENT_ENABLE])])
-    monkeypatch.setattr(pr_provenance, "check_pr", lambda pr: next(checks))
+    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
 
     [result] = run([url(1)])
 
     assert result.outcome == "merged"
     assert result.provenance_violation is True
-    assert fake.disables == []
-
-
-def test_disable_that_does_not_take_raises(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-    fake.disable_works = False
-
-    with pytest.raises(FinalizeWatchError, match="still on"):
-        run([url(1)])
-
-
-def test_disable_refused_raises(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake.script(1, pr_state(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    def refuse(query: str, **variables: object) -> dict[str, object]:
-        raise github.GitHubAPIError(1, ("gh", "api", "graphql"), stderr="forbidden")
-
-    monkeypatch.setattr(github, "graphql", refuse)
-
-    with pytest.raises(FinalizeWatchError, match="(?s)turning auto-merge off failed:.*forbidden"):
-        run([url(1)])
-
-
-def test_violation_with_auto_merge_already_off_is_not_disabled(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1, autoMergeRequest=None))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    [result] = run([url(1)])
-
-    assert result.outcome == "failed: provenance"
+    # Checked once, at the merge: the open PR's head was never checked.
+    assert fake.provenance_checks == [(url(1), HEAD_A)]
     assert fake.disables == []
 
 
@@ -963,6 +807,65 @@ def test_watch_never_enables_auto_merge() -> None:
         elif isinstance(node, ast.Attribute):
             imported.add(node.attr)
     assert "enable_auto_merge" not in imported
+
+
+# --- the watch only watches (epic vergil-project/.github#1664, plan Task 10) ---------
+
+
+@pytest.mark.parametrize("case", ["new head", "provenance violation", "gate failure"])
+def test_watch_never_disables_auto_merge(fake: FakeGitHub, gated: Gated, case: str) -> None:
+    """A new head, a provenance violation and a head the gates refuse never disarm the PR.
+
+    The one PR path judges every head the tooling pushes before it is pushed
+    (spec §5.4); the watch only reports what GitHub does.
+    """
+    if case == "gate failure":
+        # A real change with no merge-review record: the gates would refuse it.
+        head_a = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
+        head_b = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
+    else:
+        head_a, head_b = HEAD_A, HEAD_B
+    if case == "provenance violation":
+        fake.violations[url(1), head_a] = [AGENT_ENABLE]
+        fake.violations[url(1), head_b] = [AGENT_ENABLE]
+    fake.script(
+        1,
+        pr_state(1, headRefOid=head_a),
+        pr_state(1, headRefOid=head_b),
+        merged(1, headRefOid=head_b),
+    )
+
+    [result] = _watch_gated(gated)
+
+    assert result.outcome == "merged"
+    assert result.provenance_violation is (case == "provenance violation")
+    assert fake.disables == []
+    assert not any("disablePullRequestAutoMerge" in q for q in fake.graphql_queries)
+    assert gated.evaluations == []
+    source = inspect.getsource(finalize_watch)
+    assert "disablePullRequestAutoMerge" not in source
+    assert not hasattr(finalize_watch, "_disable_auto_merge")
+
+
+def test_watch_new_head_not_rechecked(fake: FakeGitHub, gated: Gated) -> None:
+    """No head of an open PR is re-checked: provenance runs once, on the merged PR."""
+    failing = [failing_check("test / unit")]
+    fake.script(
+        1,
+        pr_state(1, statusCheckRollup=failing),
+        pr_state(1, headRefOid=HEAD_B),
+        merged(1, headRefOid=HEAD_B),
+    )
+    fake.failed[url(1)] = ["test / unit"]
+    fake.script(2, pr_state(2), pr_state(2, headRefOid=HEAD_B), merged(2, headRefOid=HEAD_B))
+
+    results = _watch_gated(gated, [url(1), url(2)])
+
+    assert [r.outcome for r in results] == ["merged", "merged"]
+    assert fake.provenance_checks == [(url(1), HEAD_B), (url(2), HEAD_B)]
+    assert gated.evaluations == []
+    assert gated.actor_reads == []
+    assert not hasattr(finalize_watch, "recheck_gates")
 
 
 # --- the deadline ------------------------------------------------------------------
@@ -1021,8 +924,8 @@ def test_one_poll_per_interval_for_ten_prs(
     assert intervals == 10
     # One view per PR at start-up and one per PR per interval, nothing more.
     assert len(fake.views) == 10 * (1 + intervals)
-    # Provenance runs once per PR head, not once per poll.
-    assert len(fake.provenance_checks) == 10
+    # No open PR's head is judged: provenance runs only on a merged PR.
+    assert fake.provenance_checks == []
 
 
 def test_duplicate_prs_are_watched_once(fake: FakeGitHub) -> None:
@@ -1089,21 +992,6 @@ def test_null_rollup_is_no_checks(fake: FakeGitHub) -> None:
     [result] = run([url(1)])
 
     assert result.outcome == "merged"
-
-
-def test_disable_read_back_failure_raises(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fake.script(1, pr_state(1))
-    fake.violations[url(1), HEAD_A] = [AGENT_ENABLE]
-
-    def unreadable(pr: str) -> bool:
-        raise auto_merge.AutoMergeError(f"{pr}: reading auto-merge failed")
-
-    monkeypatch.setattr(auto_merge, "auto_merge_enabled", unreadable)
-
-    with pytest.raises(FinalizeWatchError, match="reading it back failed"):
-        run([url(1)])
 
 
 # --- the status table (issue #4677) ------------------------------------------------
@@ -1338,7 +1226,7 @@ def test_status_table_when_every_pr_ended_at_start_up(
     ]
 
 
-# --- the gates' re-check (epic vergil-project/.github#1384, plan Task 11) ------------
+# --- the gates at a head, for the one PR path (epic vergil-project/.github#1384, Task 11) ---
 
 AUTHORS = TrustedAuthors(human=("human",), agents=("human-vergil-user",))
 AGENT_ID = trust.Identity("human-vergil-user", "Bot")
@@ -1396,7 +1284,7 @@ class Gated:
 
 @pytest.fixture
 def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Gated:
-    """The real :func:`recheck_gates` and evaluator over a local clone; GitHub stubbed."""
+    """The real gates and evaluator over a local clone; GitHub stubbed."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     for var in ("AUTHOR", "COMMITTER"):
@@ -1412,7 +1300,6 @@ def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     state = Gated(clone=clone)
     monkeypatch.setenv(DEADLINE_ENV, "60")
 
-    monkeypatch.setattr(finalize_watch, "recheck_gates", REAL_RECHECK)
     monkeypatch.setattr(
         git, "remote_url", lambda remote="origin", repo=None: "https://github.com/o/r.git"
     )
@@ -1452,30 +1339,31 @@ def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     return state
 
 
-def _watch_gated(gated: Gated) -> list[PRResult]:
-    return watch([url(1)], clone=gated.clone)
+def _watch_gated(gated: Gated, prs: list[str] | None = None) -> list[PRResult]:
+    """Watch *prs* (PR 1 by default) with the real gates in place, to show they never run."""
+    assert gated.clone.is_dir()
+    return watch(prs or [url(1)])
 
 
-def test_new_head_without_merge_review_disarms(
-    fake: FakeGitHub, gated: Gated, capsys: pytest.CaptureFixture[str]
-) -> None:
+def _gates(gated: Gated, head: str) -> str:
+    """The real gates at PR 1's pushed *head*, as the one PR path's arm judges it."""
+    return finalize_watch.gates_at_head(_open_snapshot(head), "feature/1-thing", gated.clone)
+
+
+def test_head_without_merge_review_fails_the_gates(gated: Gated) -> None:
     first = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
     gated.records.append(gated.fingerprint())
     second = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
-    fake.script(1, pr_state(1, headRefOid=first), pr_state(1, headRefOid=second))
 
-    [result] = _watch_gated(gated)
+    assert _gates(gated, first) == ""
+    reason = _gates(gated, second)
 
-    assert result.outcome == "failed: gates"
-    assert result.head == second
-    assert "no merge-review record or approved exemption on o/r#7" in result.detail
-    assert gated.fingerprint() in result.detail
-    assert fake.disables == [url(1)]
+    assert "no merge-review record or approved exemption on o/r#7" in reason
+    assert gated.fingerprint() in reason
     assert [head for _base, head, _refs in gated.evaluations] == [first, second]
-    assert "GATES NOT PASSED" in capsys.readouterr().err
 
 
-def test_clean_rebase_keeps_auto_merge(fake: FakeGitHub, gated: Gated) -> None:
+def test_clean_rebase_passes_the_gates(gated: Gated) -> None:
     first = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
     gated.records.append(gated.fingerprint())
     _sh(gated.clone, "checkout", "-q", "develop")
@@ -1484,79 +1372,24 @@ def test_clean_rebase_keeps_auto_merge(fake: FakeGitHub, gated: Gated) -> None:
     _sh(gated.clone, "rebase", "-q", "develop")
     rebased = _sh(gated.clone, "rev-parse", "HEAD")
     assert rebased != first
-    fake.script(
-        1,
-        pr_state(1, headRefOid=first),
-        pr_state(1, headRefOid=rebased),
-        merged(1, headRefOid=rebased),
-    )
 
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "merged"
-    assert fake.disables == []
+    assert _gates(gated, first) == ""
+    assert _gates(gated, rebased) == ""
     # Both heads were evaluated, the rebased one against the moved develop.
     assert [head for _base, head, _refs in gated.evaluations] == [first, rebased]
     assert gated.evaluations[1][0] == gated.develop()
-
-
-def test_gates_failing_at_start_disarm(fake: FakeGitHub, gated: Gated) -> None:
-    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fake.script(1, pr_state(1, headRefOid=head))
-
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "failed: gates"
-    assert "no merge-review record" in result.detail
-    assert fake.disables == [url(1)]
-    assert fake.sleeps == []
-
-
-def test_gates_failing_with_auto_merge_already_off_disable_nothing(
-    fake: FakeGitHub, gated: Gated
-) -> None:
-    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fake.script(1, pr_state(1, headRefOid=head, autoMergeRequest=None))
-
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "failed: gates"
-    assert fake.disables == []
-
-
-def test_provenance_violation_ends_before_the_gates(fake: FakeGitHub, gated: Gated) -> None:
-    head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fake.script(1, pr_state(1, headRefOid=head))
-    fake.violations[url(1), head] = [AGENT_ENABLE]
-
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "failed: provenance"
-    assert gated.evaluations == []
-
-
-def test_merged_pr_is_not_rechecked(fake: FakeGitHub, gated: Gated) -> None:
-    head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
-    fake.script(1, merged(1, headRefOid=head))
-
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "merged"
-    assert gated.evaluations == []
-    assert gated.actor_reads == []
 
 
 @pytest.mark.parametrize(
     "broken",
     ["actors", "body", "fetch", "untrusted body"],
 )
-def test_recheck_read_failure_disarms(
-    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch, broken: str
+def test_gates_read_failure_is_a_reason(
+    gated: Gated, monkeypatch: pytest.MonkeyPatch, broken: str
 ) -> None:
-    """A read the re-check cannot complete turns auto-merge off, never left armed."""
+    """A read the gates cannot complete is a reason the head does not pass, never a pass."""
     head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
     gated.records.append(gated.fingerprint())
-    fake.script(1, pr_state(1, headRefOid=head))
 
     def api_error(*_args: object, **_kwargs: object) -> object:
         raise github.GitHubAPIError(1, ("gh", "api"), stderr="HTTP 502")
@@ -1576,19 +1409,14 @@ def test_recheck_read_failure_disarms(
     }[broken]
     monkeypatch.setattr(*target, replacement)
 
-    [result] = _watch_gated(gated)
+    reason = _gates(gated, head)
 
-    assert result.outcome == "failed: gates"
-    assert result.detail.startswith(f"the gates could not be re-checked at {head[:12]}: ")
-    assert fake.disables == [url(1)]
+    assert reason.startswith(f"the gates could not be re-checked at {head[:12]}: ")
     assert gated.evaluations == []
 
 
-def test_recheck_refuses_other_repo_clone(
-    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_gates_refuse_other_repo_clone(gated: Gated, monkeypatch: pytest.MonkeyPatch) -> None:
     head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fake.script(1, pr_state(1, headRefOid=head))
     monkeypatch.setattr(
         git, "remote_url", lambda remote="origin", repo=None: "git@github.com:o/other.git"
     )
@@ -1596,18 +1424,16 @@ def test_recheck_refuses_other_repo_clone(
     with pytest.raises(
         FinalizeWatchError, match=r"whose origin is o/other, not the PR's repository o/r"
     ):
-        _watch_gated(gated)
+        _gates(gated, head)
 
     assert gated.actor_reads == []
     assert gated.evaluations == []
-    assert fake.disables == []
 
 
-def test_recheck_refuses_a_clone_with_no_readable_origin(
-    fake: FakeGitHub, gated: Gated, monkeypatch: pytest.MonkeyPatch
+def test_gates_refuse_a_clone_with_no_readable_origin(
+    gated: Gated, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
-    fake.script(1, pr_state(1, headRefOid=head))
 
     def no_origin(remote: str = "origin", repo: Path | None = None) -> str:
         raise subprocess.CalledProcessError(2, ("git", "remote"), stderr="error: No such remote")
@@ -1615,37 +1441,27 @@ def test_recheck_refuses_a_clone_with_no_readable_origin(
     monkeypatch.setattr(git, "remote_url", no_origin)
 
     with pytest.raises(FinalizeWatchError, match="cannot read the origin of"):
-        _watch_gated(gated)
+        _gates(gated, head)
 
     assert gated.actor_reads == []
-    assert fake.disables == []
 
 
-def test_human_only_pr_skips_the_gates(fake: FakeGitHub, gated: Gated) -> None:
+def test_human_only_pr_skips_the_gates(gated: Gated) -> None:
     head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
     gated.actors = (HUMAN_ID,)
-    fake.script(1, pr_state(1, headRefOid=head), merged(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "merged"
+    assert _gates(gated, head) == ""
     assert gated.evaluations == []
 
 
-def test_recorded_by_human_never_skips_the_gates_of_an_agent_pr(
-    fake: FakeGitHub, gated: Gated
-) -> None:
+def test_recorded_by_human_never_skips_the_gates_of_an_agent_pr(gated: Gated) -> None:
     """A forged ``recorded_by: human`` does not make an agent's PR human-only."""
     head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
     gated.actors = (HUMAN_ID, AGENT_ID)
     gated.ready = finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="human")
-    fake.script(1, pr_state(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "failed: gates"
+    assert "no merge-review record" in _gates(gated, head)
     assert len(gated.evaluations) == 1
-    assert fake.disables == [url(1)]
 
 
 @pytest.mark.parametrize(
@@ -1661,41 +1477,32 @@ def test_recorded_by_human_never_skips_the_gates_of_an_agent_pr(
     ids=["missing", "user", "audit", "unknown", "not a string", "untrusted"],
 )
 def test_ready_state_makes_a_human_actors_pr_agent_involved(
-    fake: FakeGitHub, gated: Gated, ready: finalize_watch.ReadyState
+    gated: Gated, ready: finalize_watch.ReadyState
 ) -> None:
     """GitHub records no pusher: the ready state adds the involvement it cannot show."""
     head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
     gated.actors = (HUMAN_ID,)
     gated.ready = ready
-    fake.script(1, pr_state(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "failed: gates"
+    assert _gates(gated, head) != ""
     assert len(gated.evaluations) == 1
 
 
-def test_ready_state_recorded_by_human_with_human_actors_is_human_only(
-    fake: FakeGitHub, gated: Gated
-) -> None:
+def test_ready_state_recorded_by_human_with_human_actors_is_human_only(gated: Gated) -> None:
     head = _commit(gated.clone, {WORKFLOW: "on: [push, pull_request]\n"}, "touch CI")
     gated.actors = (HUMAN_ID,)
     gated.ready = finalize_watch.ReadyState(trusted=True, issues=(TASK,), recorded_by="human")
-    fake.script(1, pr_state(1, headRefOid=head), merged(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
-
-    assert result.outcome == "merged"
+    assert _gates(gated, head) == ""
     assert gated.evaluations == []
 
 
-def test_task_issues_come_from_the_trusted_body(fake: FakeGitHub, gated: Gated) -> None:
+def test_task_issues_come_from_the_trusted_body(gated: Gated) -> None:
     head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
     gated.body = "## Issue Linkage\n\n- Closes #7\n- Closes #8\n"
     gated.ready = finalize_watch.ReadyState(trusted=True, issues=("#9",), recorded_by="user")
-    fake.script(1, pr_state(1, headRefOid=head))
 
-    _watch_gated(gated)
+    _gates(gated, head)
 
     assert gated.evaluations[0][2] == ["o/r#7", "o/r#8"]
 
@@ -1710,7 +1517,6 @@ def test_task_issues_come_from_the_trusted_body(fake: FakeGitHub, gated: Gated) 
     ids=["trusted ready state", "untrusted ready state", "no ready state"],
 )
 def test_task_issues_fall_back_to_a_trusted_ready_state(
-    fake: FakeGitHub,
     gated: Gated,
     ready: finalize_watch.ReadyState | None,
     expected: list[str],
@@ -1718,17 +1524,16 @@ def test_task_issues_fall_back_to_a_trusted_ready_state(
     head = _commit(gated.clone, {"a.txt": "one\nTWO\nthree\n"}, "change")
     gated.body = "# Pull Request\n\nNo linkage here.\n"
     gated.ready = ready
-    fake.script(1, pr_state(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
+    reason = _gates(gated, head)
 
     assert gated.evaluations[0][2] == expected
-    assert result.outcome == "failed: gates"
+    assert reason != ""
     if not expected:
-        assert "resolves to no task issue" in result.detail
+        assert "resolves to no task issue" in reason
 
 
-# --- the re-check's git reads, against a local origin ---------------------------------
+# --- the gates' git reads, against a local origin -------------------------------------
 
 
 @pytest.fixture
@@ -1741,8 +1546,8 @@ def remote(gated: Gated, tmp_path: Path) -> Path:
     return bare
 
 
-def test_recheck_fetches_unseen_head(
-    fake: FakeGitHub, gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_gates_fetch_unseen_head(
+    gated: Gated, remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A head made outside the clone is fetched by SHA; no feature tracking ref moves."""
     monkeypatch.setattr(finalize_watch, "_fetch_for_gates", REAL_FETCH)
@@ -1754,11 +1559,10 @@ def test_recheck_fetches_unseen_head(
     gated.records.append(change_fingerprint(other, "develop", head))
     with pytest.raises(subprocess.CalledProcessError):
         _sh(gated.clone, "cat-file", "-e", f"{head}^{{commit}}")
-    fake.script(1, pr_state(1, headRefOid=head))
 
-    [result] = _watch_gated(gated)
+    reason = _gates(gated, head)
 
-    assert result.outcome != "failed: gates", result.detail
+    assert reason == ""
     assert gated.evaluations == [(gated.develop(), head, [TASK])]
     _sh(gated.clone, "cat-file", "-e", f"{head}^{{commit}}")
     tracking = _sh(gated.clone, "for-each-ref", "--format=%(refname)", "refs/remotes/")

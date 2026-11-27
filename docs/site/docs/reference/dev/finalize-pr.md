@@ -7,8 +7,9 @@
 Watches a batch of pull requests until each one has merged, then settles
 `develop` once. [`vrg-submit-pr`](submit-pr.md) opens every PR with GitHub
 auto-merge on, and GitHub merges each one once its required checks pass.
-`vrg-finalize-pr` **never merges a PR** and never turns auto-merge on
-(epic vergil-project/.github#1218). A run has five phases:
+`vrg-finalize-pr` **never merges a PR** and never turns auto-merge on or
+off (epic vergil-project/.github#1218; epic vergil-project/.github#1664,
+spec §5, phase 1). A run has five phases:
 
 1. **Watch.** It follows every listed PR, holding no lock, until each one
    has merged, has failed, or the batch deadline has passed.
@@ -117,19 +118,17 @@ The watch reads each open PR once per poll and judges it in this order:
 2. **Merged.** The PR ends as *merged*. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.
 3. **Closed** without merging: *failed: closed*.
-4. **Provenance.** See [Provenance](#provenance) below.
-5. **The gates.** See [The gates' re-check](#the-gates-re-check) below.
-6. **Auto-merge off**, at the start or mid-watch: *failed: auto-merge off*.
+4. **Auto-merge off**, at the start or mid-watch: *failed: auto-merge off*.
    Finalize never turns it back on: someone turned it off on purpose, or
    GitHub did, and a human looks first.
-7. **A required check failed:** *failed: CI*, naming the check. A failed
+5. **A required check failed:** *failed: CI*, naming the check. A failed
    or cancelled check-run of a superseded workflow run does not count (see
    below). When the base branch's required checks cannot be read, every
    check counts as required.
-8. **A required check was cancelled** and no newer run of its workflow
+6. **A required check was cancelled** and no newer run of its workflow
    replaced the cancelled run: *failed: cancelled*, naming the check. The
    PR stays pending for two minutes first, in case a re-run starts.
-9. **A conflict** with its base, reported at the same head for two
+7. **A conflict** with its base, reported at the same head for two
    minutes: *failed: conflict*. After a push, GitHub takes a while to
    recompute whether the PR can merge, and meanwhile it may still report
    the conflict the push resolved. So the PR stays pending first, shown as
@@ -146,26 +145,33 @@ PR's head, the check is not a failure and the PR stays pending.
 `vrg-pr-await` and `vrg-repo-status` judge checks the same way.
 
 A PR that ended *failed: CI* or *failed: cancelled* is read again on every
-later poll while the watch goes on. If GitHub has merged it, it is reported
-as *merged*. Its auto-merge is still on, so a new head pushed to it
-meanwhile gets the provenance check and the gates' re-check like any open
-PR's: a failure turns its auto-merge off and reports it *failed: provenance*
-or *failed: gates* instead.
+later poll while the watch goes on. Its auto-merge is still on, so a fix
+pushed to it merges by itself once its checks pass. If GitHub has merged
+it, it is reported as *merged*.
+
+**The watch judges no head of an open PR.** Every head the tooling arms or
+pushes to an open PR into `develop` goes through the one PR path, which
+runs the provenance check and the merge-review gates on it **before** it
+is armed or pushed: `vrg-submit-pr` when it opens the PR, and
+[`vrg-submit-pr --push`](submit-pr.md#push-mode-a-new-head-for-an-open-pr)
+for a fix or a rebase after that (`vrg-git` refuses a plain push to such a
+branch). So the watch never turns auto-merge off, and has no *failed:
+provenance* or *failed: gates* outcome (epic vergil-project/.github#1664,
+spec §3.3 and §5).
 
 A PR still pending when the batch deadline passes ends as *timed out*,
 and its auto-merge stays on, so it may still merge later. The deadline
 covers the whole watch: `$VRG_FINALIZE_DEADLINE` seconds, 7200 by default.
 A value that is not a positive whole number is an error before any
-waiting. Any failure to read a PR, to run the provenance check or to turn
-auto-merge off stops the run with exit 1; none is read as a pending or a
-clean PR.
+waiting. Any failure to read a PR or to run the provenance check stops
+the run with exit 1; none is read as a pending or a clean PR.
 
 #### Provenance
 
-The watch runs the provenance check on every PR when it starts, and
-again each time a PR's head changes. `vrg-submit-pr` ran the same check
-before it turned auto-merge on. A violation always fails, and there is
-no override (issue #4695): it is either a real problem to investigate or
+The watch runs the provenance check on each PR that has merged, the one
+check it still makes. `vrg-submit-pr` ran the same check before it turned
+auto-merge on, and the one PR path runs it on every head pushed after
+that. A violation always fails, and there is no override (issue #4695): it is either a real problem to investigate or
 a bug in the classifier to fix. Each identity's role comes from the
 trusted-authors configuration, never from its name alone: the human may
 do anything, an agent may not author, edit, close, reopen or merge the
@@ -189,54 +195,13 @@ records with that merge, on anyone's such PR. On a fork PR, or one an
 untrusted identity opened, those stay violations, and so does every other
 forbidden action. An untrusted
 approval counts for nothing: it is
-reported on stderr, metadata only, and is no violation. What it does
-depends on whether the PR has merged:
+reported on stderr, metadata only, and is no violation.
 
-- **Open PR.** Finalize turns the PR's auto-merge off and reports it
-  *failed: provenance*.
-- **Merged PR**, one that merged before finalize started included.
-  Nothing can be disabled. The PR is reported as merged with a loud
-  provenance-violation flag, and the run cannot reach full success: it
-  exits 3 (or 4, if develop did not validate) and no chained release
-  runs. A human must look at it before any release (issue #4662).
-
-#### The gates' re-check
-
-GitHub keeps a PR's auto-merge on when a new head is pushed to it, so a
-fix or a rebase pushed after submit merges by itself once its checks are
-green, and nothing turns auto-merge on again for it. The watch is where
-that head is judged (epic vergil-project/.github#1384). Right after the
-provenance check, at the start and on each new head of an open PR, it
-re-runs the gates `vrg-submit-pr` ran before it opened the PR:
-
-- **It refuses another repo's clone.** The gates are judged on local git
-  objects, so a run from a clone whose `origin` is not the PR's repository
-  stops with exit 1 before anything is read.
-- **It asks whether the PR is agent-involved.** It is when an agent login
-  opened it, reviewed it, or is the actor of any event on it, or when its
-  ready state, on the relay ref `refs/vergil/pr-workflow/<branch>`, says
-  so. Turning auto-merge on or off is not involvement, and nor, on a PR
-  the one PR path accepts, is its merge and the closing GitHub records
-  with it: the actors of those events are not counted. GitHub does not record who pushed a commit, so a ready state counts
-  as agent-involved unless its commit's author is trusted and its
-  `recorded_by` names an identity that is not an agent; a ready state with
-  no `recorded_by`, or a value finalize does not recognise, counts. The
-  value is written by whoever ran `report-ready`, so it only ever adds
-  involvement: `human` never makes a PR an agent acted on count as
-  human-only. A PR with no ready state is judged from its GitHub actors
-  alone, and a PR that is not agent-involved skips the gates.
-- **It fetches, then evaluates.** It fetches `develop` and the PR's head
-  commit (which may have been pushed from elsewhere), moving no feature
-  branch's remote-tracking ref, and checks the change from the fetched
-  `origin/develop` to the head: the change needs a merge-review record or
-  an approved merge-review exemption with its fingerprint. The task issues are the linkage lines of
-  the PR's trusted body, or, when it has none, its trusted ready state's.
-
-A head that does not pass, and any read or fetch the re-check cannot
-complete, turns the PR's auto-merge off and ends it *failed: gates*, with
-the reasons; it is never left armed. A clean rebase keeps the change's
-fingerprint, so it passes and its auto-merge stays on. A merged PR is not
-re-checked: nothing can be disabled, and the daily agent audit judges it.
+A merged PR with a violation, one that merged before finalize started
+included, cannot be undone. It is reported as merged with a loud
+provenance-violation flag, and the run cannot reach full success: it
+exits 3 (or 4, if develop did not validate) and no chained release runs.
+A human must look at it before any release (issue #4662).
 
 #### Status table
 
@@ -572,8 +537,7 @@ step, and a provenance violation is named loudly:
 | ------- | --------- |
 | *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
 | *failed: cancelled* | Re-run its cancelled checks, then re-run `vrg-finalize-pr <pr>` |
-| *failed: auto-merge off*, *failed: provenance* | Investigate before turning auto-merge back on |
-| *failed: gates* | Get the missing merge review for its head, then turn auto-merge back on |
+| *failed: auto-merge off* | Investigate before turning auto-merge back on |
 | *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
 
 It then states the validate's result (`Validate: passed on <branch> at

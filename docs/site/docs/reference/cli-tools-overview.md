@@ -734,10 +734,12 @@ validation or a release. See the
 ### vrg-finalize-pr
 
 Watch a batch of auto-merging pull requests, then settle `develop` once
-(epic vergil-project/.github#1218). It never merges a PR: `vrg-submit-pr`
-turned auto-merge on, and GitHub merges each PR once its required checks
-pass. The watch follows every listed PR until it has merged or failed (CI,
-a conflict, closed, auto-merge off, provenance, not a develop PR), or the
+(epic vergil-project/.github#1218). It never merges a PR and never turns
+auto-merge on or off: `vrg-submit-pr` turned auto-merge on, and GitHub
+merges each PR once its required checks pass. The watch judges no head of
+an open PR (the one PR path judges each before it is pushed), and follows
+every listed PR until it has merged or failed (CI, cancelled, a conflict,
+closed, auto-merge off, not a develop PR), or the
 batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes. If any PR
 merged, the settle phase closes any issue GitHub left open and syncs the
 security advisories that the closed `security` issues name (a broken pair or

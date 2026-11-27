@@ -33,7 +33,7 @@ just created and a brief 404 then means "not readable yet". At that head it
 runs :func:`accepts`, the provenance check
 (:func:`pr_provenance.check_pr`) and, for an agent-involved PR only
 (:func:`finalize_watch.agent_involvement`), the agent gates
-(:func:`agent_gates.evaluate`, through :func:`finalize_watch.recheck_gates`).
+(:func:`agent_gates.evaluate`, through :func:`finalize_watch.gates_at_head`).
 The gates judge local git objects, so they run in a clone of the PR's own
 repository: the caller's *clone*, checked as
 :func:`finalize_watch.require_clone_of` checks it, or else a fresh one the
@@ -276,10 +276,10 @@ def _gates(pr: _PR, branch: str, clone: Path | None) -> str:
     """Why *pr*'s head does not pass the gates, ``""`` when it does or no agent took part."""
     try:
         if clone is not None:
-            return finalize_watch.recheck_gates(pr.snap, branch, clone)
+            return finalize_watch.gates_at_head(pr.snap, branch, clone)
         with tempfile.TemporaryDirectory(prefix="vrg-pr-path-") as tmp:
             fresh = _fresh_clone(Path(tmp), pr.repo)
-            return finalize_watch.recheck_gates(pr.snap, branch, fresh)
+            return finalize_watch.gates_at_head(pr.snap, branch, fresh)
     except finalize_watch.FinalizeWatchError as exc:
         raise PRPathError(str(exc)) from exc
 
