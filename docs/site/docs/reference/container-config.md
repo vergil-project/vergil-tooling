@@ -234,6 +234,16 @@ system package 'X' is not installable on linux/arm64 (apt: no installation candi
 There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.
 
+### Noninteractive apt
+
+The build has no tty, so a package whose install asks a debconf question
+(`tzdata`'s time zone, `keyboard-configuration`) would wait forever on a prompt
+nothing answers. The apt snippet therefore starts with
+`export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC`, locally and in CI: each
+question takes its default, and `tzdata` takes UTC. No repo needs to set either
+variable itself. A `build-command` runs after the same export (see
+[`build-command`](#build-command)).
+
 ### Cache key
 
 `vergil.toml` is already part of the cache-sensitive file set, so editing
@@ -324,6 +334,13 @@ image with `commit --change ENV`, because the `nerdctl` runtime's `commit --chan
 supports only `CMD`/`ENTRYPOINT` directives (not `ENV`); setting it on the run
 path works identically across the `docker` and `nerdctl` runtimes.
 
+### Noninteractive apt in the command
+
+The command runs after `export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC`, in the
+local image build and in CI alike, so an `apt-get install` in it cannot hang on a
+debconf prompt (a package such as `npm` pulls in `tzdata`, which asks for a time
+zone). The command need not set either variable itself.
+
 ### Cache key
 
 Like `system-packages`, editing `build-command` changes `vergil.toml`, which is in
@@ -370,11 +387,12 @@ local bake and CI both use (`container_build_command` in
 
 ```bash
 vrg-container-build-command            # the declared command (nothing if unset)
-vrg-container-build-command --script   # the same command, emitted for CI to run
+vrg-container-build-command --script   # the shell step CI runs
 ```
 
-Both modes print the command verbatim; a repo that declares no `build-command`
-prints nothing. `--script` is the CI-consumption entry point — the CI test jobs
+The plain mode prints the command verbatim. `--script` prints the step the local
+image build and CI both run: the command after the noninteractive export above.
+A repo that declares no `build-command` prints nothing in either mode. `--script` is the CI-consumption entry point — the CI test jobs
 call it to obtain the exact command to run per job (see
 [CI Architecture → Repo-specific build steps](../guides/ci-architecture.md#repo-specific-build-steps)),
 mirroring how `vrg-container-system-packages --install-script` feeds the apt step.

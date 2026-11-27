@@ -1,9 +1,10 @@
 """Provenance verification for auto-merging PRs.
 
-``vrg-submit-pr`` runs it on each PR before it turns auto-merge on, and
-``vrg-finalize-pr``'s watch phase (``lib/finalize_watch.py``) runs it when
-the watch starts and again each time a PR's head changes. Neither command
-merges a PR itself: GitHub merges it through auto-merge.
+``vrg-submit-pr`` runs it on each PR before it turns auto-merge on, the one
+PR path (``lib/pr_path.py``) on every head pushed to an open PR before it
+is pushed, and ``vrg-finalize-pr``'s watch phase (``lib/finalize_watch.py``)
+on each PR that merged, to report a violation. None of them merges a PR
+itself: GitHub merges it through auto-merge.
 
 Fetches a PR's action history (reviews and timeline events) from
 GitHub and verifies that no identity performed an action its role forbids
@@ -66,7 +67,7 @@ context where the API is available; the same endpoints are reachable
 from the audit context under the identity-aware API allowance. A fetch
 failure propagates (``github.read_output`` raises on nonzero exit) so a
 broken check fails its caller rather than silently passing: submit leaves
-the PR's auto-merge off, and the watch stops.
+the PR's auto-merge off, the path refuses the push, and the watch stops.
 """
 
 from __future__ import annotations

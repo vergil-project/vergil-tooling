@@ -2,18 +2,18 @@
 
 ``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
 its required checks pass. ``vrg-finalize-pr`` never merges a PR and never
-turns auto-merge on (epic vergil-project/.github#1218, spec §6.3). It:
+turns auto-merge on or off (epic vergil-project/.github#1218, spec §6.3;
+epic vergil-project/.github#1664, spec §5, phase 1). It:
 
 1. **Watches** every listed PR (``lib/finalize_watch.py``), holding no lock,
-   until each ends ``merged`` or ``failed: …`` (CI, conflict, closed,
-   auto-merge off, provenance, gates, not a develop PR), or the batch deadline
+   until each ends ``merged`` or ``failed: …`` (CI, cancelled, conflict,
+   closed, auto-merge off, not a develop PR), or the batch deadline
    (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
    ``timed out``. A PR that merged before the run started counts as merged.
-   The watch runs the provenance check on each PR, and turns auto-merge off
-   on an open PR with a violation, which ends ``failed: provenance``. On
-   each new head of an agent-involved open PR it also re-checks the gates
-   (merge-review coverage), and turns auto-merge off on a head that does
-   not pass them, which ends ``failed: gates``.
+   The watch judges no head of an open PR: the one PR path
+   (``lib/pr_path.py``) runs the provenance check and the gates on every
+   head the tooling arms or pushes, before it is armed or pushed. It runs
+   the provenance check on each merged PR, to report a violation.
 2. **Settles** develop once, only if at least one PR merged. ``close-refs``
    closes any issue a merged PR closes that GitHub left open (issue #4002),
    by a closing reference the trust layer counts, before the lock is taken,
@@ -232,8 +232,6 @@ _NEXT_STEP = "hand it to an agent, then rerun `vrg-finalize-pr {pr}`"
 _INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
     "failed: auto-merge off": _INVESTIGATE,
-    "failed: provenance": _INVESTIGATE,
-    "failed: gates": "get the missing merge review for its head, then re-enable auto-merge",
     "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
@@ -442,7 +440,7 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         try:
             results = progress.run_stage(
                 "watch",
-                lambda: finalize_watch.watch(prs, clone=root),
+                lambda: finalize_watch.watch(prs),
                 args=args,
                 log=log,
                 describe=_describe_watch,

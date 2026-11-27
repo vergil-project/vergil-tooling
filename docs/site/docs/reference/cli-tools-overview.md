@@ -734,10 +734,12 @@ validation or a release. See the
 ### vrg-finalize-pr
 
 Watch a batch of auto-merging pull requests, then settle `develop` once
-(epic vergil-project/.github#1218). It never merges a PR: `vrg-submit-pr`
-turned auto-merge on, and GitHub merges each PR once its required checks
-pass. The watch follows every listed PR until it has merged or failed (CI,
-a conflict, closed, auto-merge off, provenance, not a develop PR), or the
+(epic vergil-project/.github#1218). It never merges a PR and never turns
+auto-merge on or off: `vrg-submit-pr` turned auto-merge on, and GitHub
+merges each PR once its required checks pass. The watch judges no head of
+an open PR (the one PR path judges each before it is pushed), and follows
+every listed PR until it has merged or failed (CI, cancelled, a conflict,
+closed, auto-merge off, not a develop PR), or the
 batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes. If any PR
 merged, the settle phase closes any issue GitHub left open and syncs the
 security advisories that the closed `security` issues name (a broken pair or
@@ -2791,7 +2793,7 @@ after a restart.
 
 ### vrg-container-build-command
 
-Print a repo's declared `[container].build-command` verbatim, for CI
+Print a repo's declared `[container].build-command`, for CI
 consumption. The CI test jobs call `--script` to obtain the exact
 provisioning command to run per job — the same command the local cache
 build bakes into the per-branch image — so the two paths run one
@@ -2801,7 +2803,7 @@ See [Container Config Reference → `build-command`](container-config.md#build-c
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_container_build_command` |
-| Args | `--script` (explicit CI intent; identical output), `--repo-root` (default: CWD) |
+| Args | `--script` (the step CI runs: the command after `export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC`), `--repo-root` (default: CWD) |
 | Preconditions | A readable `vergil.toml` at the repo root (absent/empty key prints nothing) |
 | Failure mode | argparse error on unknown flags; no failure for an unset key |
 | Exit codes | 0 always |

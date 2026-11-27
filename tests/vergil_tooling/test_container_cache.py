@@ -17,6 +17,7 @@ import pytest
 from tests.vergil_tooling.conftest import fixture_tooling_sha, window_default_resolution
 from tests.vergil_tooling.tooling_install_stubs import Run, run_lines, stub_bin, write_stub
 from vergil_tooling.lib.container_cache import (
+    NONINTERACTIVE_EXPORT,
     WARMUP_SKIPPED_MARKER,
     CacheImageRef,
     CacheKey,
@@ -29,6 +30,7 @@ from vergil_tooling.lib.container_cache import (
     _warmup_command,
     _warmup_line,
     apt_install_command,
+    build_command_script,
     cache_image_tag,
     cache_repo_name,
     cache_sensitive_files,
@@ -1365,6 +1367,36 @@ def test_apt_install_command_updates_then_installs_each_package() -> None:
     assert "fluidsynth" in cmd
 
 
+def test_apt_install_command_exports_noninteractive_before_apt() -> None:
+    # A package with a debconf question (tzdata) must not hang the build on a
+    # prompt nothing answers (#5225): the export comes before any apt-get call.
+    cmd = apt_install_command(["npm"], "linux/arm64")
+    assert NONINTERACTIVE_EXPORT == "export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC"
+    assert cmd.startswith(f"{NONINTERACTIVE_EXPORT} && apt-get update && ")
+
+
+def test_apt_install_command_runs_noninteractive_in_bash(tmp_path: Path) -> None:
+    # Run the speller's snippet in bash with apt-get stubbed on PATH: every
+    # apt-get call sees the noninteractive frontend and the UTC zone.
+    log = tmp_path / "apt.log"
+    stub = tmp_path / "apt-get"
+    stub.write_text(f'#!/bin/sh\necho "$DEBIAN_FRONTEND $TZ $1" >> {log}\n')
+    stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    env.pop("DEBIAN_FRONTEND", None)
+    env.pop("TZ", None)
+    cmd = apt_install_command(["tzdata"], "linux/arm64")
+    subprocess.run(["bash", "-c", cmd], env=env, check=True)  # noqa: S603, S607
+    assert log.read_text().splitlines() == [
+        "noninteractive Etc/UTC update",
+        "noninteractive Etc/UTC install",
+    ]
+
+
+def test_build_command_script_exports_noninteractive_first() -> None:
+    assert build_command_script("make deps") == f"{NONINTERACTIVE_EXPORT} && make deps"
+
+
 def test_apt_install_command_fail_closed_names_package_and_arch() -> None:
     cmd = apt_install_command(["boguspkg"], "linux/arm64")
     assert "boguspkg" in cmd
@@ -1819,6 +1851,15 @@ def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -
         < setup.index("make deps")
         < setup.index(warmup)
     )
+
+
+def test_compose_setup_runs_build_command_noninteractive(tmp_path: Path) -> None:
+    # The build-command runs after the noninteractive export, so an apt-get
+    # install in it cannot hang on a debconf prompt (#5225).
+    (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    _bootstrap_go(tmp_path)
+    setup = _compose_setup(tmp_path, "go", build_env={}, tooling=_TOOLING)
+    assert f" && {build_command_script('make deps')} && " in setup
 
 
 def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path: Path) -> None:
@@ -2385,7 +2426,7 @@ def test_compose_setup_exports_build_env_before_apt(tmp_path: Path) -> None:
     )
     _bootstrap_go(tmp_path)
     setup = _compose_setup(tmp_path, "go", build_env={"A": "1"}, tooling=_TOOLING)
-    assert setup.startswith("export A=1 && apt-get update")
+    assert setup.startswith(f"export A=1 && {NONINTERACTIVE_EXPORT} && apt-get update")
 
 
 def test_compose_setup_quotes_build_env_values(tmp_path: Path) -> None:

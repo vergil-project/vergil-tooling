@@ -3829,7 +3829,7 @@ def test_settle_once_after_mixed_batch(tmp_path: Path, capsys: pytest.CaptureFix
     with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch", watch):
         rc = main([f"{_PR_A},{_PR_B},{_PR_C}"])
     assert rc == 3
-    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C], clone=tmp_path)
+    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C])
     assert calls == _SETTLED
     assert "Validate: passed" in capsys.readouterr().out
 
@@ -4174,11 +4174,6 @@ def test_report_title_is_truncated() -> None:
         ("failed: closed", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("timed out", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("failed: auto-merge off", "investigate before re-enabling auto-merge"),
-        ("failed: provenance", "investigate before re-enabling auto-merge"),
-        (
-            "failed: gates",
-            "get the missing merge review for its head, then re-enable auto-merge",
-        ),
         ("failed: not a develop PR", "finalize watches develop PRs only"),
     ],
 )
@@ -4313,7 +4308,7 @@ def test_merged_violation_blocks_release(
         patch(_MOD + ".subprocess.run", run),
     ):
         assert main([_PR_A, "--release"]) == 3
-    watch.assert_called_once_with([_PR_A], clone=tmp_path)
+    watch.assert_called_once_with([_PR_A])
     assert calls == _SETTLED  # develop still settles: the PR is merged
     run.assert_not_called()
     out = capsys.readouterr().out
@@ -4335,22 +4330,6 @@ def test_merged_violation_with_failed_validate_is_4(tmp_path: Path) -> None:
         patch(_MOD + ".subprocess.run", run),
     ):
         assert main([_PR_A, "--release"]) == 4
-    run.assert_not_called()
-
-
-def test_open_pr_failed_on_provenance_is_3(tmp_path: Path) -> None:
-    """The watch fails an open PR on provenance: the run is 3."""
-    watch = _watch_returning(
-        _pr_result(_PR_A, "failed: provenance", "x (audit): closed", violation=True)
-    )
-    run = _release_ok()
-    with (
-        _settle_env(tmp_path, []),
-        patch(_MOD + ".finalize_watch.watch", watch),
-        patch(_MOD + ".subprocess.run", run),
-    ):
-        assert main([_PR_A, "--release"]) == 3
-    watch.assert_called_once_with([_PR_A], clone=tmp_path)
     run.assert_not_called()
 
 
@@ -4402,7 +4381,7 @@ def test_all_selects_worktree_prs(tmp_path: Path) -> None:
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged) as watch,
     ):
         assert main(["--all"]) == 0
-    watch.assert_called_once_with([_PR7.url, _PR8.url], clone=tmp_path)
+    watch.assert_called_once_with([_PR7.url, _PR8.url])
 
 
 def test_all_with_no_open_prs_returns_zero(
@@ -4797,14 +4776,6 @@ def test_release_cascade_refused_when_repo_not_released(
     mock_run.assert_not_called()
     err = capsys.readouterr().err
     assert f"vrg-finalize-pr {flag}: this repo is not released" in err
-
-
-def test_watch_runs_in_the_main_clone(tmp_path: Path) -> None:
-    """The watch re-checks the gates in the clone finalize runs from."""
-    watch = MagicMock(side_effect=_all_merged)
-    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
-        assert main([_PR_A]) == 0
-    watch.assert_called_once_with([_PR_A], clone=tmp_path)
 
 
 @pytest.mark.parametrize("mode", ["user", "audit"])
@@ -5271,3 +5242,27 @@ def test_watch_without_trusted_authors_exits_one(
     err = capsys.readouterr().err
     assert "vrg-finalize-pr: the watch stopped: no trusted authors\n" in err
     assert "Traceback" not in err
+
+
+def test_watch_keeps_close_refs_cd_and_advisory_stages(tmp_path: Path) -> None:
+    """Finalize reduced to its primary job keeps every settle stage (epic .github#1664, Task 10).
+
+    The watch takes the PRs alone: it judges no gates, so it needs no clone.
+    """
+    calls: list[str] = []
+    watch = _watch_returning(_pr_result(_PR_A))
+    with (
+        _settle_env(tmp_path, calls),
+        patch(_MOD + "._stage_advisory_sync", side_effect=lambda _ctx: calls.append("advisory")),
+        patch(_MOD + ".finalize_watch.watch", watch),
+    ):
+        assert main([_PR_A]) == 0
+    watch.assert_called_once_with([_PR_A])
+    assert calls == [
+        "close-refs:False",
+        "advisory",
+        "cleanup:True",
+        "provision:True",
+        "validation:True",
+        "cd-check:False",
+    ]

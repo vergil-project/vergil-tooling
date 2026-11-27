@@ -730,6 +730,9 @@ It follows the **same two-paths, one-declaration** shape as `system-packages`:
   base-image container before the tests. The two paths agree on *what* is
   provisioned (the same command string) even though they differ on *when* — baked
   once locally vs run per test job in CI.
+- **Noninteractive.** Both paths run the command after
+  `export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC`, as the `system-packages` apt
+  step is run, so an `apt-get install` in it cannot hang on a debconf prompt.
 - **Fail-closed.** A non-zero exit from the command **fails the build** (local)
   and the CI step, rather than producing an image whose missing dependency only
   surfaces mysteriously inside a test.

@@ -302,6 +302,36 @@ the merge-review gates on `origin/develop...HEAD`. The gates apply to an
 agent-involved PR, and a push by an agent identity makes the PR
 agent-involved, so a head an agent pushes is always gated. Only a head
 that passes is pushed. Auto-merge is never touched, so it stays on.
+`vrg-finalize-pr` judges no head of an open PR: the path is where every
+new head is judged.
+
+The path's gates, here and when it arms a PR, judge a head this way:
+
+- **They refuse another repo's clone.** The gates are judged on local git
+  objects, so a clone whose `origin` is not the PR's repository is
+  refused before anything is read.
+- **They ask whether the PR is agent-involved.** It is when an agent login
+  opened it, reviewed it, or is the actor of any event on it, or when its
+  ready state, on the relay ref `refs/vergil/pr-workflow/<branch>`, says
+  so. Turning auto-merge on or off is not involvement, and nor, on a PR
+  the one PR path accepts, is its merge and the closing GitHub records
+  with it. GitHub does not record who pushed a commit, so a ready state
+  counts as agent-involved unless its commit's author is trusted and its
+  `recorded_by` names an identity that is not an agent; a ready state with
+  no `recorded_by`, or a value the gates do not recognise, counts. The
+  value is written by whoever ran `report-ready`, so it only ever adds
+  involvement: `human` never makes a PR an agent acted on count as
+  human-only. A PR that is not agent-involved skips the gates.
+- **They fetch, then evaluate.** They fetch `develop` (and, for a head
+  already on origin, that head), moving no feature branch's
+  remote-tracking ref, and check the change from the fetched
+  `origin/develop` to the head: it needs a merge-review record or an
+  approved merge-review exemption with its fingerprint. The task issues
+  are the linkage lines of the PR's trusted body, or, when it has none,
+  its trusted ready state's.
+
+A read or fetch the gates cannot complete refuses the head, never passes
+it. A clean rebase keeps the change's fingerprint, so it passes.
 
 `--force-with-lease` pushes with a lease on the branch's remote-tracking
 ref (`refs/remotes/origin/<branch>`), the head this clone last saw on
