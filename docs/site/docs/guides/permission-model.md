@@ -290,6 +290,25 @@ refuses the update. The tooling's own server-side updates are limited to
 named sites by a guard test
 (`tests/vergil_tooling/test_branch_push_guard.py`).
 
+### Closing lines on `pr edit`
+
+A PR into `develop` keeps its closing lines as checked. For every
+identity, `vrg-gh pr edit` that sets the body (`--body`, `-b`,
+`--body-file` or `-F`), or moves the PR into `develop` with `--base`,
+refuses when the multiset of the body's `Ref` lines and closing-keyword
+references differs from the current body's. The closing-keyword family
+is `Closes` (and its variants) and the autoclose family `Fixes` and
+`Resolves`, plain or in `- <label>:` form. Prose edits pass, and so do
+edits on any other base and title-only edits.
+
+The wrapper reads the current base and body with `gh pr view` on the
+same target and `--repo`. The lookup fails closed: a read that fails, a
+response with no base or body, a body given more than one way, or a
+new body that cannot be read refuses the edit. A new body from stdin
+(`--body-file -`) on a PR into `develop` is refused, since the wrapper
+cannot read it without consuming it; pass the body inline or from a
+file.
+
 ### `gh api` by Identity
 
 `gh api` can perform any GitHub API operation — create repos,
