@@ -1,12 +1,13 @@
 """The arming refs, ``refs/vergil/release-lock-arming/<pr>``.
 
 Spec §5.4 of epic vergil-project/.github#1664. The arming side of the
-handshake between arming a PR and taking the lock: a caller about to arm a PR writes the PR's arming ref by a create-only push,
-then reads the lock; the release writes the lock, then waits until every
-arming ref is gone. Each ref is a one-file commit carrying a random nonce, so
-a renewal always changes its value: the release measures an arming ref's
-expiry from its own first sighting of a value, never from a time the ref
-carries. Arming refs are read with no trusted-author check (§5.10).
+handshake between arming a PR and taking the lock: a caller about to arm a
+PR writes the PR's arming ref by a create-only push, then reads the lock;
+the release writes the lock, then waits until every arming ref is gone. Each
+ref is a one-file commit carrying a random nonce, so a renewal always
+changes its value: the release measures an arming ref's expiry from its own
+first sighting of a value, never from a time the ref carries. Arming refs
+are read with no trusted-author check (§5.10).
 """
 
 from __future__ import annotations
