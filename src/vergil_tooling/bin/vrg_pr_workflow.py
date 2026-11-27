@@ -185,7 +185,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help=(
             "The task the PR hands off (N or owner/repo#N). Repeat it, in commit "
-            "order, for a batch PR of 2 to 8 same-epic issues: report-ready then runs "
+            "order, for a batch PR of 2 to 20 same-epic issues: report-ready then runs "
             "the batch hard rules and the one-commit-per-issue check before anything "
             "is pushed, and removes the batch markers once the state is recorded."
         ),

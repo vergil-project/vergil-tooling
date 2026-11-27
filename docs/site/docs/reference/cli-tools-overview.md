@@ -308,7 +308,7 @@ the check again when it builds the body (see
 [the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
 Any other issue, and a batch, prints no `planning_close`.
 
-The batch hard rules are: 2 to 8 issues, none listed twice, every one in
+The batch hard rules are: 2 to 20 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly blocked by an open deployment task (through a `Blocked-by:` line or a
 native GitHub blocked-by relationship) and opened by a trusted author,

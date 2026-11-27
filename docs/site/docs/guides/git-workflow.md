@@ -240,8 +240,8 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     PR's branch). See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
-!!! note "Batch PRs: several small issues, one PR"
-    An agent may implement 2 to 8 small issues of one epic on one branch
+!!! note "Batch PRs: several issues, one PR"
+    An agent may implement 2 to 20 issues of one epic on one branch
     and hand them off as one PR (epic vergil-project/.github#1019).
     `vrg-pr-workflow batch-start` checks the batch's hard rules and records
     the ordered list and a fixed base. Each issue gets one commit, its

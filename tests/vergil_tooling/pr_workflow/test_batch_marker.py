@@ -70,8 +70,8 @@ def test_write_markers_writes_every_member_with_one_base(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("issues", "match"),
     [
-        (["#10"], "2 to 8 issues"),
-        ([f"#{n}" for n in range(10, 19)], "2 to 8 issues"),
+        (["#10"], "2 to 20 issues"),
+        ([f"#{n}" for n in range(10, 31)], "2 to 20 issues"),
         (["#10", "#10"], "more than once"),
         (["#10", "11"], "not a canonical issue ref"),
     ],
@@ -148,7 +148,7 @@ def test_read_marker_refuses_a_symlinked_level(tmp_path: Path) -> None:
         (json.dumps({"issues": ["#10", 11], "base_sha": SHA}), "list of issue refs"),
         (json.dumps({"issues": ["#10", "#11"], "base_sha": 1}), "must be a string"),
         (json.dumps({"issues": ["#10", "#11"], "base_sha": "abc"}), "not a full commit SHA"),
-        (json.dumps({"issues": ["#10"], "base_sha": SHA}), "2 to 8 issues"),
+        (json.dumps({"issues": ["#10"], "base_sha": SHA}), "2 to 20 issues"),
         (json.dumps({"issues": ["#11", "#12"], "base_sha": SHA}), "does not list #10"),
     ],
 )
