@@ -132,7 +132,7 @@ to date.
 | Exit | Meaning |
 |---|---|
 | 0 | The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged |
-| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, or a branch named like a rolling tag, which must be deleted by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
+| 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or a workflow GitHub disabled for inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
 | 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
 
 ## The `apply` command (deprecated)
@@ -805,6 +805,36 @@ UNDECLARED PARAMETER: rulesets.Branch protection rule 'pull_request' has
 
 A whole live rule whose `type` the desired ruleset lacks is not an
 undeclared parameter. It is reported as `.rules` value drift.
+
+## GitHub checks — workflows disabled for inactivity
+
+GitHub turns off a public repository's scheduled workflows after 60 days
+with no repository activity, and gives each the workflow state
+`disabled_inactivity`
+([Disabling and enabling a workflow](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/disabling-and-enabling-a-workflow)).
+A workflow switched off this way fails silently: it simply stops running.
+The audit lists the repo's workflows (`GET /repos/{owner}/{repo}/actions/workflows`)
+and reports each one in that state as drift,
+`inactive_workflows.<path>`, expected `active`
+(vergil-project/vergil-tooling#5226):
+
+```text
+    inactive_workflows..github/workflows/epic-sweep.yml: expected='active', actual='disabled_inactivity'
+```
+
+- **It is non-compliant.** `audit` exits 1, and so does the nightly
+  `update`, which turns the scheduled run red.
+- **`update` and `apply` only report it.** They never turn a workflow
+  back on: whether to re-enable it is a human's call, and the nightly
+  job's token holds Actions read, not write. They still converge any
+  other drift and open the sync PR, then exit 1 naming each workflow.
+  Re-enable one from the repo's Actions tab or with
+  `gh workflow enable <file name> --repo OWNER/REPO`.
+- **Reading the list needs `actions=read`.** A token without it gets a
+  403 naming the missing permission, and the listing is
+  [not checked](#settings-the-identity-cannot-read), as
+  `inactive_workflows`. The nightly job's token holds Actions read.
+- A workflow turned off by hand (`disabled_manually`) is not reported.
 
 ## Related
 

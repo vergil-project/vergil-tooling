@@ -31,6 +31,7 @@ from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.develop_clone import DevelopCloneError, clone_develop
 from vergil_tooling.lib.github_config import (
+    INACTIVE_WORKFLOW_FIELD,
     ROLLING_TAG_BRANCH_FIELD,
     BypassUnreadable,
     ClassicProtectionReport,
@@ -177,8 +178,9 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
       no sync PR was needed, or the one opened this run merged;
     - **1:** drift that could not be fixed: a managed-file check with no
       fixer, a fix that cannot be computed (:class:`CannotFix`), an
-      undeclared ruleset parameter, or a branch named like a rolling tag,
-      which must be deleted by hand. The sync PR for the fixable drift is
+      undeclared ruleset parameter, a branch named like a rolling tag,
+      which must be deleted by hand, or a workflow GitHub disabled for
+      inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is
       still opened, and exit 1 applies only once it has merged;
     - **2:** something could not be audited or converged: an agent identity,
       a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
@@ -387,9 +389,11 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
 
     branch_prefix = f"{ROLLING_TAG_BRANCH_FIELD}."
     shadowing = [i for i in github_diff.items if i.field.startswith(branch_prefix)]
+    workflow_prefix = f"{INACTIVE_WORKFLOW_FIELD}."
+    inactive = [i for i in github_diff.items if i.field.startswith(workflow_prefix)]
     if github_diff.is_compliant():
         print("GitHub config compliant, nothing to apply.")
-    elif len(github_diff.items) > len(shadowing):
+    elif len(github_diff.items) > len(shadowing) + len(inactive):
         print(f"  Applying to {repo}...")
         try:
             reports = _apply_repo(repo, config)
@@ -428,6 +432,18 @@ def _audit_and_apply(args: argparse.Namespace, repo: str, *, local_compliant: bo
         print(
             f"  {repo}: apply does not delete branches; delete the branch(es) named "
             f"like a rolling tag by hand, then re-run: {names}"
+        )
+        return 1
+
+    if inactive:
+        # Report only (vergil-tooling#5226): GitHub switched these scheduled
+        # workflows off after 60 days with no repository activity, so they
+        # fail silently by not running. apply never turns a workflow back on.
+        paths = ", ".join(i.field.removeprefix(workflow_prefix) for i in inactive)
+        print(
+            f"  {repo}: apply does not re-enable workflows; GitHub disabled these "
+            f"for inactivity, so they no longer run. Re-enable each by hand "
+            f"(gh workflow enable <file name> --repo {repo}), then re-run: {paths}"
         )
         return 1
 

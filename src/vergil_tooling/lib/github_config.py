@@ -117,6 +117,12 @@ class DesiredState:
     # resolves a branch before a tag, and the branch-name ruleset stops one
     # being created, not one that already exists.
     rolling_tag_branches: list[str] = field(default_factory=list)
+    # The paths of the repo's workflows GitHub has disabled for inactivity
+    # (state ``disabled_inactivity``), sorted. Always empty in the desired
+    # state: GitHub switches a public repo's scheduled workflows off after 60
+    # days with no repository activity, and a workflow switched off this way
+    # fails silently, by not running (vergil-tooling#5226).
+    inactive_workflows: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -334,6 +340,16 @@ ROLLING_TAG_BRANCH_NAME = re.compile(r"v[0-9]")
 # drift item ``rolling_tag_branches.<name>``, and an unreadable listing is
 # this field, not checked.
 ROLLING_TAG_BRANCH_FIELD = "rolling_tag_branches"
+
+# The workflow state GitHub gives a workflow it has switched off for
+# inactivity. Only scheduled workflows reach it: GitHub disables them in a
+# public repo after 60 days with no repository activity.
+INACTIVE_WORKFLOW_STATE = "disabled_inactivity"
+
+# The diff path of the workflows disabled for inactivity: each one is the
+# drift item ``inactive_workflows.<path>``, and an unreadable listing is this
+# field, not checked.
+INACTIVE_WORKFLOW_FIELD = "inactive_workflows"
 
 
 AUTOMATION_BRANCH_RULESET_NAME = "Automation branches"
@@ -1170,6 +1186,9 @@ ADMIN_READ = "administration=read"
 # What the rolling-tag branch listing (``git/matching-refs``) needs.
 CONTENTS_READ = "contents=read"
 
+# What the workflow listing (``actions/workflows``) needs.
+ACTIONS_READ = "actions=read"
+
 # Phrases GitHub puts on a 403 that means "this identity lacks the permission":
 # an App token gets the first, a user token without admin the second. A 403
 # without one (a rate limit, an SSO block) is not a permission gap and raises.
@@ -1829,6 +1848,39 @@ def _fetch_rolling_tag_branches(repo: str, not_checked: list[NotChecked]) -> lis
     return sorted(names)
 
 
+def _fetch_inactive_workflows(repo: str, not_checked: list[NotChecked]) -> list[str]:
+    """The paths of the repo's workflows disabled for inactivity, sorted.
+
+    ``actions/workflows`` lists every workflow with its ``state``; those in
+    :data:`INACTIVE_WORKFLOW_STATE` are kept. The audit only reports them:
+    turning one back on is left to a human, and the nightly job's token holds
+    Actions read, not write (vergil-tooling#5226).
+
+    A permission-gap 403 records ``inactive_workflows`` as not checked, so
+    the empty placeholder never reads as clean; any other error, and any
+    malformed entry, raises rather than be dropped from the comparison.
+    """
+    endpoint = f"repos/{repo}/actions/workflows"
+    try:
+        raw = github.read_json_paginated(endpoint, "workflows")
+    except github.GitHubAPIError as exc:
+        if not _is_permission_gap(exc):
+            raise
+        not_checked.append(NotChecked(field=INACTIVE_WORKFLOW_FIELD, permission=ACTIONS_READ))
+        return []
+    paths: list[str] = []
+    for entry_raw in raw:
+        entry = cast("dict[str, object]", entry_raw) if isinstance(entry_raw, dict) else {}
+        path = entry.get("path")
+        state = entry.get("state")
+        if not isinstance(path, str) or not path or not isinstance(state, str):
+            msg = f"{endpoint} returned an unreadable workflow: {entry_raw!r}"
+            raise RuntimeError(msg)
+        if state == INACTIVE_WORKFLOW_STATE:
+            paths.append(path)
+    return sorted(paths)
+
+
 def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -1970,6 +2022,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
 
     environment = _fetch_environment(repo, AUTOMATION_ENVIRONMENT_NAME, not_checked)
     rolling_tag_branches = _fetch_rolling_tag_branches(repo, not_checked)
+    inactive_workflows = _fetch_inactive_workflows(repo, not_checked)
 
     return FetchResult(
         state=DesiredState(
@@ -1981,6 +2034,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
             classic_develop_strict=classic.develop_strict,
             environments=[environment] if environment is not None else [],
             rolling_tag_branches=rolling_tag_branches,
+            inactive_workflows=inactive_workflows,
         ),
         not_checked=not_checked,
     )
@@ -2321,6 +2375,25 @@ def _diff_rolling_tag_branches(
             )
 
 
+def _diff_inactive_workflows(desired: list[str], actual: list[str], items: list[DiffItem]) -> None:
+    """Report each workflow disabled for inactivity as its own drift item.
+
+    The item is ``inactive_workflows.<path>``, expected ``active``. ``apply``
+    and ``update`` never turn a workflow back on, so this drift is left for a
+    human to re-enable.
+    """
+    wanted = set(desired)
+    for path in actual:
+        if path not in wanted:
+            items.append(
+                DiffItem(
+                    field=f"{INACTIVE_WORKFLOW_FIELD}.{path}",
+                    expected="active",
+                    actual=INACTIVE_WORKFLOW_STATE,
+                )
+            )
+
+
 def _diff_producibility(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
@@ -2439,6 +2512,7 @@ def _compute_checked_diff(*, desired: DesiredState, actual: DesiredState) -> Con
     _diff_producibility(desired.rulesets, actual.rulesets, items)
     _diff_environments(desired.environments, actual.environments, items, skipped)
     _diff_rolling_tag_branches(desired.rolling_tag_branches, actual.rolling_tag_branches, items)
+    _diff_inactive_workflows(desired.inactive_workflows, actual.inactive_workflows, items)
     if actual.classic_develop_strict != desired.classic_develop_strict:
         items.append(
             DiffItem(
