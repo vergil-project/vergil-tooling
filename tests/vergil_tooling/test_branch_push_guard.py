@@ -466,9 +466,7 @@ def scan_updates_tree(root: Path = SRC) -> list[Update]:
     updates: list[Update] = []
     for file in sorted(root.rglob("*.py")):
         updates.extend(
-            scan_updates_source(
-                file.read_text(encoding="utf-8"), file.relative_to(root).as_posix()
-            )
+            scan_updates_source(file.read_text(encoding="utf-8"), file.relative_to(root).as_posix())
         )
     return updates
 
@@ -510,7 +508,7 @@ def test_every_allowed_update_site_is_still_needed() -> None:
 def test_lib_github_still_defines_the_updaters() -> None:
     tree = ast.parse((SRC / "lib/github.py").read_text(encoding="utf-8"))
     defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    assert _UPDATERS <= defined
+    assert defined >= _UPDATERS
 
 
 def test_the_update_scan_finds_the_known_updates() -> None:
@@ -533,7 +531,11 @@ _GITHUB_HEADER = "from vergil_tooling.lib import github\n"
             "update_branch_rebase",
         ),
         (_GITHUB_HEADER, "def f(pr):\n    run_later(github.update_branch, pr)\n", "update_branch"),
-        ("from vergil_tooling.lib import github as gh\n", "def f(pr):\n    gh.update_branch(pr)\n", "update_branch"),
+        (
+            "from vergil_tooling.lib import github as gh\n",
+            "def f(pr):\n    gh.update_branch(pr)\n",
+            "update_branch",
+        ),
         (
             "from vergil_tooling.lib.github import update_branch_rebase as ubr\n",
             "def f(pr, h):\n    ubr(pr, expected_head=h)\n",
@@ -545,7 +547,9 @@ def test_an_update_outside_the_allowed_sites_names_file_and_line(
     header: str, body: str, name: str
 ) -> None:
     [line] = update_violations(scan_updates_source(header + body, "lib/new.py"))
-    assert line.startswith(f"src/vergil_tooling/lib/new.py:3: a server-side branch update (github.{name})")
+    assert line.startswith(
+        f"src/vergil_tooling/lib/new.py:3: a server-side branch update (github.{name})"
+    )
 
 
 def test_an_update_scoped_site_allows_only_that_class() -> None:
