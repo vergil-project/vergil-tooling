@@ -522,6 +522,28 @@ and the [Releasing guide](../guides/releasing.md).
 | Exit codes | 0 success, 1 any failure or refusal, 2 usage error (such as `--supersede` with `--resume`), 130 interrupted |
 | Status | Active |
 
+### vrg-release-group
+
+List an epic's release groups: a batch of tasks of one development epic (or
+a proxy of one) that ship together (epic vergil-project/.github#1672). A
+group's membership is the latest `release-group <id> rev <n>` record in the
+epic's comments, read only from the `human` and `agents` roles; a conflict,
+an out-of-order revision, an edited record or a malformed one refuses that
+group, and an outsider's edit of an epic comment refuses the whole epic.
+`list --epic <owner>/<repo>#<N>` prints one line per group,
+`G1 rev 3: <ref> <ref>` or `G2 rev 2: dissolved`; `--group <id>` narrows it
+and `--json` prints `{"epic", "groups"}`. Read-only: there are no write
+commands yet.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_group` (library: `vergil_tooling.lib.release_groups.record`) |
+| Args | `list --epic <owner>/<repo>#<N>` (required), `--group <id>`, `--json` |
+| Preconditions | GitHub App credentials for the epic's org |
+| Failure mode | Refusals and read failures on stderr, nothing on stdout |
+| Exit codes | 0 read, 1 refusal or read failure, 2 usage error |
+| Status | Active |
+
 ### vrg-release-lock
 
 Read the release lock of a repository: the ref
