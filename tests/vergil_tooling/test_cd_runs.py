@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import TYPE_CHECKING
@@ -10,7 +11,10 @@ import pytest
 
 from vergil_tooling.lib import cd_runs, github
 from vergil_tooling.lib.cd_runs import (
+    MAX_READ_FAILURES,
     CDRunLookupError,
+    CDRunReadError,
+    RunView,
     classify_jobs,
     failed_job_labels,
     failed_job_names,
@@ -65,7 +69,7 @@ class _FakeGh:
 
 
 def _view(status: str, conclusion: str | None = None) -> dict[str, object]:
-    return {"status": status, "conclusion": conclusion, "url": _URL}
+    return {"status": status, "conclusion": conclusion, "attempt": 1, "url": _URL}
 
 
 def _run(sha: str = _SHA, run_id: int = 12345) -> dict[str, object]:
@@ -128,6 +132,85 @@ def test_watch_tells_a_supersede_from_another_cancel(group: str | None, state: s
     ):
         assert watch_run("12345", timeout=0) == state
     lookup.assert_called_once_with("12345", _URL)
+
+
+def _view_error(stderr: str) -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(1, ["gh", "run", "view"], output="", stderr=stderr)
+
+
+def test_watch_retries_a_transient_read_error_with_back_off() -> None:
+    fake = _FakeGh(views=[_view("in_progress"), _view("completed", "success")])
+    calls = iter([_view_error("HTTP 404: Not Found")])
+
+    def flaky(command: list[str], **kwargs: object) -> CompletedProcess:
+        error = next(calls, None)
+        if error is not None:
+            raise error
+        return fake(command, **kwargs)
+
+    with (
+        patch(_GH_RUN, side_effect=flaky),
+        patch(_MOD + ".time.sleep") as sleep,
+        patch(_MOD + ".retry.compute_delay", return_value=1.5),
+    ):
+        assert watch_run("12345", timeout=3600) == "success"
+    assert sleep.call_args_list[0].args == (1.5,)
+
+
+def test_watch_a_non_transient_read_error_fails_at_once() -> None:
+    # A 403 is a read failure at once, never retried to the deadline and
+    # reported as a run still in progress (#5174).
+    with (
+        patch(_GH_RUN, side_effect=_view_error("HTTP 403: Forbidden")) as run,
+        patch(_MOD + ".time.sleep") as sleep,
+        pytest.raises(CDRunReadError, match="read failure, not the run's result") as raised,
+    ):
+        watch_run("12345", timeout=3600)
+    assert raised.value.persistent is False
+    assert "403" in raised.value.detail
+    assert "403" in str(raised.value)
+    assert run.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_watch_a_persistent_read_failure_fails_as_one() -> None:
+    fake = _FakeGh(views=[[]] * (MAX_READ_FAILURES + 1))
+    with (
+        patch(_GH_RUN, side_effect=fake),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(CDRunReadError, match="persistent read failure") as raised,
+    ):
+        watch_run("12345", timeout=3600)
+    assert raised.value.persistent is True
+    assert len(fake.calls) == MAX_READ_FAILURES + 1
+
+
+def test_watch_a_read_still_failing_at_the_deadline_is_a_read_failure() -> None:
+    fake = _FakeGh(views=[{"status": "completed", "conclusion": None, "attempt": 1}])
+    with (
+        patch(_GH_RUN, side_effect=fake),
+        pytest.raises(CDRunReadError, match="persistent read failure"),
+    ):
+        watch_run("12345", timeout=0)
+
+
+def test_watch_names_the_repo_it_is_given() -> None:
+    fake = _FakeGh(views=[_view("completed", "success")])
+    with patch(_GH_RUN, side_effect=fake):
+        assert watch_run("12345", timeout=0, repo="o/r") == "success"
+    assert list(fake.calls[0][:6]) == ["gh", "run", "view", "--repo", "o/r", "12345"]
+
+
+def test_wait_completed_waits_for_a_later_attempt() -> None:
+    fake = _FakeGh(
+        views=[
+            {"status": "completed", "conclusion": "failure", "attempt": 2, "url": _URL},
+            {"status": "completed", "conclusion": "success", "attempt": 3, "url": _URL},
+        ]
+    )
+    with patch(_GH_RUN, side_effect=fake), patch(_MOD + ".time.sleep"):
+        view = cd_runs.wait_attempt_completed("12345", timeout=3600, attempt=3)
+    assert view == RunView("completed", "success", 3, _URL)
 
 
 def test_watch_raises_when_a_cancel_cannot_be_checked() -> None:
