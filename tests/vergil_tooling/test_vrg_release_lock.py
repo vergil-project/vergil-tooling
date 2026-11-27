@@ -73,7 +73,7 @@ def _gather(
     state: LockState | Exception,
     *,
     staleness: Staleness | Exception | None = None,
-    prs: object = (),
+    prs: object = None,
     refusals: dict[int, str | None | Exception] | None = None,
 ) -> tuple[LockStatus, dict[str, MagicMock]]:
     refusals = refusals or {}
@@ -96,7 +96,7 @@ def _gather(
         ),
         "read_json": MagicMock(
             side_effect=prs if isinstance(prs, Exception) else None,
-            return_value=None if isinstance(prs, Exception) else list(prs),  # type: ignore[call-overload]
+            return_value=[] if prs is None else prs,
         ),
         "accepts": MagicMock(side_effect=accepts),
     }
@@ -267,6 +267,15 @@ def test_status_text_tracking_issue_found_by_version() -> None:
     assert f"tracking issue: {_REPO}#5301 (open release issue of 2.1.400; not in the lock)" in lines
 
 
+def test_status_text_no_tracking_issue() -> None:
+    lines = lock_status.text_lines(
+        _status(LockState(sha=_SHA, record=_record(tracking_issue="", worktree=""), error=""))
+    )
+    assert "tracking issue: none" in lines
+    assert "worktree: none" in lines
+    assert any(line.startswith("heartbeat: ") and "ago" not in line for line in lines)
+
+
 def test_status_text_unreadable() -> None:
     lines = lock_status.text_lines(
         _status(
@@ -349,7 +358,9 @@ def test_status_read_failure_exits_1(error: Exception, capsys: pytest.CaptureFix
 
 
 def test_status_non_github_origin_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
-    rc, gather = _main(["status"], result=_status(LockState(None, None, "")), remote="/tmp/x")
+    rc, gather = _main(
+        ["status"], result=_status(LockState(None, None, "")), remote="git@example.com:x/y.git"
+    )
     assert rc == 1
     gather.assert_not_called()
     assert "--repo" in capsys.readouterr().err
@@ -368,3 +379,15 @@ def test_status_runs_under_an_agent_identity(
     rc, _ = _main(["status"], result=_status(LockState(None, None, "")))
     assert rc == 0
     capsys.readouterr()
+
+
+def test_status_origin_read_failure_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    failure = subprocess.CalledProcessError(2, ["git", "remote", "get-url"], stderr="no origin")
+    with (
+        patch(f"{_STATUS}.git.remote_url", side_effect=failure),
+        patch(f"{_BIN}.lock_status.gather") as gather,
+    ):
+        rc = vrg_release_lock.main(["status"])
+    assert rc == 1
+    gather.assert_not_called()
+    assert "could not read the origin remote" in capsys.readouterr().err

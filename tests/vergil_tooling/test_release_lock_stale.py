@@ -50,7 +50,7 @@ def _judge(
     state: LockState,
     *,
     issue_state: str | Exception = "OPEN",
-    open_issues: list[tuple[str, int, str]] | Exception = (),  # type: ignore[assignment]
+    open_issues: list[tuple[str, int, str]] | Exception | None = None,
 ) -> tuple[Staleness, dict[str, MagicMock]]:
     """Judge *state* with the issue reads mocked: the named issue's state, the open releases."""
     view = MagicMock(
@@ -59,7 +59,7 @@ def _judge(
     )
     listed = MagicMock(
         side_effect=open_issues if isinstance(open_issues, Exception) else None,
-        return_value=list(open_issues) if not isinstance(open_issues, Exception) else None,
+        return_value=[] if open_issues is None else open_issues,
     )
     trusted = MagicMock(side_effect=lambda issues, _repo: list(issues))
     with (
@@ -73,7 +73,9 @@ def _judge(
 
 def test_absent_lock_not_stale() -> None:
     result, mocks = _judge(LockState(sha=None, record=None, error=""))
-    assert result == Staleness(stale=False, live=False, reason="no release lock held", tracking_issue="")
+    assert result == Staleness(
+        stale=False, live=False, reason="no release lock held", tracking_issue=""
+    )
     mocks["view"].assert_not_called()
 
 
@@ -114,7 +116,9 @@ def test_broken_fresh_heartbeat_with_closed_issue_stale() -> None:
 
 
 def test_closed_issue_stale() -> None:
-    result, _ = _judge(_held(_record(tracking_issue=_ISSUE, heartbeat_at=_OLD)), issue_state="CLOSED")
+    result, _ = _judge(
+        _held(_record(tracking_issue=_ISSUE, heartbeat_at=_OLD)), issue_state="CLOSED"
+    )
     assert result.stale
     assert not result.live
     assert result.tracking_issue == _ISSUE
@@ -207,6 +211,15 @@ def test_unexpected_issue_state_raises(value: Any) -> None:
         pytest.raises(IssueReadError, match=_ISSUE),
     ):
         judge(_REPO, _held(rec), now=_NOW)
+
+
+def test_malformed_issue_ref_raises_without_a_read() -> None:
+    with (
+        patch(f"{_MOD}.github.read_json") as view,
+        pytest.raises(IssueReadError, match="not <owner>/<repo>#<n>"),
+    ):
+        stale._issue_state("#12")
+    view.assert_not_called()
 
 
 def test_issue_in_another_repo_is_read_there() -> None:

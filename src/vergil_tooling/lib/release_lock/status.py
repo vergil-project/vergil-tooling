@@ -192,7 +192,9 @@ def text_lines(status: LockStatus) -> list[str]:
         lines.append(f"release lock: held, unreadable: {state.error}")
     else:
         health = f"broken (at {rec.broken_stage})" if rec.health == "broken" else rec.health
-        age = f" ({status.heartbeat_age_secs}s ago)" if status.heartbeat_age_secs is not None else ""
+        age = (
+            f" ({status.heartbeat_age_secs}s ago)" if status.heartbeat_age_secs is not None else ""
+        )
         lines += [
             "release lock: held",
             f"holder: {rec.holder_identity} on {rec.holder_host}",

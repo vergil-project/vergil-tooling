@@ -146,7 +146,7 @@ def _run(
     still_present: bool | None = None,
     merge: Any = None,
     lock: LockStatus | Exception | None = None,
-    lock_repo: str | None = "vergil-project/vergil-tooling",
+    lock_repo: str | Exception | None = "vergil-project/vergil-tooling",
     argv: list[str] | None = None,
 ) -> tuple[int, dict[str, MagicMock]]:
     """Run main() against a mocked repo: main checkout at /repo plus *linked*.
@@ -205,7 +205,10 @@ def _run(
             _patch("pr_await.standing_block", side_effect=merge)
         else:
             _patch("pr_await.standing_block", return_value=merge)
-        _patch("lock_status.origin_repo", return_value=lock_repo)
+        if isinstance(lock_repo, Exception):
+            _patch("lock_status.origin_repo", side_effect=lock_repo)
+        else:
+            _patch("lock_status.origin_repo", return_value=lock_repo)
         if isinstance(lock, Exception):
             _patch("lock_status.gather", side_effect=lock)
         else:
@@ -1469,3 +1472,13 @@ def test_repo_status_lock_non_github_origin_is_error(capsys: pytest.CaptureFixtu
     section = _lock_section(capsys.readouterr().out)
     assert section == ["ERROR: release lock: origin is not a github.com remote"]
     mocks["lock_status.gather"].assert_not_called()
+
+
+def test_repo_status_lock_origin_read_failure_is_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failure = subprocess.CalledProcessError(2, ["git", "remote", "get-url"], stderr="no origin")
+    rc, _ = _run([], lock_repo=failure)
+    assert rc == 1
+    section = _lock_section(capsys.readouterr().out)
+    assert section[0].startswith("ERROR: release lock: could not read the origin remote")
