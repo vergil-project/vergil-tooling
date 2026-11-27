@@ -19885,6 +19885,15 @@ succeed:</p>
   <code>vrg-finalize-pr --cleanup-only --wait-cd</code> to re-confirm once the run
   has finished. It still fails the run, because an unknown result is not
   a pass, but it never claims the run failed (issue #3316).</li>
+<li><strong>A read failure is not a timeout.</strong> Finalize re-reads the run with
+  <code>gh run view</code>, and classifies a read that fails before it retries it.
+  A transient GitHub error, a 404 on the just-listed run, or a reply that
+  cannot be parsed is retried with back-off. Any other error (an expired
+  credential's 403, say), seven failed reads in a row, or a read still
+  failing at the deadline is an error naming its cause,
+  <code>CD: error (&lt;cause&gt;)</code>, and exits 1, as a failed listing does: CD's
+  state is not known, so it is neither a CD failure nor "result
+  unknown" (issue #5174).</li>
 <li><strong>Superseded is not failure.</strong> A run that concluded <code>cancelled</code> is
   checked for a concurrency supersede: every job ended passing or
   cancelled, and every cancelled job carries GitHub's annotation
