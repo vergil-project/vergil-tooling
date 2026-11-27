@@ -10,7 +10,9 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
@@ -18,6 +20,7 @@ from vergil_tooling.lib import (
     gh_version,
     github,
     identity_mode,
+    linkage,
     operational_close,
     retry,
     trust,
@@ -309,6 +312,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-gh: pr update-branch is refused. {refused}", file=sys.stderr)
             return 1
 
+    if top == "pr" and sub == "edit":
+        refused = _closing_line_refusal(argv[2:])
+        if refused is not None:
+            print(f"vrg-gh: pr edit is refused. {refused}", file=sys.stderr)
+            return 1
+
     rc = _exec_gh(argv)
     # `--help` forwards to gh's own help and exits 0 with no rerun requested.
     if (
@@ -520,6 +529,123 @@ def _update_branch_refusal(args: list[str]) -> str | None:
         "server-side (epic vergil-project/.github#1664). Bring the branch up to date "
         "locally (vrg-git fetch origin, then vrg-git rebase origin/develop) and push "
         "it with 'vrg-submit-pr --push'."
+    )
+
+
+_PR_EDIT_BODY_FLAGS = ("--body", "-b", "--body-file", "-F")
+_PR_EDIT_INLINE_BODY_FLAGS = ("--body", "-b")
+
+
+def _closing_lines(body: str) -> Counter[str]:
+    """The multiset of a PR body's Ref lines and closing-keyword references.
+
+    Each line is ``"<Keyword> <ref>"``, with the keyword as the linkage parser
+    names it (``Ref``, or ``Closes`` for the close family) and ``Fixes`` or
+    ``Resolves`` for the autoclose family (:data:`linkage.AUTOCLOSE_RE`). Lines
+    count whether plain or in ``- <label>:`` form, and a keyword mid-line is
+    prose, so it does not count.
+    """
+    lines = [f"{keyword} {ref}" for keyword, ref in linkage.extract_tracking_refs(body)]
+    for match in linkage.AUTOCLOSE_RE.finditer(body):
+        keyword = "Fixes" if match[1].lower().startswith("fix") else "Resolves"
+        number = match[0].rsplit("#", 1)[1]
+        ref = f"{match[2]}#{number}" if match[2] else f"#{number}"
+        lines.append(f"{keyword} {ref}")
+    return Counter(lines)
+
+
+def _closing_line_refusal(args: list[str]) -> str | None:
+    """Why a ``pr edit`` *args* must not run, or ``None`` when they may.
+
+    Spec §5.2 of epic vergil-project/.github#1672: a PR's closing lines stay as
+    checked. An edit that sets the body (``--body``, ``-b``, ``--body-file`` or
+    ``-F``) of a PR into ``develop``, or that moves it into ``develop`` with
+    ``--base``, is refused when the multiset of its Ref lines and
+    closing-keyword references (:func:`_closing_lines`) differs from the
+    current body's. The guard applies to every identity. An edit on any other
+    base, or one that leaves the body alone (a title-only edit), passes without
+    a body read, and ``--help`` is not gated.
+
+    The lookup fails closed, as the update-branch guard does: the target is
+    read with ``gh pr view`` on the same target, ``--repo`` and owner
+    installation, and a read that fails, a response with no base or body, a
+    body that cannot be read, or a body given more than one way, refuses the
+    edit. A new body read from stdin (``--body-file -``) on a develop PR is
+    refused too, since vrg-gh cannot read it without consuming it.
+    """
+    if any(arg in ("-h", "--help") for arg in args):
+        return None
+    parsed = _parse_args(args, _VALUE_FLAGS[("pr", "edit")])
+    body_sources = [(f, v) for f, v in parsed.flag_values if f in _PR_EDIT_BODY_FLAGS]
+    requested_bases = [v for f, v in parsed.flag_values if f in ("--base", "-B")]
+    if not body_sources and not requested_bases:
+        return None
+    owners = _target_owners(["pr", "edit", *args])
+    unreadable = "vrg-gh could not read the PR's base and body, so it does not edit the body: "
+    if len(parsed.positionals) > 1:
+        return f"{unreadable}pr edit takes at most one PR number, URL or branch"
+    if len(owners) > 1:
+        return f"{unreadable}the command names more than one owner ({', '.join(owners)})"
+    view = ["pr", "view", *parsed.positionals, "--json", "baseRefName,body"]
+    if parsed.repo_values:
+        view += ["--repo", parsed.repo_values[-1]]
+    try:
+        with github.target_org(owners[0] if owners else None):
+            data = github.read_json(*view)
+    except (
+        subprocess.CalledProcessError,
+        github.NoInstallationError,
+        github.AppAuthError,
+        gh_version.GhVersionError,
+        ValueError,
+        OSError,
+    ) as exc:
+        return f"{unreadable}{exc}"
+    base = data.get("baseRefName") if isinstance(data, dict) else None
+    if not isinstance(base, str) or not base:
+        return f"{unreadable}gh pr view returned no base branch: {data!r}"
+    if base != _DEVELOP and not (requested_bases and requested_bases[-1] == _DEVELOP):
+        return None
+    if not body_sources:
+        return None
+    current = data.get("body") if isinstance(data, dict) else None
+    if not isinstance(current, str):
+        return f"{unreadable}gh pr view returned no body: {data!r}"
+    if len(body_sources) > 1:
+        return f"{unreadable}the edit gives the body more than one way"
+    flag, value = body_sources[0]
+    if flag in _PR_EDIT_INLINE_BODY_FLAGS:
+        new_body = value
+    elif value == "-":
+        return (
+            f"The PR is into {_DEVELOP}, and its new body would come from stdin, which "
+            "vrg-gh cannot read for the closing-line check. Pass the body with --body or "
+            "a --body-file path."
+        )
+    else:
+        try:
+            new_body = Path(value).read_text(encoding="utf-8")
+        except (OSError, ValueError) as exc:
+            return (
+                f"vrg-gh could not read the new body from {value!r}, so it does not "
+                f"edit the body: {exc}"
+            )
+    before = _closing_lines(current)
+    after = _closing_lines(new_body)
+    if before == after:
+        return None
+    removed = sorted((before - after).elements())
+    added = sorted((after - before).elements())
+    changes = []
+    if removed:
+        changes.append(f"removes {', '.join(removed)}")
+    if added:
+        changes.append(f"adds {', '.join(added)}")
+    return (
+        f"The PR is into {_DEVELOP}, and its closing lines (Ref and Closes, and Fixes and "
+        "Resolves) stay as checked (epic vergil-project/.github#1672): this edit "
+        f"{' and '.join(changes)}. Keep the closing lines unchanged; the PR's linkage is "
+        "set by 'vrg-submit-pr'."
     )
 
 
@@ -1130,6 +1256,9 @@ def _print_help() -> None:
         "  - An agent's pr update-branch (with or without --rebase) of a PR into\n"
         "    develop is refused: update the branch locally and push it with\n"
         "    'vrg-submit-pr --push'.\n"
+        "  - pr edit that sets the body of a PR into develop (or moves it there\n"
+        "    with --base) is refused, for every identity, when it adds, removes or\n"
+        "    changes a Ref or closing line (Closes, Fixes, Resolves).\n"
         "  - run job-log --repo <owner>/<repo> --job <id> prints one Actions\n"
         "    job's log from the read-only per-job log endpoint, for every identity.\n"
         "\n"

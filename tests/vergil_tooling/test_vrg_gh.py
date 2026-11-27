@@ -1460,6 +1460,258 @@ class TestUpdateBranchGate:
         read.assert_not_called()
 
 
+_DEVELOP_BODY = "Summary of the change.\n\nRef #7\nCloses #8\n"
+
+
+class TestPrEditClosingLines:
+    """A develop PR's closing lines stay as checked (spec §5.2 of epic .github#1672).
+
+    ``pr edit`` that sets the body of a PR into ``develop`` is refused when the
+    multiset of its Ref lines and closing-keyword references (the Closes family
+    and Fixes/Resolves) differs from the current body's. Every identity is
+    gated. An edit on another base, or one that leaves the body alone, passes,
+    and a failed read refuses.
+    """
+
+    @pytest.fixture
+    def gh(self) -> Iterator[MagicMock]:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            yield mock_run
+
+    @pytest.fixture
+    def pr(self) -> Iterator[MagicMock]:
+        """The PR's current state: a develop PR with ``_DEVELOP_BODY``, unless a test sets it."""
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "develop", "body": _DEVELOP_BODY},
+        ) as read:
+            yield read
+
+    @pytest.mark.parametrize(
+        "new_body",
+        [
+            "Summary.\n\nRef #7\nCloses #8\nCloses #9\n",
+            "Summary.\n\nRef #7\nCloses #8\n- Closes: #9\n",
+        ],
+    )
+    def test_pr_edit_adding_closes_line_refused(
+        self,
+        gh: MagicMock,
+        pr: MagicMock,
+        new_body: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert main(["pr", "edit", "42", "--body", new_body]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "pr edit is refused" in err
+        assert "#9" in err
+
+    def test_pr_edit_removing_ref_line_refused(
+        self, gh: MagicMock, pr: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["pr", "edit", "42", "--body", "Summary.\n\nCloses #8\n"]) == 1
+        gh.assert_not_called()
+        assert "#7" in capsys.readouterr().err
+
+    def test_pr_edit_changing_ref_target_refused(
+        self, gh: MagicMock, pr: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["pr", "edit", "42", "--body", "Summary.\n\nRef #70\nCloses #8\n"]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "#7" in err
+        assert "#70" in err
+
+    def test_pr_edit_adding_fixes_line_refused(
+        self, gh: MagicMock, pr: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        body = f"{_DEVELOP_BODY}Fixes #10\n"
+        assert main(["pr", "edit", "42", "--body", body]) == 1
+        gh.assert_not_called()
+        assert "Fixes #10" in capsys.readouterr().err
+
+    def test_pr_edit_adding_resolves_line_refused(
+        self, gh: MagicMock, pr: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        body = f"{_DEVELOP_BODY}- Resolves: org/other#11\n"
+        assert main(["pr", "edit", "42", "--body", body]) == 1
+        gh.assert_not_called()
+        assert "org/other#11" in capsys.readouterr().err
+
+    def test_pr_edit_prose_only_allowed(self, gh: MagicMock, pr: MagicMock) -> None:
+        body = "A rewritten summary, with the same closing lines.\n\nRef #7\nCloses #8\n"
+        assert main(["pr", "edit", "42", "--body", body]) == 0
+        assert gh.call_args[0][0] == ["gh", "pr", "edit", "42", "--body", body]
+
+    def test_pr_edit_prose_mention_of_closing_keyword_allowed(
+        self, gh: MagicMock, pr: MagicMock
+    ) -> None:
+        # A keyword mid-line is prose, not a linkage line, so it is not counted.
+        body = "Summary.\n\nRef #7\nCloses #8\nThis also touches Fixes #99 in the notes.\n"
+        assert main(["pr", "edit", "42", "--body", body]) == 0
+        gh.assert_called_once()
+
+    def test_pr_edit_non_develop_allowed(self, gh: MagicMock) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "main", "body": _DEVELOP_BODY},
+        ):
+            assert main(["pr", "edit", "42", "--body", "Summary only.\n"]) == 0
+        assert gh.call_args[0][0] == ["gh", "pr", "edit", "42", "--body", "Summary only.\n"]
+
+    def test_pr_edit_base_moved_to_develop_refused(self, gh: MagicMock) -> None:
+        # An edit that makes a PR into develop is checked as one into develop.
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "main", "body": _DEVELOP_BODY},
+        ):
+            assert main(["pr", "edit", "42", "--base", "develop", "--body", "Summary.\n"]) == 1
+        gh.assert_not_called()
+
+    def test_pr_edit_base_moved_to_develop_without_body_passes(self, gh: MagicMock) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "main", "body": _DEVELOP_BODY},
+        ):
+            assert main(["pr", "edit", "42", "--base", "develop"]) == 0
+        gh.assert_called_once()
+
+    def test_pr_edit_repo_flag_reads_the_named_repo(self, gh: MagicMock) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "develop", "body": _DEVELOP_BODY},
+        ) as read:
+            assert main(["pr", "edit", "42", "-R", "org/repo", "--body", "Summary.\n"]) == 1
+        read.assert_called_once_with(
+            "pr", "view", "42", "--json", "baseRefName,body", "--repo", "org/repo"
+        )
+        gh.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("args", "detail"),
+        [
+            (["1", "2", "--body", "x"], "at most one PR"),
+            (
+                ["https://github.com/b/y/pull/42", "-R", "a/x", "--body", "x"],
+                "more than one owner",
+            ),
+            (
+                ["42", "--body", "Summary.\n", "--body-file", "/dev/null"],
+                "more than one way",
+            ),
+        ],
+    )
+    def test_pr_edit_unresolvable_target_or_body_refused(
+        self,
+        gh: MagicMock,
+        pr: MagicMock,
+        args: list[str],
+        detail: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert main(["pr", "edit", *args]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "could not read the PR's base and body" in err
+        assert detail in err
+
+    def test_pr_edit_title_only_allowed(self, gh: MagicMock, pr: MagicMock) -> None:
+        assert main(["pr", "edit", "42", "--title", "A new title"]) == 0
+        pr.assert_not_called()
+        assert gh.call_args[0][0] == ["gh", "pr", "edit", "42", "--title", "A new title"]
+
+    def test_pr_edit_read_failure_refused(
+        self, gh: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            side_effect=subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 502"),
+        ):
+            assert main(["pr", "edit", "42", "--body", "Summary.\n"]) == 1
+        gh.assert_not_called()
+        err = capsys.readouterr().err
+        assert "pr edit is refused" in err
+        assert "could not read the PR's" in err
+
+    @pytest.mark.parametrize(
+        ("effect", "detail"),
+        [
+            (github.NoInstallationError("org", ["other"]), "no App installation for owner 'org'"),
+            (ValueError("Expecting value"), "Expecting value"),
+            ([{"baseRefName": "develop"}], "no base branch"),
+            ({"baseRefName": "develop"}, "no body"),
+            ({"baseRefName": "develop", "body": None}, "no body"),
+        ],
+    )
+    def test_pr_edit_bad_read_refused(
+        self,
+        gh: MagicMock,
+        effect: object,
+        detail: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        if isinstance(effect, BaseException):
+            reader = patch("vergil_tooling.bin.vrg_gh.github.read_json", side_effect=effect)
+        else:
+            reader = patch("vergil_tooling.bin.vrg_gh.github.read_json", return_value=effect)
+        with reader:
+            assert main(["pr", "edit", "42", "--body", "Summary.\n"]) == 1
+        gh.assert_not_called()
+        assert detail in capsys.readouterr().err
+
+    @pytest.mark.parametrize("flag", ["--body-file", "-F"])
+    def test_pr_edit_body_file_adding_closes_refused(
+        self, gh: MagicMock, pr: MagicMock, flag: str, tmp_path: Path
+    ) -> None:
+        body_file = tmp_path / "body.md"
+        body_file.write_text("Summary.\n\nRef #7\nCloses #8\nCloses #9\n", encoding="utf-8")
+        assert main(["pr", "edit", "42", flag, str(body_file)]) == 1
+        gh.assert_not_called()
+
+    def test_pr_edit_body_file_prose_only_allowed(
+        self, gh: MagicMock, pr: MagicMock, tmp_path: Path
+    ) -> None:
+        body_file = tmp_path / "body.md"
+        body_file.write_text("Prose.\n\nRef #7\nCloses #8\n", encoding="utf-8")
+        assert main(["pr", "edit", "42", "--body-file", str(body_file)]) == 0
+        gh.assert_called_once()
+
+    def test_pr_edit_unreadable_body_file_refused(
+        self, gh: MagicMock, pr: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        missing = tmp_path / "missing.md"
+        assert main(["pr", "edit", "42", "--body-file", str(missing)]) == 1
+        gh.assert_not_called()
+        assert "could not read the new body" in capsys.readouterr().err
+
+    def test_pr_edit_body_from_stdin_refused_on_develop(
+        self, gh: MagicMock, pr: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main(["pr", "edit", "42", "--body-file", "-"]) == 1
+        gh.assert_not_called()
+        assert "stdin" in capsys.readouterr().err
+
+    def test_pr_edit_body_from_stdin_passes_on_non_develop(self, gh: MagicMock) -> None:
+        with patch(
+            "vergil_tooling.bin.vrg_gh.github.read_json",
+            return_value={"baseRefName": "main", "body": _DEVELOP_BODY},
+        ):
+            assert main(["pr", "edit", "42", "--body-file", "-"]) == 0
+        gh.assert_called_once()
+
+    def test_pr_edit_help_not_gated(self, gh: MagicMock, pr: MagicMock) -> None:
+        assert main(["pr", "edit", "--help"]) == 0
+        pr.assert_not_called()
+
+
 class TestHumanAllowlist:
     """Human identity retains full allowlist."""
 
