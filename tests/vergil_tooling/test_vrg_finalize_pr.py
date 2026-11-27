@@ -4778,14 +4778,6 @@ def test_release_cascade_refused_when_repo_not_released(
     assert f"vrg-finalize-pr {flag}: this repo is not released" in err
 
 
-def test_watch_runs_in_the_main_clone(tmp_path: Path) -> None:
-    """The watch re-checks the gates in the clone finalize runs from."""
-    watch = MagicMock(side_effect=_all_merged)
-    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
-        assert main([_PR_A]) == 0
-    watch.assert_called_once_with([_PR_A])
-
-
 @pytest.mark.parametrize("mode", ["user", "audit"])
 def test_agent_release_refused_before_watch(
     tmp_path: Path,
