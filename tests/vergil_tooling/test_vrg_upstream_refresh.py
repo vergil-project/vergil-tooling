@@ -54,6 +54,12 @@ _SLUG = "acme-automation"
 _TOKEN = "ghs_not_a_real_token_0123456789"
 _MERGED = SyncResult(status="merged", pr_url="https://github.com/o/r/pull/9", closed=[])
 _IN_SYNC = SyncResult(status="in_sync", pr_url=None, closed=[])
+_HELD = SyncResult(
+    status="held",
+    pr_url="https://github.com/o/r/pull/9",
+    closed=[],
+    detail="held for release 2.1.400",
+)
 
 _ENV = (
     "GITHUB_ACTIONS",
@@ -237,6 +243,13 @@ def _publish_raising(exc: BaseException) -> Callable[..., SyncResult]:
         (_MERGED, 0, "out", "o/r: the refresh PR https://github.com/o/r/pull/9 merged"),
         (_IN_SYNC, 0, "out", "o/r: in sync; nothing to refresh on develop"),
         (
+            _HELD,
+            0,
+            "out",
+            "o/r: the refresh PR https://github.com/o/r/pull/9 is held for release 2.1.400; "
+            "the unlock sweep arms it",
+        ),
+        (
             PRNotMergedError("o/r", "https://github.com/o/r/pull/9", "Checks failed"),
             2,
             "err",
@@ -249,7 +262,7 @@ def _publish_raising(exc: BaseException) -> Callable[..., SyncResult]:
             "data.txt: refused, not covered",
         ),
     ],
-    ids=["merged", "in-sync", "not-merged", "fence"],
+    ids=["merged", "in-sync", "held", "not-merged", "fence"],
 )
 def test_exit_codes(
     monkeypatch: pytest.MonkeyPatch,

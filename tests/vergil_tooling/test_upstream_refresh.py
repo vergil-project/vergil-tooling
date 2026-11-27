@@ -11,6 +11,7 @@ import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -39,6 +40,9 @@ from vergil_tooling.lib.upstream_refresh import (
     render_body,
     run_hook,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _REPO = "o/r"
 
@@ -1453,7 +1457,10 @@ class _Hub:
         assert head
         return pr_path.ArmResult(outcome="armed", pr_url=pr_url, head=head, method="SQUASH")
 
-    def wait_until_merged(self, _pr: str, *, deadline_secs: int) -> None:
+    def wait_until_merged(
+        self, _pr: str, *, deadline_secs: int, held: Callable[[], str] | None = None
+    ) -> None:
+        assert held is not None
         self.waits.append(deadline_secs)
 
 

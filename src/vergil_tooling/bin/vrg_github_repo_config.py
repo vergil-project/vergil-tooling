@@ -312,6 +312,8 @@ def _print_sync_result(repo: str, result: SyncResult) -> None:
         print(f"  {repo}: closed the earlier sync PR {url}")
     if result.status == "merged":
         print(f"  {repo}: sync PR {result.pr_url} merged")
+    elif result.status == "held":
+        print(f"  {repo}: sync PR {result.pr_url} is {result.detail}; the unlock sweep arms it")
     else:
         print(f"  {repo}: managed files need no sync PR")
 

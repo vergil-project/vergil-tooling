@@ -2056,6 +2056,16 @@ def test_update_reports_closed_earlier_runs(capsys: pytest.CaptureFixture[str]) 
     assert f"o/r: closed the earlier sync PR {old}" in capsys.readouterr().out
 
 
+def test_update_reports_a_sync_pr_held_by_a_release(capsys: pytest.CaptureFixture[str]) -> None:
+    url = "https://github.com/o/r/pull/4"
+    held = SyncResult("held", url, [], detail="held for release 2.1.400")
+    stack, _ = _update_env(sync=lambda *_a, **_k: held)
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    out = capsys.readouterr().out
+    assert f"o/r: sync PR {url} is held for release 2.1.400; the unlock sweep arms it" in out
+
+
 @pytest.mark.parametrize("bypass", [False, True])
 def test_update_unreadable_github_setting_opens_nothing(
     bypass: bool, capsys: pytest.CaptureFixture[str]

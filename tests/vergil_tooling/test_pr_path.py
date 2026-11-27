@@ -5,7 +5,8 @@ the modules it drives make: ``read_json`` (``gh pr view``, for the path's own
 read, the watch's snapshot, the provenance check and the auto-merge helper),
 ``read_json_paginated`` (the PR's reviews and timeline), ``graphql`` (the
 enable mutation) and ``merge`` (the direct merge). The trust layer's branch
-lookup and body read are faked too. The provenance check, the involvement rule
+lookup and body read are faked too, as are the release lock and the PR's arming
+ref (:class:`FakeLock`, free by default). The provenance check, the involvement rule
 and the merge-method rule run for real; the gates' evaluator is a spy, and the
 clones the gates judge in are real git repositories.
 """
@@ -37,9 +38,19 @@ from vergil_tooling.lib.pr_path import (
     merge_method,
     push_to_open_pr,
 )
+from vergil_tooling.lib.release_lock import arming
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock.model import (
+    ARM_CALL_BOUND_SECS,
+    LockRecord,
+    RefReadError,
+    RefWriteError,
+)
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 PR = "https://github.com/o/r/pull/7"
@@ -83,10 +94,25 @@ class FakeGitHub:
     auto_merge: dict[str, object] | None = None
     mutations: list[dict[str, object]] = field(default_factory=list)
     merges: list[tuple[str, str, str | None]] = field(default_factory=list)
+    # The enable and merge calls, in order; a test shares it with the lock's.
+    events: list[str] = field(default_factory=list)
+    # How many auto-merge state reads see the PR unarmed before another caller arms it.
+    other_arms_after: int | None = None
+    # Whether the other caller merged the PR directly instead.
+    other_merges: bool = False
+    state_reads: int = 0
 
     def read_json(self, *args: str) -> object:
         assert args[:3] == ("pr", "view", PR), args
         fields = args[args.index("--json") + 1]
+        if fields == "state,autoMergeRequest":
+            self.events.append("read_auto_merge")
+            self.state_reads += 1
+            if self.other_arms_after is not None and self.state_reads > self.other_arms_after:
+                self.auto_merge = {"mergeMethod": "SQUASH"}
+            if self.other_merges:
+                self.state = "MERGED"
+            return {"state": self.state, "autoMergeRequest": self.auto_merge}
         if fields == "isDraft":
             if self.not_found_reads:
                 self.not_found_reads -= 1
@@ -133,6 +159,7 @@ class FakeGitHub:
 
     def graphql(self, query: str, **variables: object) -> dict[str, object]:
         assert "enablePullRequestAutoMerge" in query
+        self.events.append("enable")
         self.mutations.append(variables)
         if self.clean:
             raise github.GitHubAPIError(1, ("gh", "api", "graphql"), output="", stderr=CLEAN_STDERR)
@@ -140,6 +167,7 @@ class FakeGitHub:
         return {"enablePullRequestAutoMerge": {"pullRequest": {"number": 7}}}
 
     def merge(self, pr: str, *, strategy: str, match_head: str | None = None) -> None:
+        self.events.append("merge")
         self.merges.append((pr, strategy, match_head))
         self.state = "MERGED"
 
@@ -202,6 +230,106 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(pr_provenance, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(finalize_watch, "load_trusted_authors", lambda: AUTHORS)
     return api
+
+
+def _record(holder: str = "tok-holder", heartbeat: str = "2026-11-27T10:00:00Z") -> LockRecord:
+    return LockRecord(
+        holder_identity=HUMAN,
+        holder_host="mac",
+        version="2.1.400",
+        worktree="",
+        tracking_issue="",
+        stage="quiesce",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T09:59:00Z",
+        heartbeat_at=heartbeat,
+        token=holder,
+    )
+
+
+@dataclass
+class FakeLock:
+    """The release lock and PR 7's arming ref on origin, and every call made to them.
+
+    A test that reads the order of the handshake shares *events* with
+    :class:`FakeGitHub`'s (``fake.events = lock.events``). *on_create*
+    runs right after a create lands (a release taking the lock then, say).
+    """
+
+    record: LockRecord | None = None
+    unreadable: str = ""
+    read_error: str = ""
+    arming: dict[int, str] = field(default_factory=dict)
+    collides: bool = False
+    renew_finds_gone: bool = False
+    write_error: str = ""
+    renew_error: str = ""
+    delete_error: str = ""
+    on_create: Callable[[], None] | None = None
+    events: list[str] = field(default_factory=list)
+    serial: int = 0
+
+    def _sha(self) -> str:
+        self.serial += 1
+        return f"{self.serial:040x}"
+
+    def read_lock(self, repo: str) -> LockState:
+        assert repo == "o/r"
+        self.events.append("read_lock")
+        if self.read_error:
+            raise RefReadError(self.read_error)
+        if self.unreadable:
+            return LockState(sha="a" * 40, record=None, error=self.unreadable)
+        if self.record is None:
+            return LockState(sha=None, record=None, error="")
+        return LockState(sha="b" * 40, record=self.record, error="")
+
+    def create(self, repo: str, pr: int) -> str | None:
+        assert (repo, pr) == ("o/r", 7)
+        self.events.append("create")
+        if self.write_error:
+            raise RefWriteError(self.write_error)
+        if self.collides:
+            return None
+        self.arming[pr] = self._sha()
+        if self.on_create is not None:
+            self.on_create()
+        return self.arming[pr]
+
+    def renew(self, repo: str, pr: int, *, expected: str) -> str | None:
+        assert (repo, pr) == ("o/r", 7)
+        self.events.append("renew")
+        if self.renew_error:
+            raise RefWriteError(self.renew_error)
+        if self.renew_finds_gone:
+            self.arming.pop(pr, None)
+        if self.arming.get(pr) != expected:
+            return None
+        self.arming[pr] = self._sha()
+        return self.arming[pr]
+
+    def delete(self, repo: str, pr: int, *, expected: str) -> bool:
+        assert (repo, pr) == ("o/r", 7)
+        self.events.append("delete")
+        if self.delete_error:
+            raise RefWriteError(self.delete_error)
+        if pr not in self.arming:
+            return True
+        if self.arming[pr] != expected:
+            return False
+        del self.arming[pr]
+        return True
+
+
+@pytest.fixture(autouse=True)
+def lock(monkeypatch: pytest.MonkeyPatch) -> FakeLock:
+    """A free release lock by default: every arm makes the handshake against this fake."""
+    fake_lock = FakeLock()
+    monkeypatch.setattr(lock_refs, "read_lock", fake_lock.read_lock)
+    for name in ("create", "renew", "delete"):
+        monkeypatch.setattr(arming, name, getattr(fake_lock, name))
+    return fake_lock
 
 
 @pytest.fixture
@@ -625,7 +753,11 @@ def test_arm_404_past_the_retry_bound_raises_naming_the_pr(
 
 
 def test_arm_enable_failure_raises_naming_the_pr(
-    fake: FakeGitHub, gates: Gates, clone: Path, monkeypatch: pytest.MonkeyPatch
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def refuse(_query: str, **_variables: object) -> dict[str, object]:
         raise github.GitHubAPIError(1, ("gh", "api", "graphql"), output="", stderr="forbidden")
@@ -635,9 +767,334 @@ def test_arm_enable_failure_raises_naming_the_pr(
     with pytest.raises(PRPathError, match=f"{PR}: enabling auto-merge failed"):
         arm(PR, clone=clone)
 
+    assert lock.events[-1] == "delete"
+    assert lock.arming == {}
 
-def test_held_is_an_outcome_for_the_arming_gate() -> None:
-    assert "held" in pr_path.ArmOutcome.__args__
+
+# --- the arming gate and the holder's pass (spec §5.4) ----------------------------
+
+
+def test_arm_lock_free_writes_then_deletes_arming_ref(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    fake.events = lock.events
+
+    result = arm(PR, clone=clone)
+
+    assert result == ArmResult(outcome="armed", pr_url=PR, head=HEAD, method="SQUASH")
+    assert lock.events == ["create", "read_lock", "renew", "enable", "delete"]
+    assert lock.arming == {}
+
+
+def test_arm_lock_free_clean_status_merges_inside_the_handshake(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    fake.events = lock.events
+    fake.clean = True
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "merged"
+    assert lock.events == ["create", "read_lock", "renew", "enable", "merge", "delete"]
+    assert lock.arming == {}
+
+
+def test_arm_lock_held_leaves_pr_unarmed_reports_held(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    fake.events = lock.events
+    lock.record = _record()
+
+    result = arm(PR, clone=clone)
+
+    assert result == ArmResult(
+        outcome="held",
+        pr_url=PR,
+        head=HEAD,
+        method="SQUASH",
+        detail="held for release 2.1.400",
+    )
+    assert lock.events == ["create", "read_lock", "delete"]
+    assert fake.mutations == []
+    assert lock.arming == {}
+
+
+def test_arm_unreadable_lock_is_held_naming_the_read_error(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.unreadable = "refs/vergil/release-lock is unreadable: the lock is not valid JSON"
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "held"
+    assert result.detail == (
+        "held: the release lock is held but cannot be read "
+        "(refs/vergil/release-lock is unreadable: the lock is not valid JSON)"
+    )
+    assert fake.mutations == []
+    assert lock.arming == {}
+
+
+def test_arm_racing_lock_never_arms_under_lock(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    """Review Focus 2: the lock is taken between ``create`` and ``read_lock``."""
+    fake.events = lock.events
+    fake.clean = True  # a green PR: arming it would merge it at once
+
+    def release_takes_the_lock() -> None:
+        lock.record = _record()
+
+    lock.on_create = release_takes_the_lock
+
+    result = arm(PR, clone=clone)
+
+    assert (result.outcome, result.detail) == ("held", "held for release 2.1.400")
+    assert "enable" not in lock.events
+    assert fake.mutations == []
+    assert fake.merges == []
+    assert lock.arming == {}
+
+
+def test_arm_holder_pass_matching_skips_handshake(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    fake.events = lock.events
+    lock.record = _record(holder="tok-holder")
+
+    result = arm(PR, clone=clone, holder_pass="tok-holder")
+
+    assert result.outcome == "armed"
+    assert lock.events == ["read_lock", "enable"]
+    assert lock.arming == {}
+
+
+def test_arm_holder_pass_survives_heartbeat_writes(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.record = _record(holder="tok-holder", heartbeat="2026-11-27T10:00:00Z")
+    holder_pass = lock.record.token
+    # The heartbeat rewrites the lock (a new commit and sha, the same token).
+    lock.record = _record(holder="tok-holder", heartbeat="2026-11-27T10:01:00Z")
+
+    result = arm(PR, clone=clone, holder_pass=holder_pass)
+
+    assert result.outcome == "armed"
+    assert "create" not in lock.events
+    assert fake.mutations == [{"id": "PR_kw7", "head": HEAD, "method": "SQUASH"}]
+
+
+def test_arm_holder_pass_after_retake_is_ordinary_call(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.record = _record(holder="tok-retaken")
+
+    result = arm(PR, clone=clone, holder_pass="tok-holder")
+
+    assert (result.outcome, result.detail) == ("held", "held for release 2.1.400")
+    assert lock.events == ["read_lock", "create", "read_lock", "delete"]
+    assert fake.mutations == []
+
+
+def test_arm_holder_pass_with_lock_free_is_ordinary_call(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    result = arm(PR, clone=clone, holder_pass="tok-holder")
+
+    assert result.outcome == "armed"
+    assert lock.events == ["read_lock", "create", "read_lock", "renew", "delete"]
+
+
+def test_held_unarmed_lock_free_is_not_held(fake: FakeGitHub, lock: FakeLock) -> None:
+    assert pr_path.held_unarmed(PR) == ""
+
+
+def test_held_unarmed_lock_held_and_pr_unarmed(fake: FakeGitHub, lock: FakeLock) -> None:
+    lock.record = _record()
+
+    assert pr_path.held_unarmed(PR) == "held for release 2.1.400"
+
+
+def test_held_unarmed_pr_still_armed_is_not_held(fake: FakeGitHub, lock: FakeLock) -> None:
+    lock.record = _record()
+    fake.auto_merge = {"mergeMethod": "SQUASH"}
+
+    assert pr_path.held_unarmed(PR) == ""
+
+
+def test_held_unarmed_lock_read_failure_raises(fake: FakeGitHub, lock: FakeLock) -> None:
+    lock.read_error = "git ls-remote failed"
+
+    with pytest.raises(PRPathError, match="reading the release lock failed: git ls-remote failed"):
+        pr_path.held_unarmed(PR)
+
+
+def test_arm_create_collision_waits_for_other_caller(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    fake.events = lock.events
+    lock.collides = True
+    fake.other_arms_after = 2
+
+    result = arm(PR, clone=clone)
+
+    assert result == ArmResult(outcome="armed", pr_url=PR, head=HEAD, method="SQUASH")
+    assert lock.events == ["create", "read_auto_merge", "read_auto_merge", "read_auto_merge"]
+    assert fake.mutations == []
+    assert 0 < no_wait[0] <= ARM_CALL_BOUND_SECS
+
+
+def test_arm_create_collision_with_merged_pr_is_merged(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.collides = True
+    fake.other_merges = True
+
+    result = arm(PR, clone=clone)
+
+    assert result == ArmResult(outcome="merged", pr_url=PR, head=HEAD, method="SQUASH")
+    assert fake.mutations == []
+    assert fake.merges == []
+
+
+def test_arm_create_collision_still_unarmed_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    lock.collides = True
+
+    with pytest.raises(pr_path.ArmingCollisionError, match="another caller is arming it") as info:
+        arm(PR, clone=clone)
+
+    assert isinstance(info.value, PRPathError)
+    assert f"still unarmed after {ARM_CALL_BOUND_SECS}s" in str(info.value)
+    assert no_wait[0] == pytest.approx(ARM_CALL_BOUND_SECS)
+    assert fake.mutations == []
+
+
+def test_arm_renew_finds_ref_gone_aborts(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.renew_finds_gone = True
+
+    result = arm(PR, clone=clone)
+
+    assert (result.outcome, result.detail) == ("refused", "arming ref expired")
+    assert fake.mutations == []
+    assert "delete" not in lock.events
+
+
+def test_arm_judges_before_arming_ref_created(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every judgment runs before ``arming.create``; no fetch or gate run while the ref exists."""
+    fake.events = lock.events
+    check_pr, read_issue, evaluate = pr_provenance.check_pr, trust.read_issue, gates.evaluate
+
+    def spy(name: str, fn: Callable[..., object]) -> Callable[..., object]:
+        def wrapped(*args: object, **kwargs: object) -> object:
+            lock.events.append(name)
+            return fn(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(pr_provenance, "check_pr", spy("provenance", check_pr))
+    monkeypatch.setattr(trust, "read_issue", spy("method", read_issue))
+    monkeypatch.setattr(finalize_watch, "_fetch_for_gates", spy("fetch", lambda *_a: "base-sha"))
+    monkeypatch.setattr(agent_gates, "evaluate", spy("gates", evaluate))
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "armed"
+    assert lock.events == [
+        "provenance",
+        "method",
+        "fetch",
+        "gates",
+        "create",
+        "read_lock",
+        "renew",
+        "enable",
+        "delete",
+    ]
+
+
+def test_arm_refused_by_a_judgment_writes_no_arming_ref(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    gates.ok = False
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "refused"
+    assert lock.events == []
+
+
+def test_arm_call_past_bound_stops_without_retry(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The enable, retries included, is bounded by ARM_CALL_BOUND_SECS (spec §5.4)."""
+    attempts: list[float] = []
+
+    def slow_enable(_query: str, **_variables: object) -> dict[str, object]:
+        def attempt() -> dict[str, object]:
+            attempts.append(no_wait[0])
+            no_wait[0] += ARM_CALL_BOUND_SECS - 1
+            raise subprocess.CalledProcessError(1, ("gh",), output="", stderr="HTTP 502")
+
+        return retry.call_with_retry(attempt)
+
+    monkeypatch.setattr(github, "graphql", slow_enable)
+
+    with pytest.raises(PRPathError, match=f"ran past its bound of {ARM_CALL_BOUND_SECS}s") as info:
+        arm(PR, clone=clone)
+
+    assert len(attempts) == 1
+    assert "not retried" in str(info.value)
+    # The arming ref is left for the release's expiry: the stopped call may still land.
+    assert 7 in lock.arming
+
+
+def test_arm_arming_ref_write_failure_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.write_error = "git push failed: HTTP 500"
+
+    with pytest.raises(PRPathError, match=r"writing its arming ref failed: git push failed"):
+        arm(PR, clone=clone)
+
+    assert fake.mutations == []
+
+
+def test_arm_lock_read_failure_deletes_arming_ref_and_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.read_error = "git ls-remote failed"
+
+    with pytest.raises(PRPathError, match=r"reading the release lock failed: git ls-remote failed"):
+        arm(PR, clone=clone)
+
+    assert fake.mutations == []
+    assert lock.arming == {}
+
+
+def test_arm_holder_pass_lock_read_failure_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.read_error = "git ls-remote failed"
+
+    with pytest.raises(PRPathError, match=r"reading the release lock failed"):
+        arm(PR, clone=clone, holder_pass="tok-holder")
+
+    assert lock.events == ["read_lock"]
 
 
 # --- push mode for an open PR's branch ----------------------------------------------
@@ -1001,3 +1458,93 @@ def test_open_develop_pr_url_outside_a_github_clone_raises(
 
     with pytest.raises(PRPathError, match="is not a GitHub repository"):
         pr_path.open_develop_pr_url(BRANCH)
+
+
+def test_arm_renew_failure_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.renew_error = "git push failed"
+
+    with pytest.raises(PRPathError, match="renewing its arming ref failed: git push failed"):
+        arm(PR, clone=clone)
+
+    assert fake.mutations == []
+
+
+def test_arm_delete_failure_after_arming_raises(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.delete_error = "git push failed"
+
+    with pytest.raises(PRPathError, match="deleting its arming ref failed: git push failed"):
+        arm(PR, clone=clone)
+
+
+def test_arm_lock_read_and_delete_failures_both_named(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock
+) -> None:
+    lock.read_error = "git ls-remote failed"
+    lock.delete_error = "git push failed"
+
+    with pytest.raises(PRPathError) as info:
+        arm(PR, clone=clone)
+
+    assert "reading the release lock failed: git ls-remote failed" in str(info.value)
+    assert "; then " in str(info.value)
+    assert "deleting its arming ref failed: git push failed" in str(info.value)
+
+
+def test_arm_collision_state_read_failure_raises(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock.collides = True
+    snapshot = fake.read_json
+
+    def read_json(*args: str) -> object:
+        if args[args.index("--json") + 1] == "state,autoMergeRequest":
+            raise github.GitHubAPIError(1, ("gh",), output="", stderr="HTTP 403")
+        return snapshot(*args)
+
+    monkeypatch.setattr(github, "read_json", read_json)
+
+    with pytest.raises(PRPathError, match="reading its auto-merge state failed"):
+        arm(PR, clone=clone)
+
+
+def test_arm_collision_state_read_not_an_object_raises(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock.collides = True
+    snapshot = fake.read_json
+
+    def read_json(*args: str) -> object:
+        if args[args.index("--json") + 1] == "state,autoMergeRequest":
+            return []
+        return snapshot(*args)
+
+    monkeypatch.setattr(github, "read_json", read_json)
+
+    with pytest.raises(PRPathError, match=r"returned \[\] for its auto-merge state"):
+        arm(PR, clone=clone)
+
+
+def test_held_unarmed_auto_merge_read_failure_raises(
+    fake: FakeGitHub, lock: FakeLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock.record = _record()
+
+    def refuse(*_args: str) -> object:
+        raise github.GitHubAPIError(1, ("gh",), output="", stderr="HTTP 403")
+
+    monkeypatch.setattr(github, "read_json", refuse)
+
+    with pytest.raises(PRPathError, match="reading auto-merge failed"):
+        pr_path.held_unarmed(PR)

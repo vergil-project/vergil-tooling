@@ -85,3 +85,14 @@ def update_deps(ctx: ReleaseContext) -> None:
             message=ctx.deps_failure,
             detail=f"\n\n{ctx.deps_report}\n\n{failure_markdown(deps.failure)}",
         )
+    if deps.held:
+        # The one PR path left the PR unarmed under the release lock: it has
+        # not merged, so the release cannot go on as if it had (spec §5.4).
+        raise ReleaseError(
+            phase="update-deps",
+            command="vrg-update-deps",
+            message=(
+                f"The dependency-update PR {deps.pr_url} is {deps.held}: the one PR path "
+                "left it unarmed under the release lock, so it has not merged."
+            ),
+        )

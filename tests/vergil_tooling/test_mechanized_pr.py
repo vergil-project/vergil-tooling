@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vergil_tooling.lib import (
+    auto_merge,
     develop_clone,
     github,
     mechanized_pr,
@@ -36,14 +37,33 @@ from vergil_tooling.lib.mechanized_pr import (
     branch_name,
     open_sync_pr,
 )
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.refs import LockState
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 REPO = "o/r"
 JOB = "repo-config-sync"
 RUN = "4242"
 BRANCH = f"automation/{JOB}/{RUN}"
+
+
+def _lock_record(version: str) -> LockRecord:
+    return LockRecord(
+        holder_identity="human",
+        holder_host="mac",
+        version=version,
+        worktree="",
+        tracking_issue="",
+        stage="quiesce",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T10:00:00Z",
+        heartbeat_at="2026-11-27T10:00:00Z",
+        token="tok",
+    )
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -90,6 +110,10 @@ class FakeGitHub:
     create_calls: int = 0
     # The head commit a landed PR has, when it is not the pushed one.
     landed_oid: str | None = None
+    # The release lock, and the lock a release takes during the wait.
+    lock: LockRecord | None = None
+    disarmed_mid_wait: LockRecord | None = None
+    auto_merge_on: bool = True
 
     def branches(self) -> list[str]:
         out = _git(self.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
@@ -187,12 +211,36 @@ class FakeGitHub:
             detail=self.arm_detail,
         )
 
-    def wait_until_merged(self, pr: str, *, deadline_secs: int) -> None:
-        """Stands in for ``pr_merge.wait_until_merged`` (tested in test_pr_merge)."""
+    def wait_until_merged(
+        self, pr: str, *, deadline_secs: int, held: Callable[[], str] | None = None
+    ) -> None:
+        """Stands in for ``pr_merge.wait_until_merged`` (tested in test_pr_merge).
+
+        With *disarmed_mid_wait*, a release takes the lock and disarms the PR
+        during the wait: the watch's *held* check, made each poll, then ends it.
+        """
         assert [url for url, _clone, _head in self.arms] == [pr], "the wait follows one arm"
+        assert held is not None, "the wait checks for a held lock on each poll"
         self.waits.append((pr, deadline_secs))
         if self.wait_failure is not None:
             raise self.wait_failure
+        if self.disarmed_mid_wait is not None:
+            assert held() == "", "armed and no lock held: the wait goes on"
+            self.lock = self.disarmed_mid_wait
+            self.auto_merge_on = False
+            detail = held()
+            assert detail
+            raise pr_merge.MergeHeldError(detail)
+
+    def read_lock(self, repo: str) -> LockState:
+        assert repo == REPO
+        if self.lock is None:
+            return LockState(sha=None, record=None, error="")
+        return LockState(sha="b" * 40, record=self.lock, error="")
+
+    def auto_merge_enabled(self, pr_url: str) -> bool:
+        assert pr_url.startswith(f"https://github.com/{REPO}/pull/")
+        return self.auto_merge_on
 
     def prs_for_branch(
         self, repo: str, branch: str, *, state: str
@@ -268,6 +316,8 @@ def fake(origin: Path, monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(pr_merge, "wait_until_merged", api.wait_until_merged)
     monkeypatch.setattr(pr_path, "arm", api.arm)
     monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
+    monkeypatch.setattr(lock_refs, "read_lock", api.read_lock)
+    monkeypatch.setattr(auto_merge, "auto_merge_enabled", api.auto_merge_enabled)
     monkeypatch.delenv("VRG_MECHANIZED_PR_DEADLINE", raising=False)
     return api
 
@@ -400,16 +450,8 @@ def test_sync_pr_arms_through_pr_path(fake: FakeGitHub, origin: Path, clone: Pat
     assert fake.waits == [(url, 2400)]
 
 
-@pytest.mark.parametrize(
-    ("outcome", "detail"),
-    [
-        ("refused", "provenance violations found (mallory (outsider): committed)"),
-        ("held", "held for release 9.9.9"),
-    ],
-)
-def test_sync_pr_refused_arm_fails_job(
-    fake: FakeGitHub, clone: Path, outcome: pr_path.ArmOutcome, detail: str
-) -> None:
+def test_sync_pr_refused_arm_fails_job(fake: FakeGitHub, clone: Path) -> None:
+    outcome, detail = "refused", "provenance violations found (mallory (outsider): committed)"
     fake.arm_outcome = outcome
     fake.arm_detail = detail
     (clone / "vergil.toml").write_text("v2\n")
@@ -423,6 +465,84 @@ def test_sync_pr_refused_arm_fails_job(
     assert isinstance(excinfo.value, MechanizedPRError)
     assert fake.waits == []
     assert fake.merges == []
+
+
+def test_mechanized_held_is_success(
+    fake: FakeGitHub, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A release holds the lock: the PR is left open for the unlock sweep, and the job succeeds."""
+    fake.arm_outcome = "held"
+    fake.arm_detail = "held for release 9.9.9"
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    url = fake.prs[0].url
+    assert result == SyncResult(
+        status="held", pr_url=url, closed=[], detail="held for release 9.9.9"
+    )
+    assert fake.waits == []
+    assert fake.prs[0].state == "open"
+    assert f"{REPO}: {url} is held for release 9.9.9; the unlock sweep arms it" in (
+        capsys.readouterr().out
+    )
+
+
+def test_sync_pr_disarmed_mid_wait_is_held_success(
+    fake: FakeGitHub, clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Armed, then a release takes the lock and disarms it during the wait: ``held``, success."""
+    fake.disarmed_mid_wait = _lock_record("9.9.9")
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    url = fake.prs[0].url
+    assert result == SyncResult(
+        status="held", pr_url=url, closed=[], detail="held for release 9.9.9"
+    )
+    assert fake.waits == [(url, 2400)]
+    out = capsys.readouterr().out
+    assert f"the wait for {url} ended after" in out
+    assert "held for release 9.9.9; the unlock sweep arms it" in out
+
+
+def test_sync_pr_held_lock_with_pr_still_armed_keeps_waiting(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock held while the PR is still armed (not yet disarmed) does not end the wait."""
+    fake.lock = _lock_record("9.9.9")
+    asked: list[str] = []
+
+    def wait(pr: str, *, deadline_secs: int, held: Callable[[], str] | None = None) -> None:
+        assert held is not None
+        asked.append(held())
+
+    monkeypatch.setattr(pr_merge, "wait_until_merged", wait)
+    (clone / "vergil.toml").write_text("v2\n")
+
+    result = _sync(clone)
+
+    assert result.status == "merged"
+    assert asked == [""]
+
+
+def test_sync_pr_lock_read_failure_during_wait_fails_job(
+    fake: FakeGitHub, clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(_repo: str) -> LockState:
+        raise RefReadError("git ls-remote failed")
+
+    def wait(pr: str, *, deadline_secs: int, held: Callable[[], str] | None = None) -> None:
+        assert held is not None
+        held()
+
+    monkeypatch.setattr(lock_refs, "read_lock", broken)
+    monkeypatch.setattr(pr_merge, "wait_until_merged", wait)
+    (clone / "vergil.toml").write_text("v2\n")
+
+    with pytest.raises(PRNotMergedError, match="reading the release lock failed: git ls-remote"):
+        _sync(clone)
 
 
 def test_sync_pr_merged_by_the_path_needs_no_wait(
