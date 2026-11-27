@@ -1122,9 +1122,7 @@ class _OpenPRs:
         )
         return [ref], []
 
-    def run(
-        self, argv: list[str], _env: dict[str, str] | None
-    ) -> subprocess.CompletedProcess[str]:
+    def run(self, argv: list[str], _env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
         self.pushed.append(argv)
         return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
 
@@ -1188,6 +1186,7 @@ def test_push_to_open_develop_pr_branch_refused(
         ["push", "origin", "feature/2-b"],
         ["push", "origin", ":feature/2-b"],
         ["push", "--delete", "origin", "feature/2-b"],
+        ["push", "origin", "HEAD:heads/feature/2-b"],
     ],
 )
 def test_push_refspec_naming_other_open_pr_branch_refused(
@@ -1236,6 +1235,8 @@ def test_unparseable_refspec_refused(
         ["push", "-u", "origin", "HEAD"],
         ["push", "-uq", "origin", "@"],
         ["push", "-o", "ci.skip", "origin", "HEAD:feature/1-a"],
+        ["push", "-oci.skip", "--signed=if-asked", "origin", "feature/1-a"],
+        ["push", "-u", "--", "origin", "feature/1-a"],
         ["push", "--push-option=x", "--repo=origin", "origin", "refs/heads/feature/1-a"],
     ],
 )
@@ -1328,10 +1329,13 @@ def test_path_push_does_not_use_wrapper() -> None:
     source = inspect.getsource(pr_path)
     tree = ast.parse(source)
     imported = {
-        node.module or ""
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    } | {
+        alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    } | {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
     assert not any("vrg_git" in name or name.startswith("vergil_tooling.bin") for name in imported)
     strings = [
         node.value
@@ -1438,7 +1442,12 @@ def test_lock_ref_delete_refused(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["push", "--force-with-lease=refs/vergil/release-lock:", "origin", "HEAD:refs/vergil/release-lock"],
+        [
+            "push",
+            "--force-with-lease=refs/vergil/release-lock:",
+            "origin",
+            "HEAD:refs/vergil/release-lock",
+        ],
         ["push", "--force-with-lease=refs/vergil/release-lock:", "origin", "feature/1-a"],
         ["push", "--force-with-lease=vergil/release-lock", "origin", "feature/1-a"],
     ],
@@ -1473,6 +1482,51 @@ def test_lock_ref_refused_to_a_local_target_too(
     open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _refused(["push", ".", "HEAD:refs/vergil/release-lock"], open_prs, capsys)
+
+
+def test_bare_push_resolving_to_a_lock_ref_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A branch whose upstream is a lock ref, fetched under a custom refspec:
+    # the push goes to the upstream's own ref, and is refused.
+    here = Path.cwd()
+    _git(here, "config", "--add", "remote.origin.fetch", "+refs/vergil/*:refs/remotes/origin/v/*")
+    _git(here, "update-ref", "refs/remotes/origin/v/release-lock", "HEAD")
+    _git(here, "config", "push.default", "upstream")
+    _git(here, "config", "branch.feature/1-a.merge", "refs/vergil/release-lock")
+
+    err = _refused(["push"], open_prs, capsys)
+    assert "only by the tooling" in err
+    assert open_prs.lookups == []
+
+
+def test_bare_push_falls_back_to_its_upstream(open_prs: _OpenPRs) -> None:
+    # push.default=simple cannot resolve a push to an upstream of another
+    # name, so the push is judged by the upstream.
+    _git(Path.cwd(), "branch", "-q", "--set-upstream-to=origin/develop")
+
+    assert main(["push"]) == 0
+    assert open_prs.lookups == ["develop"]
+
+
+def test_bare_push_of_an_unborn_branch_refused(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(Path.cwd(), "checkout", "-q", "--orphan", "feature/3-c")
+
+    err = _refused(["push"], open_prs, capsys)
+    assert "push target of feature/3-c cannot be read" in err
+
+
+def test_unreadable_destination_refuses(
+    open_prs: _OpenPRs, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With no origin, the push's repository cannot be compared with it.
+    _git(Path.cwd(), "remote", "remove", "origin")
+
+    err = _refused(["push", _ORIGIN_URL, "HEAD:feature/1-a"], open_prs, capsys)
+    assert "its destination could not be read" in err
+    assert open_prs.lookups == []
 
 
 def test_rebase_normal_allowed() -> None:

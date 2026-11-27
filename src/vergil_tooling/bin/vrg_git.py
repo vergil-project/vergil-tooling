@@ -1671,16 +1671,21 @@ def _bare_push_destination(repository: str | None) -> tuple[str, str] | str:
         return "a bare push on a detached HEAD has no destination vrg-git can judge"
     fields = _git_read(
         "for-each-ref",
-        "--format=%(push)%00%(push:remotename)%00%(upstream:remotename)%00%(upstream:remoteref)",
+        "--format=%(push)%00%(push:remotename)%00%(upstream)%00%(upstream:remotename)"
+        "%00%(upstream:remoteref)",
         f"refs/heads/{branch}",
     ).split("\0")
-    if len(fields) != 4:  # noqa: PLR2004
+    if len(fields) != 5:  # noqa: PLR2004
         return f"the push target of {branch} cannot be read"
-    push_ref, push_remote, up_remote, up_ref = fields
-    tracking = f"refs/remotes/{push_remote}/"
+    push_ref, push_remote, up_tracking, up_remote, up_ref = fields
     resolved: tuple[str, str] | None = None
-    if push_remote and push_ref.startswith(tracking):
-        resolved = (push_remote, "refs/heads/" + push_ref.removeprefix(tracking))
+    if push_ref and push_ref == up_tracking and up_remote and up_ref:
+        # It pushes to its upstream (push.default upstream, or simple with
+        # the same name): the destination is the upstream's own ref.
+        resolved = (up_remote, up_ref)
+    elif push_ref and push_remote:
+        # Otherwise @{push} is the branch of the same name (current, simple).
+        resolved = (push_remote, f"refs/heads/{branch}")
     elif up_remote and up_ref:
         resolved = (up_remote, up_ref)
     if resolved is None:
