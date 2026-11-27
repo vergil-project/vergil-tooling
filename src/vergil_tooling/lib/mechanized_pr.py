@@ -30,14 +30,21 @@ the way a person would, with plain git in that checkout:
    path turns auto-merge on, pinned to that head, with the method it works out
    from the PR (squash for a sync PR). When GitHub refuses because the PR can
    already merge, the path merges it directly, and the result is ``merged``
-   with no wait. An arm the path ``refused`` fails the job with
-   :class:`PRNotMergedError` giving the path's reason, as does any outcome but
-   ``armed`` or ``merged``; an arm that cannot be completed raises
+   with no wait. When a release holds the lock, the path leaves the PR
+   unarmed (``held``): that is success, the result ``held`` with no wait,
+   and the PR is left open for the release's unlock sweep to arm, never
+   closed or replaced by this run (release-lock spec §5.5). An arm the path
+   ``refused`` fails the job with :class:`PRNotMergedError` giving the
+   path's reason; an arm that cannot be completed raises
    :class:`MechanizedPRError`. This module never turns auto-merge on or
    merges a PR itself.
 5. **Wait until merged** (:func:`vergil_tooling.lib.pr_merge.wait_until_merged`).
    A merged PR is the result ``merged``. The wait only watches: GitHub's
-   auto-merge merges the PR once its checks are green. A failed check, a
+   auto-merge merges the PR once its checks are green. On each poll it asks
+   :func:`vergil_tooling.lib.pr_path.held_unarmed` whether a release now
+   holds the lock with the PR unarmed (a release took the lock and disarmed
+   it during the wait): the wait then ends with the result ``held``, a
+   success, as for a ``held`` arm. A failed check, a
    conflict, a closed PR or the deadline stops the wait with
    :class:`PRNotMergedError`, naming the PR and the reason. The deadline is
    the caller's ``deadline_secs`` when it gives one. A job that holds an App
@@ -117,14 +124,18 @@ class PRNotMergedError(MechanizedPRError):
 class SyncResult:
     """What :func:`open_sync_pr` did.
 
-    *status* is ``in_sync`` (the clone had no changes, no PR opened) or
-    ``merged`` (*pr_url* is the new PR, opened and merged this run). *closed*
-    lists the URLs of the earlier runs' PRs that were closed.
+    *status* is ``in_sync`` (the clone had no changes, no PR opened),
+    ``merged`` (*pr_url* is the new PR, opened and merged this run) or
+    ``held`` (*pr_url* is the new PR, left open and unarmed because a
+    release holds the lock; the release's unlock sweep arms it, and *detail*
+    says which release). *closed* lists the URLs of the earlier runs' PRs
+    that were closed.
     """
 
-    status: Literal["in_sync", "merged"]
+    status: Literal["in_sync", "merged", "held"]
     pr_url: str | None
     closed: list[str] = field(default_factory=list)
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -313,30 +324,43 @@ def _open_pr(repo: str, branch: str, title: str, body: str, head: str) -> str:
     return url
 
 
-def _arm(repo: str, clone: Path, pr_url: str, head: str) -> bool:
-    """Arm *pr_url* at *head* through the one PR path; true when the path merged it.
+def _arm(repo: str, clone: Path, pr_url: str, head: str) -> pr_path.ArmResult:
+    """Arm *pr_url* at *head* through the one PR path: ``armed``, ``merged`` or ``held``.
 
-    An outcome but ``armed`` or ``merged`` raises :class:`PRNotMergedError`
-    with the path's reason; an arm that cannot be completed raises
-    :class:`MechanizedPRError`.
+    A ``refused`` arm raises :class:`PRNotMergedError` with the path's
+    reason; an arm that cannot be completed raises :class:`MechanizedPRError`.
     """
     try:
         result = pr_path.arm(pr_url, clone=clone, head=head)
     except pr_path.PRPathError as exc:
         raise _fail("arming the PR", repo, exc) from exc
-    if result.outcome == "merged":
-        return True
-    if result.outcome == "armed":
-        return False
+    if result.outcome in ("armed", "merged", "held"):
+        return result
     reason = f"the one PR path did not arm it ({result.outcome}): {result.detail}"
     print(f"{repo}: {pr_url} was not armed: {reason}")
     raise PRNotMergedError(repo, pr_url, reason)
 
 
-def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
-    """Watch *pr_url* until it merges; raise :class:`PRNotMergedError` when it does not.
+def _held_by_release(repo: str, pr_url: str) -> str:
+    """The wait's check on each poll: the held detail while a release holds *pr_url* unarmed.
 
-    Prints how the wait ended and how long it took, merged or not.
+    Spec §5.5: a release that took the lock and disarmed the PR has left it
+    to the unlock sweep (:func:`pr_path.held_unarmed`). A failed read raises
+    :class:`MechanizedPRError`.
+    """
+    try:
+        return pr_path.held_unarmed(pr_url)
+    except pr_path.PRPathError as exc:
+        raise _fail("checking for a held release lock", repo, exc) from exc
+
+
+def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> str:
+    """Watch *pr_url* until it merges or a release holds it; raise when it does neither.
+
+    Returns ``""`` once merged, or the held detail when a release took the
+    lock and disarmed the PR during the wait. Any other end raises
+    :class:`PRNotMergedError`. Prints how the wait ended and how long it
+    took, whatever the end.
     """
     started = time.monotonic()
 
@@ -345,7 +369,12 @@ def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
         print(f"{repo}: the wait for {pr_url} ended after {waited}s: {outcome}")
 
     try:
-        pr_merge.wait_until_merged(pr_url, deadline_secs=deadline)
+        pr_merge.wait_until_merged(
+            pr_url, deadline_secs=deadline, held=lambda: _held_by_release(repo, pr_url)
+        )
+    except pr_merge.MergeHeldError as exc:
+        ended(f"{exc}; the unlock sweep arms it")
+        return str(exc)
     except pr_merge.MergeAbortError as exc:
         ended(f"not merged ({exc})")
         raise PRNotMergedError(repo, pr_url, str(exc)) from exc
@@ -354,6 +383,7 @@ def _wait_until_merged(repo: str, pr_url: str, deadline: int) -> None:
         ended(f"not merged ({reason})")
         raise PRNotMergedError(repo, pr_url, reason) from exc
     ended("merged")
+    return ""
 
 
 def _check_deadline(secs: int) -> int:
@@ -395,8 +425,15 @@ def open_sync_pr(  # noqa: PLR0913 - the PR's parts and its deadline, all keywor
     head = _commit_and_push(repo, clone, branch, title)
     pr_url = _open_pr(repo, branch, title, body, head)
     print(f"{repo}: opened {pr_url}; waiting up to {deadline}s for it to merge")
-    if _arm(repo, clone, pr_url, head):
+    armed = _arm(repo, clone, pr_url, head)
+    if armed.outcome == "merged":
         print(f"{repo}: {pr_url} was already mergeable and the one PR path merged it")
+        return SyncResult(status="merged", pr_url=pr_url, closed=closed)
+    held = armed.detail if armed.outcome == "held" else ""
+    if held:
+        print(f"{repo}: {pr_url} is {held}; the unlock sweep arms it")
     else:
-        _wait_until_merged(repo, pr_url, deadline)
+        held = _wait_until_merged(repo, pr_url, deadline)
+    if held:
+        return SyncResult(status="held", pr_url=pr_url, closed=closed, detail=held)
     return SyncResult(status="merged", pr_url=pr_url, closed=closed)

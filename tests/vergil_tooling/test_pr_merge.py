@@ -13,6 +13,7 @@ from vergil_tooling.lib.pr_merge import (
     MergeAbortError,
     MergeConflictError,
     MergeDeadlineError,
+    MergeHeldError,
     wait_and_merge,
     wait_until_merged,
 )
@@ -936,6 +937,26 @@ def test_wait_until_merged_never_calls_merge(auto_merge_on: bool) -> None:  # no
         assert gh.wait_for_checks.call_count > 1
     gh.merge.assert_not_called()
     gh.update_branch.assert_not_called()
+
+
+def test_watch_held_check_ends_the_wait_with_held() -> None:
+    """A *held* check that names a release ends the wait at once, before the deadline."""
+    gh = _gh(merge_states=["CLEAN"] * 1000)
+    answers = iter(["", "held for release 2.1.400"])
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeHeldError, match=r"^held for release 2\.1\.400$"),
+    ):
+        wait_until_merged(_URL, deadline_secs=2400, held=lambda: next(answers))
+    gh.wait_for_checks.assert_called_once()
+    gh.merge.assert_not_called()
+
+
+def test_watch_merged_pr_is_success_before_the_held_check() -> None:
+    gh = _gh(state="MERGED")
+    with patch(_MOD + ".github", gh):
+        wait_until_merged(_URL, deadline_secs=2400, held=lambda: pytest.fail("not asked"))
 
 
 def test_watch_ready_pr_polls_until_github_merges_it() -> None:

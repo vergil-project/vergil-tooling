@@ -15,6 +15,7 @@ from vergil_tooling.lib import (
     pr_path,
     trust,
 )
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
 from vergil_tooling.lib.update_deps.context import (
@@ -297,6 +298,18 @@ def test_deps_pr_armed_with_merge_method(monkeypatch) -> None:
     monkeypatch.setattr("vergil_tooling.lib.pr_path._require_clone", lambda clone, pr: None)  # noqa: ARG005
     monkeypatch.setattr("vergil_tooling.lib.pr_path._violations", lambda url: "")  # noqa: ARG005
     monkeypatch.setattr("vergil_tooling.lib.pr_path._gates", lambda pr, branch, clone: "")  # noqa: ARG005
+    # A free release lock: the arming gate's handshake goes through.
+    free = LockState(sha=None, record=None, error="")
+    monkeypatch.setattr("vergil_tooling.lib.release_lock.refs.read_lock", lambda repo: free)  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.release_lock.arming.create", lambda repo, n: "a" * 40)  # noqa: ARG005
+    monkeypatch.setattr(
+        "vergil_tooling.lib.release_lock.arming.renew",
+        lambda repo, n, *, expected: "b" * 40,  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "vergil_tooling.lib.release_lock.arming.delete",
+        lambda repo, n, *, expected: True,  # noqa: ARG005
+    )
     enabled: list[tuple[str, str, str]] = []
 
     def _enable(url: str, *, head: str, method: str) -> auto_merge.AutoMergeResult:
@@ -355,14 +368,18 @@ def test_deps_pr_refused_recorded_with_reason_no_wait(monkeypatch) -> None:
     assert ctx.merged is False
 
 
-def test_deps_pr_unknown_outcome_raises(monkeypatch) -> None:
-    """An outcome the update does not handle yet (``held``, Task 19) is never read as merged."""
+def test_arm_and_wait_held_returns_without_waiting(monkeypatch, capsys) -> None:
+    """A standalone update held by a release: reported, no wait, no merge failure recorded."""
     monkeypatch.setattr(_MOD + ".pr_path.arm", _Path("held", "held for release 2.1.244"))
     monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    monkeypatch.setattr(_MOD + ".record_merge_failure", _never("record_merge_failure"))
     ctx = _arm_ctx(monkeypatch)
-    with pytest.raises(UpdateDepsError, match="returned 'held'"):
-        pr.arm_and_wait(ctx)
+    pr.arm_and_wait(ctx)
+    assert ctx.failure is None
     assert ctx.merged is False
+    assert ctx.held == "held for release 2.1.244"
+    out = capsys.readouterr().out
+    assert f"{_PR_URL}: held for release 2.1.244; the unlock sweep arms it" in out
 
 
 def test_deps_pr_path_error_raises(monkeypatch) -> None:

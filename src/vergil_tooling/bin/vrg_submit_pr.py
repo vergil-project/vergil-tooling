@@ -45,7 +45,9 @@ submission, runs the provenance check, and arms it through the one PR path
 (:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664),
 pinned to that head, with the method the path works out from the PR: rebase
 for a batch PR, squash otherwise. A PR the path refuses fails its submit
-with auto-merge off. A PR whose
+with auto-merge off. A PR a release holds (the release lock is held, spec
+§5.5) is left unarmed and reported as ``held for release <version>; the
+release re-arms it``, and goes on to the finalize watch. A PR whose
 submit fails is named in the final summary and the other PRs continue; a
 provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
@@ -934,19 +936,21 @@ def _check_provenance(pr_url: str) -> None:
 
 
 def _arm(pr_url: str, head: str) -> pr_path.ArmResult:
-    """Arm *pr_url* through the one PR path, pinned to *head*; anything but armed or merged fails.
+    """Arm *pr_url* through the one PR path, pinned to *head*; a refusal fails.
 
     :func:`pr_path.arm` judges the PR again at its head (what the path
     accepts, the provenance check, and the gates for an agent-involved PR,
     in the main worktree, a clone of this repo), works out the merge method
     from the PR (rebase for a batch PR, squash otherwise) and turns
     auto-merge on, or merges the PR directly when GitHub refuses that at
-    clean status. A ``refused`` result
+    clean status. A ``held`` result (a release holds the lock, spec §5.5)
+    is returned too: the PR stays open and unarmed, the release re-arms it,
+    and the finalize watch follows it as any other. A ``refused`` result
     raises :class:`_SubmitFailedError` with its reason, so the PR's submit
     fails with auto-merge left off.
     """
     result = pr_path.arm(pr_url, clone=git.main_worktree_root(), head=head)
-    if result.outcome in ("armed", "merged"):
+    if result.outcome in ("armed", "merged", "held"):
         return result
     raise _SubmitFailedError(result.detail or f"the one PR path left it {result.outcome}")
 
@@ -1028,6 +1032,9 @@ class _SubmitRun:
         if result.outcome == "merged":
             outcome = f"merged directly ({method})"
             print(f"{pr_url}: {outcome}; it could already merge.")
+        elif result.outcome == "held":
+            outcome = f"{result.detail}; the release re-arms it"
+            print(f"{pr_url}: {outcome}.")
         else:
             outcome = f"auto-merge on ({method}, pinned to {sub.expected_head[:12]})"
             print(f"{pr_url}: {outcome}.")

@@ -185,6 +185,8 @@ def finalize_stage(state: UpdateDepsState) -> None:
         print(f"Dependency update did not land ({ctx.failure.kind}).")
     elif not ctx.any_changes:
         print("No updates found — removing worktree.")
+    elif ctx.held:
+        print(f"Dependency update {ctx.pr_url} is {ctx.held}; the unlock sweep arms it.")
     else:
         print(f"Dependency update merged: {ctx.pr_url}")
     pr.cleanup_worktree(ctx)

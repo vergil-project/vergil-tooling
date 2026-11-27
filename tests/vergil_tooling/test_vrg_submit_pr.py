@@ -1587,6 +1587,24 @@ class TestFinalizeByDefault:
         assert run.call_args.args[0] == ["vrg-finalize-pr", _URL1]
         assert run.call_args.kwargs["cwd"] == Path("/repo")
 
+    def test_submit_reports_held_and_continues_to_watch(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A release holds the lock: the PR is left unarmed, reported, and still watched."""
+        held = pr_path.ArmResult(
+            outcome="held",
+            pr_url=_URL1,
+            head="c0ffee",
+            method="SQUASH",
+            detail="held for release 2.1.400",
+        )
+        with patch(_MOD + ".pr_path.arm", return_value=held):
+            rc, run = _cli_main([])
+        assert rc == 0
+        assert run.call_args.args[0] == ["vrg-finalize-pr", _URL1]
+        out = capsys.readouterr().out
+        assert f"{_URL1}: held for release 2.1.400; the release re-arms it." in out
+
     @pytest.mark.parametrize(
         ("argv", "flags"),
         [

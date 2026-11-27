@@ -134,6 +134,10 @@ def arm_and_wait(ctx: UpdateDepsContext) -> None:
     - ``merged``: the path merged it directly (it could already merge); no wait.
     - ``refused``: nothing was turned on. The path's reason is recorded as a
       merge failure (:func:`record_merge_failure`), with no wait.
+    - ``held``: a release holds the lock, and the path left the PR unarmed.
+      It is reported (``held for release <v>; the unlock sweep arms it``) and
+      marked on *ctx* (``ctx.held``), with no wait and no failure recorded:
+      the release's unlock sweep arms it (spec §5.4, §5.5).
 
     A wait that ends without a merge (a closed PR, a failed check, a conflict,
     the deadline) is recorded the same way, not raised (spec §5.2). A step of
@@ -168,20 +172,16 @@ def arm_and_wait(ctx: UpdateDepsContext) -> None:
     if result.outcome == "refused":
         record_merge_failure(ctx, f"The one PR path refused {result.pr_url}: {result.detail}")
         return
+    if result.outcome == "held":
+        print(f"{pr_url}: {result.detail}; the unlock sweep arms it")
+        ctx.held = result.detail
+        return
     if result.outcome == "armed":
         try:
             pr_merge.wait_until_merged(pr_url, deadline_secs=deadline)
         except pr_merge.MergeAbortError as exc:
             record_merge_failure(ctx, str(exc))
             return
-    elif result.outcome != "merged":
-        # ``held`` arrives with the arming gate (plan Task 19). Until then any
-        # other outcome breaks the path's contract and is never read as a merge.
-        raise UpdateDepsError(
-            phase="merge",
-            command="pr_path.arm",
-            message=f"The one PR path returned {result.outcome!r} for {pr_url}: {result.detail}",
-        )
     ctx.merged = True
 
 

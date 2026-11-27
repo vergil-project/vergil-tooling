@@ -297,6 +297,18 @@ def test_failure_raises_release_error_with_report_and_tail(
     assert str(info.value) == ctx.deps_failure
 
 
+def test_held_update_fails_the_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An update the release lock held did not merge, so the release must not go on."""
+    d = _deps(pr_url="https://x/pull/9", any_changes=True)
+    d.held = "held for release 2.1.242"
+    _patch(monkeypatch, d)
+    ctx = _rctx()
+    with pytest.raises(ReleaseError, match=r"pull/9 is held for release 2\.1\.242") as info:
+        update_deps(ctx)
+    assert info.value.phase == "update-deps"
+    assert ctx.deps_pr_url == "https://x/pull/9"
+
+
 def test_update_failure_records_no_pr(monkeypatch: pytest.MonkeyPatch) -> None:
     d = _deps(fix_issue_url="https://x/issues/11")
     d.failure = DepsFailure(

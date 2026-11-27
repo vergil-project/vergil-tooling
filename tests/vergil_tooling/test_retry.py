@@ -594,3 +594,93 @@ def test_call_with_retry_env_factory_passes_a_fresh_env_per_attempt() -> None:
     with patch("vergil_tooling.lib.retry.time.sleep"):
         assert retry.call_with_retry(fn, env_factory=lambda: next(envs)) == "ok"
     assert seen == [{"GH_TOKEN": "t1"}, {"GH_TOKEN": "t2"}]
+
+
+# --------------------------------------------------------------------------- bounded
+# The arm call of the one PR path is bounded, retries included (release-lock
+# spec §5.4): past the bound it stops and is not retried.
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """A fake monotonic clock that the retry's sleeps advance."""
+    now = [100.0]
+    monkeypatch.setattr(retry.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(retry.time, "sleep", lambda secs: now.__setitem__(0, now[0] + secs))
+    return now
+
+
+def test_bounded_transient_error_past_the_bound_is_not_retried(clock: list[float]) -> None:
+    calls: list[int] = []
+
+    def fn() -> str:
+        calls.append(1)
+        clock[0] += 59.5
+        raise _api_error(stderr="HTTP 502 Bad Gateway")
+
+    with (
+        retry.bounded(60, what="the arm call"),
+        pytest.raises(retry.DeadlineExceededError) as info,
+    ):
+        retry.call_with_retry(fn)
+    assert calls == [1]
+    assert str(info.value).startswith("the arm call ran past its bound of 60s: a transient error")
+    assert "HTTP 502" in str(info.value)
+    assert not isinstance(info.value, subprocess.CalledProcessError)
+
+
+def test_bounded_retry_inside_the_bound_goes_ahead(clock: list[float]) -> None:
+    err = _api_error(stderr="HTTP 502")
+    calls, fn = _sequence(err, "ok")
+    with retry.bounded(60, what="the arm call"):
+        assert retry.call_with_retry(fn) == "ok"
+    assert len(calls) == 2
+
+
+def test_bounded_no_attempt_starts_past_the_bound(clock: list[float]) -> None:
+    calls: list[int] = []
+    with retry.bounded(60, what="the arm call"):
+        clock[0] += 61
+        with pytest.raises(retry.DeadlineExceededError, match="no further call was made"):
+            retry.call_with_retry(lambda: calls.append(1))
+    assert calls == []
+
+
+def test_bounded_subprocess_gets_the_time_left_and_is_stopped(clock: list[float]) -> None:
+    expired = subprocess.TimeoutExpired(["gh"], 50)
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=expired) as mock_run,
+        retry.bounded(60, what="the arm call"),
+    ):
+        clock[0] += 10
+        with pytest.raises(retry.DeadlineExceededError, match="the call was stopped after 50.0s"):
+            retry.run_with_retry(["gh"], check=True)
+    mock_run.assert_called_once_with(["gh"], check=True, timeout=50.0)
+
+
+def test_bounded_keeps_a_shorter_own_timeout(clock: list[float]) -> None:
+    ok = subprocess.CompletedProcess(["gh"], 0, "", "")
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", return_value=ok) as mock_run,
+        retry.bounded(60, what="the arm call"),
+    ):
+        retry.run_with_retry(["gh"], check=True, timeout=5)
+    mock_run.assert_called_once_with(["gh"], check=True, timeout=5)
+
+
+def test_bounded_nested_keeps_the_nearer_bound(clock: list[float]) -> None:
+    ok = subprocess.CompletedProcess(["gh"], 0, "", "")
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", return_value=ok) as mock_run,
+        retry.bounded(30, what="outer"),
+        retry.bounded(60, what="inner"),
+    ):
+        retry.run_with_retry(["gh"], check=True)
+    mock_run.assert_called_once_with(["gh"], check=True, timeout=30.0)
+
+
+def test_unbounded_call_has_no_timeout() -> None:
+    ok = subprocess.CompletedProcess(["gh"], 0, "", "")
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=ok) as mock_run:
+        retry.run_with_retry(["gh"], check=True)
+    mock_run.assert_called_once_with(["gh"], check=True)

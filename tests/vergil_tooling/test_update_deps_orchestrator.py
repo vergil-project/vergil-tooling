@@ -227,6 +227,23 @@ def test_finalize_removes_worktree_then_deletes_the_merged_branch(monkeypatch) -
     assert order == ["cleanup", "delete"]
 
 
+def test_finalize_reports_a_held_pr_and_keeps_its_branch(monkeypatch, capsys) -> None:
+    """A PR a release holds is not merged: finalize says so and keeps its branch."""
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: None)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", lambda ctx: pytest.fail("deleted"))  # noqa: ARG005
+    state, ctx = _state()
+    ctx.any_changes = True
+    ctx.pr_url = "https://x/pr/1"
+    ctx.held = "held for release 2.1.244"
+    finalize_stage(state)
+    out = capsys.readouterr().out
+    assert (
+        "Dependency update https://x/pr/1 is held for release 2.1.244; the unlock sweep arms it."
+        in out
+    )
+    assert "Dependency update merged" not in out
+
+
 @pytest.mark.parametrize("kind", ["validation", "merge"])
 def test_finalize_keeps_the_branch_of_a_pr_that_did_not_merge(monkeypatch, kind) -> None:
     """An unmerged PR's branch stays on origin for a resume (#4952)."""
