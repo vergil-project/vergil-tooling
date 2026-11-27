@@ -1002,9 +1002,13 @@ def test_supersede_takeover_then_preflight_failure_leaves_no_false_lock_claim(
     lowered = body.lower()
     assert "stays locked" not in lowered
     assert "still locked" not in lowered
-    # What it does say holds whichever way the new release goes.
-    assert f"release {takeover.records[0].version}" in body
-    assert "released" in lowered
+    # Nor does it promise the unlock, which can itself fail or never run: it
+    # states what was known when it was posted and points at the live state.
+    assert "the lock is released" not in lowered
+    assert f"now names release {takeover.records[0].version}" in body
+    assert "no tracking issue of its own recorded yet" in body
+    assert "`vrg-release-lock status`" in body
+    assert "is meant to release the lock" in body
 
 
 def test_supersede_refuses_running_fresh_lock(takeover: _Takeover) -> None:

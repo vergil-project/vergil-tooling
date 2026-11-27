@@ -576,10 +576,12 @@ def _supersede_takeover(
                 f"**Release lock taken over** by release {release_version}"
                 f" (`vrg-release --supersede {superseded.version}`), run by {identity} on"
                 f" {host}. The lock was {was}, its heartbeat {age}s old; it now names"
-                f" release {release_version}. If that release stops before its own"
-                " tracking issue is recorded in the lock, the lock is released and"
-                " `develop`'s PRs are re-armed, and this tracking issue stays open; once"
-                " it is recorded, this tracking issue is closed.",
+                f" release {release_version}, with no tracking issue of its own recorded"
+                " yet. This comment does not follow the lock from here: see"
+                " `vrg-release-lock status` for its current state. A stop of release"
+                f" {release_version} before its own tracking issue is recorded is meant to"
+                " release the lock and re-arm `develop`'s PRs; once that issue is"
+                " recorded, this one is closed.",
             ]
         ),
     )
