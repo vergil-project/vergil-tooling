@@ -15,6 +15,7 @@ from vergil_tooling.lib import (
     pr_path,
     trust,
 )
+from vergil_tooling.lib.release_lock.model import LockRecord
 from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.update_deps import pr
 from vergil_tooling.lib.update_deps.changes import PackageChange
@@ -25,6 +26,7 @@ from vergil_tooling.lib.update_deps.context import (
     UpdateDepsError,
 )
 from vergil_tooling.lib.update_deps.failure import failure_summary, tail_output
+from vergil_tooling.lib.update_deps.orchestrator import run_update
 from vergil_tooling.lib.update_deps.report import HeldBack
 from vergil_tooling.lib.update_deps.updater import UpdateResult
 
@@ -261,11 +263,18 @@ class _Path:
         self.outcome = outcome
         self.detail = detail
         self.calls: list[tuple[str, Path | None, str | None]] = []
+        self.passes: list[str | None] = []
 
     def __call__(
-        self, pr_url: str, *, clone: Path | None = None, head: str | None = None
+        self,
+        pr_url: str,
+        *,
+        clone: Path | None = None,
+        head: str | None = None,
+        holder_pass: str | None = None,
     ) -> pr_path.ArmResult:
         self.calls.append((pr_url, clone, head))
+        self.passes.append(holder_pass)
         return pr_path.ArmResult(
             outcome=self.outcome, pr_url=pr_url, head=_HEAD, method="MERGE", detail=self.detail
         )
@@ -288,6 +297,131 @@ def _never(name: str):
         pytest.fail(f"{name} called with {a} {k}")
 
     return _fail
+
+
+def _real_path_under(monkeypatch, lock: LockState) -> tuple[list[str], list[int]]:
+    """Run the real ``pr_path.arm`` with *lock* as the release lock, GitHub stubbed.
+
+    Returns the PRs auto-merge was turned on for and the PRs an arming ref
+    was created for.
+    """
+    snap = _snapshot(("dependency-update",))
+    read = pr_path._PR(snap=snap, draft=False, repo="o/r", number=9, branch=snap.head_ref)  # noqa: SLF001
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._read", lambda url: read)  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._require_clone", lambda clone, pr: None)  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._violations", lambda url: "")  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.pr_path._gates", lambda pr, branch, clone: "")  # noqa: ARG005
+    monkeypatch.setattr("vergil_tooling.lib.release_lock.refs.read_lock", lambda repo: lock)  # noqa: ARG005
+    created: list[int] = []
+
+    def _create(repo: str, number: int) -> str:  # noqa: ARG001
+        created.append(number)
+        return "a" * 40
+
+    monkeypatch.setattr("vergil_tooling.lib.release_lock.arming.create", _create)
+    monkeypatch.setattr(
+        "vergil_tooling.lib.release_lock.arming.delete",
+        lambda repo, n, *, expected: True,  # noqa: ARG005
+    )
+    enabled: list[str] = []
+
+    def _enable(url: str, *, head: str, method: str) -> auto_merge.AutoMergeResult:  # noqa: ARG001
+        enabled.append(url)
+        return auto_merge.AutoMergeResult(merged_now=False)
+
+    monkeypatch.setattr("vergil_tooling.lib.auto_merge._enable", _enable)
+    return enabled, created
+
+
+def _held_lock(token: str) -> LockState:
+    record = LockRecord(
+        holder_identity="maintainer",
+        holder_host="laptop",
+        version="2.1.243",
+        worktree="",
+        tracking_issue="o/r#40",
+        stage="update-deps",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T10:00:00Z",
+        heartbeat_at="2026-11-27T10:00:00Z",
+        token=token,
+    )
+    return LockState(sha="c" * 40, record=record, error="")
+
+
+def test_holder_pass_lets_the_release_deps_pr_arm_under_lock(monkeypatch) -> None:
+    """The release's own update arms with the holder's pass while its lock is held."""
+    token = "t" * 32
+    enabled, created = _real_path_under(monkeypatch, _held_lock(token))
+    waits: list[str] = []
+    monkeypatch.setattr(
+        _MOD + ".pr_merge.wait_until_merged",
+        lambda url, *, deadline_secs: waits.append(url),  # noqa: ARG005
+    )
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx, holder_pass=token)
+    # The holder skips the arming gate's handshake: no arming ref, armed at once.
+    assert enabled == [_PR_URL]
+    assert created == []
+    assert waits == [_PR_URL]
+    assert ctx.merged is True
+    assert not ctx.held
+
+
+def test_standalone_update_deps_held_under_lock(monkeypatch) -> None:
+    """A standalone vrg-update-deps passes no holder's pass: its PR is held, never armed."""
+    enabled, created = _real_path_under(monkeypatch, _held_lock("t" * 32))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    monkeypatch.setattr(_MOD + ".record_merge_failure", _never("record_merge_failure"))
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx)
+    assert enabled == []
+    assert created == [9]
+    assert ctx.held == "held for release 2.1.243"
+    assert ctx.merged is False
+
+
+def test_a_stale_holder_pass_is_held_too(monkeypatch) -> None:
+    """A pass that is not the token of the lock as it stands is no pass at all."""
+    enabled, _created = _real_path_under(monkeypatch, _held_lock("t" * 32))
+    monkeypatch.setattr(_MOD + ".pr_merge.wait_until_merged", _never("wait_until_merged"))
+    ctx = _arm_ctx(monkeypatch)
+    pr.arm_and_wait(ctx, holder_pass="x" * 32)
+    assert enabled == []
+    assert ctx.held == "held for release 2.1.243"
+
+
+def test_run_update_passes_holder_pass_to_path(monkeypatch) -> None:
+    """``run_update(holder_pass=…)`` reaches ``pr_path.arm`` through the merge stage."""
+    orchestrator = "vergil_tooling.lib.update_deps.orchestrator"
+    state_ctx = _arm_ctx(monkeypatch)
+    state_ctx.pr_url = None
+    state_ctx.any_changes = True
+
+    def _preflight(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:  # noqa: ARG001
+        return state_ctx
+
+    monkeypatch.setattr(orchestrator + ".preflight", _preflight)
+    monkeypatch.setattr(orchestrator + ".run_updaters_stage", lambda state: None)  # noqa: ARG005
+    monkeypatch.setattr(orchestrator + ".validate.run_validation", lambda: None)
+    monkeypatch.setattr(
+        orchestrator + ".pr.prepare_pr", lambda ctx: setattr(ctx, "pr_url", _PR_URL)
+    )
+    monkeypatch.setattr(orchestrator + ".finalize_stage", lambda state: None)  # noqa: ARG005
+    path = _Path("armed")
+    monkeypatch.setattr(_MOD + ".pr_path.arm", path)
+    monkeypatch.setattr(
+        _MOD + ".pr_merge.wait_until_merged",
+        lambda url, *, deadline_secs: None,  # noqa: ARG005
+    )
+    run_update(repo_root=Path("/tmp/r"), holder_pass="t" * 32)  # noqa: S108
+    assert path.passes == ["t" * 32]
+    # Standalone vrg-update-deps passes none.
+    path.passes.clear()
+    state_ctx.pr_url = None
+    run_update(repo_root=Path("/tmp/r"))  # noqa: S108
+    assert path.passes == [None]
 
 
 def test_deps_pr_armed_with_merge_method(monkeypatch) -> None:
@@ -383,7 +517,7 @@ def test_arm_and_wait_held_returns_without_waiting(monkeypatch, capsys) -> None:
 
 
 def test_deps_pr_path_error_raises(monkeypatch) -> None:
-    def _broken(url, *, clone=None, head=None):  # noqa: ARG001
+    def _broken(url, *, clone=None, head=None, holder_pass=None):  # noqa: ARG001
         msg = f"{url}: reading the PR failed: boom"
         raise pr_path.PRPathError(msg)
 

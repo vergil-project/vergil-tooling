@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
     from vergil_tooling.lib.release.supersede import Superseded
     from vergil_tooling.lib.release_lock.holder import LockOwner
+    from vergil_tooling.lib.release_lock.sweeps import RearmResult
 
 # The package-index stage's name, by which a deferred index miss is listed.
 INDEX_STAGE = "package-index"
@@ -67,6 +68,13 @@ class ReleaseContext:
     # the cut, and the one writer of its stage, health, tracking issue and
     # worktree. None on a resume, and before preflight takes it.
     lock: LockOwner | None = None
+
+    # The PRs the stray-merge check before unlock found merged into develop
+    # after the cut, other than the holder's own (spec §5.4 of epic
+    # vergil-project/.github#1664): reported, and recorded on the tracking
+    # issue. And what the rearm stage's re-arm sweep did.
+    stray_merges: tuple[str, ...] = ()
+    rearm_result: RearmResult | None = None
 
     # Managed worktree all release branch work happens in, so the root
     # checkout's HEAD never moves while a release runs (#1578).

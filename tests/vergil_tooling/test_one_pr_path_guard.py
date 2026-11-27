@@ -293,7 +293,10 @@ def test_pr_merge_main_only_sites_assert_main_base(develop_pr: MagicMock) -> Non
         version_override=None,
     )
     ctx.release_pr_url = _PR
-    with pytest.raises(ReleaseError, match="its base is 'develop', not 'main'"):
+    with (
+        patch("vergil_tooling.lib.release.orchestrator.stray_merges", return_value=[]),
+        pytest.raises(ReleaseError, match="its base is 'develop', not 'main'"),
+    ):
         merge_release(ctx)
     assert ctx.release_merge_sha is None
     develop_pr.assert_not_called()

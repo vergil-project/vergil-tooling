@@ -25,12 +25,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock import sweeps
+from vergil_tooling.lib.release_lock.holder import LockLost
+from vergil_tooling.lib.release_lock.model import ReleaseLockError
 
 if TYPE_CHECKING:
+    from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release_lock.holder import LockOwner
 
-__all__ = ["UnlockGuard"]
+__all__ = ["UnlockGuard", "rearm", "rearm_lines", "release_lock"]
 
 _PHASE = "unlock-on-exit"
 
@@ -122,3 +126,126 @@ def _failure(repo: str, cause: BaseException, what: str) -> ReleaseError:
             f" unlock path did not complete: {what}"
         ),
     )
+
+
+# --- the unlock path of a release that has its tracking issue ------------------
+#
+# The ``unlock`` and ``rearm`` stages (spec §5.3 step 2 of epic
+# vergil-project/.github#1664), and the abandon step of a stray merge, which
+# ends with both.
+
+_BREAK = 'vrg-release-lock break --reason "<why>"'
+
+
+def _describe(state: lock_refs.LockState) -> str:
+    record = state.record
+    if record is None:
+        return f"it cannot be read ({state.error})"
+    issue = record.tracking_issue or "none recorded"
+    return (
+        f"release {record.version}, held by {record.holder_identity} on"
+        f" {record.holder_host}, tracking issue {issue}"
+    )
+
+
+def release_lock(ctx: ReleaseContext, *, phase: str, remedy: str) -> None:
+    """Delete the release lock this run holds, by compare-and-swap on its last write.
+
+    The heartbeat stops first (:meth:`LockOwner.release`). Once the lock is
+    deleted, ``ctx.lock`` is ``None``: nothing after the unlock writes or
+    reads the lock. A run with no lock owner (a resume) takes none: it reads
+    the lock, and with none held there is nothing to release; a lock still
+    held is refused, naming it, since a resume never deletes a lock it does
+    not own. A failure raises :class:`ReleaseError` naming it and *remedy*;
+    a lost lock (broken or reclaimed meanwhile) is no longer this run's, so
+    ``ctx.lock`` is cleared then too.
+    """
+    owner = ctx.lock
+    command = f"release lock on {ctx.repo}"
+    if owner is None:
+        _release_without_owner(ctx, phase=phase)
+        return
+    try:
+        owner.release()
+    except (ReleaseError, ReleaseLockError, RuntimeError) as exc:
+        if isinstance(exc, LockLost):
+            ctx.lock = None
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=f"Releasing the release lock on {ctx.repo} failed: {exc}. {remedy}",
+        ) from exc
+    ctx.lock = None
+    print(f"Released the release lock on {ctx.repo}.")
+
+
+def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
+    command = f"read release lock on {ctx.repo}"
+    try:
+        state = lock_refs.read_lock(ctx.repo)
+    except ReleaseLockError as exc:
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=f"Reading the release lock on {ctx.repo} failed: {exc}.",
+        ) from exc
+    if not state.held:
+        print(f"No release lock is held on {ctx.repo}: nothing to release.")
+        return
+    raise ReleaseError(
+        phase=phase,
+        command=command,
+        message=(
+            f"This run holds no release lock (it is a resume), and the release lock on"
+            f" {ctx.repo} is held: {_describe(state)}. A resume does not delete a lock an"
+            " earlier run took. Check it with `vrg-release-lock status`; once no run of"
+            f" this release is alive, remove it with `{_BREAK}`, which also re-arms the"
+            f" PRs, then re-run `vrg-release --resume {ctx.version}`."
+        ),
+    )
+
+
+def rearm_lines(result: sweeps.RearmResult) -> list[str]:
+    """What the re-arm sweep did, one line per outcome and per PR it left unarmed."""
+    armed = f"Re-armed {len(result.armed)} PR(s)"
+    lines = [f"{armed}: {', '.join(result.armed)}" if result.armed else f"{armed}."]
+    if result.merged:
+        lines.append(f"Merged by the one PR path: {', '.join(result.merged)}")
+    lines.extend(f"Not re-armed (held): {url}" for url in result.held)
+    lines.extend(
+        f"Not re-armed (refused by the one PR path): {url}: {why}" for url, why in result.refused
+    )
+    return lines
+
+
+def rearm(ctx: ReleaseContext, *, phase: str, remedy: str) -> sweeps.RearmResult:
+    """Run the re-arm sweep with no holder's pass: the lock is gone.
+
+    A PR the one PR path refused or held is in the result, never a failure.
+    A sweep that could not be made, or could not offer some PRs, raises
+    :class:`ReleaseError` naming what is still disarmed and *remedy*.
+    """
+    command = f"re-arm sweep on {ctx.repo}"
+    try:
+        result = sweeps.rearm_all(ctx.repo)
+    except sweeps.RearmSweepError as exc:
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=(
+                f"{exc}. Each of those PRs is still disarmed. {remedy}"
+                f" What the sweep did with the rest: {'; '.join(rearm_lines(exc.result))}"
+            ),
+        ) from exc
+    except sweeps.SweepError as exc:
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=(
+                f"The re-arm sweep on {ctx.repo} failed: {exc}. Every open PR into develop"
+                f" it did not re-arm is still disarmed. {remedy}"
+            ),
+        ) from exc
+    for line in rearm_lines(result):
+        print(line)
+    return result

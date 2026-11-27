@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.vergil_tooling.release_stubs import branch_lookup, branch_pr, fork_skip
+from tests.vergil_tooling.release_stubs import FakeLockOwner, branch_lookup, branch_pr, fork_skip
 from vergil_tooling.lib import finalize_watch, github, pr_create, pr_merge, pr_path, trust
 from vergil_tooling.lib.release.bump import BACK_MERGE_DEADLINE_SECS, back_merge_and_bump
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
@@ -585,7 +585,7 @@ def test_back_merge_arms_through_path_with_merge_commit() -> None:
     arm = MagicMock(return_value=_arm_result("armed"))
     wait = MagicMock()
     ctx, spec = _fresh_bump(arm, wait)
-    arm.assert_called_once_with(_BUMP_PR, clone=ctx.work_root, head=_BUMP_HEAD)
+    arm.assert_called_once_with(_BUMP_PR, clone=ctx.work_root, head=_BUMP_HEAD, holder_pass=None)
     wait.assert_called_once()
     assert ctx.bump_pr_url == _BUMP_PR
     assert ctx.bump_merge_sha == _MERGE_SHA
@@ -597,6 +597,32 @@ def test_back_merge_arms_through_path_with_merge_commit() -> None:
         snap=_snapshot(head_ref), draft=False, repo="owner/repo", number=101, branch=head_ref
     )
     assert pr_path._method(pr) == "MERGE"  # noqa: SLF001
+
+
+def test_holder_pass_lets_back_merge_and_deps_arm_under_lock() -> None:
+    """The back-merge is the holder's: it arms with the lock's token as the holder's pass.
+
+    The update-deps half is ``test_update_deps_stage_passes_the_holder_pass`` and
+    ``test_holder_pass_lets_the_release_deps_pr_arm_under_lock``.
+    """
+    arm = MagicMock(return_value=_arm_result("armed"))
+    ctx = _ctx()
+    owner = FakeLockOwner()
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_BUMP_HEAD),
+        patch(_MOD + "._checkout_post_branch", return_value=None),
+        patch(_MOD + ".version.bump", return_value="2.1.1"),
+        patch(_MOD + ".github.create_pr", return_value=_BUMP_PR),
+        patch("vergil_tooling.lib.pr_create.open_trusted_prs", return_value=[]),
+        patch(_MOD + ".pr_path.arm", arm),
+        patch(_MOD + ".pr_merge.wait_until_merged"),
+    ):
+        back_merge_and_bump(ctx)
+    arm.assert_called_once_with(
+        _BUMP_PR, clone=ctx.work_root, head=_BUMP_HEAD, holder_pass=owner.token
+    )
 
 
 def test_back_merge_never_calls_a_merge_itself() -> None:
@@ -630,7 +656,7 @@ def test_back_merge_resume_rearms_open_post_pr() -> None:
         patch(_MOD + ".pr_merge.wait_until_merged") as wait,
     ):
         back_merge_and_bump(ctx)
-    arm.assert_called_once_with(_BUMP_PR, clone=ctx.work_root, head=None)
+    arm.assert_called_once_with(_BUMP_PR, clone=ctx.work_root, head=None, holder_pass=None)
     wait.assert_called_once_with(_BUMP_PR, deadline_secs=BACK_MERGE_DEADLINE_SECS)
     create.assert_not_called()
     assert ctx.next_version == "2.1.1"

@@ -113,7 +113,9 @@ def _arm_and_wait(ctx: ReleaseContext, pr_url: str, *, head: str | None) -> None
     commit, for a trusted ``release/post-*`` head) and judges it from the
     release worktree, a clone of the repository. *head* is the tip this run
     pushed, which the path pins; ``None`` on a resume of an open PR, which is
-    armed at its current head. Then:
+    armed at its current head. The back-merge is the holder's, so it is armed
+    with the release lock's token as the holder's pass and merges under the
+    lock (spec §5.3 of epic vergil-project/.github#1664). Then:
 
     - ``armed``: auto-merge is on, and :func:`pr_merge.wait_until_merged`
       watches the PR, never merging it, under :data:`BACK_MERGE_DEADLINE_SECS`.
@@ -126,7 +128,12 @@ def _arm_and_wait(ctx: ReleaseContext, pr_url: str, *, head: str | None) -> None
     ``ReleaseError`` too.
     """
     try:
-        result = pr_path.arm(pr_url, clone=ctx.work_root, head=head)
+        result = pr_path.arm(
+            pr_url,
+            clone=ctx.work_root,
+            head=head,
+            holder_pass=ctx.lock.token if ctx.lock is not None else None,
+        )
     except pr_path.PRPathError as exc:
         raise ReleaseError(
             phase=_PHASE,

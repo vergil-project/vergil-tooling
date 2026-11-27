@@ -11,6 +11,7 @@ from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.progress import Stage, mark_warn, note
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release import checklist
+from vergil_tooling.lib.release.abandon import ReleaseAbandoned, abandon_release
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.cd_publish import deliver_failed_jobs
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
@@ -20,7 +21,7 @@ from vergil_tooling.lib.release.finalize import close_tracking, finalize, teardo
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.handoff import holds
 from vergil_tooling.lib.release.install import install, minor
-from vergil_tooling.lib.release.lock_guard import UnlockGuard
+from vergil_tooling.lib.release.lock_guard import UnlockGuard, rearm, rearm_lines, release_lock
 from vergil_tooling.lib.release.merge import (
     ReleaseConflictError,
     known_pr_state,
@@ -32,6 +33,7 @@ from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
 from vergil_tooling.lib.release.records import post_records
 from vergil_tooling.lib.release.resume import ALWAYS_RUN
+from vergil_tooling.lib.release.stray import stray_merges
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
@@ -193,6 +195,12 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
         except TrackingIssueBreach:
             # A suspected breach stops the run before any write, so the
             # failure is never commented on the issue (spec §4.2).
+            raise
+        except ReleaseAbandoned:
+            # The abandon step closed the tracking issue with its own comment
+            # and released the lock: there is nothing left to comment on, to
+            # mark broken, or for --resume to finish (spec §5.4 of epic
+            # vergil-project/.github#1664).
             raise
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
@@ -425,6 +433,14 @@ def _stages() -> list[Stage]:
         # stage before it failed; a resume posts only the missing ones (spec
         # §4.9 of epic vergil-project/.github#1440).
         Stage("release-records", _tracked("release-records", post_records), mode="fail_defer"),
+        # The unlock (spec §5.3 step 2 of epic vergil-project/.github#1664):
+        # the stray-merge check, then the lock is deleted. Any failure before
+        # it holds it back, so a broken release leaves develop locked until
+        # --resume finishes it.
+        Stage("unlock", _tracked("unlock", _unlock_phase), mode="fail_defer"),
+        # The re-arm sweep: every open, non-draft PR into develop with
+        # auto-merge off is offered to the one PR path. Idempotent.
+        Stage("rearm", _tracked("rearm", _rearm_phase), mode="fail_defer"),
         # Closes the tracking issue only once no stage before it failed and
         # every record is posted, so a failed or deferred stage leaves it open
         # for --resume.
@@ -444,6 +460,12 @@ def merge_release(ctx: ReleaseContext) -> None:
     A CONFLICTING release PR self-heals: main is merged into the release
     branch and pushed, a CHANGELOG-only conflict resolved automatically, and
     any other conflict refused with recovery steps (#3526, ``conflict``).
+
+    Before the merge, while nothing is published, the stray-merge check
+    runs: a PR merged into ``develop`` after the cut, other than the
+    holder's own, abandons the release (:func:`abandon_release`) and raises
+    :class:`ReleaseAbandoned` naming it (spec §5.4 of epic
+    vergil-project/.github#1664).
     """
     if ctx.release_pr_url is None:
         raise ReleaseError(
@@ -456,6 +478,12 @@ def merge_release(ctx: ReleaseContext) -> None:
         print("Release PR already merged — skipping merge.")
         ctx.release_merge_sha = "merged"
         return
+    strays = stray_merges(ctx)
+    if strays:
+        reason = f"{', '.join(strays)} merged into develop after the release was cut"
+        print(f"Stray merge: {reason}")
+        abandon_release(ctx, reason=reason)
+        raise ReleaseAbandoned(ctx.version, reason)
     updates: list[None] = []
     heals = 0
     while True:
@@ -518,6 +546,53 @@ def _sync_release_branch(ctx: ReleaseContext, pr_url: str) -> None:
         )
     sync_local_branch(
         pr_url, branch=ctx.release_branch, worktree=ctx.worktree_path, phase="merge-release"
+    )
+
+
+def _unlock_phase(ctx: ReleaseContext) -> None:
+    """The ``unlock`` stage: the stray-merge check, then delete the release lock.
+
+    A PR merged into ``develop`` after the cut, other than the holder's own,
+    is reported and recorded on the tracking issue (the stage's completion
+    comment), and the release goes on: the published release is right for
+    what it cut, and the PR goes into the next release (spec §5.4 of epic
+    vergil-project/.github#1664). The lock is then deleted by
+    compare-and-swap on this run's last write; from here on nothing reads
+    or writes it (:func:`release_lock`).
+    """
+    strays = stray_merges(ctx)
+    ctx.stray_merges = tuple(strays)
+    if strays:
+        message = (
+            f"Merged into develop after the cut, not in release {ctx.version}: "
+            f"{', '.join(strays)}. It goes into the next release."
+        )
+        print(message)
+        mark_warn(message)
+    release_lock(
+        ctx,
+        phase="unlock",
+        remedy=(
+            "Check the lock with `vrg-release-lock status`, then re-run"
+            f" `vrg-release --resume {ctx.version}`."
+        ),
+    )
+
+
+def _rearm_phase(ctx: ReleaseContext) -> None:
+    """The ``rearm`` stage: offer every PR the quiesce disarmed back to the one PR path.
+
+    A PR the path refuses or holds is listed on the tracking issue, never a
+    failure; a sweep that cannot be made is (spec §5.3 step 2 of epic
+    vergil-project/.github#1664).
+    """
+    ctx.rearm_result = rearm(
+        ctx,
+        phase="rearm",
+        remedy=(
+            f"`vrg-release --resume {ctx.version}` runs the sweep again; it offers only the"
+            " PRs still unarmed."
+        ),
     )
 
 
@@ -638,6 +713,16 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         lines.append("Repository finalized.")
     elif phase == "release-records":
         lines.append(_records_details(ctx))
+    elif phase == "unlock":
+        lines.append("The release lock is released.")
+        if ctx.stray_merges:
+            lines.append(
+                "**Merged into develop after the cut**, so not in this release; it goes "
+                f"into the next release: {', '.join(ctx.stray_merges)}"
+            )
+    elif phase == "rearm":
+        if ctx.rearm_result is not None:
+            lines.extend(f"- {line}" for line in rearm_lines(ctx.rearm_result))
     elif phase == "close-tracking":
         lines.append("Tracking issue closed.")
     elif phase == "package-index":
