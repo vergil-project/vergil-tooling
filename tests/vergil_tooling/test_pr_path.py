@@ -460,7 +460,7 @@ def test_arm_gates_recheck_error_raises(
     def fail(*_args: object) -> str:
         raise finalize_watch.FinalizeWatchError(f"{PR}: the gates cannot be re-checked")
 
-    monkeypatch.setattr(finalize_watch, "recheck_gates", fail)
+    monkeypatch.setattr(finalize_watch, "gates_at_head", fail)
 
     with pytest.raises(PRPathError, match="the gates cannot be re-checked"):
         arm(PR, clone=clone)

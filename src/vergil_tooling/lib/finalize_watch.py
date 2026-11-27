@@ -6,11 +6,15 @@ each until it reaches a terminal :data:`Outcome` or the batch deadline
 (:func:`deadline_secs`) passes. It holds no lock and changes nothing locally;
 the settle phase that follows is the caller's.
 
-The watch never merges a PR and never turns auto-merge on. Auto-merge found
-off, at the start or mid-watch, is an exception for the human, reported as
-``failed: auto-merge off`` and never repaired. The watch turns auto-merge off
-itself in two cases only, both on an open PR: a provenance violation, and a
-head the gates do not pass.
+The watch never merges a PR and never turns auto-merge on or off
+(epic vergil-project/.github#1664, spec §5, phase 1): it watches and
+reports. Auto-merge found off, at the start or mid-watch, is an exception
+for the human, reported as ``failed: auto-merge off`` and never repaired.
+The watch judges no head of an open PR: the one PR path
+(:mod:`vergil_tooling.lib.pr_path`) runs the provenance check and the
+agent gates on every head the tooling arms or pushes, before it is armed
+or pushed, so a head pushed after submit was judged before it reached the
+PR.
 
 **Start-up and every poll** read one ``gh pr view`` snapshot per open PR and
 judge it in this order:
@@ -22,32 +26,21 @@ judge it in this order:
    author on its branch ends the same way.
 2. **Merged.** The PR ends as ``merged``, a PR that merged before the watch
    started included. Provenance (:func:`vergil_tooling.lib.pr_provenance.check_pr`)
-   runs on it first: a violation cannot be undone, so nothing is disabled,
-   and the result carries ``provenance_violation=True``, printed loudly. The
+   runs on it: a violation cannot be undone, so nothing is disabled, and
+   the result carries ``provenance_violation=True``, printed loudly. The
    caller treats such a run as not a full success.
 3. **Closed** without merging: ``failed: closed``.
-4. **Provenance** runs at start-up and again each time the PR's head
-   changes. A violation turns auto-merge off (GraphQL
-   ``disablePullRequestAutoMerge``, confirmed by reading it back) and ends the
-   PR as ``failed: provenance``. A violation always fails; there is no
-   override (vergil-tooling#4695).
-5. **The gates** (:func:`recheck_gates`) run right after provenance, at
-   start-up and on each new head: on an agent-involved PR, its head must
-   still pass :func:`vergil_tooling.lib.agent_gates.evaluate`. A head that
-   does not, or a re-check that cannot be completed, turns auto-merge off
-   the same way and ends the PR as ``failed: gates``. See "The gates' re-check"
-   below.
-6. **Auto-merge off:** ``failed: auto-merge off``.
-7. **A required check concluded in failure:** ``failed: CI``, naming the
+4. **Auto-merge off:** ``failed: auto-merge off``.
+5. **A required check concluded in failure:** ``failed: CI``, naming the
    check. :func:`check_failures` judges the snapshot's checks, and leaves
    out a failed or cancelled check-run of a superseded workflow run. When
    the base branch's required checks cannot be read, every check counts as
    required.
-8. **A required check was cancelled** on a cancelled run that no newer run
+6. **A required check was cancelled** on a cancelled run that no newer run
    of its workflow has replaced, for :data:`CANCEL_GRACE_SECS` on end:
    ``failed: cancelled``, naming the check. Until then the PR is pending,
    since a re-run may still start.
-9. **Conflict** (``mergeStateStatus`` ``DIRTY``) reported at the same head
+7. **Conflict** (``mergeStateStatus`` ``DIRTY``) reported at the same head
    for :data:`CONFLICT_SETTLE_SECS` on end: ``failed: conflict``. Until
    then the PR is pending: GitHub recomputes a PR's mergeable status after
    a push, and may report the old conflict meanwhile (issue #4998). A new
@@ -64,19 +57,18 @@ the new run as soon as it is created.
 
 **A merged PR is never reported as not merged.** A PR that ended
 ``failed: CI`` or ``failed: cancelled`` is read again on every later poll
-while the watch goes on. If GitHub has merged it, it ends ``merged`` instead.
-Its auto-merge is still on, so a new head pushed to it meanwhile gets the
-provenance check and the gates' re-check like a pending PR's: a failure
-turns its auto-merge off and replaces its result.
+while the watch goes on. If GitHub has merged it (its auto-merge is still
+on, so a fix pushed to it merges by itself once its checks pass), it ends
+``merged`` instead.
 
-**The gates' re-check** (epic vergil-project/.github#1384, plan Task 11).
-GitHub keeps a PR's auto-merge on across a push, so a head pushed after
-submit (a fix, a rebase) merges by itself once its checks are green, and
-nothing re-arms it: the watch is where that head is judged. On each new head
-of an open PR, :func:`recheck_gates`:
+**The gates at a head**, for the one PR path (epic
+vergil-project/.github#1384, plan Task 11; the path since epic
+vergil-project/.github#1664). The watch no longer calls them; they live
+here beside the snapshot they read. :func:`gates_at_head` judges a PR's
+pushed head and :func:`gates_before_push` a head about to be pushed. Each:
 
-- refuses, before reading anything, when the clone the watch runs in is not
-  a clone of the PR's repository (:class:`FinalizeWatchError`: the gates are
+- refuses, before reading anything, when the clone it runs in is not a
+  clone of the PR's repository (:class:`FinalizeWatchError`: the gates are
   judged on local git objects, so another repo's clone cannot judge them);
 - asks whether the PR is **agent-involved**: an agent login opened it or
   GitHub attributes an action on it to one
@@ -88,27 +80,25 @@ of an open PR, :func:`recheck_gates`:
   (:func:`ready_state`), says so. A ready state counts as agent-involved
   unless its commit's author is trusted and its ``recorded_by`` is an
   identity that is not an agent: one with no ``recorded_by``, or a value
-  the watch does not recognise, counts, so a PR an agent pushed to is never
+  the gates do not recognise, counts, so a PR an agent pushed to is never
   human-only for want of a pusher GitHub does not record. ``recorded_by`` is
   written by whoever ran ``report-ready`` and can be forged, so it only
   ever adds agent involvement: ``human`` never makes a PR that GitHub's
   actors show an agent acting on human-only. A PR with no ready state is
   judged from its GitHub actors alone;
-- on an agent-involved PR, fetches the PR's head commit and ``develop``
-  (a new head may have been made outside this clone), without moving any
-  branch's remote-tracking ref, and runs
+- on an agent-involved PR, fetches ``develop`` (and, for a pushed head,
+  the PR's head commit, which may have been made outside this clone),
+  without moving any branch's remote-tracking ref, and runs
   :func:`~vergil_tooling.lib.agent_gates.evaluate` from the fetched
   ``origin/develop`` to the head, on the task issues of the PR's trusted
   body's linkage lines (or, when it has none, its trusted ready state's).
 
-A head the gates do not pass, and any read or fetch the re-check cannot
-complete, ends the PR ``failed: gates`` with auto-merge turned off, never
-left armed. A merged PR is not re-checked: nothing can be disabled, and the
-daily agent audit judges it.
+A head the gates do not pass is returned as the reasons, and any read or
+fetch the gates cannot complete as the reason too, never as a pass.
 
 A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
-Every failure to read a PR, to run the provenance check or to turn auto-merge
-off raises; none is read as a pending or a clean PR.
+Every failure to read a PR or to run the provenance check raises; none is
+read as a pending or a clean PR.
 
 **A status table** (issue #4677) is built after start-up and after every
 poll: one row per PR in the batch, a PR that has ended included, with its
@@ -137,7 +127,6 @@ from typing import TYPE_CHECKING, Literal
 
 from vergil_tooling.lib import (
     agent_gates,
-    auto_merge,
     git,
     github,
     linkage,
@@ -169,8 +158,6 @@ Outcome = Literal[
     "failed: conflict",
     "failed: closed",
     "failed: auto-merge off",
-    "failed: provenance",
-    "failed: gates",
     "failed: not a develop PR",
     "timed out",
 ]
@@ -211,17 +198,9 @@ _PENDING_BUCKET = "pending"
 _MERGING_STATES = frozenset({"CLEAN", "HAS_HOOKS", "UNSTABLE"})
 _TITLE_WIDTH = 50
 
-_DISABLE_AUTO_MERGE_MUTATION = """
-mutation($id: ID!) {
-  disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
-    pullRequest { number }
-  }
-}
-"""
-
 
 class FinalizeWatchError(RuntimeError):
-    """A PR could not be read or its auto-merge turned off; the message names the PR."""
+    """A PR could not be read or its gates judged in a clone; the message names the PR."""
 
 
 @dataclass(frozen=True)
@@ -229,11 +208,11 @@ class PRResult:
     """How one watched PR ended.
 
     *pr* is the PR's URL and *head* its head commit when it ended. *detail*
-    names the failed check, the provenance actions, or why the PR was not
-    watched. *title*, *branch* (the head branch) and *labels* are the PR's
-    as last read, for the report's PR table. *provenance_violation* is true
-    whenever the watch found a provenance violation on the PR, whatever its
-    outcome.
+    names the failed check, the provenance actions of a merged PR, or why
+    the PR was not watched. *title*, *branch* (the head branch) and *labels*
+    are the PR's as last read, for the report's PR table.
+    *provenance_violation* is true when the PR merged with a provenance
+    violation.
     """
 
     pr: str
@@ -405,30 +384,13 @@ def _violations(pr: str) -> str:
     return ", ".join(f"{v.login} ({v.role.value}): {v.action}" for v in result.violations)
 
 
-def _disable_auto_merge(snap: Snapshot) -> None:
-    """Turn auto-merge off for *snap*'s PR and confirm it is off; any failure raises."""
-    try:
-        github.graphql(_DISABLE_AUTO_MERGE_MUTATION, id=snap.node_id)
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
-        msg = f"{snap.url}: turning auto-merge off failed: {error_text(exc)}"
-        raise FinalizeWatchError(msg) from exc
-    try:
-        still_on = auto_merge.auto_merge_enabled(snap.url)
-    except auto_merge.AutoMergeError as exc:
-        msg = f"{snap.url}: auto-merge was turned off, but reading it back failed: {exc}"
-        raise FinalizeWatchError(msg) from exc
-    if still_on:
-        msg = f"{snap.url}: auto-merge is still on after turning it off"
-        raise FinalizeWatchError(msg)
-
-
-# --- the gates' re-check ------------------------------------------------------------
+# --- the gates at a head, for the one PR path ----------------------------------------
 
 #: The ready state's file on its relay ref's single-file commit.
 _RELAY_FILE = "pr-workflow.json"
 
-#: Every error a re-check's read, fetch or parse raises. Each one ends the PR
-#: ``failed: gates`` with auto-merge off; none is read as a pass.
+#: Every error a read, fetch or parse of the gates raises. Each one is
+#: returned as the reason the head does not pass; none is read as a pass.
 _RECHECK_ERRORS = (
     subprocess.CalledProcessError,
     trust.TrustReadError,
@@ -472,8 +434,9 @@ def _pr_repo_and_number(snap: Snapshot) -> tuple[str, int]:
 def require_clone_of(clone: Path, repo: str, pr: str) -> None:
     """Refuse unless *clone*'s ``origin`` is *repo*: the gates judge local git objects.
 
-    The watch's re-check and the one PR path (:mod:`vergil_tooling.lib.pr_path`)
-    both check a clone they are given this way.
+    The gates (:func:`gates_at_head`, :func:`gates_before_push`) and the one
+    PR path (:mod:`vergil_tooling.lib.pr_path`) check a clone they are given
+    this way.
     """
     try:
         url = git.remote_url("origin", repo=clone)
@@ -625,13 +588,15 @@ def _gates_at(
     return "" if result.ok else "; ".join(result.reasons)
 
 
-def recheck_gates(snap: Snapshot, branch: str, clone: Path) -> str:
-    """Why *snap*'s head does not pass the gates, or ``""`` when it does.
+def gates_at_head(snap: Snapshot, branch: str, clone: Path) -> str:
+    """Why *snap*'s pushed head does not pass the gates, or ``""`` when it does.
 
-    See "The gates' re-check" in the module docstring. A clone of another
-    repository raises :class:`FinalizeWatchError` before anything is read.
-    A PR that is not agent-involved passes. Any read, fetch or parse
-    failure is returned as the reason, never a pass.
+    The one PR path's arm (:func:`vergil_tooling.lib.pr_path.arm`) judges
+    the head it arms this way. See "The gates at a head" in the module
+    docstring. A clone of another repository raises
+    :class:`FinalizeWatchError` before anything is read. A PR that is not
+    agent-involved passes. Any read, fetch or parse failure is returned as
+    the reason, never a pass.
     """
     return _gates_at(snap, branch, clone, head=snap.head, pushed=True, pusher_is_agent=False)
 
@@ -644,7 +609,7 @@ def gates_before_push(
     The one PR path's push mode
     (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`) judges a new head
     before it pushes it, so *head* is read from *clone*, never fetched. The
-    rules are :func:`recheck_gates`', with one addition: when
+    rules are :func:`gates_at_head`'s, with one addition: when
     *pusher_is_agent*, the push itself makes the PR agent-involved, so a PR
     no agent has acted on yet is gated too. ``""`` when it passes.
     """
@@ -837,19 +802,15 @@ class _Watched:
     """What the watch remembers about one PR between snapshots.
 
     *branch* is the head branch :func:`confirmed_head` gave at start-up, or
-    ``None`` when the trust layer did not confirm the PR. *clone* is the
-    clone the gates are re-checked in. *violation* is the provenance
-    violation found, and *gate_failure* why the gates did not pass.
+    ``None`` when the trust layer did not confirm the PR. *violation* is the
+    provenance violation found on the merged PR.
     """
 
     required: frozenset[str] | None
     cancel: CancelGrace
     conflict: ConflictSettle
     branch: str | None
-    clone: Path
-    checked_head: str | None = None
     violation: str = ""
-    gate_failure: str = ""
 
 
 def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) -> PRResult:
@@ -866,47 +827,14 @@ def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) ->
     )
 
 
-def _check_provenance(snap: Snapshot, watched: _Watched) -> bool:
-    """Check *snap*'s PR at its head; record a violation on *watched*. True if one was found."""
-    watched.checked_head = snap.head
-    found = _violations(snap.url)
-    if found:
-        watched.violation = found
-    return bool(found)
-
-
-def _check_gates(snap: Snapshot, watched: _Watched) -> Outcome | None:
-    """Check open *snap*'s head: provenance, then the gates; the failure it ends on, if any.
-
-    Records what it found on *watched*. The gates run only on a head with no
-    provenance violation.
-    """
-    if _check_provenance(snap, watched):
-        print(
-            f"PROVENANCE VIOLATION: {snap.url}: {watched.violation}. "
-            "Turning its auto-merge off; investigate before re-enabling auto-merge.",
-            file=sys.stderr,
-        )
-        return "failed: provenance"
-    failure = recheck_gates(snap, str(watched.branch), watched.clone)
-    if not failure:
-        return None
-    watched.gate_failure = failure
-    print(
-        f"GATES NOT PASSED: {snap.url} at {snap.head[:12]}: {failure}. "
-        "Turning its auto-merge off; settle it before re-enabling auto-merge.",
-        file=sys.stderr,
-    )
-    return "failed: gates"
-
-
 def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
     why = _not_develop(snap, watched.branch)
     if why is not None:
         return _result(snap, "failed: not a develop PR", why, watched)
     if snap.state == "MERGED":
-        if _check_provenance(snap, watched):
+        watched.violation = _violations(snap.url)
+        if watched.violation:
             print(
                 f"PROVENANCE VIOLATION: {snap.url} merged with forbidden actions: "
                 f"{watched.violation}. Nothing can be disabled; investigate before any release.",
@@ -915,9 +843,6 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
         return _result(snap, "merged", watched.violation, watched)
     if snap.state == "CLOSED":
         return _result(snap, "failed: closed", "closed without merging", watched)
-    failed = _new_head_failure(snap, watched)
-    if failed is not None:
-        return failed
     if not snap.auto_merge_on:
         detail = "auto-merge is off; investigate before re-enabling auto-merge"
         return _result(snap, "failed: auto-merge off", detail, watched)
@@ -939,30 +864,6 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
         )
         return _result(snap, "failed: conflict", detail, watched)
     return None
-
-
-def _new_head_failure(snap: Snapshot, watched: _Watched) -> PRResult | None:
-    """The failure a new head of a PR that ended on its checks alone ends it with, if any.
-
-    Such a PR is re-read while the watch goes on, and its auto-merge is still
-    on, so a fix pushed to it merges by itself once its checks pass: each new
-    head of it, while open on ``develop``, gets the same provenance and gates
-    check as a pending PR's, and a failure turns its auto-merge off and
-    replaces its result.
-    """
-    if (
-        snap.state != "OPEN"
-        or snap.head == watched.checked_head
-        or _not_develop(snap, watched.branch) is not None
-    ):
-        return None
-    failed = _check_gates(snap, watched)
-    if failed is None:
-        return None
-    if snap.auto_merge_on:
-        _disable_auto_merge(snap)
-    detail = watched.violation if failed == "failed: provenance" else watched.gate_failure
-    return _result(snap, failed, detail, watched)
 
 
 def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
@@ -1104,7 +1005,6 @@ def summarize(results: Sequence[PRResult]) -> str:
 def watch(
     prs: Sequence[str],
     *,
-    clone: Path,
     poll_interval: float = 15.0,
     cancel_grace: float = CANCEL_GRACE_SECS,
     conflict_settle: float = CONFLICT_SETTLE_SECS,
@@ -1119,8 +1019,8 @@ def watch(
     ends ``merged`` once GitHub reports it merged. *cancel_grace* is how long
     a cancelled required check with no newer run holds a PR pending, and
     *conflict_settle* how long a conflict must be reported at one head
-    before the PR ends failed: conflict. *clone* is the clone of the PRs'
-    repository the gates are re-checked in (:func:`recheck_gates`).
+    before the PR ends failed: conflict. No head of an open PR is judged
+    and auto-merge is never touched: see the module docstring.
     """
     deadline = deadline_secs()
     if poll_interval <= 0:
@@ -1129,7 +1029,7 @@ def watch(
     results: dict[str, PRResult] = {}
     pending: dict[str, tuple[_Watched, Snapshot]] = {}
     # The PRs that ended on their checks alone, re-read while the watch goes on.
-    recheck: dict[str, _Watched] = {}
+    reread: dict[str, _Watched] = {}
     rows: dict[str, _Row] = {}
     order: list[str] = []
     table = _StatusTable()
@@ -1146,7 +1046,7 @@ def watch(
         rows[snap.url] = _row(snap, watched, result.outcome, now - start)
         pending.pop(snap.url, None)
         if result.outcome in _CHECK_OUTCOMES:
-            recheck[snap.url] = watched
+            reread[snap.url] = watched
 
     for pr in prs:
         snap = snapshot(pr)
@@ -1161,7 +1061,6 @@ def watch(
             cancel=CancelGrace(cancel_grace),
             conflict=ConflictSettle(conflict_settle),
             branch=branch,
-            clone=clone,
         )
         judge(snap, watched)
 
@@ -1173,17 +1072,11 @@ def watch(
         if remaining <= 0:
             break
         time.sleep(min(poll_interval, remaining))
-        for url, watched in list(recheck.items()):
+        for url, watched in list(reread.items()):
             snap = snapshot(url)
             if snap.state == "MERGED":
-                del recheck[url]
+                del reread[url]
                 judge(snap, watched)
-                continue
-            failed = _new_head_failure(snap, watched)
-            if failed is not None:
-                del recheck[url]
-                results[url] = failed
-                rows[url] = _row(snap, watched, failed.outcome, time.monotonic() - start)
         for url, (watched, _) in list(pending.items()):
             judge(snapshot(url), watched)
         now = time.monotonic()
