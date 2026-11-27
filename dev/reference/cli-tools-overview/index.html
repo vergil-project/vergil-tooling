@@ -15228,6 +15228,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-group
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-release-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19990,6 +20001,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-group
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-release-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21672,6 +21694,51 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 any failure or refusal, 2 usage error (such as <code>--supersede</code> with <code>--resume</code>), 130 interrupted</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-release-group">vrg-release-group<a class="headerlink" href="#vrg-release-group" title="Permanent link">&para;</a></h3>
+<p>List an epic's release groups: a batch of tasks of one development epic (or
+a proxy of one) that ship together (epic vergil-project/.github#1672). A
+group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
+epic's comments, read only from the <code>human</code> and <code>agents</code> roles; a conflict,
+an out-of-order revision, an edited record or a malformed one refuses that
+group, and an outsider's edit of an epic comment refuses the whole epic.
+<code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
+<code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
+and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only: there are no write
+commands yet.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_release_group</code> (library: <code>vergil_tooling.lib.release_groups.record</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> (required), <code>--group &lt;id&gt;</code>, <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the epic's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Refusals and read failures on stderr, nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 read, 1 refusal or read failure, 2 usage error</td>
 </tr>
 <tr>
 <td>Status</td>
