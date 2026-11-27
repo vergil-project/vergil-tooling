@@ -26,6 +26,8 @@ ARMING_EXPIRY_SECS = 300
 ARM_CALL_BOUND_SECS = 60
 #: The release's total wait on arming refs before it fails, naming them.
 ARMING_WAIT_BOUND_SECS = 900
+#: How often the release lists the arming refs while it waits on them.
+ARMING_POLL_SECS = 5
 #: The watch's poll interval while the lock is held by a broken release.
 BROKEN_WATCH_POLL_SECS = 300
 

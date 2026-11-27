@@ -37,6 +37,8 @@ def test_timing_constants() -> None:
     assert model.ARM_CALL_BOUND_SECS == 60
     assert model.ARM_CALL_BOUND_SECS < model.ARMING_EXPIRY_SECS
     assert model.ARMING_WAIT_BOUND_SECS == 900
+    assert model.ARMING_POLL_SECS == 5
+    assert model.ARMING_POLL_SECS < model.ARMING_EXPIRY_SECS
     assert model.BROKEN_WATCH_POLL_SECS == 300
 
 
