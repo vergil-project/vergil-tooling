@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from vergil_tooling.lib import trust
 from vergil_tooling.lib.release.context import INDEX_STAGE
 from vergil_tooling.lib.release.state import FailedJob, initial_state
+from vergil_tooling.lib.release_lock.model import LockRecord
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -75,3 +76,45 @@ def defer_publish(ctx: ReleaseContext, *names: str) -> None:
     ctx.state = replace(current, failed_jobs=(*current.failed_jobs, *jobs))
     if INDEX_STAGE in names:
         ctx.index_missed = True
+
+
+class FakeLockOwner:
+    """A stand-in for :class:`LockOwner`: its record, and every write, in *events*.
+
+    Each :meth:`update` appends ``("update", fields)`` and :meth:`release`
+    ``("release",)``. *update_error* and *release_error*, when set, are
+    raised by the next such call.
+    """
+
+    def __init__(self, events: list[tuple[object, ...]] | None = None) -> None:
+        self.events: list[tuple[object, ...]] = [] if events is None else events
+        self.record = LockRecord(
+            holder_identity="maintainer",
+            holder_host="laptop",
+            version="2.1.0",
+            worktree="",
+            tracking_issue="",
+            stage="preflight",
+            health="running",
+            broken_stage="",
+            started_at="2026-11-27T10:00:00Z",
+            heartbeat_at="2026-11-27T10:00:00Z",
+            token="t" * 32,
+        )
+        self.update_error: Exception | None = None
+        self.release_error: Exception | None = None
+
+    @property
+    def token(self) -> str:
+        return self.record.token
+
+    def update(self, **fields: str) -> None:
+        self.events.append(("update", fields))
+        if self.update_error is not None:
+            raise self.update_error
+        self.record = replace(self.record, **fields)
+
+    def release(self) -> None:
+        self.events.append(("release",))
+        if self.release_error is not None:
+            raise self.release_error

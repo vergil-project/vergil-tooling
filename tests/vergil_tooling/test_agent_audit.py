@@ -13,13 +13,22 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from vergil_tooling.bin import vrg_agent_audit
-from vergil_tooling.lib import agent_audit, agent_gates, github, pr_provenance, trust
+from vergil_tooling.lib import agent_audit, agent_gates, github, pr_path, pr_provenance, trust
 from vergil_tooling.lib.agent_gates import GateResult
+from vergil_tooling.lib.pr_path import PRPathError
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock import stale as lock_stale
+from vergil_tooling.lib.release_lock import status as lock_status
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
+from vergil_tooling.lib.release_lock.refs import LockState
+from vergil_tooling.lib.release_lock.stale import IssueReadError, Staleness
+from vergil_tooling.lib.release_lock.status import StatusError
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
@@ -343,6 +352,108 @@ def gates(monkeypatch: pytest.MonkeyPatch) -> Gates:
     fake = Gates()
     monkeypatch.setattr(agent_gates, "evaluate", fake)
     return fake
+
+
+_NOW = datetime(2026, 11, 27, 12, 0, 0, tzinfo=UTC)
+_LOCK_SHA = "c" * 40
+_LIVE = Staleness(
+    stale=False, live=True, reason="running with a fresh heartbeat", tracking_issue=""
+)
+
+
+def _lock_record(**changes: str) -> LockRecord:
+    fields = {
+        "holder_identity": "human",
+        "holder_host": "mac.local",
+        "version": "2.1.400",
+        "worktree": "/w/.worktrees/release-2.1.400",
+        "tracking_issue": f"{REPO}#5300",
+        "stage": "cut",
+        "health": "running",
+        "broken_stage": "",
+        "started_at": "2026-11-27T11:00:00Z",
+        "heartbeat_at": "2026-11-27T11:59:00Z",
+        "token": "a1b2c3",
+    }
+    fields.update(changes)
+    return LockRecord(**fields)  # type: ignore[arg-type]
+
+
+def _open_pr(
+    number: int, *, draft: bool = False, armed: bool = False, refusal: str | None = None
+) -> dict[str, object]:
+    """One open PR into ``develop``, as ``status.develop_prs`` gives it, and the path's verdict."""
+    return {
+        "number": number,
+        "url": f"https://github.com/{REPO}/pull/{number}",
+        "isDraft": draft,
+        "autoMergeRequest": {"enabledAt": "2026-11-27T10:00:00Z"} if armed else None,
+        "refusal": refusal,
+    }
+
+
+@dataclass
+class FakeLock:
+    """The release lock's state and the open ``develop`` PRs the backstop reads."""
+
+    state: LockState | Exception = field(
+        default_factory=lambda: LockState(sha=None, record=None, error="")
+    )
+    staleness: Staleness | Exception = _LIVE
+    prs: list[dict[str, object]] | Exception = field(default_factory=list)
+    accept_errors: dict[int, Exception] = field(default_factory=dict)
+    accepted: list[str] = field(default_factory=list)
+    #: What the lock's later reads give, in turn, in place of ``state``.
+    later: list[LockState | Exception] = field(default_factory=list)
+    reads: int = 0
+
+    def hold(self, **changes: str) -> None:
+        self.state = LockState(sha=_LOCK_SHA, record=_lock_record(**changes), error="")
+
+    def read_lock(self, repo: str) -> LockState:
+        assert repo == REPO
+        self.reads += 1
+        state = self.later.pop(0) if self.reads > 1 and self.later else self.state
+        if isinstance(state, Exception):
+            raise state
+        return state
+
+    def judge(self, repo: str, state: LockState, *, now: datetime) -> Staleness:
+        assert repo == REPO
+        assert state.record is not None
+        if isinstance(self.staleness, Exception):
+            raise self.staleness
+        return self.staleness
+
+    def develop_prs(self, repo: str) -> list[dict[str, object]]:
+        assert repo == REPO
+        if isinstance(self.prs, Exception):
+            raise self.prs
+        return [{k: v for k, v in pr.items() if k != "refusal"} for pr in self.prs]
+
+    def accepts(self, url: str) -> str | None:
+        self.accepted.append(url)
+        number = int(url.rsplit("/", 1)[1])
+        if number in self.accept_errors:
+            raise self.accept_errors[number]
+        assert isinstance(self.prs, list)
+        found = next(pr for pr in self.prs if pr["number"] == number)
+        refusal = found["refusal"]
+        return None if refusal is None else str(refusal)
+
+
+@pytest.fixture
+def lock(monkeypatch: pytest.MonkeyPatch) -> FakeLock:
+    fake = FakeLock()
+    monkeypatch.setattr(lock_refs, "read_lock", fake.read_lock)
+    monkeypatch.setattr(lock_stale, "judge", fake.judge)
+    monkeypatch.setattr(lock_status, "develop_prs", fake.develop_prs)
+    monkeypatch.setattr(pr_path, "accepts", fake.accepts)
+    return fake
+
+
+def _backstop_kinds(result: agent_audit.Backstop) -> list[tuple[str, str]]:
+    return [(f.kind, f.subject) for f in result.findings]
 
 
 def _mark(gh: FakeGitHub, origin: Origin) -> None:
@@ -1251,7 +1362,7 @@ def test_marker_write_failure_is_reported(
 
 
 @pytest.fixture
-def cli(clone: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def cli(clone: Path, lock: FakeLock, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(clone)
     monkeypatch.setattr(vrg_agent_audit, "load_trusted_authors", lambda: AUTHORS)
     monkeypatch.setattr(vrg_agent_audit, "require_remote_is", lambda repo, command: None)
@@ -1388,6 +1499,238 @@ def test_cli_refuses_outside_a_clone(
     monkeypatch.setattr(vrg_agent_audit, "require_remote_is", lambda repo, command: None)
     assert vrg_agent_audit.main(["--repo", REPO]) == 1
     assert "cannot read the clone" in capsys.readouterr().err
+
+
+# --- the backstop (epic .github#1664, spec §5.9) ------------------------------------------
+
+
+def test_audit_flags_accepted_pr_unarmed_with_no_lock(lock: FakeLock) -> None:
+    lock.prs = [_open_pr(21), _open_pr(22, armed=True)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("invariant-breach", "PR #21")]
+    finding = result.findings[0]
+    assert finding.branch == "develop"
+    assert "auto-merge off while no release lock is held" in finding.detail
+    assert f"https://github.com/{REPO}/pull/21" in finding.detail
+    assert result.outsiders == []
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+def test_audit_quiet_on_unarmed_pr_while_lock_held(lock: FakeLock, *, unreadable: bool) -> None:
+    if unreadable:
+        lock.state = LockState(sha=_LOCK_SHA, record=None, error="the lock is not JSON")
+    else:
+        lock.hold()
+    lock.prs = [_open_pr(21), _open_pr(22)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert [kind for kind, _ in _backstop_kinds(result)] == (
+        ["unreadable-lock"] if unreadable else []
+    )
+
+
+def test_audit_flags_draft_pr_into_develop(lock: FakeLock) -> None:
+    lock.prs = [_open_pr(23, draft=True), _open_pr(24, draft=True, refusal="a fork's head")]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("draft-pr", "PR #23"), ("draft-pr", "PR #24")]
+    assert "draft" in result.findings[0].detail
+    # A draft is invalid whoever opened it; the path is not asked about it.
+    assert lock.accepted == []
+    assert result.outsiders == []
+
+
+def test_audit_flags_stale_lock(lock: FakeLock) -> None:
+    lock.hold(health="broken", broken_stage="cut")
+    lock.staleness = Staleness(
+        stale=True,
+        live=False,
+        reason=f"its tracking issue {REPO}#5300 is closed",
+        tracking_issue=f"{REPO}#5300",
+    )
+    lock.prs = [_open_pr(21)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    # The stale lock is still held, so the PR it holds unarmed is no breach.
+    assert _backstop_kinds(result) == [("stale-lock", "the release lock")]
+    detail = result.findings[0].detail
+    assert f"its tracking issue {REPO}#5300 is closed" in detail
+    assert "2.1.400" in detail
+    assert _LOCK_SHA[:12] in detail
+
+
+def test_audit_live_lock_is_no_finding(lock: FakeLock) -> None:
+    lock.hold()
+    assert _backstop_kinds(agent_audit.backstop(REPO, now=_NOW)) == []
+
+
+def test_audit_flags_unreadable_lock(lock: FakeLock, monkeypatch: pytest.MonkeyPatch) -> None:
+    error = "refs/vergil/release-lock is unreadable: the lock file is not JSON"
+    lock.state = LockState(sha=_LOCK_SHA, record=None, error=error)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the audit never deletes or rewrites the lock")
+
+    monkeypatch.setattr(lock_refs, "delete_lock", forbidden)
+    monkeypatch.setattr(lock_refs, "update_lock", forbidden)
+    monkeypatch.setattr(lock_stale, "judge", forbidden)
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("unreadable-lock", "the release lock")]
+    assert error in result.findings[0].detail
+    assert _LOCK_SHA[:12] in result.findings[0].detail
+
+
+def test_audit_reports_outsider_prs_on_own_line_not_breach(lock: FakeLock) -> None:
+    refusal = f"https://github.com/{REPO}/pull/25: its head is not a same-repo branch"
+    lock.prs = [_open_pr(25, refusal=refusal), _open_pr(26, armed=True, refusal=refusal)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert result.findings == []
+    assert [o.number for o in result.outsiders] == [25, 26]
+    line = result.outsiders[0].render(REPO)
+    assert line == f"outsider-pr: {REPO} develop: PR #25: {refusal}"
+
+
+def test_audit_never_arms(lock: FakeLock, gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the backstop audit never arms, merges or writes")
+
+    for target, name in (
+        (pr_path, "arm"),
+        (github, "graphql"),
+        (github, "run"),
+        (lock_refs, "take_lock"),
+        (lock_refs, "update_lock"),
+        (lock_refs, "delete_lock"),
+    ):
+        monkeypatch.setattr(target, name, forbidden)
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True), _open_pr(25, refusal="a fork")]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("invariant-breach", "PR #21"), ("draft-pr", "PR #23")]
+    assert gh.writes == []
+
+
+def test_audit_agent_reclaimed_human_pr_not_breach(
+    origin: Origin, clone: Path, gh: FakeGitHub, gates: Gates, lock: FakeLock
+) -> None:
+    # A human's PR, armed by the human, disarmed by a release, re-armed by an
+    # agent's reclaim of that release's stale lock, then disarmed and armed
+    # again by the next release, which the human runs.
+    _mark(gh, origin)
+    pr = _squash_pr(gh, origin, 11, {WORKFLOW: "on: pull_request\n"}, author=HUMAN, merger=HUMAN)
+    disarm = {"event": "auto_merge_disabled", "actor": HUMAN, "has_actor": True}
+    pr.events[:0] = [_arm(HUMAN), disarm, _arm(AGENT), disarm, _arm(HUMAN)]
+    results = agent_audit.audit(clone, REPO, AUTHORS)
+    assert _kinds(results) == []
+    assert gates.calls == []
+    # While it was open and armed again, the backstop saw no breach either.
+    lock.prs = [_open_pr(11, armed=True)]
+    assert agent_audit.backstop(REPO, now=_NOW).findings == []
+
+
+def test_backstop_lock_read_failure_is_a_read_failure(lock: FakeLock) -> None:
+    lock.state = RefReadError("git ls-remote failed: HTTP 502")
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True), _open_pr(25, refusal="a fork's head")]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    # With the lock unknown, no breach can be judged; a draft and an
+    # outsider still can.
+    assert _backstop_kinds(result) == [("read-failure", "the release lock"), ("draft-pr", "PR #23")]
+    assert "HTTP 502" in result.findings[0].detail
+    assert [o.number for o in result.outsiders] == [25]
+
+
+def test_backstop_staleness_read_failure_is_a_read_failure(lock: FakeLock) -> None:
+    lock.hold(health="broken", broken_stage="cut")
+    lock.staleness = IssueReadError("could not read the state of the lock's tracking issue")
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("read-failure", "the release lock")]
+    assert "tracking issue" in result.findings[0].detail
+
+
+def test_backstop_pr_listing_failure_is_a_read_failure(lock: FakeLock) -> None:
+    lock.prs = StatusError("could not list the open PRs into develop of o/r: HTTP 502")
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("read-failure", "the open PRs")]
+    assert "HTTP 502" in result.findings[0].detail
+
+
+def test_backstop_path_read_failure_is_a_read_failure_for_that_pr(lock: FakeLock) -> None:
+    lock.prs = [_open_pr(21), _open_pr(22)]
+    lock.accept_errors[21] = PRPathError("cannot read PR #21: HTTP 502")
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("read-failure", "PR #21"), ("invariant-breach", "PR #22")]
+    assert "HTTP 502" in result.findings[0].detail
+
+
+def test_backstop_lock_taken_between_reads_no_breach(lock: FakeLock) -> None:
+    # A release takes the lock and disarms its PRs between the first read and
+    # the listing: the second read sees the lock held, so no breach.
+    lock.later = [LockState(sha=_LOCK_SHA, record=_lock_record(), error="")]
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("draft-pr", "PR #23")]
+    assert lock.reads == 2
+
+
+def test_backstop_unreadable_lock_taken_between_reads_no_breach(lock: FakeLock) -> None:
+    lock.later = [LockState(sha=_LOCK_SHA, record=None, error="the lock is not JSON")]
+    lock.prs = [_open_pr(21)]
+    assert agent_audit.backstop(REPO, now=_NOW).findings == []
+
+
+def test_backstop_lock_free_at_both_reads_reports_breach(lock: FakeLock) -> None:
+    lock.prs = [_open_pr(21), _open_pr(22, armed=True)]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    assert _backstop_kinds(result) == [("invariant-breach", "PR #21")]
+    assert lock.reads == 2
+
+
+def test_backstop_second_lock_read_fails(lock: FakeLock) -> None:
+    lock.later = [RefReadError("git ls-remote failed: HTTP 502")]
+    lock.prs = [_open_pr(21), _open_pr(23, draft=True), _open_pr(25, refusal="a fork's head")]
+    result = agent_audit.backstop(REPO, now=_NOW)
+    # With the lock unknown at the second read, no breach is judged; a draft
+    # and an outsider still are.
+    assert _backstop_kinds(result) == [("read-failure", "the release lock"), ("draft-pr", "PR #23")]
+    assert "HTTP 502" in result.findings[0].detail
+    assert "again" in result.findings[0].detail
+    assert [o.number for o in result.outsiders] == [25]
+
+
+def test_backstop_held_at_first_read_reads_lock_once(lock: FakeLock) -> None:
+    lock.hold()
+    lock.prs = [_open_pr(21)]
+    assert agent_audit.backstop(REPO, now=_NOW).findings == []
+    assert lock.reads == 1
+
+
+def test_cli_reports_backstop_findings_and_exits_1(
+    origin: Origin,
+    cli: Path,
+    gh: FakeGitHub,
+    gates: Gates,
+    lock: FakeLock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _mark(gh, origin)
+    lock.prs = [_open_pr(21), _open_pr(25, refusal="a fork's head")]
+    assert vrg_agent_audit.main(["--repo", REPO]) == 1
+    out = capsys.readouterr().out
+    assert "invariant-breach: o/r develop: PR #21:" in out
+    assert "outsider-pr: o/r develop: PR #25: a fork's head\n" in out
+    assert "o/r backstop: 1 finding(s); 1 outsider PR(s)\n" in out
+
+
+def test_cli_outsider_prs_alone_exit_0(
+    origin: Origin,
+    cli: Path,
+    gh: FakeGitHub,
+    gates: Gates,
+    lock: FakeLock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _mark(gh, origin)
+    lock.prs = [_open_pr(25, refusal="a fork's head")]
+    assert vrg_agent_audit.main(["--repo", REPO]) == 0
+    out = capsys.readouterr().out
+    assert "outsider-pr: o/r develop: PR #25: a fork's head\n" in out
+    assert "o/r backstop: 0 finding(s); 1 outsider PR(s)\n" in out
 
 
 # --- the GitHub reads, one at a time -------------------------------------------------

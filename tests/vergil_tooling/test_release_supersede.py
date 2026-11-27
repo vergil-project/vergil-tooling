@@ -6,18 +6,24 @@ import argparse
 import contextlib
 import subprocess
 import tempfile
+import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.vergil_tooling.release_stubs import branch_lookup, branch_pr
+from tests.vergil_tooling.release_lock_stubs import REPO as LOCK_REPO
+from tests.vergil_tooling.release_lock_stubs import make_origin
+from tests.vergil_tooling.release_stubs import FakeLockOwner, branch_lookup, branch_pr
 from vergil_tooling.lib import progress, trust
 from vergil_tooling.lib.pending_release import PendingRelease, ReleaseTags
 from vergil_tooling.lib.release import checklist, confirm, records, state, supersede
+from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.lock_guard import UnlockGuard
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.preflight import (
     _check_main_not_ahead_of_develop,
@@ -36,6 +42,17 @@ from vergil_tooling.lib.release.supersede import (
     load_superseded,
 )
 from vergil_tooling.lib.release.tracking import create_tracking_issue
+from vergil_tooling.lib.release_lock import history, holder, refs, sweeps
+from vergil_tooling.lib.release_lock.holder import LockLost
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    LockRecord,
+    RefReadError,
+    RefWriteError,
+    from_json,
+    to_json,
+)
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
@@ -389,6 +406,13 @@ def _fresh_preflight(
         patch(_PREFLIGHT + "._check_packages_unpublished"),
         patch(_PREFLIGHT + ".pending_deps_prs", return_value=[]),
         patch(_PREFLIGHT + "._develop_cd_gate"),
+        # The lock and quiesce, and the head the gates judged (unmoved), have tests
+        # of their own in test_release_preflight.py.
+        patch(_PREFLIGHT + "._develop_head", return_value="d" * 40),
+        patch(_PREFLIGHT + "._lock_and_quiesce") as m_lock,
+        # No lock is held, so there is nothing to take over (the takeover's own
+        # tests are below).
+        patch(_PREFLIGHT + ".lock_refs.read_lock", return_value=LockState(None, None, "")),
         patch(_PREFLIGHT + "._acquire_release_worktree", return_value=wt) as m_worktree,
         patch(_PREFLIGHT + "._release_contents", return_value=("c" * 40, _pending(), ())),
         patch(_PREFLIGHT + ".os.chdir"),
@@ -399,7 +423,13 @@ def _fresh_preflight(
             stages=list(_TRACKED),
             supersede=_OLD,
         )
-    return ctx, {"load": m_load, "open": m_open, "worktree": m_worktree, "git": m_git}
+    return ctx, {
+        "load": m_load,
+        "open": m_open,
+        "worktree": m_worktree,
+        "git": m_git,
+        "lock": m_lock,
+    }
 
 
 def _pending() -> PendingRelease:
@@ -810,3 +840,354 @@ def test_prepare_closes_the_superseded_issue_only_after_the_bump_and_the_pr() ->
     m_close.assert_called_once()
     assert calls == ["bump", "add -A", "commit -m", "push -u", "pr"]
     assert ctx.release_pr_url == "pr"
+
+
+# --- the release lock on --supersede (spec §5.3 of epic #1664, Task 25) -----------
+
+_LOCK_SHA = "a" * 40
+_GUARD = "vergil_tooling.lib.release.lock_guard"
+
+
+def _ago(seconds: int) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _superseded_lock(**fields: str) -> LockState:
+    """The superseded release's lock (2.1.5, #40), broken at cd-publish, with *fields* changed."""
+    base = LockRecord(
+        holder_identity="maintainer",
+        holder_host="desk",
+        version=_OLD,
+        worktree="",
+        tracking_issue=f"{_REPO}#40",
+        stage="cd-publish",
+        health="broken",
+        broken_stage="cd-publish",
+        started_at="2026-11-27T09:00:00Z",
+        heartbeat_at=_ago(30),
+        token="o" * 32,
+    )
+    rec = replace(base, **cast("dict[str, Any]", fields))
+    return LockState(sha=_LOCK_SHA, record=rec, error="", text=to_json(rec))
+
+
+class _Takeover:
+    """Supersede's lock step, every release-lock call logged to :attr:`events`."""
+
+    def __init__(self, stack: contextlib.ExitStack) -> None:
+        self.events: list[tuple[object, ...]] = []
+        self.owner = FakeLockOwner(self.events)
+        self.found = _superseded_lock()
+        self.records: list[LockRecord] = []
+        self.appended: list[history.HistoryEntry] = []
+        self.comments: list[tuple[int, str]] = []
+        self.guard = UnlockGuard()
+        log = self.events.append
+
+        def takeover(repo: str, found: LockState, rec: LockRecord) -> FakeLockOwner:
+            log(("takeover", found.sha))
+            self.records.append(rec)
+            self.owner.record = rec
+            return self.owner
+
+        def append(repo: str, entry: history.HistoryEntry) -> None:
+            log(("history", entry.action))
+            self.appended.append(entry)
+
+        def comment(repo: str, number: int, body: str) -> None:
+            log(("comment", number))
+            self.comments.append((number, body))
+
+        def rearm(repo: str, *, holder_pass: str | None = None) -> sweeps.RearmResult:
+            log(("rearm",))
+            return sweeps.RearmResult(armed=[], merged=[], held=[], refused=[])
+
+        enter = stack.enter_context
+        enter(patch(_PREFLIGHT + "._holder_identity", return_value="maintainer"))
+        enter(patch(_PREFLIGHT + ".socket.gethostname", return_value="laptop"))
+        enter(patch(_PREFLIGHT + ".lock_refs.read_lock", side_effect=lambda repo: self.found))
+        enter(patch(_PREFLIGHT + ".LockOwner.takeover", side_effect=takeover))
+        enter(patch(_PREFLIGHT + ".history.append", side_effect=append))
+        enter(patch(_PREFLIGHT + ".comment_lock_takeover", side_effect=comment))
+        enter(patch(_PREFLIGHT + ".sweeps.quiesce", side_effect=lambda *a, **k: log(("quiesce",))))
+        enter(patch(_GUARD + ".sweeps.rearm_all", side_effect=rearm))
+        enter(patch(_PREFLIGHT + ".sweeps.rearm_all", side_effect=rearm))
+
+    def names(self) -> list[object]:
+        return [event[0] for event in self.events]
+
+    def run(self) -> preflight_module._Takeover | None:
+        return preflight_module._supersede_takeover(
+            _REPO, "2.1.6", self.guard, _superseded(untagged=False)
+        )
+
+
+@pytest.fixture
+def takeover() -> Iterator[_Takeover]:
+    with contextlib.ExitStack() as stack:
+        yield _Takeover(stack)
+
+
+def test_supersede_takes_over_broken_lock_without_rearm(takeover: _Takeover) -> None:
+    taken = takeover.run()
+    assert taken is not None
+    assert taken.owner is takeover.owner
+    # A compare-and-swap against the lock as read: develop stays locked, so no
+    # quiesce and no re-arm sweep runs in between.
+    assert takeover.names() == ["takeover", "history", "comment"]
+    rec = takeover.records[0]
+    assert (rec.holder_identity, rec.holder_host, rec.version) == ("maintainer", "laptop", "2.1.6")
+    assert (rec.tracking_issue, rec.stage, rec.health) == ("", "preflight", "running")
+    entry = takeover.appended[0]
+    assert entry.action == "takeover"
+    assert entry.old == takeover.found.text
+    assert entry.actor == "maintainer on laptop (vrg-release --supersede 2.1.5)"
+    assert "2.1.6" in entry.reason
+    # Recorded on the superseded release's tracking issue now, and on the new one later.
+    number, body = takeover.comments[0]
+    assert number == 40
+    assert "release 2.1.6" in body
+    assert "broken" in body
+    assert "2.1.5" in taken.note
+    assert f"{_REPO}#40" in taken.note
+    # The guard is armed, as for a fresh take: an exit before the new tracking
+    # issue exists releases the lock and re-arms what the superseded release disarmed.
+    assert takeover.guard.armed
+
+
+def test_supersede_takes_over_stale_running_lock(takeover: _Takeover) -> None:
+    takeover.found = _superseded_lock(
+        health="running", broken_stage="", heartbeat_at=_ago(STALE_AFTER_SECS + 5)
+    )
+    assert takeover.run() is not None
+    assert takeover.names()[0] == "takeover"
+
+
+def test_supersede_takeover_exit_before_tracking_issue_runs_unlock_path(
+    takeover: _Takeover,
+) -> None:
+    takeover.run()
+    takeover.guard.unlock(RuntimeError("boom"))
+    assert takeover.names()[-2:] == ["release", "rearm"]
+
+
+def test_supersede_takeover_then_preflight_failure_leaves_no_false_lock_claim(
+    takeover: _Takeover,
+) -> None:
+    # Issue #5352: a preflight that fails after the takeover releases the lock,
+    # so the comment on the superseded release's tracking issue must not say
+    # develop is still locked.
+    failure = ReleaseError(phase="preflight", command="worktree", message="no worktree")
+    with (
+        patch(_PREFLIGHT + "._check_host_prerequisites"),
+        patch(_PREFLIGHT + ".check_gh_auth", return_value=_REPO),
+        patch(_PREFLIGHT + "._read_and_validate_config"),
+        patch(_PREFLIGHT + "._check_branch_and_tree"),
+        patch(_PREFLIGHT + ".version.show", return_value=_OLD),
+        patch(_PREFLIGHT + ".load_superseded", return_value=_superseded(untagged=False)),
+        patch(_PREFLIGHT + "._check_no_open_release"),
+        patch(_PREFLIGHT + "._head_gates"),
+        patch(_PREFLIGHT + ".pending_deps_prs", return_value=[]),
+        patch(_PREFLIGHT + "._develop_cd_gate"),
+        patch(_PREFLIGHT + "._develop_head", return_value="d" * 40),
+        patch(_PREFLIGHT + "._rejudge_moved_head"),
+        patch(_PREFLIGHT + "._acquire_release_worktree", side_effect=failure),
+        pytest.raises(ReleaseError, match="no worktree"),
+    ):
+        preflight(version_override=None, repo_root=_ROOT, stages=list(_TRACKED), supersede=_OLD)
+    # The takeover commented, then the early exit released the lock and re-armed.
+    assert takeover.names() == ["takeover", "history", "comment", "release", "rearm"]
+    [(number, body)] = takeover.comments
+    assert number == 40
+    lowered = body.lower()
+    assert "stays locked" not in lowered
+    assert "still locked" not in lowered
+    # Nor does it promise the unlock, which can itself fail or never run: it
+    # states what was known when it was posted and points at the live state.
+    assert "the lock is released" not in lowered
+    assert f"now names release {takeover.records[0].version}" in body
+    assert "no tracking issue of its own recorded yet" in body
+    assert "`vrg-release-lock status`" in body
+    assert "is meant to release the lock" in body
+
+
+def test_supersede_refuses_running_fresh_lock(takeover: _Takeover) -> None:
+    takeover.found = _superseded_lock(health="running", broken_stage="", heartbeat_at=_ago(20))
+    with pytest.raises(ReleaseError) as info:
+        takeover.run()
+    message = str(info.value)
+    assert "release 2.1.5" in message
+    assert "desk" in message
+    assert "running" in message
+    assert takeover.events == []
+    assert not takeover.guard.armed
+
+
+def test_supersede_with_no_lock_leaves_it_to_a_fresh_take(takeover: _Takeover) -> None:
+    takeover.found = LockState(sha=None, record=None, error="")
+    assert takeover.run() is None
+    assert takeover.events == []
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        _superseded_lock(version="2.0.9", tracking_issue=f"{_REPO}#33"),
+        _superseded_lock(tracking_issue=""),
+        LockState(sha=_LOCK_SHA, record=None, error="not valid JSON", text="{"),
+    ],
+    ids=["other-release", "no-tracking-issue", "unreadable"],
+)
+def test_supersede_never_takes_over_a_lock_not_the_superseded_releases(
+    takeover: _Takeover, found: LockState
+) -> None:
+    # Left to the fresh take, which reclaims a stale lock or refuses naming it.
+    takeover.found = found
+    assert takeover.run() is None
+    assert takeover.events == []
+
+
+def test_supersede_takeover_of_a_lock_changed_meanwhile_refuses(takeover: _Takeover) -> None:
+    lost = LockLost("changed", phase="preflight", cause=None, outside_change=True)
+    with (
+        patch(_PREFLIGHT + ".LockOwner.takeover", side_effect=lost),
+        pytest.raises(ReleaseError, match="changed while") as info,
+    ):
+        takeover.run()
+    assert "vrg-release --supersede 2.1.5" in str(info.value)
+    assert not takeover.guard.armed
+
+
+def test_supersede_with_no_lock_takes_fresh_and_quiesces() -> None:
+    free = LockState(sha=None, record=None, error="")
+    with patch(_PREFLIGHT + ".lock_refs.read_lock", return_value=free):
+        ctx, mocks = _fresh_preflight(_OLD, _superseded(untagged=True))
+    mocks["lock"].assert_called_once()
+    assert ctx.lock is mocks["lock"].return_value
+    assert ctx.lock_takeover == ""
+
+
+def test_supersede_preflight_carries_the_takeover() -> None:
+    owner = FakeLockOwner()
+    taken = preflight_module._Takeover(owner=owner, note="took it over")  # ty: ignore[invalid-argument-type]
+    with patch(_PREFLIGHT + "._supersede_takeover", return_value=taken):
+        ctx, mocks = _fresh_preflight(_OLD, _superseded(untagged=True))
+    mocks["lock"].assert_not_called()
+    assert ctx.lock is owner
+    assert ctx.lock_takeover == "took it over"
+
+
+@pytest.mark.usefixtures("adopted_pr")
+def test_supersede_lock_never_names_closed_issue() -> None:
+    superseded = _superseded(untagged=False)
+    ctx = _new_ctx(superseded)
+    ctx.release_branch = "release/2.1.6"
+    events: list[tuple[object, ...]] = []
+    owner = FakeLockOwner(events)  # the takeover cleared the tracking issue
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+    ctx.lock_takeover = "took over the lock of 2.1.5"
+
+    def close(*args: object, **kwargs: object) -> None:
+        # The lock names the new, open tracking issue before the old one closes.
+        events.append(("close", owner.record.tracking_issue))
+
+    with (
+        patch(
+            _TRACKING + ".github.read_output",
+            return_value=f"https://github.com/{_REPO}/issues/60",
+        ),
+        patch(_TRACKING + ".github.run"),
+        patch(
+            _PREPARE + ".comment_lock_takeover",
+            side_effect=lambda *a, **_k: events.append(("comment", *a)),
+        ),
+        patch(_PREPARE + ".close_superseded", side_effect=close),
+    ):
+        prepare(ctx)
+    assert events == [
+        ("update", {"tracking_issue": f"{_REPO}#60"}),
+        ("comment", _REPO, 60, "took over the lock of 2.1.5"),
+        ("close", f"{_REPO}#60"),
+    ]
+    assert ctx.lock_takeover == ""
+
+
+def test_comment_lock_takeover_posts_on_the_issue() -> None:
+    with patch(_SUPERSEDE + ".github.run") as run:
+        supersede.comment_lock_takeover(_REPO, 40, "taken over")
+    run.assert_called_once_with("issue", "comment", "40", "--repo", _REPO, "--body", "taken over")
+
+
+def test_comment_lock_takeover_failure_raises() -> None:
+    with (
+        patch(_SUPERSEDE + ".github.run", side_effect=subprocess.CalledProcessError(1, "gh")),
+        pytest.raises(ReleaseError, match="#40"),
+    ):
+        supersede.comment_lock_takeover(_REPO, 40, "taken over")
+
+
+# --- the takeover against a local origin ---------------------------------------
+
+
+def test_supersede_takeover_starts_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(holder, "HEARTBEAT_INTERVAL_SECS", 0.05)
+    origin = make_origin(tmp_path, monkeypatch)
+    old = replace(
+        _superseded_lock().record,  # ty: ignore[invalid-argument-type]
+        tracking_issue=f"{LOCK_REPO}#40",
+    )
+    origin.set_ref(refs.LOCK_REF, origin.commit(refs.LOCK_FILE, to_json(old)))
+    with (
+        patch(_PREFLIGHT + "._holder_identity", return_value="maintainer"),
+        patch(_PREFLIGHT + ".socket.gethostname", return_value="laptop"),
+        patch(_PREFLIGHT + ".comment_lock_takeover"),
+    ):
+        superseded = replace(_superseded(untagged=False), number=40)
+        taken = preflight_module._supersede_takeover(LOCK_REPO, "2.1.6", UnlockGuard(), superseded)
+    assert taken is not None
+    owner = taken.owner
+    try:
+        on_origin = from_json(origin.file(refs.LOCK_REF, refs.LOCK_FILE))
+        assert (on_origin.version, on_origin.tracking_issue) == ("2.1.6", "")
+        assert [e.action for e in history.read_history(LOCK_REPO)] == ["takeover"]
+        assert owner.heartbeat_running
+        first = origin.sha(refs.LOCK_REF)
+        deadline = time.monotonic() + 10
+        while origin.sha(refs.LOCK_REF) == first:
+            assert time.monotonic() < deadline, "the heartbeat never wrote the lock"
+            time.sleep(0.02)
+    finally:
+        owner.stop_heartbeat()
+
+
+def test_supersede_takeover_lock_read_failure_refuses(takeover: _Takeover) -> None:
+    with (
+        patch(_PREFLIGHT + ".lock_refs.read_lock", side_effect=RefReadError("ls-remote failed")),
+        pytest.raises(ReleaseError, match="ls-remote failed"),
+    ):
+        takeover.run()
+    assert takeover.events == []
+
+
+def test_supersede_takeover_write_failure_refuses(takeover: _Takeover) -> None:
+    with (
+        patch(_PREFLIGHT + ".LockOwner.takeover", side_effect=RefWriteError("push failed")),
+        pytest.raises(ReleaseError, match="push failed"),
+    ):
+        takeover.run()
+    assert not takeover.guard.armed
+
+
+def test_supersede_takeover_history_failure_leaves_the_unlock_path_armed(
+    takeover: _Takeover,
+) -> None:
+    with (
+        patch(_PREFLIGHT + ".history.append", side_effect=RefWriteError("history push failed")),
+        pytest.raises(ReleaseError, match="history push failed"),
+    ):
+        takeover.run()
+    # The orchestrator's guard then releases the lock and re-arms the PRs.
+    assert takeover.guard.armed
+    assert "comment" not in takeover.names()

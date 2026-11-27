@@ -536,7 +536,8 @@ Two existing call sites keep archives current with no dedicated cron:
 
 - **Steady state — on close.** When a child of a *live* ad-hoc epic closes, the
   `issues.closed` rollup path (`vrg-epic-rollup`) archives just that child into
-  its close-quarter archive.
+  its close-quarter archive. A child whose repo is archived is read-only, so
+  the rollup leaves it where it is, says so, and succeeds.
 - **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
   org-wide drain for every standing kind (ad-hoc, intake, planning,
   deferred, hoshin, operations): it

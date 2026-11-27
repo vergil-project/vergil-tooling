@@ -107,7 +107,17 @@ def _paginated_via_read_json(endpoint: str, key: str | None = None) -> list[obje
     The rolling-tag branch listing (``git/matching-refs/heads/v``) reads as no
     branches when the mock answers it with its catch-all ``{}``, so the tests
     that do not model branches need not; a test that does returns a list.
+    The workflow listing (``actions/workflows``) likewise reads as no
+    workflows unless the mock answers it with a ``workflows`` envelope.
     """
+    if endpoint.endswith("/actions/workflows"):
+        try:
+            listing: object = github_config.github.read_json("api", endpoint)
+        except GitHubAPIError:
+            return []
+        if isinstance(listing, dict) and "workflows" in listing:
+            return cast("list[object]", listing["workflows"])
+        return []
     page: object = github_config.github.read_json("api", endpoint)
     if endpoint.endswith("/git/matching-refs/heads/v") and page == {}:
         return []
@@ -429,6 +439,126 @@ def test_compute_diff_rolling_tag_branch_in_desired_is_not_drift() -> None:
     actual = dataclasses.replace(desired, rolling_tag_branches=["v2", "v3"])
     diff = compute_diff(desired=desired, actual=actual)
     assert [i.field for i in diff.items] == ["rolling_tag_branches.v3"]
+
+
+# ---------------------------------------------------------------------------
+# Workflows disabled for inactivity (vergil-tooling#5226)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_with_workflows(workflows: object) -> FetchResult:
+    """Fetch o/r with the workflow listing answered by *workflows*."""
+
+    def mock_read_json(*args: str) -> object:
+        endpoint = args[1]
+        if endpoint == "repos/o/r":
+            return {"default_branch": "develop", "security_and_analysis": {}}
+        if endpoint == "repos/o/r/actions/workflows":
+            return {"total_count": 0, "workflows": workflows}
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        return {}
+
+    with (
+        patch("vergil_tooling.lib.github_config.github.read_json", side_effect=mock_read_json),
+        patch("vergil_tooling.lib.github_config._fetch_vulnerability_alerts", return_value=False),
+    ):
+        return fetch_actual_state("o/r")
+
+
+def test_fetch_actual_state_lists_workflows_disabled_for_inactivity() -> None:
+    """Only ``disabled_inactivity`` is kept; active and manually disabled are not."""
+    workflows = [
+        {"path": ".github/workflows/ops.yml", "state": "active"},
+        {"path": ".github/workflows/epic-sweep.yml", "state": "disabled_inactivity"},
+        {"path": ".github/workflows/old.yml", "state": "disabled_manually"},
+        {"path": ".github/workflows/epic-rollup.yml", "state": "disabled_inactivity"},
+    ]
+    result = _fetch_with_workflows(workflows)
+    assert result.state.inactive_workflows == [
+        ".github/workflows/epic-rollup.yml",
+        ".github/workflows/epic-sweep.yml",
+    ]
+    assert all(nc.field != "inactive_workflows" for nc in result.not_checked)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "active"},
+        {"path": "", "state": "active"},
+        {"path": ".github/workflows/ops.yml"},
+        {"path": ".github/workflows/ops.yml", "state": None},
+        "ops.yml",
+    ],
+)
+def test_fetch_actual_state_malformed_workflow_raises(entry: object) -> None:
+    with pytest.raises(RuntimeError, match="unreadable workflow"):
+        _fetch_with_workflows([entry])
+
+
+def _fetch_with_workflows_403(message: str) -> FetchResult:
+    """Fetch o/r with the workflow listing refused with a 403 *message*."""
+
+    def paginated(endpoint: str, key: str | None = None) -> list[object]:
+        if endpoint == "repos/o/r/actions/workflows":
+            raise GitHubAPIError(1, ("gh", "api", endpoint), "", f"gh: {message} (HTTP 403)")
+        return _paginated_via_read_json(endpoint, key)
+
+    with patch(
+        "vergil_tooling.lib.github_config.github.read_json_paginated", side_effect=paginated
+    ):
+        return _fetch_with_workflows([])
+
+
+def test_fetch_actual_state_unreadable_workflows_is_not_checked() -> None:
+    """A permission-gap 403 on the workflow listing is not checked, never clean."""
+    result = _fetch_with_workflows_403("Resource not accessible by integration")
+    assert NotChecked(field="inactive_workflows", permission="actions=read") in (result.not_checked)
+    assert result.state.inactive_workflows == []
+
+
+def test_fetch_actual_state_workflows_non_permission_403_propagates() -> None:
+    with pytest.raises(GitHubAPIError, match="rate limit"):
+        _fetch_with_workflows_403("API rate limit exceeded")
+
+
+def test_unreadable_workflows_make_the_audit_incomplete() -> None:
+    result = _fetch_with_workflows_403("Resource not accessible by integration")
+    desired = _state(_vergil_config())
+    diff = compute_diff(
+        desired=desired,
+        actual=dataclasses.replace(desired),
+        not_checked=result.not_checked,
+    )
+    assert NotChecked(field="inactive_workflows", permission="actions=read") in diff.not_checked
+    assert not diff.is_compliant()
+
+
+def test_compute_diff_reports_each_inactive_workflow_as_drift() -> None:
+    desired = _state(_vergil_config())
+    actual = dataclasses.replace(
+        desired,
+        inactive_workflows=[".github/workflows/epic-sweep.yml", ".github/workflows/ops.yml"],
+    )
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [(i.field, i.expected, i.actual) for i in diff.items] == [
+        ("inactive_workflows..github/workflows/epic-sweep.yml", "active", "disabled_inactivity"),
+        ("inactive_workflows..github/workflows/ops.yml", "active", "disabled_inactivity"),
+    ]
+    assert not diff.is_compliant()
+
+
+def test_compute_diff_no_inactive_workflow_is_clean() -> None:
+    desired = _state(_vergil_config())
+    assert compute_diff(desired=desired, actual=dataclasses.replace(desired)).is_compliant()
+
+
+def test_compute_diff_inactive_workflow_in_desired_is_not_drift() -> None:
+    desired = dataclasses.replace(_state(_vergil_config()), inactive_workflows=["a.yml"])
+    actual = dataclasses.replace(desired, inactive_workflows=["a.yml", "b.yml"])
+    diff = compute_diff(desired=desired, actual=actual)
+    assert [i.field for i in diff.items] == ["inactive_workflows.b.yml"]
 
 
 # ---------------------------------------------------------------------------
@@ -1900,6 +2030,8 @@ def test_fetch_actual_state_rulesets_reads_every_page() -> None:
     def fake_read_output(*args: str, **_: object) -> str:
         if args == ("api", "--paginate", "repos/o/r/git/matching-refs/heads/v?per_page=100"):
             return "[]"
+        if args == ("api", "--paginate", "repos/o/r/actions/workflows?per_page=100"):
+            return json.dumps({"total_count": 0, "workflows": []})
         assert args == ("api", "--paginate", "repos/o/r/rulesets?per_page=100")
         return json.dumps(page1) + json.dumps(page2)
 

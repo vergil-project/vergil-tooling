@@ -406,6 +406,35 @@ def repo_exists(owner: str, name: str) -> bool:
     return True
 
 
+def repo_is_archived(owner: str, name: str) -> bool:
+    """True iff ``<owner>/<name>`` is archived, so GitHub refuses every write to it.
+
+    Read fresh on every call, never memoized: a repo being retired is archived
+    while the fleet's automation still runs against it (#5212). Fail-loud: a
+    ``gh`` error propagates as :class:`GitHubAPIError`, and an answer with no
+    boolean ``isArchived`` raises it too, rather than read as not archived.
+    """
+    data = read_json("repo", "view", f"{owner}/{name}", "--json", "isArchived")
+    archived = data.get("isArchived") if isinstance(data, dict) else None
+    if not isinstance(archived, bool):
+        raise GitHubAPIError(
+            1,
+            f"gh repo view {owner}/{name} --json isArchived",
+            "missing or non-boolean isArchived",
+        )
+    return archived
+
+
+def is_archived_repo_refusal(exc: GitHubAPIError) -> bool:
+    """True when *exc* is GitHub's refusal to write to an archived repository.
+
+    Matches only its "Repository was archived so is read-only" answer; every
+    other failure is False, so it is never taken for this one.
+    """
+    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+    return "repository was archived so is read-only" in detail
+
+
 def is_repo_not_found(exc: GitHubAPIError) -> bool:
     """True when *exc* is GitHub's genuine "repository does not exist" answer.
 

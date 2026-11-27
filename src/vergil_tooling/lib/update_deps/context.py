@@ -62,6 +62,10 @@ class UpdateDepsContext:
     # Set by the merge stage once this run merged its PR; finalize then deletes
     # the branch (#4952).
     merged: bool = False
+    # Set by the merge stage when a release holds the lock and the one PR path
+    # left the PR unarmed ("held for release <v>"): the release's unlock sweep
+    # arms it, so this is no failure, and its branch stays (release-lock §5.5).
+    held: str = ""
 
     @property
     def has_work(self) -> bool:

@@ -45,7 +45,9 @@ submission, runs the provenance check, and arms it through the one PR path
 (:func:`vergil_tooling.lib.pr_path.arm`, epic vergil-project/.github#1664),
 pinned to that head, with the method the path works out from the PR: rebase
 for a batch PR, squash otherwise. A PR the path refuses fails its submit
-with auto-merge off. A PR whose
+with auto-merge off. A PR a release holds (the release lock is held, spec
+§5.5) is left unarmed and reported as ``held for release <version>; the
+release re-arms it``, and goes on to the finalize watch. A PR whose
 submit fails is named in the final summary and the other PRs continue; a
 provenance violation always fails that PR's submit and leaves its auto-merge
 off (vergil-tooling#4695). Submit never rebases a branch:
@@ -126,11 +128,12 @@ Submit always finishes: it returns only once each PR has merged or cannot
 merge (spec §4.8 of epic vergil-project/.github#1440).
 
 **Exit status.** Submit returns finalize's exit status (0 full success, 3
-not every PR merged, 4 develop did not validate, 5 the release failed), with
-two adjustments: when any PR failed to submit it returns at least 3, and a
-tool error from finalize (1, or any code finalize does not define) always
-wins. When no PR opened, a failed submit exits 3. A usage error, or a
-refusal before anything opened, exits 1.
+not every PR merged, 4 develop did not validate, 5 the release failed, 6
+every PR that did not merge is held by release: run ``vrg-finalize-pr``
+again), with two adjustments: when any PR failed to submit it returns at
+least 3 (and 3 in place of a 6), and a tool error from finalize (1, or any
+code finalize does not define) always wins. When no PR opened, a failed
+submit exits 3. A usage error, or a refusal before anything opened, exits 1.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
 (submit always finalizes), ``--no-finalize`` (submit returns once each PR
@@ -715,7 +718,8 @@ def _create_or_adopt(sub: _Submission) -> str:
 # unchanged: a tool error always wins.
 EXIT_OK = 0
 EXIT_NOT_ALL_MERGED = 3
-_FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5})
+EXIT_HELD_BY_RELEASE = finalize_watch.EXIT_HELD_BY_RELEASE
+_FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5, EXIT_HELD_BY_RELEASE})
 
 # What progress.run_pipeline returns when the rollup is interrupted.
 _INTERRUPTED = 130
@@ -759,11 +763,16 @@ def _submit_exit(finalize_rc: int, *, any_failed: bool) -> int:
 
     A code finalize does not define as an outcome (1, a tool error, above
     all) always wins. Otherwise a failed submit makes it at least 3 ("not
-    every PR merged"), and a higher code from finalize (4 or 5) wins.
+    every PR merged"), and a higher code from finalize (4 or 5) wins. Held
+    by release (6) means every PR finalize watched that did not merge is
+    held, which a failed submit makes untrue, so it becomes 3: ``max`` alone
+    would keep 6.
     """
     if finalize_rc not in _FINALIZE_OUTCOMES:
         return finalize_rc
     if any_failed:
+        if finalize_rc == EXIT_HELD_BY_RELEASE:
+            return EXIT_NOT_ALL_MERGED
         return max(finalize_rc, EXIT_NOT_ALL_MERGED)
     return finalize_rc
 
@@ -934,19 +943,21 @@ def _check_provenance(pr_url: str) -> None:
 
 
 def _arm(pr_url: str, head: str) -> pr_path.ArmResult:
-    """Arm *pr_url* through the one PR path, pinned to *head*; anything but armed or merged fails.
+    """Arm *pr_url* through the one PR path, pinned to *head*; a refusal fails.
 
     :func:`pr_path.arm` judges the PR again at its head (what the path
     accepts, the provenance check, and the gates for an agent-involved PR,
     in the main worktree, a clone of this repo), works out the merge method
     from the PR (rebase for a batch PR, squash otherwise) and turns
     auto-merge on, or merges the PR directly when GitHub refuses that at
-    clean status. A ``refused`` result
+    clean status. A ``held`` result (a release holds the lock, spec §5.5)
+    is returned too: the PR stays open and unarmed, the release re-arms it,
+    and the finalize watch follows it as any other. A ``refused`` result
     raises :class:`_SubmitFailedError` with its reason, so the PR's submit
     fails with auto-merge left off.
     """
     result = pr_path.arm(pr_url, clone=git.main_worktree_root(), head=head)
-    if result.outcome in ("armed", "merged"):
+    if result.outcome in ("armed", "merged", "held"):
         return result
     raise _SubmitFailedError(result.detail or f"the one PR path left it {result.outcome}")
 
@@ -1028,6 +1039,9 @@ class _SubmitRun:
         if result.outcome == "merged":
             outcome = f"merged directly ({method})"
             print(f"{pr_url}: {outcome}; it could already merge.")
+        elif result.outcome == "held":
+            outcome = f"{result.detail}; the release re-arms it"
+            print(f"{pr_url}: {outcome}.")
         else:
             outcome = f"auto-merge on ({method}, pinned to {sub.expected_head[:12]})"
             print(f"{pr_url}: {outcome}.")

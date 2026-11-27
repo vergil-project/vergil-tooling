@@ -202,16 +202,17 @@ agent_gates.agent_involved, which can only make a PR more agent-involved."""
 path = "lib/release/preflight.py"
 function = "pending_deps_prs"
 fields = ["headRefName"]
-judge = ["lib/release/preflight.py:_owns_its_branch", "lib/release/preflight.py:_trusted_fix_task"]
+judge = ["lib/release/preflight.py:_owns_its_branch", "lib/release/resume.py:_trusted_read"]
 reason = """The head branch is acted on (its deletion) only once _owns_its_branch \
 finds the PR among trust.prs_for_branch's same-repo PRs with a trusted author; the \
-fix task link is read from a body the layer trusts."""
+fix task link is read (preflight._trusted_fix_task) only from the body \
+resume._trusted_read returns, which the layer trusts."""
 
 [[judged]]
 path = "lib/release/resume.py"
 function = "_open_release_issues"
 fields = ["body"]
-judge = ["lib/release/preflight.py:_trusted_release_issues", "lib/release/guard.py:check_tracking_issue"]
+judge = ["lib/release/resume.py:_trusted_release_issues", "lib/release/guard.py:check_tracking_issue"]
 reason = """The listing's body only finds the target. The one-release-at-a-time gate \
 counts an issue only when _trusted_release_issues reads its body again through the \
 layer; a resume checks the listed state block, refusing a bad one, and the release \

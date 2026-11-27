@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.354] - 2026-11-27
+
+### Bug fixes
+
+- leave a closed child in an archived repo in place (#5312)
+- read the lock again before the backstop judges a breach (#5323)
+- take over a stale arming ref on the arm path outside a release (#5327)
+- state only what the tool knows in two release-lock messages (#5365)
+
+### Features
+
+- add the lock, history and arming refs (#5317)
+- report workflows disabled for inactivity as config drift (#5310)
+- add the staleness rule, vrg-release-lock status and the lock in vrg-repo-status (#5318)
+- add the lock owner, its serialised writes and the background heartbeat (#5319)
+- key cleanup safety on the release lock as well as the tracking issue (#5321)
+- add the release lock's backstop checks to the daily agent audit (#5320)
+- add the arming gate and the holder's pass to the one PR path (#5325)
+- add the disarm and re-arm sweeps (#5326)
+- add stale-lock reclaim and the human-only vrg-release-lock break (#5328)
+- take the release lock and quiesce develop before vrg-release cuts (#5329)
+- run the merge watch under the release lock (#5330)
+- unlock and re-arm at the end of vrg-release, with stray-merge checks and the abandon step (#5331)
+- run --resume and --supersede under the release lock (#5351)
+
 ## [2.1.353] - 2026-11-27
 
 ### Bug fixes

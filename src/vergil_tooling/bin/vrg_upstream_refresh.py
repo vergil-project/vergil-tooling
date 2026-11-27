@@ -385,6 +385,10 @@ def _token_events_to_stdout() -> Generator[None]:
 def _report(repo: str, result: SyncResult) -> None:
     if result.status == "merged":
         print(f"{repo}: the refresh PR {result.pr_url} merged")
+    elif result.status == "held":
+        print(
+            f"{repo}: the refresh PR {result.pr_url} is {result.detail}; the unlock sweep arms it"
+        )
     else:
         print(f"{repo}: in sync; nothing to refresh on develop")
 

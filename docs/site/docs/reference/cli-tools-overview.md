@@ -220,7 +220,7 @@ removed and refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 | Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--release`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--no-finalize`, `--install`, `--no-install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
 | Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
-| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize |
+| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed, and 3 in place of a 6), 4 develop did not validate, 5 the release failed, 6 every PR that did not merge held by release; 1 a usage error, a refusal, or a tool error from finalize |
 | Status | Active |
 
 ### vrg-pr-workflow
@@ -370,11 +370,19 @@ longer merge as it stands, then print the outcome as JSON. Used by the
 A new review or a new commit does not end the wait: a review after submit
 never holds the merge, and auto-merge stays pinned to the head submit pushed.
 
-On exit 0 or 1 it prints one JSON object with `pr`, `outcome` (`merged` or
-`cannot_merge`), `reason` (`null` when merged), `detail`, `head_sha`,
-`merge_commit` (`null` unless merged), `merge_state_status`, `failed_checks`
-and `orphaned_checks`. On exit 1 the reason is also printed on stderr. The
-reasons are:
+It reads the release lock on every poll, as `vrg-finalize-pr`'s watch does
+(see [Under the release lock](dev/finalize-pr.md#under-the-release-lock)):
+a PR a release holds is reported as held on stderr, naming the release,
+its version, its stage and its health, and the wait goes on, every five
+minutes while the release is broken or the lock unreadable, reclaiming a
+stale lock. With no lock held, an unarmed PR is re-armed through the one
+PR path.
+
+On exit 0, 1 or 6 it prints one JSON object with `pr`, `outcome` (`merged`,
+`cannot_merge` or `held_by_release`), `reason` (`null` when merged),
+`detail`, `head_sha`, `merge_commit` (`null` unless merged),
+`merge_state_status`, `failed_checks` and `orphaned_checks`. On exit 1 or 6
+the reason is also printed on stderr. The reasons are:
 
 - `check_failed`: a required check concluded in failure; `failed_checks`
   names it. A failed or cancelled check-run of a workflow run that a newer
@@ -388,21 +396,25 @@ reasons are:
   the conflict the push resolved, so the wait goes on first and says so on
   stderr. A new head starts the two minutes again, and any other merge
   state clears the conflict. It is the rule `vrg-finalize-pr` applies.
-- `auto_merge_off`: auto-merge is off, at the start or after a push.
+- `refused`: the PR was unarmed with no release lock held, and the one PR
+  path refused to re-arm it; `detail` names the path's reason.
 - `closed`: the PR was closed without merging.
 - `orphaned_check`: every pending check is stuck after its workflow run
   completed, for longer than `$VRG_ORPHAN_GRACE` (default 300s);
   `orphaned_checks` names them.
 - `timed_out`: the deadline passed with the PR still pending. The deadline is
   `$VRG_FINALIZE_DEADLINE` seconds, default 7200, as for `vrg-finalize-pr`.
+- `held_by_release` (exit 6): the deadline passed while the release lock
+  held the PR; `detail` names the release. Not a failure: run the same
+  wait again.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_await` |
 | Args | `pr` (positional, URL or number). `--since-sha` and `--since-reviews` are removed and are an error |
 | Preconditions | GitHub App credentials for the PR's org |
-| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR or bad arguments exit 2 with a message on stderr and nothing on stdout |
-| Exit codes | 0 merged, 1 cannot merge, 2 any other error |
+| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR, a release lock read, re-arm or reclaim that failed, or bad arguments exit 2 with a message on stderr and nothing on stdout |
+| Exit codes | 0 merged, 1 cannot merge, 2 any other error, 6 held by release |
 | Status | Active |
 
 ### vrg-pr-review-comments
@@ -508,6 +520,72 @@ and the [Releasing guide](../guides/releasing.md).
 | Preconditions | Human identity; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff`. A fresh start also needs the root checkout on a clean `develop` that has not diverged from `origin/develop` (one that is only behind is fast-forwarded); a `--resume` runs only the host, auth and config checks |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run except those the hold rule holds back, and are summarized at the end, with the tracking issue left open for `--resume` |
 | Exit codes | 0 success, 1 any failure or refusal, 2 usage error (such as `--supersede` with `--resume`), 130 interrupted |
+| Status | Active |
+
+### vrg-release-lock
+
+Read the release lock of a repository: the ref
+`refs/vergil/release-lock` on its origin, which a running `vrg-release`
+holds so that nothing but the release's own PR merges into `develop`
+(epic vergil-project/.github#1664). `status` prints the lock's holder,
+version, tracking issue, stage, health, start, heartbeat and worktree,
+whether it is stale and why, and the PRs it holds unarmed: the open,
+non-draft PRs into `develop` with auto-merge off that the one PR path
+accepts. Any identity may run it; it only reads. The lock is read as
+written, with no trusted-author check, and a lock that cannot be read or
+parsed is held, shown as `release lock: held, unreadable: <why>`.
+
+A lock is **stale** by these rules, in order. A `running` lock with a
+heartbeat under 900 seconds old is live, never stale, and no issue is
+read. Otherwise a lock that names a tracking issue is stale exactly when
+that issue is closed: an open one keeps it the human's, however old its
+heartbeat. A lock that names none is not stale while an open release
+tracking issue of its version with a trusted body exists (shown as its
+tracking issue, `not in the lock`); failing that, it is stale once its
+heartbeat is 900 seconds old. An unreadable lock is never stale.
+
+```text
+$ vrg-release-lock status
+no release lock held
+```
+
+`--json` prints one object: the lock record's fields (`holder_identity`,
+`holder_host`, `version`, `worktree`, `tracking_issue`, `stage`,
+`health`, `broken_stage`, `started_at`, `heartbeat_at`, `token`; each
+`null` with no readable record) plus `repo`, `held`, `sha` (the lock
+ref's commit, `null` when absent), `error` (why a held lock is
+unreadable, else `""`), `stale`, `live`, `reason`,
+`judged_tracking_issue` (the issue the staleness verdict rests on, `""`
+with none), `heartbeat_age_secs` (`null` with no readable record) and
+`held_prs` (a list of `{"number", "url"}`). Every key is always present.
+It is the machine-readable state a future auto-releaser reads.
+`vrg-repo-status` shows the same text form in its Release lock section.
+
+`break --reason "<why>"` is the human's escape hatch. It removes any held
+lock, a live or an unreadable one included. It first records the reason
+and the old lock's contents in `refs/vergil/release-lock-history` and, when
+the lock names a tracking issue, as a comment there; then it deletes the
+lock by compare-and-swap and runs the re-arm sweep over the PRs the lock
+held. A live holder's heartbeat can rewrite the lock between the read and
+the delete, so a lost delete is retried against a fresh read, up to three
+attempts, while the lock is still the same holder's. A break that still
+loses, finds the lock gone or taken by another holder, or fails once its
+entry is written (the comment, the delete's push or the re-read), records
+a `break-failed` entry and a comment, exits 1 and re-arms nothing. It is
+human only: refused under every agent identity and agent signal, as
+`vrg-release` is. An agent never breaks a lock; it may only reclaim a
+stale one. `--json` prints the result
+as one object: `repo`, `action` (`break`), `old_sha`, `tracking_issue`,
+`reason` and `rearm` (`armed`, `merged` and `held`, lists of PR URLs, and
+`refused`, a list of `{"url", "reason"}`).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_lock` (`lib/release_lock/status.py`, `lib/release_lock/stale.py`, `lib/release_lock/reclaim.py`) |
+| Args | `status` with `--json` (print one JSON object) and `--repo <owner>/<repo>` (default: the repository `origin` names); `break` with `--reason` (required, not blank), `--json` and `--repo` |
+| Preconditions | `gh` authenticated, and `git` able to read the repository's origin over HTTPS; `break` also needs the human identity and write access to the repository |
+| Failure mode | Any failed read (the lock ref, a tracking issue, the open-PR listing or a PR's admission check) or an `origin` that is not on github.com prints `ERROR:` on stderr with nothing on stdout; it is never shown as "no release lock held". A `break` with no lock held, a failed record (nothing is deleted), a delete that did not land, or a failed re-arm sweep after the delete prints `ERROR:` naming it |
+| Exit codes | 0 the lock was read (held or not, stale or not) or broken and re-armed, 1 a failed read, a refusal or a failed break, 2 usage error |
 | Status | Active |
 
 ### vrg-release-record
@@ -735,12 +813,17 @@ validation or a release. See the
 
 Watch a batch of auto-merging pull requests, then settle `develop` once
 (epic vergil-project/.github#1218). It never merges a PR and never turns
-auto-merge on or off: `vrg-submit-pr` turned auto-merge on, and GitHub
+auto-merge off: `vrg-submit-pr` turned auto-merge on, and GitHub
 merges each PR once its required checks pass. The watch judges no head of
 an open PR (the one PR path judges each before it is pushed), and follows
 every listed PR until it has merged or failed (CI, cancelled, a conflict,
-closed, auto-merge off, not a develop PR), or the
-batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes. If any PR
+closed, refused, not a develop PR), or the
+batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes (a PR the
+release lock still holds then ends *held by release*). The watch reads the
+release lock on every poll: a PR a release holds is reported as held, a
+stale lock is reclaimed, and with no lock held an unarmed PR is re-armed
+through the one PR path, the one way it turns auto-merge on (see
+[Under the release lock](dev/finalize-pr.md#under-the-release-lock)). If any PR
 merged, the settle phase closes any issue GitHub left open and syncs the
 security advisories that the closed `security` issues name (a broken pair or
 a failed sync exits 1; see
@@ -782,7 +865,7 @@ commit and one changelog entry per issue. See
 | Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks`, `--install`, `--no-install` and `--allow-provenance-violation` are removed and are an error |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
 | Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed or ambiguous branch PR lookup, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
-| Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed |
+| Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed, 6 develop healthy and every PR that did not merge held by release (run it again) |
 | Status | Active |
 
 ### vrg-branch-sweep
@@ -1255,7 +1338,10 @@ head of the chain the task is linked in, it closes only when every item
 across the chain is closed, and it then closes the head first, then each
 continuation. Before judging it adopts each orphaned continuation of the
 head, and it refuses to close the epic while one it cannot adopt exists. A
-continuation closing rolls nothing up. Run by the `epic-rollup` workflow on
+continuation closing rolls nothing up. A closed child of a standing epic
+moves into its close-quarter archive, unless its repo is archived: a
+read-only child is left where it is and reported, and the run succeeds. Any
+other failure to move it is an error. Run by the `epic-rollup` workflow on
 `issues.closed`.
 
 | Attribute | Value |
@@ -2265,9 +2351,11 @@ which sets `VRG_EPIC_SWEEP=1`. Other invariant violations stay report-only.
 
 Show every worktree git knows about in the current repo, grouped by
 kind, so nothing with code on disk goes unseen (issue #3386), then the
-open PRs on `origin` that no worktree shows (issue #4581), then what the
-integration branch holds that `main` does not. Read-only — it never
-fetches or writes a ref, cleanup stays `vrg-finalize-pr`'s job, and
+open PRs on `origin` that no worktree shows (issue #4581), then the
+release lock, then what the integration branch holds that `main` does
+not. Read-only — it never fetches into the clone or writes a ref (the
+release lock is read through a scratch repository), cleanup stays
+`vrg-finalize-pr`'s job, and
 finalize and sweep still act only on development worktrees. Local
 branches with no worktree are not shown. The sections, in order:
 
@@ -2291,7 +2379,9 @@ branches with no worktree are not shown. The sections, in order:
    worktree outside `.worktrees/` (shown by its full path).
 5. **Open PRs on origin with no local worktree** — every open PR whose
    head branch no linked worktree holds, described below. Always shown.
-6. **Pending release** — every change on the integration branch that is
+6. **Release lock** — whether a release holds `develop`'s release lock,
+   described below. Always shown.
+7. **Pending release** — every change on the integration branch that is
    not yet on `main`, described below. Shown only in a repo that
    publishes.
 
@@ -2378,8 +2468,37 @@ PR    BRANCH                    BASE     TYPE       AUTHOR                     C
   prints, then the command exits 1. The reason never carries URL
   credentials.
 
-**Pending release.** The section follows the open-PR section and comes
-before the summary lines. It is shown only when `vergil.toml` sets
+**Release lock.** The section follows the open-PR section. It is the
+text form of [`vrg-release-lock status`](#vrg-release-lock), read the
+same way: `no release lock held`, or one line per field of the lock
+`refs/vergil/release-lock` holds on `origin` (its holder, version,
+tracking issue, stage, health, start, heartbeat and age, and worktree),
+then whether it is stale and why, and the PRs it holds unarmed. A
+release, a reclaim or a break can be watched here as it happens.
+
+```text
+Release lock
+release lock: held
+holder: human on mac.local
+version: 2.1.400
+tracking issue: vergil-project/vergil-tooling#5300
+stage: cut
+health: running
+started: 2026-11-27T11:00:00Z
+heartbeat: 2026-11-27T11:59:00Z (60s ago)
+worktree: /Users/me/dev/vergil-tooling/.worktrees/release-2.1.400
+stale: no (running with a fresh heartbeat)
+held PRs: #5310, #5312
+```
+
+A read that fails (the lock ref, the tracking issue, the PR listing), or
+an `origin` that is not on github.com, is an error, never "no release
+lock held": the section prints its heading and
+`ERROR: release lock: <reason>` alone. The rest of the output still
+prints, then the command exits 1.
+
+**Pending release.** The section follows the Release lock section and
+comes before the summary lines. It is shown only when `vergil.toml` sets
 `[publish].release = true`; with the flag false or absent, nothing is
 printed for it, and without a `vergil.toml` a note says it was skipped.
 In a publishing repo it is always shown, even when nothing is pending.
@@ -2448,11 +2567,11 @@ PR     BRANCH                      TYPE     MERGED  TITLE
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; pending release: `lib/pending_release.py`) |
+| Source | `vergil_tooling.bin.vrg_repo_status` (open PRs: `lib/open_prs.py`; release lock: `lib/release_lock/status.py`; pending release: `lib/pending_release.py`) |
 | Args | `--target-branch` (default: develop) — the branch AHEAD is measured against |
-| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR and Pending release sections, a github.com `origin` and GitHub credentials |
-| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
-| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR or pending-release lookup error |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state; for the open-PR, Release lock and Pending release sections, a github.com `origin` and GitHub credentials |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row and a failed branch-gone check as a note, never a crash. A malformed `vergil.toml` exits 1 with the reason. A failed or incomplete open-PR, release-lock or pending-release lookup prints `ERROR:` in its section and exits 1 after the rest of the output |
+| Exit codes | 0 success, 1 malformed `vergil.toml`, or an open-PR, release-lock or pending-release lookup error |
 | Status | Active |
 
 ### vrg-whoami
@@ -2611,8 +2730,23 @@ repo has neither of nor its marker is skipped, by the audit and by
 `--init`, each printing `<repo>: no <branch> branch; not audited`, and is
 not a finding. An absent branch whose marker is set is refused by
 `--init` and is a `missing-branch` finding, so deleting a branch never
-escapes the audit; a repo with no `develop` is always both. It is a
-security-signal job: it files no issue and posts nothing.
+escapes the audit; a repo with no `develop` is always both.
+
+It then runs the release lock's backstop
+([epic vergil-project/.github#1664](https://github.com/vergil-project/.github/issues/1664),
+spec §5.9) on the repo as it stands. An open PR into `develop` that the
+one PR path accepts, with auto-merge off while no release lock is held,
+is an `invariant-breach`; while a lock is held the audit is quiet on it.
+A lock free at the first read is read again once the PRs are listed, so
+a release that takes the lock in between raises no breach. Every open draft PR into `develop` is a `draft-pr`, a stale lock a
+`stale-lock` and a lock that cannot be read or parsed an
+`unreadable-lock`, naming its read error; the audit never deletes it. An
+open PR the path does not accept (a fork's or an outsider's) is reported
+on an `outsider-pr:` line of its own, never a finding, and does not
+change the exit status. The output ends with
+`<repo> backstop: <n> finding(s); <m> outsider PR(s)`. The backstop is
+report-only: it never arms a PR. The audit is a security-signal job: it
+files no issue and posts nothing.
 
 | Attribute | Value |
 |---|---|

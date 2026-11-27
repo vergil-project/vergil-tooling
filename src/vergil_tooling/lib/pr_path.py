@@ -4,9 +4,15 @@ Spec §5.1 and §5.4 of the release-lock epic. Every PR into ``develop`` that
 the tooling opens or arms is armed here, by :func:`arm`, and nothing else
 turns auto-merge on or merges a PR into ``develop``. ``vrg-submit-pr``, the
 mechanized automation (:func:`vergil_tooling.lib.mechanized_pr.open_sync_pr`),
-update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`) and the
-release's back-merge (:func:`vergil_tooling.lib.release.bump.back_merge_and_bump`)
-are its callers; the re-arm sweeps converge on it in a later task. The release
+update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`), the
+release's back-merge (:func:`vergil_tooling.lib.release.bump.back_merge_and_bump`),
+the release lock's re-arm sweep
+(:func:`vergil_tooling.lib.release_lock.sweeps.rearm_all`) and the merge
+watch's re-arm of its own unarmed PR when no lock is held
+(:class:`vergil_tooling.lib.release_lock.watch.LockWatch`) are its callers.
+Only the release lock's disarm sweep
+(:func:`vergil_tooling.lib.release_lock.sweeps.disarm_all`) turns auto-merge
+off. The release
 PR into ``main`` is the one direct merge outside it
 (:func:`vergil_tooling.lib.release.merge.wait_and_merge`, which refuses any
 other base), and ``tests/vergil_tooling/test_one_pr_path_guard.py`` holds every
@@ -49,6 +55,41 @@ method. A PR the path does not accept, or that fails a check, is
 ``refused`` and left unarmed. A step that cannot be completed (a read, the
 provenance check, the enable) raises :class:`PRPathError`, naming the PR.
 
+**The arming gate** (spec §5.4) closes the race between a release taking the
+release lock and the path arming a PR. Every judgment above completes first;
+only then does the path write the PR's arming ref
+(:func:`vergil_tooling.lib.release_lock.arming.create`, a create-only push),
+and then read the lock:
+
+- Lock free: renew the arming ref by compare-and-swap, turn auto-merge on (or
+  merge) under :func:`retry.bounded`'s :data:`ARM_CALL_BOUND_SECS`, retries
+  included, then delete the ref. A renewal that finds the ref gone is
+  ``refused`` with ``arming ref expired``. An arm call stopped at the bound
+  raises and leaves the ref, since the stopped call may still land: a
+  release expires it, and so does the next arm of the PR (below).
+- Lock held, or unreadable: delete the ref and report ``held`` (*detail*
+  ``held for release <version>``, or the read error), with the PR unarmed.
+- The create finds a ref already there (another caller is arming the PR):
+  the path does not arm while that ref stands, and waits up to
+  :data:`ARMING_COLLISION_WAIT_SECS` for the PR to be armed or merged (its
+  outcome then). If the ref goes meanwhile, it creates its own and goes on
+  through the handshake. If the ref is **stale**, its value seen unchanged
+  by this wait for :data:`ARMING_EXPIRY_SECS` while the PR stayed open and
+  unarmed (a caller that crashed, or whose arm call was stopped at the
+  bound), the path reads the lock: held, it reports ``held`` and leaves the
+  ref for the release to expire; free, it takes the ref over by
+  compare-and-swap on that value and goes on through the handshake. So a
+  leftover ref never leaves a PR unarmable outside a release. Still unarmed
+  at the bound, it raises :class:`ArmingCollisionError`.
+
+The release writes the lock and then waits until every arming ref is gone,
+so each side writes before it reads and at least one sees the other.
+**The holder's pass** is the lock's token as the calling release holds it:
+when it is the token of the lock as it stands, the path arms with no
+handshake. A heartbeat rewrites the lock but keeps the token; a re-take,
+adopt or takeover writes a new one, so a lost holder's pass is an ordinary
+call, held like any other.
+
 :func:`push_to_open_pr` is the path's push mode (``vrg-submit-pr --push``):
 every push the tooling makes to the branch of an open PR into ``develop``
 goes through it. It runs the same admission rule, the provenance check and
@@ -66,6 +107,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -77,20 +119,29 @@ from vergil_tooling.lib import (
     github,
     identity_mode,
     pr_provenance,
+    release_lock,
     retry,
     trust,
 )
 from vergil_tooling.lib.develop_clone import clone_url
 from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release_lock import arming
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock.model import (
+    ARM_CALL_BOUND_SECS,
+    ARMING_COLLISION_POLL_SECS,
+    ARMING_COLLISION_WAIT_SECS,
+    ARMING_EXPIRY_SECS,
+)
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.auto_merge import MergeMethod
 
-#: What :func:`arm` did. ``held`` (a release holds the lock) is produced from
-#: the arming gate's task on (plan Task 19).
+#: What :func:`arm` did. ``held``: a release holds the lock (or it cannot be
+#: read), and the PR is left unarmed for the release to re-arm.
 ArmOutcome = Literal["armed", "merged", "held", "refused"]
 
 _DEVELOP = "develop"
@@ -114,6 +165,14 @@ _STEP_ERRORS = (
 
 class PRPathError(RuntimeError):
     """A step of the one PR path could not be completed; the message names the PR."""
+
+
+class ArmingCollisionError(PRPathError):
+    """Another caller held the PR's arming ref, and the PR was still unarmed after the wait."""
+
+
+class _ArmCallStoppedError(PRPathError):
+    """The arm call ran past :data:`ARM_CALL_BOUND_SECS` and was stopped, not retried."""
 
 
 @dataclass(frozen=True)
@@ -284,16 +343,31 @@ def _gates(pr: _PR, branch: str, clone: Path | None) -> str:
         raise PRPathError(str(exc)) from exc
 
 
-def arm(pr_url: str, *, clone: Path | None = None, head: str | None = None) -> ArmResult:
+def arm(
+    pr_url: str,
+    *,
+    clone: Path | None = None,
+    head: str | None = None,
+    holder_pass: str | None = None,
+) -> ArmResult:
     """Arm *pr_url* through the one PR path (see the module docstring).
 
     *clone*, when given, must be a clone of the PR's repository
     (:class:`PRPathError` otherwise, before any check runs); without it the
     gates judge in a fresh fetch the path makes. *head*, when given, is the
     head the caller expects: a PR whose current head is another one is
-    refused. Returns ``armed``, ``merged`` (GitHub refused auto-merge at
-    clean status and the path merged it directly) or ``refused`` (nothing
-    turned on). A step that cannot be completed raises :class:`PRPathError`.
+    refused. *holder_pass* is the release lock's token as the calling
+    release holds it: when it is the token of the lock as it stands, the
+    arm skips the arming gate's handshake.
+
+    Every judgment completes before the handshake starts, so no fetch or
+    gate run happens while the PR's arming ref exists. Returns ``armed``,
+    ``merged`` (GitHub refused auto-merge at clean status and the path
+    merged it directly), ``held`` (a release holds the lock, or the lock
+    cannot be read; nothing turned on, and *detail* says which) or
+    ``refused`` (nothing turned on). A step that cannot be completed raises
+    :class:`PRPathError`: :class:`ArmingCollisionError` when another
+    caller's arming ref left the PR unarmed.
     """
     pr = _read(pr_url)
     url, current = pr.snap.url, pr.snap.head
@@ -319,13 +393,256 @@ def arm(pr_url: str, *, clone: Path | None = None, head: str | None = None) -> A
     gates = _gates(pr, cast("str", pr.branch), clone)
     if gates:
         return refused(f"the gates refused its head {current[:12]}: {gates}", method)
+    # Every judgment is made: only the lock read and the enable are left.
+    if holder_pass is not None and _holds_the_lock(pr, holder_pass):
+        return _enable_bounded(pr, current, method)
+    return _through_the_gate(pr, current, method)
+
+
+def held_detail(state: lock_refs.LockState) -> str:
+    """What a PR the held lock *state* leaves unarmed reports: ``held for release <v>``.
+
+    An unreadable lock is held too, and the detail names its read error.
+    """
+    if state.record is not None:
+        return f"held for release {state.record.version}"
+    return f"held: the release lock is held but cannot be read ({state.error})"
+
+
+def _read_lock_of(repo: str, url: str) -> lock_refs.LockState:
     try:
-        # The path is the one caller of the enable (spec §5.4).
-        result = auto_merge._enable(url, head=current, method=method)  # noqa: SLF001
+        return lock_refs.read_lock(repo)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{url}: reading the release lock failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _read_lock(pr: _PR) -> lock_refs.LockState:
+    return _read_lock_of(pr.repo, pr.snap.url)
+
+
+def held_unarmed(pr_url: str) -> str:
+    """The held detail when a release holds the lock and *pr_url* is unarmed, else ``""``.
+
+    Spec §5.5: a wait on a PR asks this on each poll. A PR that is still
+    armed while the lock is held is not yet held: the release's disarm sweep
+    turns it off, or it merges before the cut. A lock that cannot be read is
+    held (:func:`held_detail`). A failed read raises :class:`PRPathError`.
+    """
+    repo, _number = _repo_and_number(pr_url)
+    state = _read_lock_of(repo, pr_url)
+    if not state.held:
+        return ""
+    try:
+        armed = auto_merge.auto_merge_enabled(pr_url)
+    except auto_merge.AutoMergeError as exc:
+        raise PRPathError(str(exc)) from exc
+    return "" if armed else held_detail(state)
+
+
+def _holds_the_lock(pr: _PR, holder_pass: str) -> bool:
+    """Whether *holder_pass* is the token of the lock as it stands: the caller holds it."""
+    record = _read_lock(pr).record
+    return record is not None and record.token == holder_pass
+
+
+def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
+    """Turn auto-merge on (or merge directly), bounded by :data:`ARM_CALL_BOUND_SECS`.
+
+    The bound covers the call's retries, and a call past it is stopped and
+    not retried: :class:`PRPathError` names it.
+    """
+    url = pr.snap.url
+    try:
+        with retry.bounded(ARM_CALL_BOUND_SECS, what=f"{url}: the arm call"):
+            # The path is the one caller of the enable (spec §5.4).
+            result = auto_merge._enable(url, head=head, method=method)  # noqa: SLF001
+    except retry.DeadlineExceededError as exc:
+        msg = f"{exc}; it was stopped and is not retried"
+        raise _ArmCallStoppedError(msg) from exc
     except auto_merge.AutoMergeError as exc:
         raise PRPathError(str(exc)) from exc
     outcome: ArmOutcome = "merged" if result.merged_now else "armed"
-    return ArmResult(outcome=outcome, pr_url=url, head=current, method=method)
+    return ArmResult(outcome=outcome, pr_url=url, head=head, method=method)
+
+
+def _delete_arming_ref(pr: _PR, sha: str) -> None:
+    """Delete *pr*'s arming ref at *sha*; a value written by another caller is left alone."""
+    try:
+        arming.delete(pr.repo, pr.number, expected=sha)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{pr.snap.url}: deleting its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _through_the_gate(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
+    """Arm *pr* through the arming gate's handshake (spec §5.4, see :func:`arm`)."""
+    url = pr.snap.url
+    sha = _create_arming_ref(pr)
+    if sha is None:
+        taken = _await_other_caller(pr, head, method)
+        if isinstance(taken, ArmResult):
+            return taken
+        sha = taken
+    try:
+        state = _read_lock(pr)
+    except PRPathError as exc:
+        _delete_after_failure(pr, sha, exc)
+        raise
+    if state.held:
+        _delete_arming_ref(pr, sha)
+        return ArmResult(
+            outcome="held", pr_url=url, head=head, method=method, detail=held_detail(state)
+        )
+    try:
+        renewed = arming.renew(pr.repo, pr.number, expected=sha)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{url}: renewing its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+    if renewed is None:
+        # Gone (a release saw it unchanged for the expiry and deleted it) or
+        # rewritten by another caller: either way it is no longer ours.
+        return ArmResult(
+            outcome="refused", pr_url=url, head=head, method=method, detail="arming ref expired"
+        )
+    try:
+        result = _enable_bounded(pr, head, method)
+    except PRPathError as exc:
+        # A stopped call may still land, so its arming ref stays for a
+        # release, or the PR's next arm, to expire (spec §5.4); neither
+        # takes it before the expiry.
+        if not isinstance(exc, _ArmCallStoppedError):
+            _delete_after_failure(pr, renewed, exc)
+        raise
+    _delete_arming_ref(pr, renewed)
+    return result
+
+
+def _delete_after_failure(pr: _PR, sha: str, failure: PRPathError) -> None:
+    """Delete *pr*'s arming ref after *failure*; a delete that fails too raises both."""
+    try:
+        _delete_arming_ref(pr, sha)
+    except PRPathError as exc:
+        msg = f"{failure}; then {exc}"
+        raise PRPathError(msg) from failure
+
+
+def _create_arming_ref(pr: _PR) -> str | None:
+    """Write *pr*'s arming ref by a create-only push: its sha, ``None`` if one exists."""
+    try:
+        return arming.create(pr.repo, pr.number)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{pr.snap.url}: writing its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _current_arming_ref(pr: _PR) -> str | None:
+    """The sha of *pr*'s arming ref as it stands, ``None`` when it is gone."""
+    try:
+        return arming.current(pr.repo, pr.number)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{pr.snap.url}: reading its arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+
+
+def _auto_merge_state(url: str) -> dict[str, object]:
+    try:
+        data = github.read_json("pr", "view", url, "--json", "state,autoMergeRequest")
+    except subprocess.CalledProcessError as exc:
+        msg = f"{url}: reading its auto-merge state failed: {error_text(exc)}"
+        raise PRPathError(msg) from exc
+    if not isinstance(data, dict):
+        msg = f"{url}: gh pr view returned {data!r} for its auto-merge state"
+        raise PRPathError(msg)
+    return data
+
+
+def _await_other_caller(pr: _PR, head: str, method: MergeMethod) -> ArmResult | str:
+    """Another caller holds *pr*'s arming ref: wait, bounded, for the PR or the ref to settle.
+
+    Each poll reads the PR's auto-merge state, then its arming ref:
+
+    - Merged or armed: that is the outcome. Closed: :class:`ArmingCollisionError`.
+    - The ref is gone (the other caller ended without arming): create it
+      afresh, and on success return its sha, for the caller to go on
+      through the handshake with.
+    - The ref is stale, its value seen unchanged by this wait for
+      :data:`ARMING_EXPIRY_SECS` with the PR open and unarmed at every
+      poll: :func:`_replace_stale` takes it over, by compare-and-swap on
+      that value, and its sha is returned. A lock held then reports
+      ``held`` instead, and leaves the ref for the release's own expiry.
+
+    Any change of the ref's value, or a ref that goes and comes back,
+    restarts its clock, as the release's rule does. Past
+    :data:`ARMING_COLLISION_WAIT_SECS` with none of these, it raises
+    :class:`ArmingCollisionError`.
+    """
+    url = pr.snap.url
+    deadline = time.monotonic() + ARMING_COLLISION_WAIT_SECS
+    sighting: tuple[str, float] | None = None
+    while True:
+        data = _auto_merge_state(url)
+        state = data.get("state")
+        if state == "MERGED":
+            return ArmResult(outcome="merged", pr_url=url, head=head, method=method)
+        if state == _OPEN and data.get("autoMergeRequest") is not None:
+            return ArmResult(outcome="armed", pr_url=url, head=head, method=method)
+        if state != _OPEN:
+            text = str(state or "").lower() or "unknown"
+            msg = f"{url}: another caller is arming it (its arming ref exists), and it is {text}"
+            raise ArmingCollisionError(msg)
+        sha = _current_arming_ref(pr)
+        now = time.monotonic()
+        if sha is None:
+            sighting = None
+            mine = _create_arming_ref(pr)
+            if mine is not None:
+                return mine
+        elif sighting is None or sighting[0] != sha:
+            sighting = (sha, now)
+        elif now - sighting[1] >= ARMING_EXPIRY_SECS:
+            taken = _replace_stale(pr, head, method, sha)
+            if taken is not None:
+                return taken
+            sighting = None
+        remaining = deadline - now
+        if remaining <= 0:
+            msg = (
+                f"{url}: another caller is arming it (its arming ref exists), and it is still "
+                f"unarmed after {ARMING_COLLISION_WAIT_SECS}s"
+            )
+            raise ArmingCollisionError(msg)
+        delay = min(ARMING_COLLISION_POLL_SECS, remaining)
+        print(f"{url}: another caller is arming it; checking again in {delay:.0f}s")
+        time.sleep(delay)
+
+
+def _replace_stale(pr: _PR, head: str, method: MergeMethod, stale: str) -> ArmResult | str | None:
+    """Take over *pr*'s stale arming ref at *stale* (see :func:`_await_other_caller`).
+
+    The lock is read first: while a release holds it, the ref is the
+    release's to expire, and the PR is ``held``. Otherwise the ref is
+    renewed by compare-and-swap on *stale*: its new sha, or ``None`` when it
+    changed meanwhile. Why this keeps the release's quiesce guarantee is in
+    :mod:`vergil_tooling.lib.release_lock.sweeps`.
+    """
+    url = pr.snap.url
+    state = _read_lock(pr)
+    if state.held:
+        return ArmResult(
+            outcome="held", pr_url=url, head=head, method=method, detail=held_detail(state)
+        )
+    try:
+        mine = arming.renew(pr.repo, pr.number, expected=stale)
+    except release_lock.ReleaseLockError as exc:
+        msg = f"{url}: replacing its stale arming ref failed: {exc}"
+        raise PRPathError(msg) from exc
+    if mine is not None:
+        print(
+            f"{url}: replaced its stale arming ref {arming.arming_ref(pr.number)} "
+            f"({stale[:12]}): unchanged for {ARMING_EXPIRY_SECS}s with the PR unarmed"
+        )
+    return mine
 
 
 @dataclass(frozen=True)

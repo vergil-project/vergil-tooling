@@ -26,16 +26,44 @@ from __future__ import annotations
 
 import contextlib
 import sys
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, trust
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.pr_workflow.transport import Transport
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _FILE = "pr-workflow.json"
 _REF_PREFIX = "refs/vergil/pr-workflow"
 _COMMIT_MESSAGE = "vergil: pr-workflow relay"
 # The regular-file mode git uses for a blob entry in a tree.
 _BLOB_MODE = "100644"
+
+
+def one_file_commit(
+    text: str,
+    filename: str,
+    message: str,
+    *,
+    parent: str | None = None,
+    repo: Path | None = None,
+) -> str:
+    """Build a commit whose tree holds only *filename* with *text*, and return its sha.
+
+    Pure plumbing (``hash-object`` -> ``mktree`` -> ``commit-tree``): it never
+    runs ``git commit`` and never touches HEAD, the index or the working tree,
+    so pushing the result is a pure ref write. *parent*, when given, is the
+    commit's one parent (an appended history entry); with none it is a root
+    commit. *repo* builds it in that repository instead of the CWD's. Shared by
+    the relay and the release-lock refs (epic vergil-project/.github#1664).
+    """
+    where = ("-C", str(repo)) if repo is not None else ()
+    blob = git.read_output_stdin(text, *where, "hash-object", "-w", "--stdin")
+    tree = git.read_output_stdin(f"{_BLOB_MODE} blob {blob}\t{filename}\n", *where, "mktree")
+    parents = ("-p", parent) if parent is not None else ()
+    return git.read_output(*where, "commit-tree", tree, *parents, "-m", message)
 
 
 def list_relay_branches(remote: str = "origin") -> list[str]:
@@ -111,9 +139,7 @@ class GitHubTransport(Transport):
         is torn down only after ``git.run`` joins its output-pump threads, so
         every emitted line lands on stderr before ``write`` returns.
         """
-        blob = git.read_output_stdin(state.to_json(), "hash-object", "-w", "--stdin")
-        tree = git.read_output_stdin(f"{_BLOB_MODE} blob {blob}\t{_FILE}\n", "mktree")
-        commit = git.read_output("commit-tree", tree, "-m", _COMMIT_MESSAGE)
+        commit = one_file_commit(state.to_json(), _FILE, _COMMIT_MESSAGE)
         with contextlib.redirect_stdout(sys.stderr):
             git.run("push", "--force", self.remote, f"{commit}:{self.ref}")
 

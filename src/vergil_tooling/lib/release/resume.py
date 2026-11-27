@@ -14,17 +14,28 @@ from __future__ import annotations
 import functools
 import re
 import subprocess
-from typing import TYPE_CHECKING, cast
+import sys
+from typing import TYPE_CHECKING, Literal, cast
 
-from vergil_tooling.lib import git, github, host_versions, version
+from vergil_tooling.lib import git, github, host_versions, trust, version
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    heartbeat_age_secs,
+    heartbeat_fresh,
+)
+from vergil_tooling.lib.release_lock.refs import LOCK_REF
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release.state import StateBlock
+    from vergil_tooling.lib.release_lock.model import LockRecord
+    from vergil_tooling.lib.release_lock.refs import LockState
 
 _TITLE_RE = re.compile(r"^release: (\d+\.\d+\.\d+)$")
 # Upper bound on the open issues the release search lists. Reaching it is a
@@ -41,6 +52,15 @@ _SHORT = 12
 BRANCH_STAGES = ("prepare", "merge-release", "back-merge-bump", "teardown-worktree")
 # The stages that run on every run and are never recorded done.
 ALWAYS_RUN = ("audit", "preflight", "publish-status")
+# The stage that deletes the release lock (spec §5.3 step 2 of epic
+# vergil-project/.github#1664). A resume before it holds the lock; one at it
+# deletes what is left of its own; one past it reads no lock.
+UNLOCK_STAGE = "unlock"
+# The stage before which a resume that re-takes the lock checks for stray merges.
+MERGE_STAGE = "merge-release"
+#: What a resume before ``unlock`` does with the lock it finds: adopt its own, or re-take it.
+ResumeLock = Literal["adopt", "retake"]
+_BREAK = 'vrg-release-lock break --reason "<why>"'
 
 
 def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str, int, str]]:
@@ -94,6 +114,42 @@ def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str,
         if match:
             issues.append((match.group(1), int(str(item["number"])), str(item.get("body", ""))))
     return issues
+
+
+def _trusted_read(repo: str, number: int) -> trust.IssueContent:
+    """:func:`trust.read_issue` of *repo*#*number*, its skips reported on stderr.
+
+    A read that cannot complete raises :class:`ReleaseError`: who wrote the
+    content is never guessed.
+    """
+    try:
+        content = trust.read_issue(repo, number)
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"read_issue {repo}#{number}",
+            message=f"Could not read who wrote {repo}#{number}; refusing to release blind.",
+            detail=str(exc),
+        ) from exc
+    trust.report_skipped(content.skipped, stream=sys.stderr)
+    return content
+
+
+def _trusted_release_issues(
+    issues: Sequence[tuple[str, int, str]], repo: str
+) -> list[tuple[str, int, str]]:
+    """The *issues* whose body is trusted, each with that trusted body.
+
+    A ``release:`` issue with an untrusted body (an outsider's, or one an
+    untrusted identity edited) is no release in flight: it is reported on
+    stderr, metadata only, and never blocks the start (GHSA-777j-j57r-92ff).
+    """
+    trusted: list[tuple[str, int, str]] = []
+    for ver, number, _listed_body in issues:
+        body = _trusted_read(repo, number).body
+        if body is not None:
+            trusted.append((ver, number, body))
+    return trusted
 
 
 def _found_state(version: str, number: int, body: str, stages: Sequence[str]) -> StateBlock:
@@ -389,3 +445,89 @@ def verify_facts(ctx: ReleaseContext, current: StateBlock) -> None:
         _check_run_head(
             "develop_cd_run", ctx.repo, current.develop_cd_run, bump_merge, "the back-merge PR"
         )
+
+
+# --- the release lock on a resume (spec §5.3 and §5.6 of epic vergil-project/.github#1664) ---
+
+
+def holds_lock_at(first: str | None, stages: Sequence[str]) -> bool:
+    """Whether a resume whose first undone stage is *first* runs before ``unlock``.
+
+    Such a resume holds the release lock: it adopts its own or re-takes it.
+    One at ``unlock`` deletes what is left of its own in that stage, and one
+    past it (or with nothing left) takes, adopts and reads no lock.
+    """
+    return first is not None and stages.index(first) < stages.index(UNLOCK_STAGE)
+
+
+def describe_holder(rec: LockRecord) -> str:
+    """Who holds the lock *rec* and for what, for a refusal that names it."""
+    issue = rec.tracking_issue or "none recorded"
+    return (
+        f"release {rec.version}, held by {rec.holder_identity} on {rec.holder_host}"
+        f" (stage {rec.stage}, health {rec.health}, tracking issue {issue})"
+    )
+
+
+def is_own_lock(rec: LockRecord, *, identity: str, tracking_issue: str) -> bool:
+    """Whether *rec* is this release's lock: its identity and its tracking issue.
+
+    The host is recorded for information only, so a resume on another
+    machine finds its lock its own too (spec §5.3).
+    """
+    return rec.holder_identity == identity and rec.tracking_issue == tracking_issue
+
+
+def _lock_refusal(message: str) -> ReleaseError:
+    return ReleaseError(phase="preflight", command=f"read {LOCK_REF}", message=message)
+
+
+def judge_resume_lock(
+    repo: str,
+    found: LockState,
+    *,
+    identity: str,
+    tracking_issue: str,
+    version: str,
+    now: datetime,
+) -> ResumeLock:
+    """What a resume before ``unlock`` does with the lock *found* on *repo*, or a refusal.
+
+    No lock: ``retake`` (a break or a reclaim removed it). This release's
+    lock (:func:`is_own_lock`) that is ``broken`` or whose heartbeat is
+    stale: ``adopt``. Its own lock ``running`` with a fresh heartbeat is
+    refused, naming its host and heartbeat age: another run of the release
+    may be alive. A lock that cannot be read, or that another release holds,
+    is refused naming it. A refusal raises :class:`ReleaseError` and writes
+    nothing.
+    """
+    if not found.held:
+        return "retake"
+    rec = found.record
+    if rec is None:
+        raise _lock_refusal(
+            f"The release lock on {repo} is held but cannot be read ({found.error}), so"
+            f" whether it is release {version}'s own cannot be told, and a resume does"
+            f" not adopt it. Check it with `vrg-release-lock status`; once no release run"
+            f" is alive, remove it with `{_BREAK}`, then re-run"
+            f" `vrg-release --resume {version}`."
+        )
+    if not is_own_lock(rec, identity=identity, tracking_issue=tracking_issue):
+        raise _lock_refusal(
+            f"The release lock on {repo} is held by another release: {describe_holder(rec)}."
+            f" This resume of release {version} ({identity}, tracking issue"
+            f" {tracking_issue}) does not adopt it. Finish that release first (see"
+            f" `vrg-release-lock status`), or once no run of it is alive remove its lock"
+            f" with `{_BREAK}`."
+        )
+    if heartbeat_fresh(rec, now=now):
+        age = heartbeat_age_secs(rec, now=now)
+        raise _lock_refusal(
+            f"The release lock on {repo} is release {version}'s own, and it is running on"
+            f" {rec.holder_host}: its heartbeat is {age}s old (stale after"
+            f" {STALE_AFTER_SECS}s). Another run of this release may still be alive, and"
+            " two runs of one release never both go on. Wait for that run to stop and its"
+            f" heartbeat to go stale, or once no run of it is alive remove the lock with"
+            f" `{_BREAK}`; then re-run `vrg-release --resume {version}`."
+        )
+    return "adopt"

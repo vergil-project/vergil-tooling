@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
+import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_lock_stubs import REPO, Origin, make_origin
+from tests.vergil_tooling.release_stubs import FakeLockOwner
 from vergil_tooling.lib.release import checklist, state
+from vergil_tooling.lib.release import preflight as preflight_module
+from vergil_tooling.lib.release.abandon import ReleaseAbandoned
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.lock_guard import release_lock
+from vergil_tooling.lib.release.orchestrator import build_stages
 from vergil_tooling.lib.release.prepare import _apply_bump
 from vergil_tooling.lib.release.resume import (
     _SEARCH_LIST_LIMIT,
@@ -22,9 +31,20 @@ from vergil_tooling.lib.release.resume import (
     restore_context,
     verify_facts,
 )
+from vergil_tooling.lib.release_lock import history, holder, refs, sweeps
+from vergil_tooling.lib.release_lock.holder import LockLost
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    LockRecord,
+    RefReadError,
+    RefWriteError,
+    from_json,
+    to_json,
+)
+from vergil_tooling.lib.release_lock.refs import LockState
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 _MOD = "vergil_tooling.lib.release.resume"
 _STAGES = ["audit", "prepare"]
@@ -519,3 +539,527 @@ def test_resume_refuses_a_malformed_version_file(release_branch: Path) -> None:
         match=r"Cannot read the VERSION of 'release/2\.1\.0'.*plugin\.json is not valid JSON",
     ):
         check_release_version(_branch_ctx(release_branch), _minor())
+
+
+# --- the release lock on a resume (spec §5.3 and §5.6 of epic #1664, Task 25) ---------
+
+_PREFLIGHT = "vergil_tooling.lib.release.preflight"
+_GUARD = "vergil_tooling.lib.release.lock_guard"
+_LOCK_REPO = "owner/repo"
+_OURS = f"{_LOCK_REPO}#42"
+_LOCK_SHA = "a" * 40
+_PIPELINE = [stage.name for stage in build_stages()]
+_RESUME_WT = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+
+
+def _ago(seconds: int) -> str:
+    """The UTC timestamp *seconds* before now, as the lock records it."""
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _record(**fields: str) -> LockRecord:
+    """This release's lock record (2.3.0, #42, maintainer on desk), with *fields* changed."""
+    base = LockRecord(
+        holder_identity="maintainer",
+        holder_host="desk",
+        version="2.3.0",
+        worktree="/elsewhere/.worktrees/release-2.3.0",
+        tracking_issue=_OURS,
+        stage="merge-release",
+        health="running",
+        broken_stage="",
+        started_at="2026-11-27T09:00:00Z",
+        heartbeat_at=_ago(STALE_AFTER_SECS + 60),
+        token="o" * 32,
+    )
+    return replace(base, **cast("dict[str, Any]", fields))
+
+
+def _held(**fields: str) -> LockState:
+    """A readable lock holding :func:`_record` with *fields* changed."""
+    rec = _record(**fields)
+    return LockState(sha=_LOCK_SHA, record=rec, error="", text=to_json(rec))
+
+
+_FREE = LockState(sha=None, record=None, error="")
+
+
+def _resume_ctx() -> ReleaseContext:
+    ctx = ReleaseContext(
+        repo=_LOCK_REPO,
+        version="2.3.0",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+        release_branch="release/2.3.0",
+        issue_number=42,
+        issue_url=f"https://github.com/{_LOCK_REPO}/issues/42",
+    )
+    ctx.state = state.initial_state(version="2.3.0", cut="c" * 40, issues=(), without_deps=False)
+    ctx.worktree_path = _RESUME_WT
+    return ctx
+
+
+class _ResumeLock:
+    """A resume's lock step, its every release-lock call logged to :attr:`events`.
+
+    The lock reads as :attr:`found`; adopt returns :attr:`owner`, take
+    :attr:`take_result`; the stray-merge check finds :attr:`strays`.
+    """
+
+    def __init__(self, stack: contextlib.ExitStack) -> None:
+        self.events: list[tuple[object, ...]] = []
+        self.owner = FakeLockOwner(self.events)
+        self.found = _held()
+        self.take_result: FakeLockOwner | None = self.owner
+        self.taken: list[LockRecord] = []
+        self.appended: list[history.HistoryEntry] = []
+        self.strays: list[str] = []
+        log = self.events.append
+
+        def adopt(repo: str, found: LockState) -> FakeLockOwner:
+            log(("adopt", found.sha))
+            return self.owner
+
+        def take(repo: str, rec: LockRecord) -> FakeLockOwner | None:
+            log(("take",))
+            self.taken.append(rec)
+            return self.take_result
+
+        def append(repo: str, entry: history.HistoryEntry) -> None:
+            log(("history", entry.action))
+            self.appended.append(entry)
+
+        def quiesce(repo: str, **_kwargs: object) -> sweeps.QuiesceResult:
+            log(("quiesce",))
+            return sweeps.QuiesceResult(expired=(), disarmed=(), late=(), arming_at_check=())
+
+        def strays(ctx: ReleaseContext) -> list[str]:
+            log(("strays",))
+            return self.strays
+
+        def abandon(ctx: ReleaseContext, *, reason: str) -> None:
+            log(("abandon", reason))
+
+        enter = stack.enter_context
+        enter(patch(_PREFLIGHT + "._holder_identity", return_value="maintainer"))
+        enter(patch(_PREFLIGHT + ".socket.gethostname", return_value="laptop"))
+        enter(patch(_PREFLIGHT + ".lock_refs.read_lock", side_effect=lambda repo: self.found))
+        enter(patch(_PREFLIGHT + ".LockOwner.adopt", side_effect=adopt))
+        enter(patch(_PREFLIGHT + ".LockOwner.take", side_effect=take))
+        enter(patch(_PREFLIGHT + ".history.append", side_effect=append))
+        enter(patch(_PREFLIGHT + ".sweeps.quiesce", side_effect=quiesce))
+        enter(patch(_PREFLIGHT + ".stray_merges", side_effect=strays))
+        enter(patch(_PREFLIGHT + ".abandon_release", side_effect=abandon))
+
+    def names(self) -> list[object]:
+        return [event[0] for event in self.events]
+
+    def run(self, first: str | None, ctx: ReleaseContext | None = None) -> ReleaseContext:
+        ctx = ctx or _resume_ctx()
+        preflight_module._resume_lock(ctx, first, _PIPELINE)
+        return ctx
+
+
+@pytest.fixture
+def resume_lock() -> Iterator[_ResumeLock]:
+    with contextlib.ExitStack() as stack:
+        yield _ResumeLock(stack)
+
+
+def test_resume_adopts_own_lock_on_other_host(resume_lock: _ResumeLock) -> None:
+    # This release's lock, written on another machine, broken there and gone quiet.
+    resume_lock.found = _held(health="broken", broken_stage="confirm-main")
+    ctx = resume_lock.run("confirm-main")
+    assert ctx.lock is resume_lock.owner
+    assert resume_lock.events[0] == ("adopt", _LOCK_SHA)
+    # Health back to running, on this run's worktree: never a take or a quiesce.
+    assert resume_lock.events[1] == (
+        "update",
+        {
+            "stage": "preflight",
+            "health": "running",
+            "broken_stage": "",
+            "worktree": str(_RESUME_WT),
+        },
+    )
+    assert not {"take", "quiesce", "history", "strays"} & set(resume_lock.names())
+
+
+def test_resume_adopts_own_stale_running_lock(resume_lock: _ResumeLock) -> None:
+    # A laptop that slept mid-release: still running, but its heartbeat is stale.
+    ctx = resume_lock.run("merge-release")
+    assert ctx.lock is resume_lock.owner
+    assert resume_lock.names()[:2] == ["adopt", "update"]
+
+
+def test_resume_adopt_in_the_root_checkout_keeps_the_worktree_recorded(
+    resume_lock: _ResumeLock,
+) -> None:
+    ctx = _resume_ctx()
+    ctx.worktree_path = None
+    resume_lock.run("confirm-develop", ctx)
+    assert resume_lock.events[1] == (
+        "update",
+        {"stage": "preflight", "health": "running", "broken_stage": ""},
+    )
+
+
+def test_resume_refuses_own_live_lock(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _held(heartbeat_at=_ago(30))
+    ctx = _resume_ctx()
+    with pytest.raises(ReleaseError) as info:
+        resume_lock.run("confirm-main", ctx)
+    message = str(info.value)
+    assert "desk" in message
+    assert re.search(r"heartbeat is 3\ds old", message)
+    assert "vrg-release-lock break" in message
+    # Nothing written: no adopt, no take, no update.
+    assert resume_lock.events == []
+    assert ctx.lock is None
+
+
+def test_resume_refuses_lock_of_other_release(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _held(
+        holder_identity="other-maintainer", version="2.4.0", tracking_issue=f"{_LOCK_REPO}#77"
+    )
+    with pytest.raises(ReleaseError) as info:
+        resume_lock.run("confirm-main")
+    message = str(info.value)
+    assert "release 2.4.0" in message
+    assert "other-maintainer" in message
+    assert f"{_LOCK_REPO}#77" in message
+    assert resume_lock.events == []
+
+
+def test_resume_refuses_own_issue_under_another_identity(resume_lock: _ResumeLock) -> None:
+    # The holder is the identity and the tracking issue together.
+    resume_lock.found = _held(holder_identity="other-maintainer")
+    with pytest.raises(ReleaseError, match="other-maintainer"):
+        resume_lock.run("confirm-main")
+    assert resume_lock.events == []
+
+
+def test_resume_refuses_an_unreadable_lock(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = LockState(sha=_LOCK_SHA, record=None, error="not valid JSON", text="{")
+    with pytest.raises(ReleaseError, match="not valid JSON") as info:
+        resume_lock.run("confirm-main")
+    assert "vrg-release-lock break" in str(info.value)
+    assert resume_lock.events == []
+
+
+def test_resume_refuses_when_the_lock_cannot_be_read(resume_lock: _ResumeLock) -> None:
+    with (
+        patch(_PREFLIGHT + ".lock_refs.read_lock", side_effect=RefReadError("ls-remote failed")),
+        pytest.raises(ReleaseError, match="ls-remote failed"),
+    ):
+        resume_lock.run("confirm-main")
+    assert resume_lock.events == []
+
+
+def test_resume_retakes_absent_lock_quiesces_and_records(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    ctx = resume_lock.run("confirm-main")
+    assert ctx.lock is resume_lock.owner
+    # Take, record the re-take, then quiesce; at confirm-main no stray check.
+    assert resume_lock.names() == ["take", "history", "quiesce"]
+    rec = resume_lock.taken[0]
+    assert (rec.holder_identity, rec.holder_host, rec.version) == ("maintainer", "laptop", "2.3.0")
+    assert (rec.tracking_issue, rec.stage, rec.health, rec.worktree) == (
+        _OURS,
+        "preflight",
+        "running",
+        str(_RESUME_WT),
+    )
+    entry = resume_lock.appended[0]
+    assert entry.action == "retake"
+    assert entry.actor == "maintainer on laptop (vrg-release --resume)"
+    assert "confirm-main" in entry.reason
+    assert entry.old == ""
+
+
+def test_resume_retake_refused_when_another_release_wins(resume_lock: _ResumeLock) -> None:
+    resume_lock.take_result = None
+    with (
+        patch(
+            _PREFLIGHT + ".lock_refs.read_lock",
+            side_effect=[_FREE, _held(holder_identity="other", tracking_issue="o/r#9")],
+        ),
+        pytest.raises(ReleaseError, match="held by other"),
+    ):
+        resume_lock.run("confirm-main")
+    assert resume_lock.names() == ["take"]
+
+
+def test_resume_before_merge_release_stray_check_after_disarm_abandons(
+    resume_lock: _ResumeLock,
+) -> None:
+    resume_lock.found = _FREE
+    stray = f"https://github.com/{_LOCK_REPO}/pull/77"
+    resume_lock.strays = [stray]
+    with pytest.raises(ReleaseAbandoned, match="fresh `vrg-release`"):
+        resume_lock.run("prepare")
+    # The stray check runs only once develop is disarmed, and abandons on a hit.
+    assert resume_lock.names() == ["take", "history", "quiesce", "strays", "abandon"]
+    assert stray in str(resume_lock.events[-1][1])
+
+
+def test_resume_before_merge_release_without_strays_goes_on(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    ctx = resume_lock.run("prepare")
+    assert resume_lock.names() == ["take", "history", "quiesce", "strays"]
+    assert ctx.lock is resume_lock.owner
+
+
+def test_resume_adopt_runs_no_stray_check(resume_lock: _ResumeLock) -> None:
+    # The lock was held all along, so develop could not move.
+    resume_lock.run("prepare")
+    assert "strays" not in resume_lock.names()
+
+
+def test_resume_lock_failure_after_retake_marks_it_broken(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    with (
+        patch(_PREFLIGHT + ".sweeps.quiesce", side_effect=sweeps.SweepError("disarm failed")),
+        pytest.raises(ReleaseError, match="disarm failed"),
+    ):
+        resume_lock.run("confirm-main")
+    # The lock is the resume's now: marked broken, so the next resume adopts it at once.
+    assert resume_lock.events[-1] == ("update", {"health": "broken", "broken_stage": "preflight"})
+
+
+def test_resume_lock_failure_marking_broken_names_both(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    resume_lock.owner.update_error = RefWriteError("push rejected")
+    with (
+        patch(_PREFLIGHT + ".sweeps.quiesce", side_effect=sweeps.SweepError("disarm failed")),
+        pytest.raises(ReleaseError) as info,
+    ):
+        resume_lock.run("confirm-main")
+    assert "disarm failed" in str(info.value)
+    assert "push rejected" in str(info.value)
+
+
+@pytest.mark.parametrize("first", ["unlock", "rearm", "close-tracking", None])
+def test_resume_at_unlock_or_later_takes_no_lock(
+    resume_lock: _ResumeLock, first: str | None
+) -> None:
+    ctx = resume_lock.run(first)
+    assert resume_lock.events == []
+    assert ctx.lock is None
+
+
+def test_resume_at_rearm_takes_no_lock(resume_lock: _ResumeLock) -> None:
+    with patch(_PREFLIGHT + ".lock_refs.read_lock") as read:
+        ctx = resume_lock.run("rearm")
+    read.assert_not_called()
+    assert ctx.lock is None
+
+
+# --- the unlock stage on a resume -------------------------------------------------
+
+
+def _unlock(found: LockState, *, deleted: bool = True) -> tuple[ReleaseContext, MagicMock]:
+    ctx = _resume_ctx()
+    with (
+        patch(_GUARD + ".lock_refs.read_lock", return_value=found),
+        patch(_GUARD + ".lock_refs.delete_lock", return_value=deleted) as delete,
+        patch(_GUARD + ".holder_identity", return_value="maintainer"),
+    ):
+        release_lock(ctx, phase="unlock", remedy="Re-run it.")
+    return ctx, delete
+
+
+def test_resume_at_unlock_deletes_own_remaining_lock(capsys: pytest.CaptureFixture[str]) -> None:
+    # Its own lock, live or not: the stage deletes it against the sha just read.
+    ctx, delete = _unlock(_held(heartbeat_at=_ago(5)))
+    delete.assert_called_once_with(_LOCK_REPO, expected=_LOCK_SHA)
+    assert ctx.lock is None
+    assert "Deleted" in capsys.readouterr().out
+
+
+def test_resume_at_unlock_absent_lock_done() -> None:
+    _ctx, delete = _unlock(_FREE)
+    delete.assert_not_called()
+
+
+def test_resume_at_unlock_refuses_other_holder() -> None:
+    other = _held(holder_identity="other-maintainer", version="2.4.0", tracking_issue="o/r#77")
+    with pytest.raises(ReleaseError) as info:
+        _unlock(other)
+    message = str(info.value)
+    assert "release 2.4.0" in message
+    assert "other-maintainer" in message
+    assert "vrg-release-lock break" in message
+    # Unchanged by issue #5352: a readable lock of another release is named as such.
+    assert "It is not release 2.3.0's own" in message
+    assert "a resume deletes only its own release's lock" in message
+
+
+def test_resume_at_unlock_refuses_a_lock_changed_meanwhile() -> None:
+    with pytest.raises(ReleaseError, match="changed") as info:
+        _unlock(_held(), deleted=False)
+    assert "vrg-release-lock status" in str(info.value)
+
+
+def test_resume_at_unlock_delete_failure_refuses() -> None:
+    ctx = _resume_ctx()
+    with (
+        patch(_GUARD + ".lock_refs.read_lock", return_value=_held()),
+        patch(_GUARD + ".lock_refs.delete_lock", side_effect=RefWriteError("push failed")),
+        patch(_GUARD + ".holder_identity", return_value="maintainer"),
+        pytest.raises(ReleaseError, match="push failed"),
+    ):
+        release_lock(ctx, phase="unlock", remedy="Re-run it.")
+
+
+# --- the lock owner a resume makes, against a local origin ------------------------
+
+
+@pytest.fixture
+def origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Origin:
+    monkeypatch.setattr(holder, "HEARTBEAT_INTERVAL_SECS", 0.05)
+    return make_origin(tmp_path, monkeypatch)
+
+
+def _real_resume(first: str) -> ReleaseContext:
+    ctx = _resume_ctx()
+    ctx.repo = REPO
+    quiet = sweeps.QuiesceResult(expired=(), disarmed=(), late=(), arming_at_check=())
+    with (
+        patch(_PREFLIGHT + "._holder_identity", return_value="maintainer"),
+        patch(_PREFLIGHT + ".socket.gethostname", return_value="laptop"),
+        patch(_PREFLIGHT + ".sweeps.quiesce", return_value=quiet),
+        patch(_PREFLIGHT + ".stray_merges", return_value=[]),
+    ):
+        preflight_module._resume_lock(ctx, first, _PIPELINE)
+    return ctx
+
+
+def _beats(ctx: ReleaseContext, origin: Origin) -> None:
+    """Wait until the lock on *origin* moves past the owner's write: the heartbeat ran."""
+    owner = ctx.lock
+    assert owner is not None
+    assert owner.heartbeat_running
+    first = origin.sha(refs.LOCK_REF)
+    deadline = time.monotonic() + 10
+    try:
+        while origin.sha(refs.LOCK_REF) == first:
+            assert time.monotonic() < deadline, "the heartbeat never wrote the lock"
+            time.sleep(0.02)
+    finally:
+        owner.stop_heartbeat()
+
+
+def test_resume_adopt_starts_heartbeat(origin: Origin) -> None:
+    rec = _record(tracking_issue=f"{REPO}#42", health="broken", broken_stage="install")
+    origin.set_ref(refs.LOCK_REF, origin.commit(refs.LOCK_FILE, to_json(rec)))
+    ctx = _real_resume("install")
+    on_origin = from_json(origin.file(refs.LOCK_REF, refs.LOCK_FILE))
+    assert on_origin.token != rec.token
+    assert (on_origin.health, on_origin.broken_stage) == ("running", "")
+    _beats(ctx, origin)
+
+
+def test_resume_retake_starts_heartbeat(origin: Origin) -> None:
+    ctx = _real_resume("confirm-main")
+    assert [entry.action for entry in history.read_history(REPO)] == ["retake"]
+    _beats(ctx, origin)
+
+
+def test_lost_holder_stops_with_clear_error(origin: Origin) -> None:
+    # A resumed run whose lock is broken under it stops at its next write,
+    # naming the break, and never re-takes the lock.
+    ctx = _real_resume("confirm-main")
+    owner = ctx.lock
+    assert owner is not None
+    owner.stop_heartbeat()
+    old = origin.file(refs.LOCK_REF, refs.LOCK_FILE)
+    history.append(
+        REPO,
+        history.HistoryEntry(
+            action="break", old=old, actor="human", at=_ago(0), reason="stuck", rearmed=()
+        ),
+    )
+    origin.git("update-ref", "-d", refs.LOCK_REF)
+    with pytest.raises(LockLost, match="broken by human") as info:
+        owner.update(stage="confirm-main")
+    assert "does not re-take the lock" in str(info.value)
+    assert origin.sha(refs.LOCK_REF) is None
+
+
+# --- the lock step's failures -----------------------------------------------------
+
+
+def test_resume_adopt_of_a_lock_changed_meanwhile_refuses(resume_lock: _ResumeLock) -> None:
+    lost = LockLost("it moved", phase="preflight", cause=None, outside_change=True)
+    ctx = _resume_ctx()
+    with (
+        patch(_PREFLIGHT + ".LockOwner.adopt", side_effect=lost),
+        pytest.raises(ReleaseError, match="changed while this resume adopted it") as info,
+    ):
+        resume_lock.run("confirm-main", ctx)
+    assert "vrg-release-lock status" in str(info.value)
+    assert ctx.lock is None
+
+
+def test_resume_adopt_write_failure_refuses(resume_lock: _ResumeLock) -> None:
+    ctx = _resume_ctx()
+    with (
+        patch(_PREFLIGHT + ".LockOwner.adopt", side_effect=RefWriteError("push failed")),
+        pytest.raises(ReleaseError, match="push failed"),
+    ):
+        resume_lock.run("confirm-main", ctx)
+    assert ctx.lock is None
+
+
+def test_resume_adopt_update_lost_is_not_marked_broken(resume_lock: _ResumeLock) -> None:
+    # A lock lost under the adopting write is no longer this run's to mark.
+    resume_lock.owner.update_error = LockLost(
+        "broken meanwhile", phase="preflight", cause=None, outside_change=False
+    )
+    with pytest.raises(LockLost, match="broken meanwhile"):
+        resume_lock.run("confirm-main")
+    assert resume_lock.names() == ["adopt", "update"]
+
+
+def test_resume_retake_write_failure_refuses(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    ctx = _resume_ctx()
+    with (
+        patch(_PREFLIGHT + ".LockOwner.take", side_effect=RefWriteError("push failed")),
+        pytest.raises(ReleaseError, match="push failed"),
+    ):
+        resume_lock.run("confirm-main", ctx)
+    assert ctx.lock is None
+
+
+def test_resume_retake_history_failure_marks_the_lock_broken(resume_lock: _ResumeLock) -> None:
+    resume_lock.found = _FREE
+    with (
+        patch(_PREFLIGHT + ".history.append", side_effect=RefWriteError("history push failed")),
+        pytest.raises(ReleaseError, match="history push failed"),
+    ):
+        resume_lock.run("confirm-main")
+    assert "quiesce" not in resume_lock.names()
+    assert resume_lock.events[-1] == ("update", {"health": "broken", "broken_stage": "preflight"})
+
+
+def test_resume_abandon_failure_after_the_lock_went_marks_nothing(
+    resume_lock: _ResumeLock,
+) -> None:
+    # The abandon step released the lock, then its re-arm sweep failed: the
+    # lock is gone, so there is nothing to mark broken.
+    resume_lock.found = _FREE
+    resume_lock.strays = ["https://github.com/owner/repo/pull/77"]
+    failure = ReleaseError(phase="merge-release", command="re-arm", message="re-arm failed")
+
+    def abandon(ctx: ReleaseContext, *, reason: str) -> None:
+        ctx.lock = None
+        raise failure
+
+    with (
+        patch(_PREFLIGHT + ".abandon_release", side_effect=abandon),
+        pytest.raises(ReleaseError, match="re-arm failed"),
+    ):
+        resume_lock.run("prepare")
+    assert resume_lock.names() == ["take", "history", "quiesce", "strays"]

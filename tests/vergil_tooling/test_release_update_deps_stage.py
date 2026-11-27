@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import FakeLockOwner
 from vergil_tooling.lib.pr_path import ArmResult
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.handoff import holds
@@ -66,6 +67,7 @@ class _Recorder:
         self.chdirs: list[Path] = []
         self.run_update_roots: list[Path] = []
         self.run_update_fast_forwards: list[bool] = []
+        self.run_update_passes: list[str | None] = []
         # Every lock, branch, git and run_update event, in order.
         self.events: list[str] = []
 
@@ -103,10 +105,13 @@ def _patch(
     monkeypatch.setattr(_MOD + ".git.current_branch", fake_branch)
     monkeypatch.setattr(_MOD + ".git.run", fake_git)
 
-    def fake_run_update(*, repo_root: Path, fast_forward: bool) -> UpdateDepsContext:
+    def fake_run_update(
+        *, repo_root: Path, fast_forward: bool, holder_pass: str | None
+    ) -> UpdateDepsContext:
         rec.events.append("run_update")
         rec.run_update_roots.append(repo_root)
         rec.run_update_fast_forwards.append(fast_forward)
+        rec.run_update_passes.append(holder_pass)
         if isinstance(deps, BaseException):
             raise deps
         return deps
@@ -156,6 +161,22 @@ def test_syncs_root_develop_before_running(monkeypatch: pytest.MonkeyPatch) -> N
     assert rec.gits == [("fetch", "origin", "develop"), ("merge", "--ff-only", "origin/develop")]
     assert rec.run_update_roots == [Path("/r")]
     assert rec.run_update_fast_forwards == [True]
+
+
+def test_update_deps_stage_passes_the_holder_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The release's update is the holder's: run_update gets the lock's token."""
+    rec = _patch(monkeypatch, _deps(pr_url="https://x/pull/9", any_changes=True))
+    ctx = _rctx()
+    owner = FakeLockOwner()
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+    update_deps(ctx)
+    assert rec.run_update_passes == [owner.token]
+
+
+def test_update_deps_stage_with_no_lock_owner_passes_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _patch(monkeypatch, _deps(pr_url="https://x/pull/9", any_changes=True))
+    update_deps(_rctx())
+    assert rec.run_update_passes == [None]
 
 
 def test_refuses_when_root_checkout_not_on_develop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +239,13 @@ def test_release_deps_stage_uses_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(deps_pr + ".git.read_output", lambda *a: "a" * 40)  # noqa: ARG005
     armed: list[tuple[str, str | None]] = []
 
-    def fake_arm(url: str, *, clone: Path | None = None, head: str | None = None) -> ArmResult:
+    def fake_arm(
+        url: str,
+        *,
+        clone: Path | None = None,
+        head: str | None = None,
+        holder_pass: str | None = None,  # noqa: ARG001
+    ) -> ArmResult:
         armed.append((url, head))
         return ArmResult(outcome="armed", pr_url=url, head="a" * 40, method="MERGE")
 
@@ -295,6 +322,18 @@ def test_failure_raises_release_error_with_report_and_tail(
     assert ctx.deps_failure is not None
     assert "issues/10" in ctx.deps_failure
     assert str(info.value) == ctx.deps_failure
+
+
+def test_held_update_fails_the_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An update the release lock held did not merge, so the release must not go on."""
+    d = _deps(pr_url="https://x/pull/9", any_changes=True)
+    d.held = "held for release 2.1.242"
+    _patch(monkeypatch, d)
+    ctx = _rctx()
+    with pytest.raises(ReleaseError, match=r"pull/9 is held for release 2\.1\.242") as info:
+        update_deps(ctx)
+    assert info.value.phase == "update-deps"
+    assert ctx.deps_pr_url == "https://x/pull/9"
 
 
 def test_update_failure_records_no_pr(monkeypatch: pytest.MonkeyPatch) -> None:

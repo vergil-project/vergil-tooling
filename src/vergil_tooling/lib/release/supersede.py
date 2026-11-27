@@ -27,6 +27,14 @@ a tag. The new release's main-ahead check accepts that commit, its
 ``develop`` VERSION was never bumped, so it takes the next patch unless a
 ``minor`` or ``major`` bump is given, and its release branch and worktree
 are removed when its tracking issue is closed.
+
+The new release takes over the superseded release's release lock rather
+than taking a new one (spec §5.3 of epic vergil-project/.github#1664), so
+``develop`` stays locked throughout: :func:`judge_superseded_lock` decides
+whether it may, and :func:`comment_lock_takeover` records the takeover on
+both tracking issues. The lock never names a closed issue: the takeover
+clears its tracking issue, and the new release writes its own into the lock
+before the superseded release's is closed.
 """
 
 from __future__ import annotations
@@ -42,14 +50,27 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.rebuild import absorb as absorb
 from vergil_tooling.lib.release.rebuild import rebuild_breached
-from vergil_tooling.lib.release.resume import _found_state, _open_release_issues, verify_facts
+from vergil_tooling.lib.release.resume import (
+    _found_state,
+    _open_release_issues,
+    describe_holder,
+    verify_facts,
+)
 from vergil_tooling.lib.release.tracking import read_state
+from vergil_tooling.lib.release_lock.model import (
+    STALE_AFTER_SECS,
+    heartbeat_age_secs,
+    heartbeat_fresh,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
     from pathlib import Path
 
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+    from vergil_tooling.lib.release_lock.model import LockRecord
+    from vergil_tooling.lib.release_lock.refs import LockState
 
 _PHASE = "preflight"
 
@@ -256,6 +277,52 @@ def _check_untagged(version: str) -> None:
         )
 
 
+def judge_superseded_lock(
+    repo: str, found: LockState, superseded: Superseded, *, now: datetime
+) -> LockRecord | None:
+    """The record of the lock *found* on *repo* a ``--supersede`` run takes over, if any.
+
+    The superseded release's own lock (its version and its tracking issue)
+    when it is ``broken`` or its heartbeat is stale. That lock ``running``
+    with a fresh heartbeat is refused, naming it: the release may still be
+    alive. ``None`` for anything else (no lock, a lock that cannot be read,
+    another release's): the new release takes a fresh lock, which reclaims
+    a stale one or refuses naming its holder.
+    """
+    rec = found.record
+    if rec is None:
+        return None
+    own_issue = f"{repo}#{superseded.number}"
+    if rec.version != superseded.version or rec.tracking_issue != own_issue:
+        return None
+    if heartbeat_fresh(rec, now=now):
+        age = heartbeat_age_secs(rec, now=now)
+        raise _refuse(
+            superseded.version,
+            f"its release lock on {repo} is running with a fresh heartbeat: it is"
+            f" {describe_holder(rec)}, its heartbeat {age}s old (stale after"
+            f" {STALE_AFTER_SECS}s), so the release may still be alive. Wait for it to"
+            " stop and its heartbeat to go stale (see `vrg-release-lock status`), then"
+            f" re-run `vrg-release --supersede {superseded.version}`.",
+        )
+    return rec
+
+
+def comment_lock_takeover(repo: str, number: int, body: str, *, phase: str = _PHASE) -> None:
+    """Post *body*, a record of a lock takeover, on tracking issue *number*; raise on failure."""
+    try:
+        github.run("issue", "comment", str(number), "--repo", repo, "--body", body)
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase=phase,
+            command=f"gh issue comment {number} --repo {repo}",
+            message=(
+                f"The release lock takeover could not be recorded on tracking issue #{number}."
+            ),
+            detail=error_text(exc),
+        ) from exc
+
+
 def superseded_issue(repo: str, version: str) -> int | None:
     """The number of the open ``release: <version>`` tracking issue, or None once it is closed."""
     numbers = [number for ver, number, _ in _open_release_issues(repo) if ver == version]
@@ -266,7 +333,7 @@ def superseded_issue(repo: str, version: str) -> int | None:
     return numbers[0] if numbers else None
 
 
-def _git(phase: str, *args: str) -> str:
+def _git(phase: str, label: str, *args: str) -> str:
     """Run git *args*, turning a failure into a :class:`ReleaseError` of *phase*."""
     try:
         return git.read_output(*args)
@@ -275,39 +342,50 @@ def _git(phase: str, *args: str) -> str:
             phase=phase,
             command=command_text(exc.cmd),
             message=(
-                "A git command failed while removing the superseded release's branch. Fix "
+                f"A git command failed while removing the {label}'s branch. Fix "
                 "the cause git reports below, then resume the release."
             ),
             detail=error_text(exc),
         ) from exc
 
 
-def remove_release_branch(repo_root: Path, branch: str, *, phase: str) -> None:
+def remove_release_branch(
+    repo_root: Path,
+    branch: str,
+    *,
+    phase: str,
+    reason: str = "superseded by a new release",
+    label: str = "superseded release",
+) -> None:
     """Remove *branch*'s release worktree, its local branch and its branch on origin.
 
     Each is removed only when it is there, so a re-run after a partial
-    removal finishes it. A git failure raises :class:`ReleaseError`.
+    removal finishes it. The worktree's removal is logged with *reason*
+    (spec §5.8 of epic vergil-project/.github#1664); *label* names the
+    release in the output. Supersede and the abandon step of a stray merge
+    both remove a release this way. A git failure raises
+    :class:`ReleaseError`.
     """
     path = worktree_path(repo_root, branch)
     if path.exists():
-        print(f"Removing the superseded release worktree {path}.")
+        print(f"Removing the {label} worktree {path}.")
         try:
-            remove_worktree(path, branch=branch, reason="superseded by a new release")
+            remove_worktree(path, branch=branch, reason=reason)
         except subprocess.CalledProcessError as exc:
             raise ReleaseError(
                 phase=phase,
                 command=command_text(exc.cmd),
-                message=f"The superseded release worktree {path} could not be removed.",
+                message=f"The {label} worktree {path} could not be removed.",
                 detail=error_text(exc),
             ) from exc
     if git.ref_exists(f"refs/heads/{branch}"):
-        print(f"Deleting the superseded release branch '{branch}'.")
-        _git(phase, "branch", "-D", branch)
-    if _git(phase, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
+        print(f"Deleting the {label} branch '{branch}'.")
+        _git(phase, label, "branch", "-D", branch)
+    if _git(phase, label, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
         print(f"Deleting '{branch}' on origin.")
-        _git(phase, "push", "origin", "--delete", branch)
+        _git(phase, label, "push", "origin", "--delete", branch)
     if git.ref_exists(f"refs/remotes/origin/{branch}"):
-        _git(phase, "branch", "-dr", f"origin/{branch}")
+        _git(phase, label, "branch", "-dr", f"origin/{branch}")
 
 
 def close_superseded(  # noqa: PLR0913 - the superseded and superseding releases, each named

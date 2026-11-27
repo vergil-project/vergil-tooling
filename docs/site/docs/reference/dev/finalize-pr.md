@@ -118,9 +118,10 @@ The watch reads each open PR once per poll and judges it in this order:
 2. **Merged.** The PR ends as *merged*. A PR that merged before the run
    started counts as merged at once, and the watch goes on for the rest.
 3. **Closed** without merging: *failed: closed*.
-4. **Auto-merge off**, at the start or mid-watch: *failed: auto-merge off*.
-   Finalize never turns it back on: someone turned it off on purpose, or
-   GitHub did, and a human looks first.
+4. **The release lock.** The watch reads the lock before it would judge
+   auto-merge off (see [Under the release lock](#under-the-release-lock)),
+   so auto-merge off never ends a PR. A re-arm the one PR path refuses
+   ends it as *failed: refused*, naming the path's reason.
 5. **A required check failed:** *failed: CI*, naming the check. A failed
    or cancelled check-run of a superseded workflow run does not count (see
    below). When the base branch's required checks cannot be read, every
@@ -159,12 +160,40 @@ branch). So the watch never turns auto-merge off, and has no *failed:
 provenance* or *failed: gates* outcome (epic vergil-project/.github#1664,
 spec §3.3 and §5).
 
+#### Under the release lock
+
+While `vrg-release` runs, it holds the release lock and leaves every open
+PR into `develop` unarmed (epic vergil-project/.github#1664, spec §5.5).
+On every poll the watch reads the lock for each open PR, and says what it
+is waiting on:
+
+- **A live release** (running, with a fresh heartbeat): the PR shows as
+  `held by release <version> (stage <stage>, running)`, and the watch
+  polls at its normal pace.
+- **A broken release, or one whose heartbeat is stale:** the PR shows as
+  held by that release, with its health, and the watch polls every five
+  minutes. A lock that is stale (its tracking issue is closed, or it names
+  none and its heartbeat is old) is reclaimed, and the reclaim's re-arm
+  sweep re-arms the PRs it held. A broken release whose tracking issue is
+  open is the human's to finish: the watch says why it is not reclaimed.
+- **A lock that cannot be read:** the PR shows as
+  `held by an unreadable release lock (<error>)`, polled every five
+  minutes, and never reclaimed: only `vrg-release-lock break` clears it.
+- **No lock held, and the PR unarmed:** the watch re-arms it through the
+  one PR path, the one way it turns auto-merge on. A re-arm the path
+  refuses ends the PR as *failed: refused*.
+
+The watch may reclaim a stale lock, but never takes or breaks one.
+
 A PR still pending when the batch deadline passes ends as *timed out*,
-and its auto-merge stays on, so it may still merge later. The deadline
+and its auto-merge stays on, so it may still merge later. One the release
+lock still holds then ends as *held by release*, naming the release, its
+version, its stage and its health. The deadline
 covers the whole watch: `$VRG_FINALIZE_DEADLINE` seconds, 7200 by default.
 A value that is not a positive whole number is an error before any
-waiting. Any failure to read a PR or to run the provenance check stops
-the run with exit 1; none is read as a pending or a clean PR.
+waiting. Any failure to read a PR, to run the provenance check, or to read
+the lock, re-arm a PR or reclaim a stale lock stops the run with exit 1;
+none is read as a pending or a clean PR.
 
 #### Provenance
 
@@ -391,6 +420,19 @@ can take it.
 
     With no `branching_model`, finalize warns and protects `develop`,
     `main` and `gh-pages`.
+
+    A running release's worktrees are kept, here and in steps 3 and
+    `--clean-dirty`: the worktree the release lock
+    (`refs/vergil/release-lock`) names, whatever its branch, and every
+    `release/*` worktree while the lock is held, while it cannot be read,
+    or while a trusted `release: X.Y.Z` tracking issue is open. The
+    tracking-issue key keeps a broken release's worktree after
+    `vrg-release-lock break` deletes its lock, until its issue closes. A
+    kept worktree is named on the output with the reason. A lock or issue
+    read that fails keeps the worktrees it covers and fails the run. The
+    release's own removals (its `teardown-worktree` stage and
+    `--supersede`) are not judged here. Every removal is logged, naming
+    the worktree, its branch and the reason.
 5. **Prune.** Any relay ref whose branch no longer exists on origin is
    pruned, as a safety net for a branch deleted outside finalize. Cached
    container images whose branch is live in no repo of the platform repo
@@ -537,7 +579,8 @@ step, and a provenance violation is named loudly:
 | ------- | --------- |
 | *failed: CI*, *failed: conflict*, *failed: closed*, *timed out* | Hand it to an agent, then re-run `vrg-finalize-pr <pr>` |
 | *failed: cancelled* | Re-run its cancelled checks, then re-run `vrg-finalize-pr <pr>` |
-| *failed: auto-merge off* | Investigate before turning auto-merge back on |
+| *failed: refused* | The one PR path refused to re-arm it: deal with its reason, then re-run `vrg-finalize-pr <pr>` |
+| *held by release* | A release holds the lock: run `vrg-finalize-pr <pr>` again |
 | *failed: not a develop PR* | Finalize watches develop PRs only; a release PR goes through `vrg-release` |
 
 It then states the validate's result (`Validate: passed on <branch> at
@@ -584,8 +627,9 @@ needs that update; a conflict is resolved by rebasing the branch.
 | 0 | Full success: every PR merged with no provenance violation, the validate passed and, with `--wait-cd`, CD did not fail. Also a prompt declined, or `--all` with no open PR. |
 | 1 | A tool or usage error: a removed or contradictory flag, not run from the main worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree) |
 | 3 | Develop is healthy, but not every PR merged, or one merged with a provenance violation |
-| 4 | Develop did not validate: the validate failed or could not run, or, with `--wait-cd`, CD did not succeed. 4 takes precedence over 1 and 3 |
+| 4 | Develop did not validate: the validate failed or could not run, or, with `--wait-cd`, CD did not succeed. 4 takes precedence over 1, 3 and 6 |
 | 5 | Full success, but the chained release failed |
+| 6 | Develop is healthy, and every PR that did not merge is *held by release* (`EXIT_HELD_BY_RELEASE`, shared with `vrg-pr-await`). Not a failure: run the same command again. 3 takes precedence when any PR failed, timed out or merged with a provenance violation |
 | 130 | Interrupted (Ctrl-C) |
 
 ## Environment

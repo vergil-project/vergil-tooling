@@ -30,6 +30,7 @@ the dev-tree override venv.
 | [vrg-await](cli-tools-overview.md#vrg-await) | Block until a `.vergil/` channel file appears or changes |
 | [vrg-audit-approve](cli-tools-overview.md#vrg-audit-approve) | Post the `vergil-audit/approved` check-run on a PR's head commit |
 | [vrg-release](dev/release.md) | Run the full release workflow, ending with the dependency update |
+| [vrg-release-lock](cli-tools-overview.md#vrg-release-lock) | Print the release lock, whether it is stale, and the PRs it holds unarmed; break it (human only) |
 | [vrg-release-record](dev/release-record.md) | Check a task's `Released:` record against git and print a verdict |
 | [vrg-promote](cli-tools-overview.md#vrg-promote) | Move the rolling `vX.Y` tag to a release (human-only) |
 | [vrg-version](cli-tools-overview.md#vrg-version) | Print or bump the repo's version |
@@ -49,7 +50,7 @@ the dev-tree override venv.
 | [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
 | [vrg-upstream-refresh](cli-tools-overview.md#vrg-upstream-refresh) | Run the repo's upstream-refresh hook, check its path fence, and open a PR that merges itself |
 | [vrg-branch-sweep](dev/branch-sweep.md) | Report, or with `--apply` delete, a repo's finished remote branches |
-| [vrg-repo-status](cli-tools-overview.md#vrg-repo-status) | Show every worktree in the current repo, grouped by kind, the open PRs no worktree shows, and what is pending release |
+| [vrg-repo-status](cli-tools-overview.md#vrg-repo-status) | Show every worktree in the current repo, grouped by kind, the open PRs no worktree shows, the release lock, and what is pending release |
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
 | [vrg-container-docs](cli-tools-overview.md#vrg-container-docs) | Preview/build MkDocs in a dev container |
 | [vrg-container-build-command](cli-tools-overview.md#vrg-container-build-command) | Print the declared `[container].build-command` (CI consumption) |

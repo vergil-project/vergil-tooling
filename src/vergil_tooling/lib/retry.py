@@ -35,18 +35,30 @@ exactly those reads in :func:`retry_known_resource`, which retries a 404 with
 the same backoff as transient errors under a ~60 s time budget and then fails
 with a clear :class:`KnownResourceNotFoundError`. Never wrap a read whose ID
 came from user input or config — it must keep failing fast.
+
+:func:`bounded` puts a wall-clock bound on every call made inside it, retries
+included (the arm call of the one PR path, epic vergil-project/.github#1664,
+spec §5.4). Each subprocess :func:`run_with_retry` runs is killed once the
+bound is reached, no attempt starts past it, and a transient error whose
+backoff would end past it is not retried. Each of these stops the call with
+:class:`DeadlineExceededError`, which is not a
+:class:`subprocess.CalledProcessError`, so no caller mistakes it for a
+``gh`` error.
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import random
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, overload
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     # Builds a subprocess environment for one attempt: a dict, or ``None`` to
     # inherit the caller's environment. A caller whose credentials can change
@@ -144,6 +156,71 @@ def is_retryable_read(exc: subprocess.CalledProcessError) -> bool:
     return any(p in detail for p in _READ_RETRYABLE_PATTERNS)
 
 
+class DeadlineExceededError(Exception):
+    """A call inside a :func:`bounded` block ran past its bound, and was not retried."""
+
+
+@dataclass(frozen=True)
+class _Bound:
+    deadline: float  # a time.monotonic() value
+    secs: float
+    what: str
+
+
+_bound: contextvars.ContextVar[_Bound | None] = contextvars.ContextVar("retry_bound", default=None)
+
+
+@contextlib.contextmanager
+def bounded(secs: float, *, what: str) -> Generator[None]:
+    """Bound every call inside the block, retries included, to *secs* seconds from now.
+
+    *what* names the bounded step in the :class:`DeadlineExceededError` that
+    a call past the bound raises. Each subprocess :func:`run_with_retry` runs
+    gets the time left as its timeout and is killed when it runs out, no
+    attempt starts once the bound is reached, and a transient error whose
+    backoff would end past the bound is raised as
+    :class:`DeadlineExceededError` instead of being retried. A block nested
+    in another keeps the nearer of the two bounds.
+    """
+    bound = _Bound(deadline=time.monotonic() + secs, secs=secs, what=what)
+    outer = _bound.get()
+    if outer is not None and outer.deadline < bound.deadline:
+        bound = outer
+    token = _bound.set(bound)
+    try:
+        yield
+    finally:
+        _bound.reset(token)
+
+
+def _past_bound(bound: _Bound, detail: str) -> DeadlineExceededError:
+    return DeadlineExceededError(f"{bound.what} ran past its bound of {bound.secs:g}s: {detail}")
+
+
+def _remaining(bound: _Bound) -> float:
+    """Seconds left before *bound*; :class:`DeadlineExceededError` when none are."""
+    left = bound.deadline - time.monotonic()
+    if left <= 0:
+        raise _past_bound(bound, "no further call was made")
+    return left
+
+
+def _run_bounded(args: tuple[Any, ...], kwargs: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    """One ``subprocess.run`` attempt, killed at the bound of the :func:`bounded` block, if any."""
+    bound = _bound.get()
+    if bound is None:
+        return subprocess.run(*args, **kwargs)  # noqa: S603
+    left = _remaining(bound)
+    own = kwargs.get("timeout")
+    if own is not None and own <= left:
+        return subprocess.run(*args, **kwargs)  # noqa: S603
+    try:
+        timed: dict[str, Any] = {**kwargs, "timeout": left}
+        return subprocess.run(*args, **timed)  # noqa: S603
+    except subprocess.TimeoutExpired as exc:
+        raise _past_bound(bound, f"the call was stopped after {left:.1f}s") from exc
+
+
 def compute_delay(attempt: int) -> float:
     """Return a jittered exponential backoff delay for the given attempt."""
     delay: float = min(BASE_DELAY_SECS * (2**attempt), MAX_DELAY_SECS)
@@ -165,14 +242,14 @@ def run_with_retry(
     ``env`` keyword.
     """
     if env_factory is None:
-        return call_with_retry(lambda: subprocess.run(*args, **kwargs))  # noqa: S603
+        return call_with_retry(lambda: _run_bounded(args, kwargs))
     if "env" in kwargs:
         msg = "run_with_retry takes env or env_factory, not both"
         raise TypeError(msg)
 
     def _attempt(env: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
         attempt_kwargs = kwargs if env is None else {**kwargs, "env": env}
-        return subprocess.run(*args, **attempt_kwargs)  # noqa: S603
+        return _run_bounded(args, attempt_kwargs)
 
     return call_with_retry(_attempt, env_factory=env_factory)
 
@@ -216,12 +293,18 @@ def call_with_retry(
     after HTTP 401 never repeats an expired token.
     """
     for attempt in range(MAX_RETRIES + 1):
+        bound = _bound.get()
+        if bound is not None:
+            _remaining(bound)
         try:
             return fn() if env_factory is None else fn(env_factory())
         except subprocess.CalledProcessError as exc:
             if attempt == MAX_RETRIES or not retryable(exc):
                 raise
             delay = compute_delay(attempt)
+            if bound is not None and time.monotonic() + delay >= bound.deadline:
+                detail = ((exc.stderr or "") + (exc.stdout or "")).strip() or str(exc)
+                raise _past_bound(bound, f"a transient error was not retried: {detail}") from exc
             log.warning(
                 "GitHub API error (attempt %d/%d), retrying in %.1fs",
                 attempt + 1,

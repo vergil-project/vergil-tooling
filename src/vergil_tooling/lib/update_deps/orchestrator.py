@@ -66,6 +66,10 @@ class UpdateDepsState:
     vergil_bump: str | None = None
     # Set only by vrg-release's update-deps stage (see preflight).
     fast_forward: bool = False
+    # The release lock's token, set only by vrg-release's update-deps stage:
+    # the release's own update arms under its lock (spec §5.3 of epic
+    # vergil-project/.github#1664). Standalone vrg-update-deps passes none.
+    holder_pass: str | None = None
 
 
 def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
@@ -153,7 +157,7 @@ def merge_stage(state: UpdateDepsState) -> None:
     """Arm only a green update through the one PR path; a red one stays open for its fix task."""
     ctx = _require_ctx(state)
     if ctx.has_work and ctx.failure is None:
-        pr.arm_and_wait(ctx)
+        pr.arm_and_wait(ctx, holder_pass=state.holder_pass)
 
 
 def fix_task_stage(state: UpdateDepsState) -> None:
@@ -185,6 +189,8 @@ def finalize_stage(state: UpdateDepsState) -> None:
         print(f"Dependency update did not land ({ctx.failure.kind}).")
     elif not ctx.any_changes:
         print("No updates found — removing worktree.")
+    elif ctx.held:
+        print(f"Dependency update {ctx.pr_url} is {ctx.held}; the unlock sweep arms it.")
     else:
         print(f"Dependency update merged: {ctx.pr_url}")
     pr.cleanup_worktree(ctx)
@@ -220,7 +226,11 @@ def build_stages() -> list[Stage]:
 
 
 def run_update(
-    *, repo_root: Path, registry: list[Updater] | None = None, fast_forward: bool = False
+    *,
+    repo_root: Path,
+    registry: list[Updater] | None = None,
+    fast_forward: bool = False,
+    holder_pass: str | None = None,
 ) -> UpdateDepsContext:
     """Run the pipeline as plain calls, for callers already inside a pipeline.
 
@@ -233,8 +243,11 @@ def run_update(
     *fast_forward* is passed to preflight: only vrg-release's update-deps stage
     sets it, so a ``develop`` behind ``origin/develop`` is fast-forwarded there
     rather than refused. ``vrg-update-deps`` never does.
+
+    *holder_pass*, the release lock's token, is passed on to
+    :func:`pr.arm_and_wait`: only vrg-release's update-deps stage sets it.
     """
-    state = UpdateDepsState(repo_root=repo_root, fast_forward=fast_forward)
+    state = UpdateDepsState(repo_root=repo_root, fast_forward=fast_forward, holder_pass=holder_pass)
     if registry is not None:
         state.registry = list(registry)
     preflight_stage(state)

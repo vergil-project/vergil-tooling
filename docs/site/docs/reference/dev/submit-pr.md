@@ -481,7 +481,8 @@ open. `vrg-pr-workflow report-ready` previews the result in its response as
 ## Exit Codes
 
 Submit returns finalize's exit status, with two adjustments: when any PR
-failed to submit it returns at least 3, and a tool error from finalize
+failed to submit it returns at least 3 (3 in place of finalize's 6, since a
+failed submit is not held by a release), and a tool error from finalize
 (1, or any code finalize does not define) always wins.
 
 | Code | Meaning |
@@ -491,3 +492,4 @@ failed to submit it returns at least 3, and a tool error from finalize
 | 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |
+| 6 | Every PR finalize watched that did not merge is held by release (finalize's 6): the release lock still held it at the deadline. Not a failure: run `vrg-finalize-pr` on the PRs again |

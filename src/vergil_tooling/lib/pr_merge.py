@@ -673,6 +673,14 @@ class MergeDeadlineError(MergeAbortError):
     """The PR did not merge before the caller's overall deadline."""
 
 
+class MergeHeldError(Exception):
+    """A release holds the PR: the caller's *held* check named it, so the wait ended.
+
+    Not a :class:`MergeAbortError`: the PR is left for the release's unlock
+    sweep to re-arm, which is no failure (release-lock spec §5.5).
+    """
+
+
 def _merged_or_refuse_closed(pr: str) -> bool:
     """True when *pr* is merged; raise when it was closed without merging."""
     state = github.pr_state(pr)
@@ -685,7 +693,9 @@ def _merged_or_refuse_closed(pr: str) -> bool:
     return False
 
 
-def wait_until_merged(pr: str, *, deadline_secs: int) -> None:
+def wait_until_merged(
+    pr: str, *, deadline_secs: int, held: Callable[[], str] | None = None
+) -> None:
     """Watch *pr* until GitHub merges it; the watch itself never merges.
 
     The watch-only loop for a PR the one PR path armed
@@ -697,6 +707,9 @@ def wait_until_merged(pr: str, *, deadline_secs: int) -> None:
 
     - **merged:** returns;
     - **closed** (without merging): raises;
+    - **held:** when the caller gives a *held* check and it returns a
+      non-empty detail (a release holds the lock and the PR is unarmed),
+      raises :class:`MergeHeldError` with it;
     - **past the deadline:** raises :class:`MergeDeadlineError`;
     - **draft or conflicting:** raises (the shared shape checks);
     - **behind its base:** updates the branch (one of the shared update cap's
@@ -731,6 +744,9 @@ def wait_until_merged(pr: str, *, deadline_secs: int) -> None:
     while True:
         if _merged_or_refuse_closed(pr):
             return
+        detail = held() if held is not None else ""
+        if detail:
+            raise MergeHeldError(detail)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _past_deadline()

@@ -170,7 +170,7 @@ def test_prepare_pr_stage_runs_only_on_changes(monkeypatch) -> None:
 
 def test_merge_stage_runs_only_on_changes(monkeypatch) -> None:
     calls = {"n": 0}
-    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx: calls.update(n=calls["n"] + 1))  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx, **kw: calls.update(n=calls["n"] + 1))  # noqa: ARG005
     state, ctx = _state()
     merge_stage(state)  # no changes -> skip
     ctx.any_changes = True
@@ -227,6 +227,23 @@ def test_finalize_removes_worktree_then_deletes_the_merged_branch(monkeypatch) -
     assert order == ["cleanup", "delete"]
 
 
+def test_finalize_reports_a_held_pr_and_keeps_its_branch(monkeypatch, capsys) -> None:
+    """A PR a release holds is not merged: finalize says so and keeps its branch."""
+    monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: None)  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.delete_merged_branch", lambda ctx: pytest.fail("deleted"))  # noqa: ARG005
+    state, ctx = _state()
+    ctx.any_changes = True
+    ctx.pr_url = "https://x/pr/1"
+    ctx.held = "held for release 2.1.244"
+    finalize_stage(state)
+    out = capsys.readouterr().out
+    assert (
+        "Dependency update https://x/pr/1 is held for release 2.1.244; the unlock sweep arms it."
+        in out
+    )
+    assert "Dependency update merged" not in out
+
+
 @pytest.mark.parametrize("kind", ["validation", "merge"])
 def test_finalize_keeps_the_branch_of_a_pr_that_did_not_merge(monkeypatch, kind) -> None:
     """An unmerged PR's branch stays on origin for a resume (#4952)."""
@@ -250,7 +267,7 @@ def test_run_update_raises_when_the_merged_branch_cannot_be_deleted(monkeypatch)
     monkeypatch.setattr(
         _MOD + ".pr.prepare_pr", lambda ctx: setattr(ctx, "pr_url", "https://x/pr/1")
     )
-    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx: setattr(ctx, "merged", True))
+    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx, **kw: setattr(ctx, "merged", True))
     monkeypatch.setattr(_MOD + ".pr.cleanup_worktree", lambda ctx: cleaned.append(True))  # noqa: ARG005
 
     def _fail(ctx: UpdateDepsContext) -> None:  # noqa: ARG001
@@ -396,7 +413,7 @@ def test_validate_stage_runs_on_green(monkeypatch) -> None:
 def test_validation_failure_still_opens_pr_but_skips_merge(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(_MOD + ".pr.prepare_pr", lambda ctx: calls.append("prepare"))  # noqa: ARG005
-    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx: calls.append("merge"))  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx, **kw: calls.append("merge"))  # noqa: ARG005
     monkeypatch.setattr(_MOD + ".pr.file_fix_task", lambda ctx: calls.append("fix"))  # noqa: ARG005
     state, ctx = _state()
     ctx.any_changes = True
@@ -410,7 +427,7 @@ def test_validation_failure_still_opens_pr_but_skips_merge(monkeypatch) -> None:
 def test_merge_failure_files_fix_task(monkeypatch) -> None:
     calls: list[str] = []
 
-    def _merge(ctx: UpdateDepsContext) -> None:
+    def _merge(ctx: UpdateDepsContext, **_kw: object) -> None:
         calls.append("merge")
         ctx.failure = _failure("merge")
 
@@ -435,7 +452,7 @@ def test_fix_task_stage_noop_on_success(monkeypatch) -> None:
 def test_update_failure_opens_no_pr_but_files_a_task(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(_MOD + ".pr.prepare_pr", lambda ctx: calls.append("prepare"))  # noqa: ARG005
-    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx: calls.append("merge"))  # noqa: ARG005
+    monkeypatch.setattr(_MOD + ".pr.arm_and_wait", lambda ctx, **kw: calls.append("merge"))  # noqa: ARG005
     monkeypatch.setattr(_MOD + ".pr.file_fix_task", lambda ctx: calls.append("fix"))  # noqa: ARG005
     monkeypatch.setattr(_MOD + ".validate.run_validation", lambda: calls.append("validate"))
     state, ctx = _state()

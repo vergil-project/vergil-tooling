@@ -12,19 +12,33 @@ merge from a failure:
   required checks), ``check_cancelled`` (a required check was cancelled
   and no newer run replaced it; ``failed_checks`` names it), ``conflict``
   (GitHub reported it at the same head for two minutes, the settle rule
-  ``vrg-finalize-pr`` applies), ``auto_merge_off``, ``closed``,
-  ``orphaned_check`` (``orphaned_checks`` names them) or ``timed_out``
+  ``vrg-finalize-pr`` applies), ``refused`` (the PR was unarmed with no
+  release lock held, and the one PR path refused to re-arm it; ``detail``
+  names the path's reason), ``closed``, ``orphaned_check``
+  (``orphaned_checks`` names them) or ``timed_out``
   (``$VRG_FINALIZE_DEADLINE`` passed with the PR still pending). The same
   reason is printed on stderr. The agent running pr-watch deals with it.
 - **2, any other error.** Bad arguments, a malformed ``$VRG_FINALIZE_DEADLINE``
   or ``$VRG_ORPHAN_GRACE`` (checked before any waiting), a GitHub API or
-  permission failure, a PR state that cannot be read: a message on stderr
-  and nothing on stdout. Exit 1 never means anything but "cannot merge".
+  permission failure, a PR state that cannot be read, a release lock read,
+  re-arm or reclaim that failed: a message on stderr and nothing on stdout.
+  Exit 1 never means anything but "cannot merge".
+- **6, held by release** (``EXIT_HELD_BY_RELEASE``, shared with
+  ``vrg-finalize-pr``; epic vergil-project/.github#1664, spec §5.5). The
+  deadline passed while the release lock held the PR. ``reason`` is
+  ``held_by_release`` and ``detail`` names the release, its version, its
+  stage and its health. This is not a failure: run the same wait again.
 
-On 0 and 1 it prints one JSON object: ``pr``, ``outcome`` (``merged`` or
-``cannot_merge``), ``reason`` (``null`` when merged), ``detail``,
-``head_sha``, ``merge_commit`` (``null`` unless merged),
-``merge_state_status``, ``failed_checks`` and ``orphaned_checks``.
+Under the release lock the wait waits (``lib/release_lock/watch.py``): a
+PR a release holds is reported as held on stderr, never as auto-merge off.
+With no lock held, the wait re-arms its own unarmed PR through the one PR
+path, the one way it turns auto-merge on; it never turns auto-merge off,
+and never takes or breaks a lock, though it reclaims a stale one.
+
+On 0, 1 and 6 it prints one JSON object: ``pr``, ``outcome`` (``merged``,
+``cannot_merge`` or ``held_by_release``), ``reason`` (``null`` when
+merged), ``detail``, ``head_sha``, ``merge_commit`` (``null`` unless
+merged), ``merge_state_status``, ``failed_checks`` and ``orphaned_checks``.
 
 A new review or a new commit does not end the wait. The ``--since-sha`` and
 ``--since-reviews`` baselines of the old settle-and-return contract are
@@ -52,11 +66,24 @@ import traceback
 
 from vergil_tooling.lib import finalize_watch, github, pr_await
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.release_lock.watch import LockWatch
 
-#: Exit statuses: merged, cannot merge, any other error.
+#: Exit statuses: merged, cannot merge, any other error, held by release.
 EXIT_MERGED = 0
 EXIT_CANNOT_MERGE = 1
 EXIT_ERROR = 2
+EXIT_HELD_BY_RELEASE = finalize_watch.EXIT_HELD_BY_RELEASE
+
+_EPILOG = f"""\
+exit status:
+  {EXIT_MERGED}  merged
+  {EXIT_CANNOT_MERGE}  cannot merge as it stands: check_failed, check_cancelled, conflict,
+     refused (the one PR path refused to re-arm it), closed, orphaned_check
+     or timed_out
+  {EXIT_ERROR}  any other error
+  {EXIT_HELD_BY_RELEASE}  held by release: the deadline passed while the release lock held
+     the PR; run the same wait again
+"""
 
 _PR_URL_OWNER_RE = re.compile(r"github\.com/([^/]+)/[^/]+/pull/\d+")
 _PR_URL_REPO_RE = re.compile(r"github\.com/([^/]+/[^/]+)/pull/\d+")
@@ -75,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Mint the App token for the PR's owner, not the cwd org (#3055).
         with github.target_org(pr_owner(args.pr)):
-            result = pr_await.wait_for_merge(args.pr)
+            result = pr_await.wait_for_merge(args.pr, lock=LockWatch())
     except github.AppAuthError as exc:
         print(f"vrg-pr-await: {github.app_auth_message(exc)}", file=sys.stderr)
         return EXIT_ERROR
@@ -104,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(result.to_output(), indent=2))
     if result.merged:
         return EXIT_MERGED
+    if result.held:
+        print(
+            f"vrg-pr-await: {result.pr} held by release ({result.reason}): {result.detail}",
+            file=sys.stderr,
+        )
+        return EXIT_HELD_BY_RELEASE
     print(
         f"vrg-pr-await: {result.pr} cannot merge ({result.reason}): {result.detail}",
         file=sys.stderr,
@@ -116,8 +149,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Block until a PR merges (exit 0) or cannot merge (exit 1, with the "
-            "reason); any other error exits 2."
+            "reason); any other error exits 2, and a PR the release lock still holds "
+            "at the deadline exits 6."
         ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("pr", help="PR URL or number")
     for flag in _REMOVED_FLAGS:
