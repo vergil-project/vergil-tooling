@@ -164,7 +164,7 @@ rejected as not recognized.
 | `pr diff` | yes | yes | yes | Read-only |
 | `pr comment` | yes | yes | yes | Review context |
 | `pr review` | yes | yes | yes | `--approve` is refused for `user` |
-| `pr update-branch` | yes | yes | — | Server-side update onto the base (`--rebase` allowed) |
+| `pr update-branch` | yes | yes | — | Server-side update onto the base (`--rebase` allowed); refused for an agent on a PR into `develop` (see [Server-side branch update](#server-side-branch-update)) |
 | `pr edit` | yes | — | — | Agents do not edit PRs |
 | `pr merge` | yes | — | — | Human only, and a PR number or URL is required |
 | `run list` | yes | yes | — | CI status |
@@ -239,6 +239,25 @@ cannot resolve (a positional that is not one issue number or URL, or a
 `--repo` that is not `OWNER/REPO`) and a read that cannot complete
 refuse the close rather than let it through unchecked. The success
 marker is the one `vrg-epic-audit` checks on closed operational tasks.
+
+### Server-side branch update
+
+Every new head of an open PR into `develop` is made through the one PR
+path, so for an agent identity `vrg-gh pr update-branch`, with or
+without `--rebase`, refuses a PR into `develop`: GitHub would otherwise
+make the new head itself, merging the base in or rebasing onto it,
+outside the path. The refusal names the path: bring the branch up to
+date locally (`vrg-git fetch origin`, then `vrg-git rebase
+origin/develop`) and push it with `vrg-submit-pr --push`.
+
+Before it updates a branch, the wrapper reads the PR's base with
+`gh pr view` on the same target and `--repo`. A PR into any other base
+is updated as before, and a human's update is not gated. The lookup
+fails closed: a target it cannot resolve (more than one positional, or
+more than one owner), a read that fails, or a response with no base
+refuses the update. The tooling's own server-side updates are limited to
+named sites by a guard test
+(`tests/vergil_tooling/test_branch_push_guard.py`).
 
 ### `gh api` by Identity
 
