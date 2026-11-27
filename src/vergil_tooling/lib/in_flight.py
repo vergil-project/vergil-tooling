@@ -49,9 +49,19 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import epics, git, github, live_branches, pending_release, pr_body, trust
+from vergil_tooling.lib import (
+    epics,
+    git,
+    github,
+    live_branches,
+    pending_release,
+    pr_body,
+    trust,
+    worktrees,
+)
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthors,
@@ -237,7 +247,12 @@ def _counted_pr_issues(
 
 
 def _open_pr_issues(repo: str) -> frozenset[int]:
-    """The issues of *repo* that a counted open PR closes or carries on a ``feature/<N>-`` head.
+    """The issues of *repo* that a counted open PR closes or carries on a ``feature/<N>-`` head."""
+    return frozenset(open_pr_marks(repo))
+
+
+def open_pr_marks(repo: str) -> dict[int, frozenset[int]]:
+    """Each issue of *repo* that a counted open PR marks, with the numbers of the PRs that mark it.
 
     Only same-repo PRs with a trusted author count (:func:`_counted_pr_issues`);
     each PR, body or hand link not counted is reported on stderr, metadata
@@ -246,11 +261,12 @@ def _open_pr_issues(repo: str) -> frozenset[int]:
     """
     try:
         authors = load_trusted_authors()
-        issues: set[int] = set()
+        marks: dict[int, set[int]] = {}
         skipped: list[trust.Skipped] = []
         for node in _open_prs(repo):
             marked, passed = _counted_pr_issues(repo, node, authors)
-            issues |= marked
+            for issue in marked:
+                marks.setdefault(issue, set()).add(int(node["number"]))
             skipped += passed
     except github.MissingGitHubTokenError:
         raise
@@ -266,7 +282,7 @@ def _open_pr_issues(repo: str) -> frozenset[int]:
     ) as exc:
         raise InFlightError(f"{repo}: cannot read its open PRs: {_detail(exc)}") from exc
     trust.report_skipped(skipped, stream=sys.stderr)
-    return frozenset(issues)
+    return {issue: frozenset(numbers) for issue, numbers in marks.items()}
 
 
 def _ls_remote(repo: str, clone: Path) -> tuple[frozenset[str], dict[str, str]]:
@@ -333,14 +349,17 @@ def read_relay(repo: str, branch: str, sha: str) -> WorkflowState:
         raise InFlightError(msg) from exc
 
 
-def _relay_issues(repo: str, branch: str, state: WorkflowState) -> set[int]:
-    """The issues of *repo* that *state* hands off; another repo's entry marks nothing."""
+def _state_issues(repo: str, source: str, state: WorkflowState) -> set[int]:
+    """The issues of *repo* that *state* hands off; another repo's entry marks nothing.
+
+    *source* names where the state was read from, for the refusal of an unparsable entry.
+    """
     issues: set[int] = set()
     for entry in state.all_issues:
         try:
             ref = epics.parse_issue_ref(pr_body.normalize_issue_ref(entry), default_repo=repo)
         except ValueError as exc:
-            msg = f"{repo}: the relay ref of {branch} names an unparsable issue {entry!r}"
+            msg = f"{repo}: {source} names an unparsable issue {entry!r}"
             raise InFlightError(msg) from exc
         if _same_repo(f"{ref.owner}/{ref.repo}", repo):
             issues.add(ref.number)
@@ -356,21 +375,57 @@ def _local_branches(repo: str, clone: Path) -> frozenset[str]:
         raise InFlightError(msg) from exc
 
 
+def _ready_relays(repo: str, relays: Mapping[str, str]) -> dict[str, frozenset[int]]:
+    """The relay refs (branch -> commit SHA) that are ready, each with the issues it hands off."""
+    ready: dict[str, frozenset[int]] = {}
+    for branch, sha in sorted(relays.items()):
+        state = read_relay(repo, branch, sha)
+        if state.status == _READY:
+            source = f"the relay ref of {branch}"
+            ready[branch] = frozenset(_state_issues(repo, source, state))
+    return ready
+
+
+def ready_relays(repo: str, clone: Path) -> dict[str, frozenset[int]]:
+    """The ready relay refs of *repo*, each branch mapped to the issues it hands off.
+
+    Read by SHA, as :func:`read_relay` reads one; a relay ref that cannot be read raises
+    :class:`InFlightError`.
+    """
+    _branches, relays = _ls_remote(repo, clone)
+    return _ready_relays(repo, relays)
+
+
+def ready_local_branches(repo: str, clone: Path) -> dict[str, frozenset[int]]:
+    """The branches of *clone*'s worktrees whose local ``pr-workflow.json`` is ready.
+
+    Each branch maps to the issues its state hands off. A worktree with no state file is
+    not ready; a state file that cannot be read or parsed raises :class:`InFlightError`.
+    """
+    ready: dict[str, frozenset[int]] = {}
+    try:
+        for worktree in worktrees.list_worktrees(clone):
+            state = LocalFileTransport(worktree.path).read()
+            if state is not None and state.status == _READY:
+                source = f"the local ready-state of {worktree.branch}"
+                ready[worktree.branch] = frozenset(_state_issues(repo, source, state))
+    except (subprocess.CalledProcessError, OSError, WorkflowError) as exc:
+        msg = f"{repo}: cannot read the local ready-state under {clone}: {_detail(exc)}"
+        raise InFlightError(msg) from exc
+    return ready
+
+
 def repo_signals(repo: str, clone: Path) -> RepoSignals:
     """Read every in-flight source of *repo* once: its PRs, remote refs, relays and clone."""
     open_prs = _open_pr_issues(repo)
     remote, relays = _ls_remote(repo, clone)
-    ready: set[int] = set()
-    for branch, sha in sorted(relays.items()):
-        state = read_relay(repo, branch, sha)
-        if state.status == _READY:
-            ready |= _relay_issues(repo, branch, state)
+    ready = _ready_relays(repo, relays)
     return RepoSignals(
         repo=repo,
         clone=clone,
         open_pr_issues=open_prs,
         remote_branches=remote,
-        ready_relay_issues=frozenset(ready),
+        ready_relay_issues=frozenset(issue for issues in ready.values() for issue in issues),
         local_branches=_local_branches(repo, clone),
     )
 
