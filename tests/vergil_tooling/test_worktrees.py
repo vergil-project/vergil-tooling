@@ -1319,9 +1319,7 @@ def test_release_protection_inactive_with_no_trusted_release_issue() -> None:
     ):
         protection = release_protection("o/r")
     assert protection.active is False
-    assert protection.reason == (
-        "no release lock is held and no release tracking issue is open"
-    )
+    assert protection.reason == "no release lock is held and no release tracking issue is open"
 
 
 def test_release_protection_raises_on_a_refused_listing() -> None:
@@ -1440,7 +1438,9 @@ def test_release_protection_active_while_the_lock_is_held() -> None:
 
 def test_release_protection_unreadable_lock_is_held() -> None:
     """A lock that is present but cannot be read protects: it is held, never absent."""
-    unreadable = LockState(sha=_LOCK_SHA, record=None, error="refs/vergil/release-lock is unreadable")
+    unreadable = LockState(
+        sha=_LOCK_SHA, record=None, error="refs/vergil/release-lock is unreadable"
+    )
     with patch(_READ_LOCK, return_value=unreadable), patch(_RESUME) as listing:
         protection = release_protection("o/r")
     assert protection.active is True

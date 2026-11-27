@@ -5467,3 +5467,21 @@ def test_cleanup_skips_release_worktree_after_break_while_issue_open(
     out = capsys.readouterr().out
     assert "kept .worktrees/release-2.1.9: a release is running" in out
     assert "release 2.1.9 (#77)" in out
+
+
+def test_release_guard_reads_the_lock_once_for_a_feature_then_a_release_worktree(
+    tmp_path: Path,
+) -> None:
+    """A feature worktree reads the lock; a release worktree after it reuses that
+    read and adds only the tracking issues."""
+    guard = ReleaseGuard()
+    with (
+        patch(_MOD + ".worktrees.lock_protection", return_value=_NO_LOCK) as lock,
+        patch(_MOD + ".worktrees.release_protection", return_value=_RELEASE_OPEN) as read,
+    ):
+        feature = guard.keeps("feature/1-x", tmp_path / ".worktrees" / "issue-1-x", tmp_path)
+        release = guard.keeps("release/2.1.9", tmp_path / ".worktrees" / "release-2.1.9", tmp_path)
+    assert feature is False
+    assert release is True
+    lock.assert_called_once_with("o/r")
+    read.assert_called_once_with("o/r", lock=_NO_LOCK)
