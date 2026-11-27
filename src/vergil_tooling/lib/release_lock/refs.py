@@ -48,7 +48,7 @@ from vergil_tooling.lib.release_lock.model import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 LOCK_REF = "refs/vergil/release-lock"
 HISTORY_REF = "refs/vergil/release-lock-history"
@@ -73,8 +73,8 @@ def origin_url(repo: str) -> str:
 
 
 @contextlib.contextmanager
-def scratch(repo: str, error: _Failure) -> Iterator[Path]:
-    """A throwaway bare repository whose ``origin`` is *repo*; *error* is raised if it cannot be made."""
+def scratch(repo: str, error: _Failure) -> Generator[Path]:
+    """A throwaway bare repository whose ``origin`` is *repo*; *error* if it cannot be made."""
     if not _REPO.fullmatch(repo):
         msg = f"not an <owner>/<repo>: {repo!r}"
         raise ValueError(msg)
@@ -92,7 +92,10 @@ def scratch(repo: str, error: _Failure) -> Iterator[Path]:
 
 
 def list_remote(where: Path, pattern: str) -> dict[str, str]:
-    """Each ref on ``origin`` matching *pattern*, mapped to its sha; :class:`RefReadError` on failure."""
+    """Each ref on ``origin`` matching *pattern*, mapped to its sha.
+
+    Raises :class:`RefReadError` when the listing fails.
+    """
     try:
         listing = git.read_output("-C", str(where), "ls-remote", "origin", pattern)
     except subprocess.CalledProcessError as exc:
@@ -138,9 +141,7 @@ def read_file(where: Path, sha: str, filename: str) -> str:
         raise RefReadError(msg) from None
 
 
-def build(
-    where: Path, text: str, filename: str, message: str, *, parent: str | None = None
-) -> str:
+def build(where: Path, text: str, filename: str, message: str, *, parent: str | None = None) -> str:
     """Build the one-file commit a write pushes; :class:`RefWriteError` when it cannot."""
     try:
         return one_file_commit(text, filename, message, parent=parent, repo=where)

@@ -1,7 +1,7 @@
-"""The arming refs, ``refs/vergil/release-lock-arming/<pr>`` (spec §5.4, epic vergil-project/.github#1664).
+"""The arming refs, ``refs/vergil/release-lock-arming/<pr>``.
 
-The arming side of the handshake between arming a PR and taking the lock:
-a caller about to arm a PR writes the PR's arming ref by a create-only push,
+Spec §5.4 of epic vergil-project/.github#1664. The arming side of the
+handshake between arming a PR and taking the lock: a caller about to arm a PR writes the PR's arming ref by a create-only push,
 then reads the lock; the release writes the lock, then waits until every
 arming ref is gone. Each ref is a one-file commit carrying a random nonce, so
 a renewal always changes its value: the release measures an arming ref's
@@ -40,12 +40,12 @@ def _write(repo: str, pr: int, expected: str | None) -> str | None:
 
 
 def create(repo: str, pr: int) -> str | None:
-    """Write PR *pr*'s arming ref by a create-only push: its sha, or ``None`` if another holds it."""
+    """Write PR *pr*'s arming ref by a create-only push: its sha, or ``None`` if one exists."""
     return _write(repo, pr, None)
 
 
 def renew(repo: str, pr: int, *, expected: str) -> str | None:
-    """Renew PR *pr*'s arming ref at *expected* to a new value: its sha, or ``None`` on a mismatch."""
+    """Renew PR *pr*'s arming ref at *expected* to a new value: its sha, or ``None`` on mismatch."""
     return _write(repo, pr, expected)
 
 

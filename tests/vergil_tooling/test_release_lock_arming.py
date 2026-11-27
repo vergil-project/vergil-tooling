@@ -1,4 +1,4 @@
-"""The arming refs, ``refs/vergil/release-lock-arming/<pr>`` (epic vergil-project/.github#1664, Task 17).
+"""The arming refs, ``refs/vergil/release-lock-arming/<pr>`` (epic .github#1664, Task 17).
 
 Exercised against a local bare repository served as ``origin``; see
 :mod:`tests.vergil_tooling.release_lock_stubs`.

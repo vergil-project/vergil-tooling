@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -49,7 +49,7 @@ def origin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Origin:
     return make_origin(tmp_path, monkeypatch)
 
 
-def _record(stage: str = "pre-check", token: str = "t1") -> LockRecord:
+def _record(stage: str = "pre-check", token: str = "t1") -> LockRecord:  # noqa: S107
     return LockRecord(
         holder_identity="human",
         holder_host="mac.local",
@@ -67,7 +67,7 @@ def _record(stage: str = "pre-check", token: str = "t1") -> LockRecord:
 
 def _entry(action: str = "reclaim", actor: str = "user-agent") -> history.HistoryEntry:
     return history.HistoryEntry(
-        action=action,  # type: ignore[arg-type]
+        action=cast("history.Action", action),
         old=to_json(_record()),
         actor=actor,
         at="2026-11-27T11:00:00Z",

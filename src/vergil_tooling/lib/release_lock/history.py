@@ -1,4 +1,6 @@
-"""The lock history, ``refs/vergil/release-lock-history`` (spec §5.2, epic vergil-project/.github#1664).
+"""The lock history, ``refs/vergil/release-lock-history``.
+
+Spec §5.2 of epic vergil-project/.github#1664.
 
 One commit per break, reclaim, reclaim re-arm, supersede takeover or retake,
 each a one-file commit whose parent is the entry before it. An entry is
@@ -75,7 +77,14 @@ def _parse(text: str, sha: str) -> HistoryEntry:
         msg = f"{what} has a field of the wrong type"
         raise RefReadError(msg)
     try:
-        return HistoryEntry(*texts, rearmed=tuple(rearmed))
+        return HistoryEntry(
+            action=data["action"],
+            old=data["old"],
+            actor=data["actor"],
+            at=data["at"],
+            reason=data["reason"],
+            rearmed=tuple(rearmed),
+        )
     except ValueError as exc:
         msg = f"{what} is not valid: {exc}"
         raise RefReadError(msg) from None
@@ -114,7 +123,10 @@ def _buried(where: Path, built: str) -> bool:
     try:
         return git.is_ancestor(built, tip, repo=where)
     except subprocess.CalledProcessError as exc:
-        msg = f"appending to {refs.HISTORY_REF}: checking {built} against the tip failed: {error_text(exc)}"
+        msg = (
+            f"appending to {refs.HISTORY_REF}: checking {built} against the tip"
+            f" failed: {error_text(exc)}"
+        )
         raise RefWriteError(msg) from exc
 
 
@@ -134,5 +146,7 @@ def append(repo: str, entry: HistoryEntry) -> None:
                 return
             if _buried(where, built):
                 return
-        msg = f"appending to {refs.HISTORY_REF} lost to a concurrent append {_APPEND_ATTEMPTS} times"
+        msg = (
+            f"appending to {refs.HISTORY_REF} lost to a concurrent append {_APPEND_ATTEMPTS} times"
+        )
         raise RefWriteError(msg)

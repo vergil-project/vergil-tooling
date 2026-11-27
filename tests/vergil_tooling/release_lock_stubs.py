@@ -111,7 +111,7 @@ class FlakyPush:
         monkeypatch: pytest.MonkeyPatch,
         *,
         apply: bool = True,
-        meanwhile: Callable[[], None] | None = None,
+        meanwhile: Callable[[], object] | None = None,
     ) -> None:
         self.apply = apply
         self.meanwhile = meanwhile

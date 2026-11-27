@@ -1,4 +1,4 @@
-"""The release lock's record model and timing constants (epic vergil-project/.github#1664, Task 17)."""
+"""The release lock's record model and timing constants (epic .github#1664, Task 17)."""
 
 from __future__ import annotations
 
