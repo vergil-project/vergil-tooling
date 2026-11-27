@@ -183,8 +183,33 @@ def test_records_ignore_non_agent_authors(items: trust_stubs.FakeItems) -> None:
         ]
     )
     assert records("o/r#7", authors=AUTHORS) == [
-        Record(HEAD, FP, "eligible", comment_id=8, author="human-vergil-user")
+        Record(
+            HEAD,
+            FP,
+            "eligible",
+            comment_id=8,
+            author="human-vergil-user",
+            at=trust_stubs.CREATED,
+        )
     ]
+
+
+def test_records_carry_the_comment_time_and_the_record_line_is_unchanged(
+    items: trust_stubs.FakeItems,
+) -> None:
+    body = _closing()
+    posted = "2026-11-03T08:15:00Z"
+    items.items[KEY] = trust_stubs.item(
+        nodes=[trust_stubs.comment(8, body, AGENT, created=posted)]
+    )
+    found = records("o/r#7", authors=AUTHORS)
+    assert found == [
+        Record(HEAD, FP, "eligible", comment_id=8, author="human-vergil-user", at=posted)
+    ]
+    assert found[0].at == posted
+    # The stored line is the same one a record written before the time field carried.
+    assert parse_record(body) == Record(HEAD, FP, "eligible")
+    assert render_record(HEAD, FP, "eligible") in body
 
 
 def test_records_narrow_the_stream_to_the_agent_role(
@@ -221,7 +246,14 @@ def test_records_call_a_human_scope_change_ignored_and_the_issue_read_trusts_it(
         ]
     )
     assert records("o/r#7", authors=AUTHORS) == [
-        Record(HEAD, FP, "eligible", comment_id=2, author="human-vergil-user")
+        Record(
+            HEAD,
+            FP,
+            "eligible",
+            comment_id=2,
+            author="human-vergil-user",
+            at=trust_stubs.CREATED,
+        )
     ]
     err = capsys.readouterr().err
     assert err == (

@@ -43,6 +43,7 @@ def comment(
     author: Any = HUMAN,
     *,
     editor: Any = None,
+    created: str = CREATED,
 ) -> dict[str, Any]:
     """An ``IssueComment`` node; an *editor* makes it edited once, by that editor."""
     return {
@@ -51,7 +52,7 @@ def comment(
         "author": author,
         "editor": editor,
         "body": body,
-        "createdAt": CREATED,
+        "createdAt": created,
         "lastEditedAt": EDITED if editor is not None else None,
         "userContentEdits": _edits([editor] if editor is not None else []),
     }
