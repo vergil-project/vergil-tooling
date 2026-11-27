@@ -357,25 +357,25 @@ def test_main_epic_blocker_read_failure_exits_1(
     assert captured.err == f"vrg-epic-audit: {error}\n"
 
 
-def _patch_epic_listing(children: list[ChildState]) -> contextlib.ExitStack:
+@contextlib.contextmanager
+def _patch_epic_listing(children: list[ChildState]) -> Iterator[None]:
     """Patch the listing of a one-container epic of the vergil-project home with *children*."""
-    stack = contextlib.ExitStack()
-    stack.enter_context(
-        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github")
-    )
-    stack.enter_context(patch("vergil_tooling.lib.epics._container_parent", return_value=None))
-    stack.enter_context(patch(f"{_MOD}.epics._labels", return_value={"epic"}))
-    stack.enter_context(
-        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children)
-    )
-    stack.enter_context(patch(f"{_MOD}.epics.blockers_of", return_value=[]))
-    return stack
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+    ):
+        yield
 
 
 def test_epic_listing_json_groups(capsys: pytest.CaptureFixture[str]) -> None:
     # The JSON's "groups" lists each live group, in ID order, with its members,
     # runnability and open outside blockers as slugs (epic .github#1672, spec §5.3).
-    open_child = ChildState(IssueRef("vergil-project", "vergil-tooling", 5346), "OPEN", "Task")
+    open_child = ChildState(
+        IssueRef("vergil-project", "vergil-tooling", 5346), "OPEN", "Task", native_blockers=()
+    )
     member = IssueRef("vergil-project", "vergil-tooling", 5346)
     other = IssueRef("vergil-project", "vergil-tooling", 5347)
     outside = IssueRef("other-org", "lib", 131)
@@ -383,9 +383,10 @@ def test_epic_listing_json_groups(capsys: pytest.CaptureFixture[str]) -> None:
         group_audit.GroupStatus("G2", 3, (member,), False, (outside,)),
         group_audit.GroupStatus("G10", 1, (member, other), True, ()),
     ]
-    with _patch_epic_listing([open_child]), patch(
-        f"{_MOD}.group_audit.group_status", return_value=statuses
-    ) as group_status:
+    with (
+        _patch_epic_listing([open_child]),
+        patch(f"{_MOD}.group_audit.group_status", return_value=statuses) as group_status,
+    ):
         rc = main(["--epic", "vergil-project/.github#201"])
     assert rc == 0
     assert group_status.call_args.args[0] == IssueRef("vergil-project", ".github", 201)

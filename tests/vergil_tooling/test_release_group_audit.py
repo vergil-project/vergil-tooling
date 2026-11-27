@@ -151,14 +151,15 @@ def test_groups_returned_in_id_order(world: _World) -> None:
 
 
 def test_blocked_by_is_sorted(world: _World) -> None:
-    # Outside blockers come back sorted by (owner, repo, number), whatever order they were read in.
+    # Outside blockers come back sorted by (owner, repo, number), whatever order they were read
+    # in: "org" sorts before "other", so the org/repo refs come first.
     world.add_group("G1", 1, 1)
     other = IssueRef("other", "lib", 2)
     world.native[ref(1)] = (_blocker(9, "OPEN"), BlockerState(other, "OPEN"))
     world.body[ref(1)] = [ref(3)]
     world.states[ref(3)] = "OPEN"
     [status] = audit.group_status(EPIC)
-    assert status.blocked_by == (other, ref(3), ref(9))
+    assert status.blocked_by == (ref(3), ref(9), other)
 
 
 def test_broken_group_raises(world: _World) -> None:
