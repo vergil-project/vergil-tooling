@@ -18873,7 +18873,7 @@ The Rust TEST gate's coverage report now passes --fail-under-regions 100 beside 
 <ul>
 <li>feat(validate): check that links to versioned Vergil docs sites carry a version segment</li>
 </ul>
-<p>Adds the docs-links check to vrg-validate's common stage. Over docs/site/**/<em>.md, README.md and epics/</em><em>/</em>.md (less epics/archive/), a link to one of the mike-versioned Vergil sites, kept as a fixed list in vergil_tooling.lib.doc_links, must have latest, dev or a version number as its first path segment; a bare site root is allowed. Each hit is reported by path and line with its /latest/ form. Refs #3831.</p>
+<p>Adds the docs-links check to vrg-validate's common stage. Over docs/site/<strong>/*.md, README.md and epics/</strong>/*.md (less epics/archive/), a link to one of the mike-versioned Vergil sites, kept as a fixed list in vergil_tooling.lib.doc_links, must have latest, dev or a version number as its first path segment; a bare site root is allowed. Each hit is reported by path and line with its /latest/ form. Refs #3831.</p>
 <ul>
 <li><strong>add a language-neutral BUILD check kind (#4516)</strong></li>
 <li><strong>manage the TypeScript base configs as per-language files (#4517)</strong></li>

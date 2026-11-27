@@ -20963,6 +20963,11 @@ denied for the user identity. An agent's <code>issue close</code> of an operatio
 task as completed is refused until a trusted comment on it records
 <code>Outcome: SUCCESS</code> (see
 <a href="../../guides/permission-model/#operational-task-close">Operational task close</a>).
+An agent's <code>pr update-branch</code> (with or without <code>--rebase</code>) of a PR into
+<code>develop</code> is refused, naming the one PR path: update the branch locally and
+push it with <code>vrg-submit-pr --push</code>; the PR's base is read first, and a read
+that fails refuses the update (see
+<a href="../../guides/permission-model/#server-side-branch-update">Server-side branch update</a>).
 Its own <code>run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job
 &lt;job-id&gt;</code> prints one Actions job's log from the read-only per-job log endpoint,
 for every identity, with terminal control sequences stripped (see

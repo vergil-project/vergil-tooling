@@ -18346,6 +18346,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#server-side-branch-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server-side branch update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19191,6 +19202,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#server-side-branch-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server-side branch update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19866,7 +19888,7 @@ rejected as not recognized.</p>
 <td>yes</td>
 <td>yes</td>
 <td>—</td>
-<td>Server-side update onto the base (<code>--rebase</code> allowed)</td>
+<td>Server-side update onto the base (<code>--rebase</code> allowed); refused for an agent on a PR into <code>develop</code> (see <a href="#server-side-branch-update">Server-side branch update</a>)</td>
 </tr>
 <tr>
 <td><code>pr edit</code></td>
@@ -20123,6 +20145,22 @@ cannot resolve (a positional that is not one issue number or URL, or a
 <code>--repo</code> that is not <code>OWNER/REPO</code>) and a read that cannot complete
 refuse the close rather than let it through unchecked. The success
 marker is the one <code>vrg-epic-audit</code> checks on closed operational tasks.</p>
+<h3 id="server-side-branch-update">Server-side branch update<a class="headerlink" href="#server-side-branch-update" title="Permanent link">&para;</a></h3>
+<p>Every new head of an open PR into <code>develop</code> is made through the one PR
+path, so for an agent identity <code>vrg-gh pr update-branch</code>, with or
+without <code>--rebase</code>, refuses a PR into <code>develop</code>: GitHub would otherwise
+make the new head itself, merging the base in or rebasing onto it,
+outside the path. The refusal names the path: bring the branch up to
+date locally (<code>vrg-git fetch origin</code>, then <code>vrg-git rebase
+origin/develop</code>) and push it with <code>vrg-submit-pr --push</code>.</p>
+<p>Before it updates a branch, the wrapper reads the PR's base with
+<code>gh pr view</code> on the same target and <code>--repo</code>. A PR into any other base
+is updated as before, and a human's update is not gated. The lookup
+fails closed: a target it cannot resolve (more than one positional, or
+more than one owner), a read that fails, or a response with no base
+refuses the update. The tooling's own server-side updates are limited to
+named sites by a guard test
+(<code>tests/vergil_tooling/test_branch_push_guard.py</code>).</p>
 <h3 id="gh-api-by-identity"><code>gh api</code> by Identity<a class="headerlink" href="#gh-api-by-identity" title="Permanent link">&para;</a></h3>
 <p><code>gh api</code> can perform any GitHub API operation — create repos,
 delete branches, modify settings, push code via the Contents API.
