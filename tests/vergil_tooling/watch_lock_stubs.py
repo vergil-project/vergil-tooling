@@ -87,7 +87,7 @@ class FakeLock:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeLock:
         monkeypatch.setattr(refs, "read_lock", self.read_lock)
         monkeypatch.setattr(stale, "_issue_state", self.read_issue)
-        monkeypatch.setattr(reclaim, "reclaim_if_stale", self.reclaim)
+        monkeypatch.setattr(reclaim, "reclaim_if_stale", self.reclaim_if_stale)
         monkeypatch.setattr(pr_path, "arm", self.arm)
         return self
 
@@ -107,7 +107,7 @@ class FakeLock:
         self.issue_reads.append(ref)
         return self.issue_state
 
-    def reclaim(self, repo: str, *, actor: str) -> reclaim.ReclaimResult | None:
+    def reclaim_if_stale(self, repo: str, *, actor: str) -> reclaim.ReclaimResult | None:
         self.reclaims.append((repo, actor))
         if self.reclaim_error is not None:
             raise self.reclaim_error

@@ -887,6 +887,17 @@ def test_watch_reclaims_stale_lock(fake: FakeGitHub, capsys: pytest.CaptureFixtu
     assert fake.sleeps == [15.0, 15.0]
 
 
+def test_reclaim_names_the_actor_given(fake: FakeGitHub) -> None:
+    fake.lock.states = [broken()]
+    fake.lock.issue_state = "CLOSED"
+    fake.lock.reclaimed = False
+    fake.script(1, unarmed(1), unarmed(1), merged(1))
+
+    watch([url(1)], lock=LockWatch(actor="user on laptop"))
+
+    assert fake.lock.reclaims == [("o/r", "user on laptop")] * 2
+
+
 def test_watch_lost_reclaim_reads_the_lock_again(fake: FakeGitHub) -> None:
     """A reclaim another reclaimer won leaves the PR to the next poll, at the normal pace."""
     fake.lock.states = [broken(), None]

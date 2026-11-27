@@ -10,7 +10,7 @@ The watch never merges a PR and never turns auto-merge on or off itself
 (epic vergil-project/.github#1664, spec §5): it watches and reports. An
 open PR's auto-merge is the release lock's business (spec §5.5, §5.7
 layer 2): on every read of an open PR the watch asks its *lock* rule
-(:class:`LockRule`; ``vrg-finalize-pr`` passes
+(:data:`LockRule`; ``vrg-finalize-pr`` passes
 :class:`vergil_tooling.lib.release_lock.watch.LockWatch`), before it would
 judge auto-merge off, and the answer (a :class:`LockView`) decides:
 
@@ -132,8 +132,8 @@ number, its shortened title, its state (``held by release …`` while the
 lock holds it, ``checks pending (<n>)``, ``checks green, merging``,
 ``behind develop``, ``waiting (<merge state>)``, or the outcome it ended
 with) and how long it has waited since the watch started, frozen when it
-ended. A totals line closes it: merged, pending, failed and held by
-release, and the time left before the batch deadline. It goes to
+ended. A totals line closes it: merged, pending and failed, and the time
+left before the batch deadline. It goes to
 :func:`vergil_tooling.lib.progress.status_block` (issue #4694), marked
 changed when some PR's state has changed since the last one: on a TTY it
 is redrawn in place every poll; off a TTY it is printed only when it
@@ -150,7 +150,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 
 from vergil_tooling.lib import (
     agent_gates,
@@ -173,7 +173,7 @@ from vergil_tooling.lib.trusted_authors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Callable, Collection, Sequence
     from pathlib import Path
 
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
@@ -234,14 +234,10 @@ class LockView:
 FREE = LockView("free")
 
 
-class LockRule(Protocol):
-    """The release lock's answer for an open PR, read on every poll before auto-merge is judged.
-
-    A lock, re-arm or reclaim step that cannot be completed raises
-    :class:`FinalizeWatchError`, naming the PR.
-    """
-
-    def __call__(self, snap: Snapshot, /) -> LockView: ...
+#: The release lock's answer for an open PR, asked on every read before
+#: auto-merge is judged. A lock, re-arm or reclaim step that cannot be
+#: completed raises :class:`FinalizeWatchError`, naming the PR.
+type LockRule = Callable[[Snapshot], LockView]
 
 
 #: The batch deadline's environment variable: a positive whole number of
@@ -1038,14 +1034,17 @@ def _shorten(title: str) -> str:
 
 
 def _totals(results: Collection[PRResult], pending: int, left: float) -> str:
-    """The table's totals: merged, pending, failed and held by release, and the time left."""
+    """The table's totals: merged, pending and failed, and the time left.
+
+    A PR the lock holds is pending until the deadline, after which no table
+    is shown, so no PR is counted here as ended ``held by release``.
+    """
     merged = sum(r.outcome == "merged" for r in results)
     failed = sum(r.outcome.startswith("failed") for r in results)
-    held = sum(r.outcome == "held by release" for r in results)
-    counts = f"{merged} merged, {pending} pending, {failed} failed"
-    if held:
-        counts += f", {held} held by release"
-    return f"{counts}; {_duration(left)} left before the batch deadline"
+    return (
+        f"{merged} merged, {pending} pending, {failed} failed; "
+        f"{_duration(left)} left before the batch deadline"
+    )
 
 
 def _status_lines(rows: Sequence[_Row], totals: str, elapsed: float) -> list[str]:
