@@ -2695,8 +2695,22 @@ repo has neither of nor its marker is skipped, by the audit and by
 `--init`, each printing `<repo>: no <branch> branch; not audited`, and is
 not a finding. An absent branch whose marker is set is refused by
 `--init` and is a `missing-branch` finding, so deleting a branch never
-escapes the audit; a repo with no `develop` is always both. It is a
-security-signal job: it files no issue and posts nothing.
+escapes the audit; a repo with no `develop` is always both.
+
+It then runs the release lock's backstop
+([epic vergil-project/.github#1664](https://github.com/vergil-project/.github/issues/1664),
+spec §5.9) on the repo as it stands. An open PR into `develop` that the
+one PR path accepts, with auto-merge off while no release lock is held,
+is an `invariant-breach`; while a lock is held the audit is quiet on it.
+Every open draft PR into `develop` is a `draft-pr`, a stale lock a
+`stale-lock` and a lock that cannot be read or parsed an
+`unreadable-lock`, naming its read error; the audit never deletes it. An
+open PR the path does not accept (a fork's or an outsider's) is reported
+on an `outsider-pr:` line of its own, never a finding, and does not
+change the exit status. The output ends with
+`<repo> backstop: <n> finding(s); <m> outsider PR(s)`. The backstop is
+report-only: it never arms a PR. The audit is a security-signal job: it
+files no issue and posts nothing.
 
 | Attribute | Value |
 |---|---|

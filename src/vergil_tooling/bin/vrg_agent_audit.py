@@ -23,6 +23,16 @@ run log hoshin reads; it is not a finding. An absent branch whose marker is
 set, and a repository with no ``develop``, are refused by ``--init`` and are
 a ``missing-branch`` finding in the audit.
 
+After the branches, the audit runs the release lock's backstop
+(:func:`~vergil_tooling.lib.agent_audit.backstop`, epic
+vergil-project/.github#1664): an open PR into ``develop`` that the one PR
+path accepts with auto-merge off while no release lock is held, an open draft
+PR into ``develop``, a stale lock and an unreadable lock are findings. An open
+PR the path does not accept is reported on an ``outsider-pr:`` line of its
+own, which is not a finding and does not change the exit status. The line
+``<owner/name> backstop: <n> finding(s); <m> outsider PR(s)`` closes the
+output. The backstop is report-only: it never arms a PR.
+
 It is a security-signal job: it files no issue and posts nothing. Each
 finding is one line on stdout.
 
@@ -105,15 +115,23 @@ def _audit(repo: str) -> int:
         _fail("the clone is shallow; the audit needs its full history (fetch-depth: 0)")
         return EXIT_FINDINGS
     results = agent_audit.audit(Path.cwd(), repo, authors)
+    checked = agent_audit.backstop(repo)
     findings = [finding for result in results for finding in result.findings]
+    findings += checked.findings
     for finding in findings:
         print(finding.render())
+    for outsider in checked.outsiders:
+        print(outsider.render(repo))
     for result in results:
         if result.skipped:
             print(agent_audit.not_audited(repo, result.branch))
             continue
         reached = result.audited_to[:12] if result.audited_to else "unchanged"
         print(f"{repo} {result.branch}: {len(result.findings)} finding(s); marker {reached}")
+    print(
+        f"{repo} backstop: {len(checked.findings)} finding(s);"
+        f" {len(checked.outsiders)} outsider PR(s)"
+    )
     return EXIT_FINDINGS if findings else EXIT_CLEAN
 
 
@@ -132,6 +150,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "Audit every merge into develop and main since the audit's markers:"
             " the merge and auto-merge actors of every PR, and, on an"
             " agent-involved PR merged into develop, its merge-review coverage."
+            " Then, report-only, the release lock's backstop: open develop PRs"
+            " left unarmed with no lock held, drafts, and a stale or unreadable lock."
             " Run it in a full-history"
             " clone of the repository. It files no issue and posts nothing."
         ),
