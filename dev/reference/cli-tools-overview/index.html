@@ -24704,7 +24704,8 @@ escapes the audit; a repo with no <code>develop</code> is always both.</p>
 spec §5.9) on the repo as it stands. An open PR into <code>develop</code> that the
 one PR path accepts, with auto-merge off while no release lock is held,
 is an <code>invariant-breach</code>; while a lock is held the audit is quiet on it.
-Every open draft PR into <code>develop</code> is a <code>draft-pr</code>, a stale lock a
+A lock free at the first read is read again once the PRs are listed, so
+a release that takes the lock in between raises no breach. Every open draft PR into <code>develop</code> is a <code>draft-pr</code>, a stale lock a
 <code>stale-lock</code> and a lock that cannot be read or parsed an
 <code>unreadable-lock</code>, naming its read error; the audit never deletes it. An
 open PR the path does not accept (a fork's or an outsider's) is reported
