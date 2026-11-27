@@ -21,7 +21,8 @@ from vergil_tooling.lib.release.run_wait import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_MOD = "vergil_tooling.lib.release.run_wait"
+# The wait reads the run through lib/github, from lib/cd_runs.
+_READ = "vergil_tooling.lib.github.read_output"
 
 
 def _view(status: str, conclusion: str | None = None, attempt: int = 1) -> str:
@@ -38,7 +39,7 @@ def _wait(
     reads: Sequence[str | Exception], *, attempt: int | None = None, timeout: float = 1e9
 ) -> tuple[RunView, MagicMock, MagicMock]:
     sleep = MagicMock()
-    with patch(_MOD + ".github.read_output", side_effect=list(reads)) as read:
+    with patch(_READ, side_effect=list(reads)) as read:
         view = wait_run_completed(
             "o/r",
             "5",
@@ -126,7 +127,7 @@ def test_a_persistent_read_failure_fails_loudly_as_one() -> None:
 
 def test_a_non_transient_read_error_fails_at_once() -> None:
     with (
-        patch(_MOD + ".github.read_output", side_effect=[_err("HTTP 403: Forbidden")]) as read,
+        patch(_READ, side_effect=[_err("HTTP 403: Forbidden")]) as read,
         pytest.raises(ReleaseError, match="read failure, not the run's result"),
     ):
         wait_run_completed("o/r", "5", phase="cd-publish", sleep=MagicMock(), clock=lambda: 0.0)
@@ -136,7 +137,7 @@ def test_a_non_transient_read_error_fails_at_once() -> None:
 def test_an_attempt_still_going_at_the_deadline_is_result_unknown() -> None:
     clock = itertools.count(0.0, 100.0)
     with (
-        patch(_MOD + ".github.read_output", return_value=_view("in_progress", attempt=3)),
+        patch(_READ, return_value=_view("in_progress", attempt=3)),
         pytest.raises(
             ReleaseError,
             match=r"attempt 3 had not completed .*last read: attempt 3 in_progress.*unknown",
@@ -153,12 +154,25 @@ def test_an_attempt_still_going_at_the_deadline_is_result_unknown() -> None:
         )
 
 
+def test_a_read_still_failing_at_the_deadline_is_a_read_failure() -> None:
+    clock = itertools.count(0.0, 100.0)
+    with (
+        patch(_READ, side_effect=[_view("in_progress"), _err("HTTP 503")]),
+        pytest.raises(ReleaseError, match="persistent read failure") as e,
+    ):
+        wait_run_completed(
+            "o/r", "5", phase="confirm-main", timeout=150, sleep=MagicMock(), clock=lambda: next(clock)
+        )
+    assert e.value.detail is not None
+    assert "503" in e.value.detail
+
+
 def test_the_deadline_defaults_to_vrg_cd_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VRG_CD_TIMEOUT", "30")
     clock = itertools.count(0.0, 20.0)
     sleep = MagicMock()
     with (
-        patch(_MOD + ".github.read_output", return_value=_view("queued")),
+        patch(_READ, return_value=_view("queued")),
         pytest.raises(ReleaseError, match="had not completed"),
     ):
         wait_run_completed("o/r", "5", phase="confirm-main", sleep=sleep, clock=lambda: next(clock))

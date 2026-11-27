@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib import trust
-from vergil_tooling.lib.cd_runs import CDRunLookupError
+from vergil_tooling.lib.cd_runs import CDRunLookupError, CDRunReadError, RunView
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
 from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
 from vergil_tooling.lib.pending_release import PendingRelease, PendingReleaseError, ReleaseTags
@@ -2139,19 +2139,45 @@ def test_develop_cd_gate_failed_run_refuses() -> None:
 def test_develop_cd_gate_queued_run_waits() -> None:
     # The real watch: queued, then pending, then in progress, then green.
     views = [
-        {"status": "queued", "conclusion": None, "url": ""},
-        {"status": "pending", "conclusion": None, "url": ""},
-        {"status": "in_progress", "conclusion": None, "url": ""},
-        {"status": "completed", "conclusion": "success", "url": ""},
+        RunView("queued", "", 1, ""),
+        RunView("pending", "", 1, ""),
+        RunView("in_progress", "", 1, ""),
+        RunView("completed", "success", 1, ""),
     ]
     with (
         patch(_CD + ".find_run", return_value=_cd_run(3)),
-        patch(_CD + "._view_cd_run", side_effect=views) as view,
+        patch(_CD + "._read_run_view", side_effect=views) as view,
         patch(_CD + ".time.sleep") as sleep,
     ):
         check_develop_cd(_REPO, _CD_HEAD)
     assert view.call_count == 4
     assert sleep.call_count == 3
+    assert view.call_args.kwargs == {"repo": _REPO}
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_develop_cd_gate_unreadable_run_refuses_as_a_read_failure(persistent: bool) -> None:
+    # A run that cannot be read refuses as a read failure naming its cause,
+    # never as a run still in progress (#5174).
+    error = CDRunReadError(
+        "Run 3 could not be read while waiting for its latest attempt to complete. "
+        "This is a read failure, not the run's result.",
+        detail="HTTP 403: Forbidden",
+        persistent=persistent,
+    )
+    with (
+        patch(_CD + ".find_run", return_value=_cd_run(3)),
+        patch(_CD + ".watch_run", side_effect=error),
+        pytest.raises(ReleaseError) as exc,
+    ):
+        check_develop_cd(_REPO, _CD_HEAD)
+    assert exc.value.phase == "preflight"
+    assert exc.value.detail == "HTTP 403: Forbidden"
+    message = str(exc.value)
+    assert "read failure, not the run's result" in message
+    assert "Refusing to release without develop's CD result" in message
+    assert "actions/runs/3" in message
+    assert "still not complete" not in message
 
 
 def test_develop_cd_gate_timed_out_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2180,7 +2206,7 @@ def test_develop_cd_gate_no_run_uses_green_ancestor() -> None:
     # The in-progress run is skipped and the run whose commit is not local is
     # not an ancestor; the next completed run is judged, with no wait.
     ancestor.assert_called_once_with("d" * 40, _CD_HEAD)
-    watch.assert_called_once_with("5", timeout=0)
+    watch.assert_called_once_with("5", timeout=0, repo=_REPO)
 
 
 def test_develop_cd_gate_no_run_red_ancestor_refuses() -> None:
@@ -2210,7 +2236,7 @@ def test_develop_cd_gate_no_run_unfinished_ancestor_refuses_without_a_wait() -> 
         pytest.raises(ReleaseError) as exc,
     ):
         check_develop_cd(_REPO, _CD_HEAD)
-    watch.assert_called_once_with("5", timeout=0)
+    watch.assert_called_once_with("5", timeout=0, repo=_REPO)
     message = str(exc.value)
     assert (
         f"The develop CD run on ancestor {'d' * 12} of {_CD_HEAD[:12]} is not finished; "

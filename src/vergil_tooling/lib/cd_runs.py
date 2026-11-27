@@ -11,6 +11,10 @@ cancelled by a concurrency group making way for a higher-priority run is
 *superseded*, not failed (issue #3834). Of the jobs that failed, a docs job's
 failure is *deferred*, as ``confirm-develop`` defers a develop docs publish;
 any other failure is *blocking*.
+
+Every wait on a run goes through :func:`wait_attempt_completed`, which
+classifies a failed read before it retries one, so a read failure is
+reported as one, never as a run still in progress (issue #5174).
 """
 
 from __future__ import annotations
@@ -18,14 +22,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, retry
+from vergil_tooling.lib.process_errors import error_text
 
 if TYPE_CHECKING:
-    import subprocess
+    from collections.abc import Callable
 
 RunState = Literal[
     "queued", "in_progress", "success", "failed", "timed_out", "superseded", "cancelled", "none"
@@ -155,27 +161,189 @@ def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, obj
     return None
 
 
-def _view_cd_run(run_id: object) -> dict[str, object] | None:
-    """Fetch a CD run's current status/conclusion/url, or ``None`` on a gh error.
+@dataclass(frozen=True)
+class RunView:
+    """One read of a run: its latest attempt's status and conclusion, and its URL."""
 
-    ``gh`` runs with the current identity's token, as :func:`_list_cd_runs`
-    does. An unusable gh (:func:`github.require_gh`) or no credentials to run
-    it with is raised, never read as a gh error: the watch retries a failed
-    view to its deadline, so a missing credential would read as a run still
-    going.
+    status: str
+    conclusion: str
+    attempt: int
+    url: str
+
+
+class CDRunReadError(Exception):
+    """A run could not be read while waiting for it to complete (#5174).
+
+    Raised for a read error that is not transient (a 403, say), and for a
+    read that kept failing: more than :data:`MAX_READ_FAILURES` times in a
+    row, or still failing when the wait ran out. It is a read failure, never
+    the run's result. ``persistent`` tells the two apart; ``detail`` is the
+    last error, the cause.
     """
-    result = github.run_tolerating(
-        ("gh", "run", "view", str(run_id), "--json", "status,conclusion,url"),
-        is_answer=_any_exit,
+
+    def __init__(self, message: str, *, detail: str, persistent: bool) -> None:
+        super().__init__(message)
+        self.message = message
+        self.detail = detail
+        self.persistent = persistent
+
+    def __str__(self) -> str:
+        return f"{self.message} Cause: {self.detail}"
+
+
+class CDRunWaitTimeoutError(Exception):
+    """The attempt waited for had not completed when the wait ran out.
+
+    The result is unknown, not a failure. ``last`` is the last view read.
+    """
+
+    def __init__(self, message: str, *, last: RunView | None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.last = last
+
+
+# Consecutive failed reads tolerated before a wait fails as a read failure.
+# Each read already retries transient errors inside github.read_output; with
+# compute_delay's back-off between them this spans a few minutes of outage.
+MAX_READ_FAILURES = 6
+
+
+def _parse_view(out: str) -> RunView:
+    """The :class:`RunView` in ``gh run view --json`` output; ``ValueError`` if malformed.
+
+    A completed view with no conclusion is malformed too: a read that failed.
+    """
+    data = json.loads(out)  # JSONDecodeError is a ValueError
+    if not isinstance(data, dict):
+        msg = f"gh run view returned {type(data).__name__}, not an object"
+        raise ValueError(msg)  # noqa: TRY004 - a malformed read, retried as one
+    attempt = data.get("attempt")
+    status = data.get("status")
+    if not isinstance(attempt, int) or not isinstance(status, str) or not status:
+        msg = f"gh run view returned no attempt number or status: {out!r}"
+        raise ValueError(msg)
+    view = RunView(
+        status=status,
+        conclusion=str(data.get("conclusion") or ""),
+        attempt=attempt,
+        url=str(data.get("url") or ""),
     )
-    if result.returncode != 0:
-        return None
-    stdout = result.stdout or ""
-    try:
-        data = json.loads(stdout) if stdout.strip() else None
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    if view.status == "completed" and not view.conclusion:
+        msg = "gh run view reports the run completed with no conclusion"
+        raise ValueError(msg)
+    return view
+
+
+def _read_run_view(run_id: object, *, repo: str | None = None) -> RunView:
+    """Read run *run_id* once; *repo* names its repository, else the current one.
+
+    ``gh`` runs with the current identity's token through
+    :func:`github.read_output`, which retries a transient error itself. A
+    ``gh`` error raises ``subprocess.CalledProcessError`` and a malformed
+    view ``ValueError``. An unusable gh (:func:`github.require_gh`) or no
+    credentials to run it with raises its own error, never read as a failed
+    view.
+    """
+    args: tuple[str, ...] = ("run", "view")
+    if repo is not None:
+        args += ("--repo", repo)
+    out = github.read_output(*args, str(run_id), "--json", "status,conclusion,attempt,url")
+    return _parse_view(out)
+
+
+def _is_transient(exc: subprocess.CalledProcessError) -> bool:
+    """Whether a failed read of a run is worth another try.
+
+    Any error :func:`retry.is_retryable_read` accepts, or a 404 on a run
+    that was just listed or re-run, which GitHub may not serve yet.
+    """
+    return retry.is_retryable_read(exc) or retry.is_not_found(exc)
+
+
+def wait_attempt_completed(  # noqa: PLR0913 - the clock and sleep are test seams
+    run_id: object,
+    *,
+    timeout: float,
+    repo: str | None = None,
+    attempt: int | None = None,
+    poll_interval: float = _CD_POLL_INTERVAL_SECS,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> RunView:
+    """Re-read run *run_id* until *attempt* (or, with none, its latest) is ``completed``.
+
+    The classify-then-retry wait every CD wait goes through (#5174). The
+    run is read at least once, so a run already completed is returned with
+    no wait. Returns the completed attempt's view: its ``conclusion`` is the
+    run's result, for the caller to judge. A view of an earlier attempt
+    than *attempt* (GitHub has not caught up with a re-run yet) is waited
+    through, as is any status short of ``completed``.
+
+    A failed read is classified first. A transient one (:func:`_is_transient`)
+    or a malformed view is retried with :func:`retry.compute_delay`'s
+    back-off. Any other ``gh`` error raises :class:`CDRunReadError` at once.
+    A read still failing after :data:`MAX_READ_FAILURES` retries in a row,
+    or when the wait runs out, raises :class:`CDRunReadError` with
+    ``persistent`` set. An attempt read but still not completed at the
+    deadline raises :class:`CDRunWaitTimeoutError` (result unknown). Neither
+    is ever the run's result, and an unread run is never taken as a
+    finished one.
+
+    *sleep* and *clock* default to :func:`time.sleep` and
+    :func:`time.monotonic`, looked up at each call.
+    """
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    deadline = clock() + timeout
+    which = f"attempt {attempt}" if attempt is not None else "its latest attempt"
+    failures = 0
+    error = ""
+    shown = ""
+    last: RunView | None = None
+    while True:
+        try:
+            view = _read_run_view(run_id, repo=repo)
+        except subprocess.CalledProcessError as exc:
+            if not _is_transient(exc):
+                msg = (
+                    f"Run {run_id} could not be read while waiting for {which} to "
+                    "complete. This is a read failure, not the run's result."
+                )
+                raise CDRunReadError(msg, detail=error_text(exc), persistent=False) from exc
+            failures, error = failures + 1, error_text(exc)
+        except ValueError as exc:
+            failures, error = failures + 1, error_text(exc)
+        else:
+            failures, last = 0, view
+            if (attempt is None or view.attempt >= attempt) and view.status == "completed":
+                print(f"  Run {run_id} attempt {view.attempt} completed: {view.conclusion}")
+                return view
+            line = f"  Run {run_id} attempt {view.attempt}: {view.status}"
+            if line != shown:
+                print(line)
+                shown = line
+        remaining = deadline - clock()
+        if failures > MAX_READ_FAILURES or (failures and remaining <= 0):
+            msg = (
+                f"Run {run_id} could not be read {failures} times in a row while "
+                f"waiting for {which} to complete. This is a persistent read "
+                "failure, not the run's result."
+            )
+            raise CDRunReadError(msg, detail=error, persistent=True)
+        if remaining <= 0:
+            seen = f"last read: attempt {last.attempt} {last.status}" if last else "never read"
+            msg = (
+                f"Run {run_id}'s {which} had not completed when the wait ran out "
+                f"({seen}). The result is unknown, not a failure."
+            )
+            raise CDRunWaitTimeoutError(msg, last=last)
+        if failures:
+            delay = retry.compute_delay(failures - 1)
+            print(f"  Could not read run {run_id} ({error}); retrying in {delay:.1f}s")
+        else:
+            delay = poll_interval
+        sleep(min(delay, remaining))
 
 
 def _poll_for_run(
@@ -213,24 +381,28 @@ def find_run(
 
 
 def wait_completed(
-    run_id: object, *, timeout: float, poll_interval: float = _CD_POLL_INTERVAL_SECS
-) -> dict[str, object] | None:
-    """Poll run *run_id* until it completes; its last view, or ``None`` at *timeout*.
+    run_id: object,
+    *,
+    timeout: float,
+    repo: str | None = None,
+    poll_interval: float = _CD_POLL_INTERVAL_SECS,
+) -> RunView | None:
+    """Wait for run *run_id* to complete; its completed view, or ``None`` at *timeout*.
 
-    The run is viewed at least once, so a run already completed is returned
-    with no wait. A view that fails or is malformed is retried, not fatal.
+    :func:`wait_attempt_completed` on the run's latest attempt, with a run
+    read but still going at *timeout* returned as ``None`` (result unknown).
+    A run that could not be read raises :class:`CDRunReadError`, never
+    ``None``: a read failure is not a run still in progress.
     """
-    deadline = time.monotonic() + timeout
-    while True:
-        view = _view_cd_run(run_id)
-        if view is not None and view.get("status") == "completed":
-            return view
-        if time.monotonic() >= deadline:
-            return None
-        time.sleep(poll_interval)
+    try:
+        return wait_attempt_completed(
+            run_id, timeout=timeout, repo=repo, poll_interval=poll_interval
+        )
+    except CDRunWaitTimeoutError:
+        return None
 
 
-def watch_run(run_id: str, *, timeout: float) -> RunState:
+def watch_run(run_id: str, *, timeout: float, repo: str | None = None) -> RunState:
     """Wait for CD run *run_id* to complete, up to *timeout* seconds; its state.
 
     Every status short of ``completed`` (``queued``, ``pending``, ``waiting``,
@@ -243,18 +415,20 @@ def watch_run(run_id: str, *, timeout: float) -> RunState:
     - ``failed``: any other conclusion;
     - ``timed_out``: still not completed at *timeout*.
 
-    A cancel that cannot be checked for a supersede raises the lookup's error
+    *repo* names the run's repository; without it ``gh`` uses the current
+    one. A run that could not be read raises :class:`CDRunReadError`
+    (:func:`wait_completed`), never reads as ``timed_out``. A cancel that cannot be checked for a supersede raises the lookup's error
     (``subprocess.CalledProcessError`` or ``ValueError``) rather than reading
     as either answer.
     """
-    view = wait_completed(run_id, timeout=timeout)
+    view = wait_completed(run_id, timeout=timeout, repo=repo)
     if view is None:
         return "timed_out"
-    conclusion = str(view.get("conclusion") or "")
+    conclusion = view.conclusion
     if conclusion in _CD_PASSING_CONCLUSIONS:
         return "success"
     if conclusion == "cancelled":
-        if _supersede_group(run_id, str(view.get("url") or "")) is not None:
+        if _supersede_group(run_id, view.url) is not None:
             return "superseded"
         return "cancelled"
     return "failed"

@@ -134,6 +134,7 @@ from vergil_tooling.lib.cd_runs import (
     CD_TIMEOUT_ENV,
     CDRunLookupError,
     CDRunProblem,
+    CDRunReadError,
     CDRunSuperseded,
     _poll_for_run,
     _supersede_group,
@@ -644,7 +645,7 @@ def _develop_broken(settle: SettleOutcome) -> bool:
 
     A provision failure stops the pipeline before the validate, so it could
     not run. With ``--wait-cd``, a CD check that failed counts too, unless it
-    failed because the CD runs could not be listed: CD's state is then not
+    failed because the CD runs could not be listed or read: CD's state is then not
     known, a tool error (exit 1), not a CD that did not succeed.
     """
     if _validate_failed(settle):
@@ -745,9 +746,11 @@ class FinalizeError(Exception):
 
 
 class CDUnreadableError(FinalizeError):
-    """The CD runs of a repo that declares CD could not be listed (#5140).
+    """The CD runs of a repo that declares CD could not be read (#5140, #5174).
 
-    Its message names the cause (a ``gh`` failure, or no credentials to run
+    Either the runs could not be listed, or the run being waited on could not
+    be read (a non-transient read error, or a persistent read failure). Its
+    message names the cause (a ``gh`` failure, or no credentials to run
     ``gh`` with). The CD state is not known, so the cd-check stage fails as a
     tool error rather than reporting the state as unknown.
     """
@@ -779,8 +782,8 @@ class FinalizeContext:
     stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
     # The CD line the cd-check stage reported, repeated in the final report.
     cd_line: str = ""
-    # The cd-check stage failed because the CD runs could not be listed
-    # (CDUnreadableError): a tool error, not a CD that did not succeed.
+    # The cd-check stage failed because the CD runs could not be listed or
+    # the run could not be read (CDUnreadableError): a tool error, not a CD that did not succeed.
     cd_unreadable: bool = False
     # A failed validate's full output log and its last lines.
     validate_log: Path | None = None
@@ -1220,7 +1223,10 @@ def _wait_for_cd_run(
         (:func:`_declares_cd_workflow` on *root*), reported as
         ``CD: no CD workflow in this repo``; any other failed listing raises
         :class:`CDUnreadableError` naming its cause
-        (:func:`_report_cd_lookup_failure`),
+        (:func:`_report_cd_lookup_failure`), as does a run that could not be
+        read while waiting on it (a non-transient read error, or a persistent
+        read failure: :class:`CDRunReadError`), never reported as a run still
+        in progress,
       - no run was dispatched for this SHA within ``dispatch_timeout``
         (a change CD legitimately skips, e.g. path filters), or
       - the run concluded success / skipped / neutral.
@@ -1257,11 +1263,20 @@ def _wait_for_cd_run(
         print(f"  {url}")
 
     # Phase 2: watch the registered run to completion.
-    view = wait_completed(run_id, timeout=watch_timeout, poll_interval=poll_interval)
+    try:
+        view = wait_completed(run_id, timeout=watch_timeout, poll_interval=poll_interval)
+    except CDRunReadError as exc:
+        # A read failure is not a run still in progress: the stage fails as a
+        # tool error naming the cause (vergil-tooling#5174).
+        msg = f"CD workflow run {run_id} for {head_sha[:7]} could not be read: {exc}"
+        print(f"ERROR: {msg}", file=sys.stderr)
+        if url:
+            print(f"  {url}", file=sys.stderr)
+        raise CDUnreadableError(msg) from exc
     if view is None:
         return CDRunProblem(run_id, target_branch, head_sha, url, None, int(watch_timeout))
-    url = str(view.get("url") or url)
-    conclusion = str(view.get("conclusion") or "")
+    url = view.url or url
+    conclusion = view.conclusion
     if conclusion in _CD_PASSING_CONCLUSIONS:
         return None
     note = ""
@@ -2051,8 +2066,9 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
             return
         problem = _wait_for_cd_run(args.target_branch, head_sha, root=ctx.root)
     except CDUnreadableError as exc:
-        # The CD runs could not be listed: the stage fails with the cause, and
-        # the final report repeats it (vergil-tooling#5140).
+        # The CD runs could not be listed, or the run could not be read: the
+        # stage fails with the cause, and the final report repeats it
+        # (vergil-tooling#5140, #5174).
         ctx.cd_line = f"CD: error ({exc})"
         ctx.cd_unreadable = True
         raise

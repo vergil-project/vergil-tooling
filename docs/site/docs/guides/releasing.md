@@ -597,8 +597,9 @@ says which, only on one of these:
 - **The run's result:** the attempt completed and its jobs did not pass,
   judged as each stage describes.
 - **A read failure:** the run could not be read, either for a
-  non-transient error or for seven failed reads in a row. This is not
-  the run's result: check the run, then resume.
+  non-transient error, for seven failed reads in a row, or for a read
+  still failing when the wait ran out. This is not the run's result:
+  check the run, then resume.
 - **Result unknown:** the attempt was still not complete after
   `$VRG_CD_TIMEOUT` seconds (default 5400). Once it finishes, resume.
 
@@ -1136,7 +1137,10 @@ by its commit, the way `vrg-finalize-pr` finds the synced head's run:
 - **Queued, pending or in progress.** The gate waits for it, up to
   `$VRG_CD_TIMEOUT` seconds (default 5400). A run still not complete at
   the deadline refuses, as "result unknown": re-run `vrg-release` once
-  it finishes.
+  it finishes. The wait reads the run as the confirm stages do
+  ([waiting for a CD run](#waiting-for-a-cd-run)): a run that cannot be
+  read refuses as a read failure naming its cause, never as a run still
+  in progress.
 - **Succeeded.** The release goes ahead.
 - **Failed.** The release refuses, naming the failed jobs and linking the
   run. A failure only in a docs job is the exception: `confirm-develop`
@@ -1177,7 +1181,8 @@ succeed, with a direct link to the log. The wait is bounded by
 `VRG_CD_TIMEOUT` (seconds, default 90 minutes). A run still going at the
 deadline is reported as "still in progress; result unknown", with the
 run URL and how to re-check it, not as a failed run. It still fails the
-wait (issue #3316).
+wait (issue #3316). A run that cannot be read while finalize waits is
+an error naming its cause, never a run still in progress (issue #5174).
 
 For deeper investigation, view recent runs directly:
 

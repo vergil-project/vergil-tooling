@@ -1382,7 +1382,7 @@ def check_develop_cd(repo: str, head_sha: str) -> None:
     for _ in range(_MAX_SUPERSEDES + 1):
         url = _run_url(repo, run)
         print(f"  Develop CD run: {url}")
-        state = _watch(run, timeout=max(0.0, deadline - time.monotonic()))
+        state = _watch(repo, run, timeout=max(0.0, deadline - time.monotonic()))
         if state != "superseded":
             unfinished = (
                 f"The develop CD run is still not complete after {timeout}s; result unknown. "
@@ -1431,8 +1431,25 @@ def _run_url(repo: str, run: dict[str, object]) -> str:
     return str(run.get("url") or f"https://github.com/{repo}/actions/runs/{run.get('databaseId')}")
 
 
-def _watch(run: dict[str, object], *, timeout: float) -> cd_runs.RunState:
-    return _cd_lookup(lambda: cd_runs.watch_run(str(run.get("databaseId")), timeout=timeout))
+def _watch(repo: str, run: dict[str, object], *, timeout: float) -> cd_runs.RunState:
+    """Wait for *run* to complete, up to *timeout*; its state.
+
+    A run that could not be read refuses as a read failure naming its cause,
+    never as a run still in progress (#5174).
+    """
+    run_id = str(run.get("databaseId"))
+    try:
+        return _cd_lookup(lambda: cd_runs.watch_run(run_id, timeout=timeout, repo=repo))
+    except cd_runs.CDRunReadError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"gh run view {run_id} --repo {repo}",
+            message=(
+                f"{exc.message} Refusing to release without develop's CD result. "
+                f"Run: {_run_url(repo, run)}"
+            ),
+            detail=exc.detail,
+        ) from exc
 
 
 def _next_run(repo: str, run: dict[str, object]) -> dict[str, object] | None:
@@ -1460,7 +1477,7 @@ def _judge_ancestor_run(repo: str, head_sha: str) -> None:
             f"  No develop CD run registered for {head_sha[:12]}; judging the latest "
             f"completed run on an ancestor ({sha[:12]}): {_run_url(repo, run)}"
         )
-        state = _watch(run, timeout=0)
+        state = _watch(repo, run, timeout=0)
         # The ancestor run is judged as it stands, with no wait, so an
         # unfinished one is reported as such, never as a timeout.
         unfinished = (
