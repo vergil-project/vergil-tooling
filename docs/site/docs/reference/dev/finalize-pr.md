@@ -605,7 +605,7 @@ it stopped before that.
 ## Batch PRs (one PR closing several issues)
 
 A PR whose body has more than one `Closes` line is a **batch PR**: 2 to
-8 issues of one epic on one branch, exactly one commit per issue, each
+20 issues of one epic on one branch, exactly one commit per issue, each
 subject ending in its issue's `(#N)` (epic vergil-project/.github#1019).
 `vrg-submit-pr` re-checks the batch's rules before it opens the PR, and
 turns its auto-merge on with the **rebase** method, pinned to the head it

@@ -116,7 +116,7 @@ which worktree it will operate in.
 4. **One worktree per issue, or per batch.** Do not stack multiple
    in-flight issues in one worktree. When a worktree branch lands,
    remove the worktree before starting the next. The one exception is
-   a **batch**: 2 to 8 small issues of one epic in one repo,
+   a **batch**: 2 to 20 issues of one epic in one repo,
    implemented in order on a single branch, one commit per issue, and
    handed off as one PR. A batch gets exactly one worktree and one
    branch for all of its issues (see [Batches](#batches) below).

@@ -1,6 +1,6 @@
 """The batch rules: the hard rules, the one-commit-per-issue invariant, the closing refs.
 
-A *batch* is one PR that implements and closes 2 to 8 same-epic, same-repo
+A *batch* is one PR that implements and closes 2 to 20 same-epic, same-repo
 issues, one commit per issue (epic vergil-project/.github#1019). Its checks
 are shared by ``vrg-pr-workflow batch-start``, ``report-ready``,
 ``batch-check`` and ``vrg-submit-pr``, so every stage refuses the same
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 MIN_BATCH = 2
-MAX_BATCH = 8
+MAX_BATCH = 20
 
 # The roles that may open a batch's issues: the human and the agents.
 _AUTHOR_ROLES = frozenset({trust.Role.HUMAN, trust.Role.AGENTS})
@@ -293,7 +293,7 @@ def check_hard_rules(issues: list[str], *, repo: str) -> None:
     """Refuse *issues* unless they form a valid batch for a PR in *repo*.
 
     *issues* are canonical refs (``#N`` or ``owner/repo#N``) in batch order;
-    *repo* is the PR's ``owner/name``. The rules (spec §5.1): 2 to 8 issues,
+    *repo* is the PR's ``owner/name``. The rules (spec §5.1): 2 to 20 issues,
     none listed twice, each in *repo*, each a task (not an epic or archive)
     under a buildable parent (not a queue item or an ops issue), each opened
     by a trusted author, none operational, none directly blocked by an open
