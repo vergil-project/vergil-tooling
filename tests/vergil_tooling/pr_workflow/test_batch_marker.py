@@ -16,6 +16,7 @@ from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.pr_workflow.batch_marker import (
     BatchMarkerError,
     Marker,
+    batch_of,
     existing_batch,
     extract,
     marker_path,
@@ -234,10 +235,10 @@ def test_extract_reports_a_failed_directory_removal(
 
     monkeypatch.setattr(batch_marker.shutil, "rmtree", refuse)
     with pytest.raises(BatchMarkerError, match="Re-run batch-extract to finish"):
-        extract(tmp_path, "#11")
+        extract(tmp_path, ["#11"])
     monkeypatch.undo()
     # The re-run finishes it.
-    assert extract(tmp_path, "#11") == ["#10", "#12"]
+    assert extract(tmp_path, ["#11"]) == ["#10", "#12"]
     assert not _issue_dir(tmp_path, 11).exists()
 
 
@@ -254,7 +255,7 @@ def test_extract_removes_whole_state_dir_and_rewrites_lists(tmp_path: Path) -> N
     review = _issue_dir(tmp_path, 11) / "merge-review"
     review.mkdir(mode=0o700)
     (review / "open-request.json").write_text("{}")
-    assert extract(tmp_path, "#11") == ["#10", "#12"]
+    assert extract(tmp_path, ["#11"]) == ["#10", "#12"]
     assert not _issue_dir(tmp_path, 11).exists()
     for issue in ("#10", "#12"):
         assert read_marker(tmp_path, issue) == Marker(["#10", "#12"], SHA)
@@ -267,7 +268,7 @@ def test_extract_refuses_while_a_security_details_file_exists(tmp_path: Path) ->
     details = review / "security-R2.md"
     details.write_text("details\n")
     with pytest.raises(BatchMarkerError) as raised:
-        extract(tmp_path, "#11")
+        extract(tmp_path, ["#11"])
     message = str(raised.value)
     assert str(details) in message
     assert "record step" in message
@@ -283,7 +284,7 @@ def test_extract_refuses_a_security_file_in_the_issue_dir_itself(tmp_path: Path)
     details = _issue_dir(tmp_path, 10) / "security-1.md"
     details.write_text("details\n")
     with pytest.raises(BatchMarkerError, match="security-1.md"):
-        extract(tmp_path, "#10")
+        extract(tmp_path, ["#10"])
     assert details.exists()
     assert read_marker(tmp_path, "#11") == Marker(["#10", "#11"], SHA)
 
@@ -303,7 +304,7 @@ def test_extract_refuses_when_a_subdirectory_cannot_be_listed(
 
     monkeypatch.setattr(batch_marker.os, "scandir", scandir)
     with pytest.raises(BatchMarkerError, match="cannot look for security details"):
-        extract(tmp_path, "#11")
+        extract(tmp_path, ["#11"])
     monkeypatch.undo()
     assert review.is_dir()
     for issue in ("#10", "#11", "#12"):
@@ -312,7 +313,7 @@ def test_extract_refuses_when_a_subdirectory_cannot_be_listed(
 
 def test_extract_to_one_member_removes_last_marker(tmp_path: Path) -> None:
     write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
-    assert extract(tmp_path, "#10") == ["#11"]
+    assert extract(tmp_path, ["#10"]) == ["#11"]
     assert not _issue_dir(tmp_path, 10).exists()
     assert read_marker(tmp_path, "#11") is None
     # The last member's directory held only the marker, so it is gone too.
@@ -323,21 +324,21 @@ def test_extract_to_one_member_keeps_its_merge_review_state(tmp_path: Path) -> N
     write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
     review = _issue_dir(tmp_path, 11) / "merge-review"
     review.mkdir(mode=0o700)
-    assert extract(tmp_path, "#10") == ["#11"]
+    assert extract(tmp_path, ["#10"]) == ["#11"]
     assert read_marker(tmp_path, "#11") is None
     assert review.is_dir()
 
 
 def test_extract_refuses_an_issue_without_a_marker(tmp_path: Path) -> None:
     with pytest.raises(BatchMarkerError, match="not in a batch"):
-        extract(tmp_path, "#10")
+        extract(tmp_path, ["#10"])
 
 
 def test_extract_refuses_disagreeing_markers_and_changes_nothing(tmp_path: Path) -> None:
     write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
     write_markers(tmp_path, ["#12", "#13"], base_sha=SHA)
     with pytest.raises(BatchMarkerError, match="#12's batch marker lists #12, #13"):
-        extract(tmp_path, "#10")
+        extract(tmp_path, ["#10"])
     assert read_marker(tmp_path, "#10") == Marker(["#10", "#11", "#12"], SHA)
     assert read_marker(tmp_path, "#11") == Marker(["#10", "#11", "#12"], SHA)
 
@@ -347,7 +348,7 @@ def test_extract_refuses_a_member_with_another_base(tmp_path: Path) -> None:
     path = _issue_dir(tmp_path, 12) / "batch"
     path.write_text(json.dumps({"issues": ["#10", "#11", "#12"], "base_sha": OTHER_SHA}))
     with pytest.raises(BatchMarkerError, match="base_sha"):
-        extract(tmp_path, "#10")
+        extract(tmp_path, ["#10"])
     assert _issue_dir(tmp_path, 10).is_dir()
 
 
@@ -355,7 +356,7 @@ def test_extract_refuses_a_missing_member_marker_in_a_batch_that_remains(tmp_pat
     write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
     (_issue_dir(tmp_path, 12) / "batch").unlink()
     with pytest.raises(BatchMarkerError, match="lists none"):
-        extract(tmp_path, "#10")
+        extract(tmp_path, ["#10"])
 
 
 def test_extract_finishes_an_interrupted_extraction(tmp_path: Path) -> None:
@@ -365,14 +366,14 @@ def test_extract_finishes_an_interrupted_extraction(tmp_path: Path) -> None:
     (_issue_dir(tmp_path, 11) / "batch").write_text(
         json.dumps({"issues": ["#10", "#11", "#12"], "base_sha": SHA})
     )
-    assert extract(tmp_path, "#11") == ["#10", "#12"]
+    assert extract(tmp_path, ["#11"]) == ["#10", "#12"]
     assert not _issue_dir(tmp_path, 11).exists()
 
 
 def test_extract_finishes_an_interrupted_extraction_to_one(tmp_path: Path) -> None:
     write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
     remove_markers(tmp_path, ["#11"])
-    assert extract(tmp_path, "#10") == ["#11"]
+    assert extract(tmp_path, ["#10"]) == ["#11"]
     assert not _issue_dir(tmp_path, 10).exists()
 
 
@@ -395,3 +396,98 @@ def test_remove_markers_refuses_a_bad_ref_before_removing_any(tmp_path: Path) ->
 
 def test_marker_error_is_a_workflow_error() -> None:
     assert issubclass(BatchMarkerError, WorkflowError)
+
+
+def test_batch_of_returns_the_batch_a_set_is_in(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    assert batch_of(tmp_path, ["#10", "#12"]) == Marker(["#10", "#11", "#12"], SHA)
+
+
+def test_batch_of_refuses_a_set_with_a_member_in_no_batch(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
+    with pytest.raises(BatchMarkerError, match="#12 is not in a batch"):
+        batch_of(tmp_path, ["#10", "#12"])
+
+
+def test_batch_of_refuses_a_set_whose_markers_disagree(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    write_markers(tmp_path, ["#13", "#14"], base_sha=SHA)
+    with pytest.raises(BatchMarkerError, match="the markers disagree"):
+        batch_of(tmp_path, ["#10", "#13"])
+
+
+def test_batch_of_refuses_a_set_whose_bases_disagree(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    (_issue_dir(tmp_path, 12) / "batch").write_text(
+        json.dumps({"issues": ["#10", "#11", "#12"], "base_sha": OTHER_SHA})
+    )
+    with pytest.raises(BatchMarkerError, match="#12's batch marker has base_sha"):
+        batch_of(tmp_path, ["#10", "#12"])
+    assert read_marker(tmp_path, "#10") == Marker(["#10", "#11", "#12"], SHA)
+
+
+def test_extract_set_one_marker_rewrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12", "#13"], base_sha=SHA)
+    rewrites: list[list[str]] = []
+    real_write = batch_marker.write_markers
+
+    def spy(root: Path, issues: list[str], *, base_sha: str) -> None:
+        rewrites.append(list(issues))
+        real_write(root, issues, base_sha=base_sha)
+
+    monkeypatch.setattr(batch_marker, "write_markers", spy)
+    assert extract(tmp_path, ["#11", "#12"]) == ["#10", "#13"]
+    assert rewrites == [["#10", "#13"]]
+    for number in (11, 12):
+        assert not _issue_dir(tmp_path, number).exists()
+    for issue in ("#10", "#13"):
+        assert read_marker(tmp_path, issue) == Marker(["#10", "#13"], SHA)
+
+
+def test_extract_set_refuses_security_under_any_member_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    review = _issue_dir(tmp_path, 12) / "merge-review"
+    review.mkdir(mode=0o700)
+    (review / "security-R1.md").write_text("details\n")
+    with pytest.raises(BatchMarkerError, match="security-R1.md"):
+        extract(tmp_path, ["#11", "#12"])
+    assert _issue_dir(tmp_path, 11).is_dir()
+    for issue in ("#10", "#11", "#12"):
+        assert read_marker(tmp_path, issue) == Marker(["#10", "#11", "#12"], SHA)
+
+
+def test_extract_set_refuses_a_duplicate_issue(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    with pytest.raises(BatchMarkerError, match="more than once"):
+        extract(tmp_path, ["#11", "#11"])
+    assert read_marker(tmp_path, "#10") == Marker(["#10", "#11", "#12"], SHA)
+
+
+def test_extract_refuses_an_empty_set(tmp_path: Path) -> None:
+    with pytest.raises(BatchMarkerError, match="no issues"):
+        extract(tmp_path, [])
+
+
+def test_extract_set_of_every_member_unbatches_all(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    assert extract(tmp_path, ["#10", "#11", "#12"]) == []
+    for number in (10, 11, 12):
+        assert not _issue_dir(tmp_path, number).exists()
+
+
+def test_extract_set_leaving_one_removes_the_last_marker(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    assert extract(tmp_path, ["#10", "#11"]) == ["#12"]
+    assert read_marker(tmp_path, "#12") is None
+    assert not _issue_dir(tmp_path, 12).exists()
+
+
+def test_extract_refuses_a_set_member_of_another_batch(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    write_markers(tmp_path, ["#13", "#14"], base_sha=SHA)
+    with pytest.raises(BatchMarkerError, match="the markers disagree"):
+        extract(tmp_path, ["#10", "#13"])
+    assert _issue_dir(tmp_path, 10).is_dir()
+    assert read_marker(tmp_path, "#13") == Marker(["#13", "#14"], SHA)

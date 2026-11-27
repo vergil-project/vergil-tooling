@@ -19,11 +19,12 @@ mode-600 temporary file in its directory and renamed over the old one, so no
 link at the marker's name is followed and a reader never sees half a file. A
 marker that cannot be read or does not parse is an error, never "no marker".
 
-:func:`extract` removes a member's whole ``issue-implement/<N>/`` directory,
-its ``merge-review/`` state included, but refuses while any
-``security-*.md`` details file is under it: those hold a security finding's
-details until the merge review records them, and deleting one would lose
-them.
+:func:`extract` takes a set of members out of their batch in one rewrite of
+the markers that remain. It removes each leaving member's whole
+``issue-implement/<N>/`` directory, its ``merge-review/`` state included, but
+refuses while any ``security-*.md`` details file is under one of them: those
+hold a security finding's details until the merge review records them, and
+deleting one would lose them. :func:`batch_of` reads the batch a set is in.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.build_dir import BuildDirError
 from vergil_tooling.lib.merge_review.state import (
@@ -46,6 +48,9 @@ from vergil_tooling.lib.merge_review.state import (
 )
 from vergil_tooling.lib.pr_workflow.batch_rules import MAX_BATCH, MIN_BATCH
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 #: The marker's file name inside ``issue-implement/<N>/``.
 MARKER_FILE = "batch"
@@ -285,28 +290,84 @@ def remove_markers(root: Path, issues: list[str]) -> None:
         _remove_marker(root, issue)
 
 
-def extract(root: Path, issue: str) -> list[str]:
-    """Take *issue* out of its batch; return the remaining members, in order.
-
-    Refuses, naming each file, while any ``security-*.md`` details file is
-    under *issue*'s directory. Otherwise it rewrites every remaining member's
-    marker without *issue* (removing the last one's when fewer than
-    :data:`MIN_BATCH` remain), then removes *issue*'s whole
-    ``issue-implement/<N>/`` directory. Every remaining member's marker is
-    checked against *issue*'s first, so nothing changes when they disagree;
-    a member already rewritten by an interrupted extraction is accepted.
-    """
-    found = _read_marker(root, issue)
-    if found is None:
-        msg = f"{issue} has no batch marker; it is not in a batch, so there is nothing to extract"
+def _canonical_set(issues: Sequence[str]) -> list[str]:
+    """A set of issues: at least one canonical ref, none listed twice."""
+    if not issues:
+        msg = "no issues were given: a batch stop takes at least one issue out of its batch"
         raise BatchMarkerError(msg)
-    directory, marker = found
+    for issue in issues:
+        _number(issue)
+    if len(set(issues)) != len(issues):
+        msg = f"the set lists an issue more than once ({', '.join(issues)})"
+        raise BatchMarkerError(msg)
+    return list(issues)
 
-    security = _security_files(directory)
+
+def _found_markers(root: Path, issues: list[str]) -> dict[str, tuple[Path, Marker]]:
+    """Each issue's checked directory and marker; every issue must hold a marker."""
+    found: dict[str, tuple[Path, Marker]] = {}
+    for issue in issues:
+        entry = _read_marker(root, issue)
+        if entry is None:
+            msg = f"{issue} is not in a batch (it has no batch marker)"
+            raise BatchMarkerError(msg)
+        found[issue] = entry
+    return found
+
+
+def _one_batch(found: dict[str, tuple[Path, Marker]]) -> Marker:
+    """The batch every found marker lists, with one base; refuses when they disagree."""
+    first_issue, (_, first) = next(iter(found.items()))
+    for issue, (_, marker) in found.items():
+        if marker.issues != first.issues:
+            msg = (
+                f"{issue}'s batch marker lists {', '.join(marker.issues)}, but"
+                f" {first_issue}'s lists {', '.join(first.issues)};"
+                " the markers disagree"
+            )
+            raise BatchMarkerError(msg)
+        if marker.base_sha != first.base_sha:
+            msg = (
+                f"{issue}'s batch marker has base_sha {marker.base_sha}, but"
+                f" {first_issue}'s has {first.base_sha}; the markers disagree"
+            )
+            raise BatchMarkerError(msg)
+    return first
+
+
+def batch_of(root: Path, issues: Sequence[str]) -> Marker:
+    """The batch that *issues* are all in, read from their markers; nothing is written.
+
+    Every issue must hold a marker, and every marker must list the same batch
+    with the same ``base_sha``; otherwise :class:`BatchMarkerError` names the
+    difference.
+    """
+    return _one_batch(_found_markers(root, _canonical_set(issues)))
+
+
+def extract(root: Path, issues: Sequence[str]) -> list[str]:
+    """Take *issues* out of their batch; return the remaining members, in order.
+
+    *issues* must all be in one batch (:func:`batch_of`). Refuses, naming each
+    file, while any ``security-*.md`` details file is under a leaving issue's
+    directory. Otherwise it rewrites every remaining member's marker once,
+    without the set (removing the last one's when fewer than :data:`MIN_BATCH`
+    remain), then removes each leaving issue's whole ``issue-implement/<N>/``
+    directory. Every remaining member's marker is checked against the batch
+    first, so nothing changes when they disagree; a member already rewritten
+    by an interrupted extraction is accepted.
+    """
+    leaving = _canonical_set(issues)
+    found = _found_markers(root, leaving)
+    batch = _one_batch(found)
+
+    security: list[Path] = []
+    for issue in leaving:
+        security.extend(_security_files(found[issue][0]))
     if security:
         listed = "\n".join(f"  {path}" for path in security)
         msg = (
-            f"{issue} cannot be extracted while security details await a record:\n"
+            f"{', '.join(leaving)} cannot be extracted while security details await a record:\n"
             f"{listed}\n"
             "Record each one first with the merge review's record step"
             " (vrg-security-record create ... --details-file <file>), then delete"
@@ -314,35 +375,38 @@ def extract(root: Path, issue: str) -> list[str]:
         )
         raise BatchMarkerError(msg)
 
-    remaining = [member for member in marker.issues if member != issue]
+    remaining = [member for member in batch.issues if member not in leaving]
     for member in remaining:
         other = read_marker(root, member)
         if other is None and len(remaining) < MIN_BATCH:
             continue  # An interrupted extraction already removed it.
-        if other is None or other.issues not in (marker.issues, remaining):
+        if other is None or other.issues not in (batch.issues, remaining):
             held = "none" if other is None else ", ".join(other.issues)
             msg = (
-                f"{member}'s batch marker lists {held}, but {issue}'s lists"
-                f" {', '.join(marker.issues)}; the markers disagree, so nothing was changed"
+                f"{member}'s batch marker lists {held}, but the batch"
+                f" {', '.join(batch.issues)} lists its members; the markers disagree,"
+                " so nothing was changed"
             )
             raise BatchMarkerError(msg)
-        if other.base_sha != marker.base_sha:
+        if other.base_sha != batch.base_sha:
             msg = (
-                f"{member}'s batch marker has base_sha {other.base_sha}, but {issue}'s has"
-                f" {marker.base_sha}; the markers disagree, so nothing was changed"
+                f"{member}'s batch marker has base_sha {other.base_sha}, but the batch's"
+                f" is {batch.base_sha}; the markers disagree, so nothing was changed"
             )
             raise BatchMarkerError(msg)
 
     if len(remaining) >= MIN_BATCH:
-        write_markers(root, remaining, base_sha=marker.base_sha)
+        write_markers(root, remaining, base_sha=batch.base_sha)
     else:
         remove_markers(root, remaining)
-    try:
-        shutil.rmtree(directory)
-    except OSError as exc:
-        msg = (
-            f"could not remove {issue}'s state directory {directory}: {exc};"
-            " the other members no longer list it. Re-run batch-extract to finish."
-        )
-        raise BatchMarkerError(msg) from exc
+    for issue in leaving:
+        directory = found[issue][0]
+        try:
+            shutil.rmtree(directory)
+        except OSError as exc:
+            msg = (
+                f"could not remove {issue}'s state directory {directory}: {exc};"
+                " the other members no longer list it. Re-run batch-extract to finish."
+            )
+            raise BatchMarkerError(msg) from exc
     return remaining

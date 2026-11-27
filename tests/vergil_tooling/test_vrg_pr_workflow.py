@@ -29,6 +29,8 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups.record import Group, GroupRecordError
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
@@ -168,26 +170,216 @@ def test_batch_start_refuses_a_malformed_issue(
     rules.assert_not_called()
 
 
-def test_batch_extract_rewrites_the_batch(clone: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.fixture()
+def groups(monkeypatch: pytest.MonkeyPatch) -> list[Group]:
+    """The live groups the faked ``groups_of`` answers with, each by its members."""
+    live: list[Group] = []
+
+    def groups_of(task: IssueRef, *, authors: object = None) -> list[Group]:
+        return [group for group in live if task in group.members]
+
+    monkeypatch.setattr(record, "groups_of", groups_of)
+    return live
+
+
+def _group(group_id: str, *numbers: int) -> Group:
+    members = tuple(IssueRef("acme", "tools", number) for number in numbers)
+    return Group(
+        epic=IssueRef("acme", "tools", 1672),
+        group=group_id,
+        rev=1,
+        members=members,
+        dissolved=False,
+        comment_id="1",
+    )
+
+
+def test_batch_extract_rewrites_the_batch(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
     sha = "c" * 40
     write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
     assert _run("batch-extract", "--issue", "acme/tools#11") == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"ok": True, "extracted": "#11", "remaining": ["#10", "#12"], "batch": True}
+    assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10", "#12"], "batch": True}
     assert not _state_dir(clone, 11).exists()
     assert read_marker(clone, "#12") == Marker(["#10", "#12"], sha)
 
 
-def test_batch_extract_to_one_member(clone: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_batch_extract_to_one_member(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
     write_markers(clone, ["#10", "#11"], base_sha="c" * 40)
     assert _run("batch-extract", "--issue", "11") == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"ok": True, "extracted": "#11", "remaining": ["#10"], "batch": False}
+    assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10"], "batch": False}
     assert read_marker(clone, "#10") is None
 
 
+def test_check_writes_nothing(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = "c" * 40
+    write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
+    assert _run("batch-extract", "--check", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "split": [], "remaining": ["#10", "#12"]}
+    assert _state_dir(clone, 11).is_dir()
+    assert read_marker(clone, "#11") == Marker(["#10", "#11", "#12"], sha)
+
+
+def test_batch_extract_check_reports_a_split_and_exits_1(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "ok": False,
+        "split": [{"group": "G1", "leaving": ["#11"], "staying": ["#10"]}],
+        "remaining": ["#10", "#12"],
+    }
+    assert read_marker(clone, "#11") is not None
+
+
+def test_extract_split_refused_before_marker_change(
+    clone: Path,
+    groups: list[Group],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+
+    def extract_must_not_run(*_args: object) -> None:
+        msg = "extract ran after a refused split"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(vrg_pr_workflow.batch_marker, "extract", extract_must_not_run)
+    assert _run("batch-extract", "--issue", "11") == 1
+    err = capsys.readouterr().err
+    assert "G1" in err
+    assert "#11" in err
+    assert read_marker(clone, "#10") == Marker(["#10", "#11", "#12"], "c" * 40)
+    assert _state_dir(clone, 11).is_dir()
+
+
+def test_extract_whole_group_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "extracted": ["#10", "#11"], "remaining": ["#12"], "batch": False}
+    assert read_marker(clone, "#12") is None
+    assert not _state_dir(clone, 10).exists()
+
+
+def test_extract_standalone_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--issue", "12") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["remaining"] == ["#10", "#11"]
+
+
+def test_handoff_set_whole_groups_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12", "#13"], base_sha="c" * 40)
+    groups.extend([_group("G1", 10, 11), _group("G2", 12, 13)])
+    assert _run("batch-extract", "--check", "--issue", "10", "--issue", "11") == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["remaining"] == ["#12", "#13"]
+    assert read_marker(clone, "#12") == Marker(["#12", "#13"], "c" * 40)
+
+
+def test_unbatch_all_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10))
+    assert _run("batch-extract", "--issue", "10", "--issue", "11", "--issue", "12") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "ok": True,
+        "extracted": ["#10", "#11", "#12"],
+        "remaining": [],
+        "batch": False,
+    }
+    for number in (10, 11, 12):
+        assert not _state_dir(clone, number).exists()
+
+
+def test_group_member_outside_the_batch_is_not_staying(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #99 is grouped with #10 but is not in the batch, so it does not stay in it.
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 99))
+    assert _run("batch-extract", "--check", "--issue", "10") == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_collapsed_batch_under_group_rules(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.extend([_group("G1", 10, 11), _group("G2", 12, 13)])
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    capsys.readouterr()
+    # The one issue left is no longer in a batch: its marker went with the rest.
+    assert read_marker(clone, "#12") is None
+    assert _run("batch-show", "--issue", "12") == 1
+
+
+def test_check_read_failure_exits_1(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+
+    def unreadable(task: IssueRef, *, authors: object = None) -> list[Group]:
+        msg = f"acme/tools#1672 cannot be read: comment 7 for {task.slug} is malformed"
+        raise GroupRecordError(msg)
+
+    monkeypatch.setattr(record, "groups_of", unreadable)
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    assert "cannot be read" in capsys.readouterr().err
+    assert read_marker(clone, "#11") is not None
+
+
+def test_batch_extract_read_failure_refuses_before_any_change(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+
+    def unreadable(task: IssueRef, *, authors: object = None) -> list[Group]:
+        msg = f"acme/tools#1672 cannot be read: {task.slug}"
+        raise GroupRecordError(msg)
+
+    monkeypatch.setattr(record, "groups_of", unreadable)
+    assert _run("batch-extract", "--issue", "11") == 1
+    assert "cannot be read" in capsys.readouterr().err
+    assert read_marker(clone, "#10") == Marker(["#10", "#11", "#12"], "c" * 40)
+
+
+def test_batch_extract_check_refuses_an_issue_in_no_batch(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not in a batch" in captured.err
+
+
 def test_batch_extract_refuses_while_security_details_exist(
-    clone: Path, capsys: pytest.CaptureFixture[str]
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_markers(clone, ["#10", "#11"], base_sha="c" * 40)
     review = _state_dir(clone, 11) / "merge-review"
