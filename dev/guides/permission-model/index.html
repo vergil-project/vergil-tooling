@@ -18304,6 +18304,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#push-to-an-open-prs-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push to an Open PR's Branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#denied-subcommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19160,6 +19171,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#push-to-an-open-prs-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push to an Open PR's Branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#denied-subcommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19788,6 +19810,35 @@ Unlike commit and push, which warn and proceed, they fail closed when
 <code>.vergil/pr-workflow.json</code> exists but cannot be read. The no-op editors
 vrg-git sets for every rebase (<code>GIT_SEQUENCE_EDITOR=true</code>,
 <code>GIT_EDITOR=true</code>) keep <code>rebase -i --autosquash</code> non-interactive.</p>
+<h3 id="push-to-an-open-prs-branch">Push to an Open PR's Branch<a class="headerlink" href="#push-to-an-open-prs-branch" title="Permanent link">&para;</a></h3>
+<p>Every new head of an open PR into <code>develop</code> is made through the one PR
+path, which judges it before it pushes it. So <code>vrg-git push</code> refuses a
+plain push to the branch of an open PR into <code>develop</code>, naming the path's
+push mode: <code>vrg-submit-pr --push</code>, with <code>--force-with-lease</code> for a
+rebased head.</p>
+<ul>
+<li>It judges every destination branch the refspecs name, not only the
+  current worktree's branch. A bare push is judged by the branch it
+  resolves to: the current branch's push target (<code>@{push}</code>), falling back
+  to its upstream.</li>
+<li>It refuses what it cannot judge: an unparseable refspec (a wildcard, a
+  matching or negative refspec), an option it does not know, an option
+  that pushes refs no refspec names (<code>--all</code>, <code>--mirror</code>, <code>--prune</code>), a
+  bare push whose destination cannot be resolved (a detached HEAD, no
+  push target or upstream, <code>remote.&lt;name&gt;.push</code> set,
+  <code>push.default=matching</code>), and a push that may go anywhere but origin's
+  GitHub repository: a URL or path typed in place of a configured remote,
+  or a remote any of whose push URLs, as git resolves them (rewrites
+  included), is not origin's repository. The PR is looked up on origin's
+  repository, and a lookup that fails refuses the push, naming the error.</li>
+<li>It always refuses a push under <code>refs/vergil/release-lock</code>: the release
+  lock, <code>refs/vergil/release-lock-history</code> and every
+  <code>refs/vergil/release-lock-arming/*</code> ref, a delete and a lease create
+  included. Only the tooling writes those refs.</li>
+</ul>
+<p>There is no bypass: no environment variable, flag or marker lets a
+refused push through. The path's own push goes through <code>lib.git</code>, outside
+the wrapper.</p>
 <h3 id="denied-subcommands">Denied Subcommands<a class="headerlink" href="#denied-subcommands" title="Permanent link">&para;</a></h3>
 <p>Anything not on the allowlist is rejected. Notable denials:</p>
 <ul>
@@ -20524,7 +20575,7 @@ keeps untrusted content from driving behaviour.</p>
 <tr>
 <td><code>vrg-git push</code></td>
 <td>allowed</td>
-<td>validates: no <code>--force</code></td>
+<td>validates: no <code>--force</code>, not an open <code>develop</code> PR's branch, not a release-lock ref</td>
 <td>n/a</td>
 <td>n/a</td>
 <td>push accepted</td>
