@@ -86,7 +86,13 @@ forms), denied subcommands (`commit`, `gc` and others; use
 `rebase -i` without `--autosquash`), the worktree convention, the
 `<type>/<N>-<slug>` branch form for an open, non-epic issue opened by a
 trusted author, and the
-report-ready freeze. It protects origin, not the local checkout: `reset`,
+report-ready freeze. A plain push to the branch of an open PR into
+`develop` is refused, naming `vrg-submit-pr --push`, on every destination
+the refspecs name (a bare push by its `@{push}` target, else its
+upstream), and every push under `refs/vergil/release-lock` is refused;
+both fail closed and have no bypass (see
+[Push to an Open PR's Branch](../guides/permission-model.md#push-to-an-open-prs-branch)).
+It protects origin, not the local checkout: `reset`,
 `clean`, a pathspec `checkout` and `rebase -i --autosquash` run only on a
 branch that is neither protected nor frozen, and fail closed when the
 PR-workflow state cannot be read. Remote operations run with the GitHub App installation

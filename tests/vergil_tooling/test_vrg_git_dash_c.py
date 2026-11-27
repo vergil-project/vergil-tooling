@@ -50,6 +50,8 @@ def _init_repo(path: Path, origin: str) -> Path:
     _git(path, "commit", "-m", "base commit")
     _git(path, "remote", "add", "origin", origin)
     _git(path, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    # A bare push is judged by the destination it resolves to (spec §5.4).
+    _git(path, "branch", "--set-upstream-to=origin/develop")
     return path.resolve()
 
 
@@ -68,6 +70,8 @@ def layout(tmp_path: Path) -> Layout:
     (repo / ".worktrees").mkdir()
     worktree = repo / ".worktrees" / "issue-1-x"
     _git(repo, "worktree", "add", "-b", "feature/1-x", str(worktree))
+    _git(repo, "update-ref", "refs/remotes/origin/feature/1-x", "feature/1-x")
+    _git(worktree, "branch", "--set-upstream-to=origin/feature/1-x")
     # A branch tracking origin/develop: `branch -D` may delete it (#1426).
     _git(repo, "branch", "--track", "feature/2-z", "origin/develop")
     other = _init_repo(tmp_path / "other", "https://github.com/orgb/other.git")
@@ -86,6 +90,7 @@ class Outcome:
     issue_read_cwds: list[Path]
     freeze_roots: list[Path]
     repo_lookup_cwds: list[Path]
+    pr_lookups: list[tuple[Path, str, str]]
 
 
 class _Spy:
@@ -112,6 +117,14 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         issue_read_cwds: list[Path] = []
         freeze_roots: list[Path] = []
         repo_lookup_cwds: list[Path] = []
+        pr_lookups: list[tuple[Path, str, str]] = []
+
+        def _prs_for_branch(
+            repo: str, branch: str, *, state: str
+        ) -> tuple[list[trust.PRRef], list[trust.Skipped]]:
+            assert state == "open"
+            pr_lookups.append((Path.cwd().resolve(), repo, branch))
+            return [], []
 
         def _read_json(*_args: str) -> dict[str, object]:
             issue_read_cwds.append(Path.cwd().resolve())
@@ -135,6 +148,7 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             patch.object(vrg_git.github, "graphql", trust_stubs.FakeItems()),
             patch.object(trust, "load_trusted_authors", lambda: trust_stubs.AUTHORS),
             patch.object(vrg_git.freeze, "check_worktree", _check_worktree),
+            patch.object(vrg_git.pr_path.trust, "prs_for_branch", _prs_for_branch),
             patch.dict(
                 vrg_git.github._token_cache,
                 {
@@ -153,6 +167,7 @@ def run_vrg_git(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             issue_read_cwds=issue_read_cwds,
             freeze_roots=freeze_roots,
             repo_lookup_cwds=repo_lookup_cwds,
+            pr_lookups=pr_lookups,
         )
 
     yield _run
@@ -255,6 +270,15 @@ def test_dash_c_gives_the_same_answer_as_cd(
         assert via_dash_c.forwarded_cwd is None
     assert via_dash_c.issue_read_cwds == via_cd.issue_read_cwds
     assert via_dash_c.repo_lookup_cwds == via_cd.repo_lookup_cwds
+    assert via_dash_c.pr_lookups == via_cd.pr_lookups
+
+
+def test_open_pr_lookup_runs_in_the_dash_c_repo(layout: Layout, run_vrg_git: Any) -> None:
+    # The open-PR refusal resolves a bare push's destination, and looks its
+    # PR up, in the -C worktree: its branch, on its origin's repository.
+    out = run_vrg_git(layout.other, ["-C", str(layout.worktree), "push"])
+    assert out.rc == 0
+    assert out.pr_lookups == [(layout.worktree, "orga/repo", "feature/1-x")]
 
 
 _CWD_DEPENDENT = {

@@ -119,6 +119,37 @@ Unlike commit and push, which warn and proceed, they fail closed when
 vrg-git sets for every rebase (`GIT_SEQUENCE_EDITOR=true`,
 `GIT_EDITOR=true`) keep `rebase -i --autosquash` non-interactive.
 
+### Push to an Open PR's Branch
+
+Every new head of an open PR into `develop` is made through the one PR
+path, which judges it before it pushes it. So `vrg-git push` refuses a
+plain push to the branch of an open PR into `develop`, naming the path's
+push mode: `vrg-submit-pr --push`, with `--force-with-lease` for a
+rebased head.
+
+- It judges every destination branch the refspecs name, not only the
+  current worktree's branch. A bare push is judged by the branch it
+  resolves to: the current branch's push target (`@{push}`), falling back
+  to its upstream.
+- It refuses what it cannot judge: an unparseable refspec (a wildcard, a
+  matching or negative refspec), an option it does not know, an option
+  that pushes refs no refspec names (`--all`, `--mirror`, `--prune`), a
+  bare push whose destination cannot be resolved (a detached HEAD, no
+  push target or upstream, `remote.<name>.push` set,
+  `push.default=matching`), and a push that may go anywhere but origin's
+  GitHub repository: a URL or path typed in place of a configured remote,
+  or a remote any of whose push URLs, as git resolves them (rewrites
+  included), is not origin's repository. The PR is looked up on origin's
+  repository, and a lookup that fails refuses the push, naming the error.
+- It always refuses a push under `refs/vergil/release-lock`: the release
+  lock, `refs/vergil/release-lock-history` and every
+  `refs/vergil/release-lock-arming/*` ref, a delete and a lease create
+  included. Only the tooling writes those refs.
+
+There is no bypass: no environment variable, flag or marker lets a
+refused push through. The path's own push goes through `lib.git`, outside
+the wrapper.
+
 ### Denied Subcommands
 
 Anything not on the allowlist is rejected. Notable denials:
@@ -593,7 +624,7 @@ keeps untrusted content from driving behaviour.
 | Operation | L1 Permissions | L2 Wrapper | L3 Plugin Hook | L4 Hook Guard | Server-Side |
 |---|---|---|---|---|---|
 | `vrg-commit` | allowed | n/a | n/a | allows | push accepted |
-| `vrg-git push` | allowed | validates: no `--force` | n/a | n/a | push accepted |
+| `vrg-git push` | allowed | validates: no `--force`, not an open `develop` PR's branch, not a release-lock ref | n/a | n/a | push accepted |
 | `git push` | denied | n/a | blocked | n/a | push accepted (if layers bypassed) |
 | `vrg-gh pr merge` | allowed | rejected | blocked | n/a | into `develop`, merged once its required checks pass (if layers bypassed); into `main`, **refused** by the "Main updates" ruleset |
 | `gh pr create` | denied | n/a | blocked | n/a | PR created (if layers bypassed) |
