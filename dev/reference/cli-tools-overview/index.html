@@ -24805,7 +24805,7 @@ after a restart.</p>
 </tbody>
 </table>
 <h3 id="vrg-container-build-command">vrg-container-build-command<a class="headerlink" href="#vrg-container-build-command" title="Permanent link">&para;</a></h3>
-<p>Print a repo's declared <code>[container].build-command</code> verbatim, for CI
+<p>Print a repo's declared <code>[container].build-command</code>, for CI
 consumption. The CI test jobs call <code>--script</code> to obtain the exact
 provisioning command to run per job — the same command the local cache
 build bakes into the per-branch image — so the two paths run one
@@ -24825,7 +24825,7 @@ See <a href="../container-config/#build-command">Container Config Reference → 
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--script</code> (explicit CI intent; identical output), <code>--repo-root</code> (default: CWD)</td>
+<td><code>--script</code> (the step CI runs: the command after <code>export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC</code>), <code>--repo-root</code> (default: CWD)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
