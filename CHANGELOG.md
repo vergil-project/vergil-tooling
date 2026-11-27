@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.351] - 2026-11-27
+
+### Bug fixes
+
+- report not-accepted content as ignored, not untrusted (#5154)
+- report the PR it opened when a later step fails (#5198)
+- name each recorded issue in release-records, not the tracking issue (#5221)
+- carry the Deferred from: line forward on a defer refresh (#5224)
+- keep release worktrees during cleanup while a release tracking issue is open (#5284)
+- tighten the config read-form check (#5287)
+- widen how the audit reads agent involvement (#5289)
+- tighten how a commit SHA ref is resolved (#5295)
+
+### Chores
+
+- uv lock --upgrade
+
+### Documentation
+
+- bring the CLI and architecture docs in line with chained epics (#5253)
+- say that vrg-submit-pr upgrades a managed task's Ref linkage to Closes (#5191)
+- hand human-run steps as separate copy-paste blocks without the ! prefix (#5243)
+- match the failed-write row to what vrg-checkpoint prints (#5235)
+- say the vrg-validate transcripts are staged from v2.1.349 (#5286)
+
+### Features
+
+- show the branch in the watch-status table (#5223)
+- relax the provenance check for the one PR path (#5283)
+- add the one PR path and arm vrg-submit-pr's PRs through it (#5288)
+- arm the dependency-update PR through the one PR path (#5290)
+- add push mode, vrg-submit-pr --push judges a head before pushing it to an open PR's branch (#5291)
+- arm sync PRs through the one PR path; wait_until_merged becomes watch-only (#5292)
+- arm the back-merge through the one PR path; wait_and_merge serves main only (#5294)
+- every tooling push to an open develop PR's branch goes through the path (#5293)
+
+### Testing
+
+- clear GITHUB_ACTIONS and the trusted-authors variables for every test (#5279)
+- pin that submit's record read and vrg-issue-read agree on a human scope change (#5199)
+- re-capture the RHEL 9 dnf fixtures and show the repo keyring before the race (#5285)
+
 ## [2.1.350] - 2026-11-25
 
 ### Features
