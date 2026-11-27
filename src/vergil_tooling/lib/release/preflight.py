@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -41,27 +42,38 @@ from vergil_tooling.lib.pending_release import (
 )
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release import state
+from vergil_tooling.lib.release.abandon import ReleaseAbandoned, abandon_release
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.lock_guard import UnlockGuard
+from vergil_tooling.lib.release.lock_guard import UnlockGuard, holder_identity
 from vergil_tooling.lib.release.resume import (
     _SEARCH_COMMAND,
     BRANCH_STAGES,
+    MERGE_STAGE,
     _open_release_issues,
     _trusted_read,
     _trusted_release_issues,
     check_release_version,
     first_undone,
+    holds_lock_at,
+    judge_resume_lock,
     restore_context,
     verify_facts,
 )
-from vergil_tooling.lib.release.supersede import absorb, load_superseded
+from vergil_tooling.lib.release.stray import stray_merges
+from vergil_tooling.lib.release.supersede import (
+    absorb,
+    comment_lock_takeover,
+    judge_superseded_lock,
+    load_superseded,
+)
 from vergil_tooling.lib.release.tracking import read_state, render_contents
-from vergil_tooling.lib.release_lock import reclaim, sweeps
+from vergil_tooling.lib.release_lock import history, reclaim, sweeps
 from vergil_tooling.lib.release_lock import refs as lock_refs
-from vergil_tooling.lib.release_lock.holder import LockOwner
+from vergil_tooling.lib.release_lock.holder import LockLost, LockOwner
 from vergil_tooling.lib.release_lock.model import (
     LockRecord,
     ReleaseLockError,
+    heartbeat_age_secs,
     new_token,
     utc_now,
 )
@@ -205,8 +217,16 @@ def preflight(
     own_guard = guard is None
     if guard is None:
         guard = UnlockGuard()
+    takeover: _Takeover | None = None
     try:
-        lock = _lock_and_quiesce(repo, release_version, guard)
+        # --supersede takes over the superseded release's lock, so develop
+        # stays locked throughout; with no such lock it takes a fresh one.
+        if superseded is not None:
+            takeover = _supersede_takeover(repo, release_version, guard, superseded)
+        if takeover is not None:
+            lock = takeover.owner
+        else:
+            lock = _lock_and_quiesce(repo, release_version, guard)
         _check_branch_and_tree(repo_root)
         deps_gate = _merge_deps_outcomes(
             deps_gate, _check_pending_deps(repo, allow=allow_pending_deps)
@@ -246,6 +266,7 @@ def preflight(
         undeleted_deps_branches=deps_gate.undeleted,
         superseded=superseded,
         lock=lock,
+        lock_takeover="" if takeover is None else takeover.note,
     )
     return ctx
 
@@ -352,22 +373,7 @@ def _merge_deps_outcomes(first: _DepsGateOutcome, second: _DepsGateOutcome) -> _
 
 def _holder_identity() -> str:
     """The GitHub login this release runs as, from ``gh api user``'s JSON."""
-    try:
-        login = github.read_output("api", "user", "--jq", ".login")
-    except Exception as exc:
-        raise ReleaseError(
-            phase="preflight",
-            command="gh api user --jq .login",
-            message="Could not read the GitHub login the release lock names as its holder.",
-            detail=error_text(exc),
-        ) from exc
-    if not login:
-        raise ReleaseError(
-            phase="preflight",
-            command="gh api user --jq .login",
-            message="gh api user returned no login for the release lock's holder.",
-        )
-    return login
+    return holder_identity("preflight")
 
 
 def _lock_error(what: str, exc: Exception) -> ReleaseError:
@@ -432,20 +438,7 @@ def _lock_and_quiesce(repo: str, release_version: str, guard: UnlockGuard) -> Lo
             f"Reclaimed a stale release lock on {repo} (was at {reclaimed.old_sha}): "
             f"{reclaimed.reason}"
         )
-    now = utc_now()
-    record = LockRecord(
-        holder_identity=identity,
-        holder_host=host,
-        version=release_version,
-        worktree="",
-        tracking_issue="",
-        stage="preflight",
-        health="running",
-        broken_stage="",
-        started_at=now,
-        heartbeat_at=now,
-        token=new_token(),
-    )
+    record = _new_record(identity, host, release_version, tracking_issue="", worktree="")
     try:
         owner = LockOwner.take(repo, record)
     except ReleaseLockError as exc:
@@ -458,11 +451,146 @@ def _lock_and_quiesce(repo: str, release_version: str, guard: UnlockGuard) -> Lo
         result = sweeps.quiesce(repo, on_disarm=guard.disarm_started)
     except ReleaseLockError as exc:
         raise _lock_error(f"{repo}: quiescing develop", exc) from exc
+    _report_quiesce(result)
+    return owner
+
+
+def _report_quiesce(result: sweeps.QuiesceResult) -> None:
     print(
         f"Quiesced develop: disarmed {len(result.disarmed) + len(result.late)} PR(s)"
         + (f", deleted {len(result.expired)} expired arming ref(s)" if result.expired else "")
     )
-    return owner
+
+
+def _new_record(
+    identity: str, host: str, version: str, *, tracking_issue: str, worktree: str
+) -> LockRecord:
+    """A lock record for a holder starting now, at ``preflight``, ``running``."""
+    now = utc_now()
+    return LockRecord(
+        holder_identity=identity,
+        holder_host=host,
+        version=version,
+        worktree=worktree,
+        tracking_issue=tracking_issue,
+        stage="preflight",
+        health="running",
+        broken_stage="",
+        started_at=now,
+        heartbeat_at=now,
+        token=new_token(),
+    )
+
+
+@dataclass(frozen=True)
+class _Takeover:
+    """A ``--supersede`` run's takeover of the superseded release's lock.
+
+    *note* is the comment that records it on the new tracking issue, once
+    prepare creates that issue.
+    """
+
+    owner: LockOwner
+    note: str
+
+
+def _supersede_takeover(
+    repo: str, release_version: str, guard: UnlockGuard, superseded: Superseded
+) -> _Takeover | None:
+    """Take over *superseded*'s release lock for release *release_version*, if it holds one.
+
+    Spec §5.3 of epic vergil-project/.github#1664. When the lock is the
+    superseded release's and it is ``broken`` or its heartbeat is stale
+    (:func:`supersede.judge_superseded_lock`), it is taken over by
+    compare-and-swap against the value read, naming this release as holder
+    and no tracking issue, so ``develop`` stays locked throughout and no
+    quiesce or re-arm sweep runs. The takeover is recorded in the lock
+    history and on the superseded release's tracking issue; the note for the
+    new one is returned with the owner. *guard* is armed as for a fresh
+    take, and told the PRs are disarmed (the superseded release disarmed
+    them), so an exit before the new tracking issue exists releases the lock
+    and re-arms them.
+
+    ``None`` when there is nothing to take over (no lock, one that cannot be
+    read, or another release's): the caller takes a fresh lock and quiesces.
+    That lock running with a fresh heartbeat is refused, naming it.
+    """
+    try:
+        found = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: reading the lock", exc) from exc
+    now = datetime.now(UTC)
+    old = judge_superseded_lock(repo, found, superseded, now=now)
+    if old is None:
+        return None
+    identity = _holder_identity()
+    host = socket.gethostname()
+    record = _new_record(identity, host, release_version, tracking_issue="", worktree="")
+    try:
+        owner = LockOwner.takeover(repo, found, record)
+    except LockLost as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"take over {lock_refs.LOCK_REF}",
+            message=(
+                f"The release lock on {repo} changed while this run took it over from release"
+                f" {superseded.version}, so nothing was taken over or disarmed: {exc} Check it"
+                " with `vrg-release-lock status`, then re-run"
+                f" `vrg-release --supersede {superseded.version}`."
+            ),
+        ) from exc
+    except (ReleaseLockError, ValueError) as exc:
+        raise _lock_error(f"{repo}: taking over the lock", exc) from exc
+    guard.arm(repo, owner)
+    # The superseded release's quiesce disarmed develop's PRs, and the lock
+    # never went: an unlock before the new tracking issue exists re-arms them.
+    guard.disarm_started()
+    age = heartbeat_age_secs(old, now=now)
+    was = old.health + (f" at {old.broken_stage}" if old.broken_stage else "")
+    print(
+        f"Took over the release lock on {repo} from release {superseded.version}"
+        f" ({was}, heartbeat {age}s old) for release {release_version}"
+    )
+    try:
+        history.append(
+            repo,
+            history.HistoryEntry(
+                action="takeover",
+                old=found.text,
+                actor=f"{identity} on {host} (vrg-release --supersede {superseded.version})",
+                at=utc_now(),
+                reason=f"superseded by release {release_version}",
+                rearmed=(),
+            ),
+        )
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: recording the takeover in the lock history", exc) from exc
+    old_issue = f"{repo}#{superseded.number}"
+    comment_lock_takeover(
+        repo,
+        superseded.number,
+        "\n".join(
+            [
+                "<!-- vrg-release:lock-takeover -->",
+                "",
+                f"**Release lock taken over** by release {release_version}"
+                f" (`vrg-release --supersede {superseded.version}`), run by {identity} on"
+                f" {host}. The lock was {was}, its heartbeat {age}s old. `develop` stays"
+                f" locked; this tracking issue is closed once release {release_version}'s"
+                " own is recorded in the lock.",
+            ]
+        ),
+    )
+    note = "\n".join(
+        [
+            "<!-- vrg-release:lock-takeover -->",
+            "",
+            f"**Release lock taken over** from superseded release {superseded.version}"
+            f" ({old_issue}), whose lock was {was}, its heartbeat {age}s old. `develop`"
+            " stayed locked throughout; no PR was re-armed in between.",
+        ]
+    )
+    return _Takeover(owner=owner, note=note)
 
 
 def _release_bump(
@@ -557,9 +685,169 @@ def _resume_context(
         where = f"root checkout {repo_root}"
     if on_branch:
         check_release_version(ctx, current)
+    _resume_lock(ctx, first, stages)
     resume_at = first or "nothing left undone"
     print(f"Preflight passed: {repo} v{resume_version} — resuming at {resume_at} in {where}")
     return ctx
+
+
+def _resume_lock(ctx: ReleaseContext, first: str | None, stages: Sequence[str]) -> None:
+    """Hold the release lock for a resume whose first undone stage is *first*.
+
+    Spec §5.3 and §5.6 of epic vergil-project/.github#1664. Only a resume
+    before ``unlock`` holds it (:func:`resume.holds_lock_at`); one at
+    ``unlock`` deletes what is left of its own in that stage, and one past it
+    reads no lock. The lock is read and judged
+    (:func:`resume.judge_resume_lock`): this release's own lock, ``broken`` or
+    with a stale heartbeat, is adopted (:func:`_adopt`); no lock is re-taken
+    (:func:`_retake`); anything else is refused, writing nothing.
+
+    A failure once the run holds the lock marks it ``broken`` at
+    ``preflight``, so the next resume adopts it rather than waiting for its
+    heartbeat to go stale; a failure to mark it is reported with the first.
+    """
+    if not holds_lock_at(first, stages):
+        return
+    repo = ctx.repo
+    identity = _holder_identity()
+    host = socket.gethostname()
+    try:
+        found = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: reading the lock", exc) from exc
+    action = judge_resume_lock(
+        repo,
+        found,
+        identity=identity,
+        tracking_issue=f"{repo}#{ctx.issue_number}",
+        version=ctx.version,
+        now=datetime.now(UTC),
+    )
+    if action == "adopt":
+        owner = _adopt(repo, found)
+        ctx.lock = owner
+        fields = {"stage": "preflight", "health": "running", "broken_stage": ""}
+        if ctx.worktree_path is not None:
+            fields["worktree"] = str(ctx.worktree_path)
+        _holding(ctx, lambda: owner.update(**fields))
+        return
+    ctx.lock = _retake(ctx, identity, host)
+    _holding(ctx, lambda: _after_retake(ctx, identity, host, first, stages))
+
+
+def _adopt(repo: str, found: lock_refs.LockState) -> LockOwner:
+    """Adopt this release's own lock, read as *found*, with a new token."""
+    try:
+        owner = LockOwner.adopt(repo, found)
+    except LockLost as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"adopt {lock_refs.LOCK_REF}",
+            message=(
+                f"The release lock on {repo} changed while this resume adopted it, so it"
+                f" was not adopted: {exc} Check it with `vrg-release-lock status`, then"
+                " re-run the resume."
+            ),
+        ) from exc
+    except (ReleaseLockError, ValueError) as exc:
+        raise _lock_error(f"{repo}: adopting the lock", exc) from exc
+    print(f"Adopted this release's release lock on {repo} ({found.sha}), with a new token")
+    return owner
+
+
+def _retake(ctx: ReleaseContext, identity: str, host: str) -> LockOwner:
+    """Re-take the absent lock for this release, naming its tracking issue (create-only)."""
+    repo = ctx.repo
+    record = _new_record(
+        identity,
+        host,
+        ctx.version,
+        tracking_issue=f"{repo}#{ctx.issue_number}",
+        worktree="" if ctx.worktree_path is None else str(ctx.worktree_path),
+    )
+    try:
+        owner = LockOwner.take(repo, record)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: re-taking the lock", exc) from exc
+    if owner is None:
+        raise _held_refusal(repo)
+    print(f"Re-took the release lock on {repo} for release {ctx.version}: none was held")
+    return owner
+
+
+def _after_retake(
+    ctx: ReleaseContext, identity: str, host: str, first: str | None, stages: Sequence[str]
+) -> None:
+    """Record the re-take, quiesce ``develop`` again, and check for stray merges before the merge.
+
+    The break or reclaim that removed the lock ended with a re-arm sweep, so
+    the re-take quiesces as a fresh take does. A resume before
+    ``merge-release`` then checks for a PR merged after the cut, only once
+    ``develop`` is disarmed: one found abandons the release
+    (:func:`abandon.abandon_release`), and the run stops telling the human
+    to run a fresh release.
+    """
+    repo = ctx.repo
+    try:
+        history.append(
+            repo,
+            history.HistoryEntry(
+                action="retake",
+                old="",
+                actor=f"{identity} on {host} (vrg-release --resume)",
+                at=utc_now(),
+                reason=(
+                    f"release {ctx.version} ({repo}#{ctx.issue_number}) resumed at {first},"
+                    " and no release lock was held"
+                ),
+                rearmed=(),
+            ),
+        )
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: recording the re-take in the lock history", exc) from exc
+    try:
+        result = sweeps.quiesce(repo)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: quiescing develop", exc) from exc
+    _report_quiesce(result)
+    if first is None or stages.index(first) >= stages.index(MERGE_STAGE):
+        return
+    strays = stray_merges(ctx)
+    if strays:
+        reason = f"{', '.join(strays)} merged into develop after the release was cut"
+        print(f"Stray merge: {reason}")
+        abandon_release(ctx, reason=reason)
+        raise ReleaseAbandoned(ctx.version, reason)
+
+
+def _holding(ctx: ReleaseContext, step: Callable[[], object]) -> None:
+    """Run *step* while this resume holds the lock; on a failure, mark the lock broken first.
+
+    An abandoned release has released its lock, so there is nothing to
+    mark. A lock no longer this run's (``ctx.lock`` is ``None``, once
+    released or lost) or lost to a break is not marked either. A failed mark
+    is raised naming both failures.
+    """
+    try:
+        step()
+    except ReleaseAbandoned:
+        raise
+    except Exception as exc:
+        held = ctx.lock
+        if held is None or isinstance(exc, LockLost):
+            raise
+        try:
+            held.update(health="broken", broken_stage="preflight")
+        except Exception as lock_exc:
+            raise ReleaseError(
+                phase="preflight",
+                command=getattr(exc, "command", "release lock"),
+                message=(
+                    f"{exc} Marking the release lock broken at preflight then failed too:"
+                    f" {lock_exc}"
+                ),
+            ) from lock_exc
+        raise
 
 
 def _deps_pr_number(url: str) -> int:

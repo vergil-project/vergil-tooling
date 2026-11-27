@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import git, github, pr_path
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release_lock import stale
-from vergil_tooling.lib.release_lock.model import LockRecord, ReleaseLockError
+from vergil_tooling.lib.release_lock.model import LockRecord, ReleaseLockError, heartbeat_age_secs
 from vergil_tooling.lib.release_lock.refs import read_lock
 
 if TYPE_CHECKING:
@@ -175,7 +175,7 @@ def gather(repo: str, *, now: datetime | None = None) -> LockStatus:
         repo=repo,
         state=state,
         staleness=staleness,
-        heartbeat_age_secs=stale.heartbeat_age_secs(rec, now=when) if rec is not None else None,
+        heartbeat_age_secs=heartbeat_age_secs(rec, now=when) if rec is not None else None,
         held_prs=held_prs(repo) if state.held else (),
     )
 

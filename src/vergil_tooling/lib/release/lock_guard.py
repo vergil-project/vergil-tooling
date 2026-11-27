@@ -24,7 +24,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import github
+from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.resume import is_own_lock
 from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock import sweeps
 from vergil_tooling.lib.release_lock.holder import LockLost
@@ -34,9 +37,29 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release_lock.holder import LockOwner
 
-__all__ = ["UnlockGuard", "rearm", "rearm_lines", "release_lock"]
+__all__ = ["UnlockGuard", "holder_identity", "rearm", "rearm_lines", "release_lock"]
 
 _PHASE = "unlock-on-exit"
+
+
+def holder_identity(phase: str = "preflight") -> str:
+    """The GitHub login this release runs as: the identity its lock names as the holder."""
+    try:
+        login = github.read_output("api", "user", "--jq", ".login")
+    except Exception as exc:
+        raise ReleaseError(
+            phase=phase,
+            command="gh api user --jq .login",
+            message="Could not read the GitHub login the release lock names as its holder.",
+            detail=error_text(exc),
+        ) from exc
+    if not login:
+        raise ReleaseError(
+            phase=phase,
+            command="gh api user --jq .login",
+            message="gh api user returned no login for the release lock's holder.",
+        )
+    return login
 
 
 class UnlockGuard:
@@ -153,12 +176,11 @@ def release_lock(ctx: ReleaseContext, *, phase: str, remedy: str) -> None:
 
     The heartbeat stops first (:meth:`LockOwner.release`). Once the lock is
     deleted, ``ctx.lock`` is ``None``: nothing after the unlock writes or
-    reads the lock. A run with no lock owner (a resume) takes none: it reads
-    the lock, and with none held there is nothing to release; a lock still
-    held is refused, naming it, since a resume never deletes a lock it does
-    not own. A failure raises :class:`ReleaseError` naming it and *remedy*;
-    a lost lock (broken or reclaimed meanwhile) is no longer this run's, so
-    ``ctx.lock`` is cleared then too.
+    reads the lock. A run with no lock owner (a resume at ``unlock``) takes
+    and adopts none: it reads the lock (:func:`_release_without_owner`). A
+    failure raises :class:`ReleaseError` naming it and *remedy*; a lost lock
+    (broken or reclaimed meanwhile) is no longer this run's, so ``ctx.lock``
+    is cleared then too.
     """
     owner = ctx.lock
     command = f"release lock on {ctx.repo}"
@@ -180,6 +202,14 @@ def release_lock(ctx: ReleaseContext, *, phase: str, remedy: str) -> None:
 
 
 def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
+    """The unlock of a resume at ``unlock``: delete what is left of this release's own lock.
+
+    Spec §5.3 of epic vergil-project/.github#1664. The lock is read: none
+    held means the stage is done. One that names this release's identity and
+    tracking issue is deleted by compare-and-swap against the sha just read.
+    Anything else (an unreadable lock, another release's, or a lock that
+    changed between the read and the delete) is refused, naming it.
+    """
     command = f"read release lock on {ctx.repo}"
     try:
         state = lock_refs.read_lock(ctx.repo)
@@ -189,20 +219,61 @@ def _release_without_owner(ctx: ReleaseContext, *, phase: str) -> None:
             command=command,
             message=f"Reading the release lock on {ctx.repo} failed: {exc}.",
         ) from exc
-    if not state.held:
+    if state.sha is None:
         print(f"No release lock is held on {ctx.repo}: nothing to release.")
+        return
+    tracking_issue = f"{ctx.repo}#{ctx.issue_number}"
+    if (
+        state.record is not None
+        and ctx.issue_number is not None
+        and is_own_lock(
+            state.record, identity=holder_identity(phase), tracking_issue=tracking_issue
+        )
+    ):
+        _delete_own(ctx, state.sha, phase=phase)
         return
     raise ReleaseError(
         phase=phase,
         command=command,
         message=(
             f"This run holds no release lock (it is a resume), and the release lock on"
-            f" {ctx.repo} is held: {_describe(state)}. A resume does not delete a lock an"
-            " earlier run took. Check it with `vrg-release-lock status`; once no run of"
-            f" this release is alive, remove it with `{_BREAK}`, which also re-arms the"
-            f" PRs, then re-run `vrg-release --resume {ctx.version}`."
+            f" {ctx.repo} is held: {_describe(state)}. It is not release {ctx.version}'s"
+            f" own ({tracking_issue}), and a resume deletes only its own release's lock."
+            " Check it with `vrg-release-lock status`; once no run of the release holding"
+            f" it is alive, remove it with `{_BREAK}`, which also re-arms the PRs, then"
+            f" re-run `vrg-release --resume {ctx.version}`."
         ),
     )
+
+
+def _delete_own(ctx: ReleaseContext, sha: str, *, phase: str) -> None:
+    """Delete this release's remaining lock, by compare-and-swap against *sha*, as just read."""
+    command = f"delete {lock_refs.LOCK_REF} on {ctx.repo}"
+    retry = (
+        "Check it with `vrg-release-lock status`, then re-run"
+        f" `vrg-release --resume {ctx.version}`."
+    )
+    try:
+        deleted = lock_refs.delete_lock(ctx.repo, expected=sha)
+    except ReleaseLockError as exc:
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=(
+                f"Deleting release {ctx.version}'s release lock on {ctx.repo} failed: {exc}."
+                f" {retry}"
+            ),
+        ) from exc
+    if not deleted:
+        raise ReleaseError(
+            phase=phase,
+            command=command,
+            message=(
+                f"The release lock on {ctx.repo} changed between this run's read of it"
+                f" (at {sha}) and its delete, so it was not deleted. {retry}"
+            ),
+        )
+    print(f"Deleted release {ctx.version}'s remaining release lock on {ctx.repo} (at {sha}).")
 
 
 def rearm_lines(result: sweeps.RearmResult) -> list[str]:

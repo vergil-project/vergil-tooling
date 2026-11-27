@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import finalize_watch, identity_mode, pr_path
 from vergil_tooling.lib.finalize_watch import FREE, LockView
 from vergil_tooling.lib.release_lock import reclaim, refs, stale
-from vergil_tooling.lib.release_lock.model import ReleaseLockError
+from vergil_tooling.lib.release_lock.model import ReleaseLockError, heartbeat_age_secs
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.finalize_watch import Snapshot
@@ -62,7 +62,7 @@ class LockWatchError(finalize_watch.FinalizeWatchError):
 def _health(rec: LockRecord, verdict: stale.Staleness, *, now: datetime) -> str:
     """``(stage <stage>, <health>)``, with the heartbeat's age when it is what makes it not live."""
     if rec.health == "running" and not verdict.live:
-        age = stale.heartbeat_age_secs(rec, now=now)
+        age = heartbeat_age_secs(rec, now=now)
         return f"(stage {rec.stage}, running, heartbeat {age}s old)"
     return f"(stage {rec.stage}, {rec.health})"
 
