@@ -66,6 +66,10 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
     the Contents section and the state block, never a later edit, so no
     interrupt can leave an open tracking issue that ``vrg-release --resume``
     refuses for want of one (#4367; spec §4.2 of epic vergil-project/.github#1440).
+
+    When the run holds the release lock (``ctx.lock``), the issue's
+    ``<owner>/<repo>#<n>`` is written into it immediately after the issue is
+    created, before anything else (spec §5.2 of epic vergil-project/.github#1664).
     """
     if not ctx.progress_block:
         raise ReleaseError(
@@ -130,6 +134,11 @@ def create_tracking_issue(ctx: ReleaseContext) -> None:
     ctx.issue_number = int(match.group(1))
     ctx.issue_url = url
     ctx.state = initial
+    if ctx.lock is not None:
+        # Before anything else, so the lock names the issue that records this
+        # release (spec §5.2 of epic vergil-project/.github#1664): from here on
+        # the early-exit unlock path no longer applies.
+        ctx.lock.update(tracking_issue=f"{ctx.repo}#{ctx.issue_number}")
     # Locked at birth, so only repository collaborators can comment (spec
     # §4.2). A lock that fails leaves an unlocked issue, which every later
     # read of the state locks before it trusts it (guard.ensure_locked).

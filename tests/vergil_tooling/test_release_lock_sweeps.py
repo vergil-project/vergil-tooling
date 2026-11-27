@@ -426,6 +426,35 @@ def test_quiesce_reports_arming_refs_at_final_check(
     assert sweeps.quiesce(REPO).arming_at_check == (21,)
 
 
+def test_quiesce_on_disarm_called_after_wait_before_first_sweep(
+    gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    def wait(repo: str, **kw: object) -> list[int]:
+        events.append("wait")
+        return []
+
+    monkeypatch.setattr(sweeps, "wait_for_arming_refs", wait)
+    monkeypatch.setattr(arming, "list_arming", lambda repo: {})
+    gh.add(1, armed=True)
+    sweeps.quiesce(REPO, on_disarm=lambda: events.append(f"on_disarm after {gh.lists} lists"))
+    assert events == ["wait", "on_disarm after 0 lists"]
+    assert not gh.armed(1)
+
+
+def test_quiesce_wait_failure_never_calls_on_disarm(monkeypatch: pytest.MonkeyPatch) -> None:
+    def wait(repo: str, **kw: object) -> list[int]:
+        msg = "arming refs still there"
+        raise sweeps.SweepError(msg)
+
+    monkeypatch.setattr(sweeps, "wait_for_arming_refs", wait)
+    called: list[str] = []
+    with pytest.raises(sweeps.SweepError, match="still there"):
+        sweeps.quiesce(REPO, on_disarm=lambda: called.append("on_disarm"))
+    assert called == []
+
+
 def test_quiesce_final_listing_failure_raises(
     gh: FakeGitHub, monkeypatch: pytest.MonkeyPatch
 ) -> None:

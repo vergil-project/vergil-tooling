@@ -6,6 +6,7 @@ import functools
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -41,10 +42,13 @@ from vergil_tooling.lib.pending_release import (
 from vergil_tooling.lib.process_errors import command_text, error_text
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.lock_guard import UnlockGuard
 from vergil_tooling.lib.release.resume import (
     _SEARCH_COMMAND,
     BRANCH_STAGES,
     _open_release_issues,
+    _trusted_read,
+    _trusted_release_issues,
     check_release_version,
     first_undone,
     restore_context,
@@ -52,6 +56,15 @@ from vergil_tooling.lib.release.resume import (
 )
 from vergil_tooling.lib.release.supersede import absorb, load_superseded
 from vergil_tooling.lib.release.tracking import read_state, render_contents
+from vergil_tooling.lib.release_lock import reclaim, sweeps
+from vergil_tooling.lib.release_lock import refs as lock_refs
+from vergil_tooling.lib.release_lock.holder import LockOwner
+from vergil_tooling.lib.release_lock.model import (
+    LockRecord,
+    ReleaseLockError,
+    new_token,
+    utc_now,
+)
 from vergil_tooling.lib.self_repo import is_self_repo
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -114,6 +127,7 @@ def preflight(
     allow_pending_deps: bool = False,
     stages: Sequence[str] = (),
     supersede: str | None = None,
+    guard: UnlockGuard | None = None,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
@@ -165,20 +179,7 @@ def preflight(
             stages=stages,
         )
     _check_branch_and_tree(repo_root)
-
-    try:
-        current_version = version.show(repo_root)
-    except (
-        FileNotFoundError,
-        version.VersionSyncError,
-        version.CargoVersionError,
-        version.VersionFileError,
-    ) as exc:
-        raise ReleaseError(
-            phase="preflight",
-            command="version.show",
-            message=str(exc),
-        ) from exc
+    current_version = _current_version(repo_root)
 
     superseded = None if supersede is None else load_superseded(repo, repo_root, supersede, stages)
     bump = _release_bump(current_version, version_override, superseded)
@@ -187,17 +188,47 @@ def preflight(
     else:
         release_version = current_version
 
-    _check_main_not_ahead_of_develop(accept=None if superseded is None else superseded.main_commit)
-    _check_version_not_tagged(release_version)
+    # The one-release check first: a refusal here locks and disarms nothing.
+    # The lock gives the atomic exclusion; this check stays as the second
+    # guard, for a release past its unlock whose tracking issue is still open
+    # (spec §5.3 step 1.2 of epic vergil-project/.github#1664).
     _check_no_open_release(repo, exempt=None if superseded is None else superseded.number)
-    _check_packages_unpublished(repo, repo_root, release_version)
+    # The pre-checks: a refusal here exits with nothing locked (spec §5.3 step 1.1).
+    _head_gates(repo, repo_root, release_version, superseded)
     deps_gate = _check_pending_deps(repo, allow=allow_pending_deps)
     _develop_cd_gate(repo)
+    judged = _develop_head()
 
-    branch = f"release/{release_version}"
-    worktree = _acquire_release_worktree(repo_root, branch, resume=False)
-    os.chdir(worktree)
-    cut, pending, issues = _release_contents(worktree, superseded)
+    # Lock and quiesce, then judge again what is cut (spec §5.3 steps 1.2-1.5).
+    # Every exit from here until prepare records the tracking issue in the
+    # lock runs the unlock path: the orchestrator's guard spans both stages.
+    own_guard = guard is None
+    if guard is None:
+        guard = UnlockGuard()
+    try:
+        lock = _lock_and_quiesce(repo, release_version, guard)
+        _check_branch_and_tree(repo_root)
+        deps_gate = _merge_deps_outcomes(
+            deps_gate, _check_pending_deps(repo, allow=allow_pending_deps)
+        )
+        _rejudge_moved_head(
+            repo,
+            repo_root,
+            judged=judged,
+            current_version=current_version,
+            release_version=release_version,
+            superseded=superseded,
+        )
+
+        branch = f"release/{release_version}"
+        worktree = _acquire_release_worktree(repo_root, branch, resume=False)
+        lock.update(worktree=str(worktree))
+        os.chdir(worktree)
+        cut, pending, issues = _release_contents(worktree, superseded)
+    except BaseException as exc:
+        if own_guard and guard.armed:
+            guard.unlock(exc)
+        raise
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     ctx = ReleaseContext(
@@ -214,8 +245,224 @@ def preflight(
         cleared_deps_prs=deps_gate.cleared,
         undeleted_deps_branches=deps_gate.undeleted,
         superseded=superseded,
+        lock=lock,
     )
     return ctx
+
+
+def _current_version(repo_root: Path) -> str:
+    """``develop``'s VERSION in *repo_root*; any failure to read it is a :class:`ReleaseError`."""
+    try:
+        return version.show(repo_root)
+    except (
+        FileNotFoundError,
+        version.VersionSyncError,
+        version.CargoVersionError,
+        version.VersionFileError,
+    ) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=str(exc),
+        ) from exc
+
+
+def _head_gates(
+    repo: str, repo_root: Path, release_version: str, superseded: Superseded | None
+) -> None:
+    """The gates that judge ``develop``'s head, but for the develop CD gate.
+
+    The main/develop check, the already-tagged check and the package check:
+    each reads the synced head (its history, its tags or its ``[package]``
+    config), so each runs again on a head that moved before the disarm.
+    """
+    _check_main_not_ahead_of_develop(accept=None if superseded is None else superseded.main_commit)
+    _check_version_not_tagged(release_version)
+    _check_packages_unpublished(repo, repo_root, release_version)
+
+
+def _develop_head() -> str:
+    """The root checkout's ``develop`` head, as the sync left it."""
+    try:
+        return git.read_output("rev-parse", "HEAD")
+    except subprocess.CalledProcessError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="git rev-parse HEAD",
+            message="Could not read the develop head the release gates judge.",
+            detail=error_text(exc),
+        ) from exc
+
+
+def _rejudge_moved_head(
+    repo: str,
+    repo_root: Path,
+    *,
+    judged: str,
+    current_version: str,
+    release_version: str,
+    superseded: Superseded | None,
+) -> None:
+    """Judge the head the second sync reached again, if it is not the one the gates judged.
+
+    After the disarm ``develop`` cannot move, so whatever this judges is what
+    is cut (spec §5.3 step 1.5 of epic vergil-project/.github#1664). An
+    unmoved head is cut with no gate run again. A moved one (a PR merged
+    between the gates and the disarm) must keep the VERSION the release was
+    computed from, then passes the head-judging gates and the develop CD
+    gate again, on the new head.
+    """
+    head = _develop_head()
+    if head == judged:
+        print(f"develop is still at {head[:12]}, the head the gates judged")
+        return
+    print(
+        f"develop moved from {judged[:12]} to {head[:12]} before the disarm; "
+        "judging the new head again"
+    )
+    moved_version = _current_version(repo_root)
+    if moved_version != current_version:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=(
+                f"develop moved from {judged[:12]} to {head[:12]} before the disarm, and its "
+                f"VERSION changed from {current_version} to {moved_version}, so release "
+                f"{release_version} no longer matches it. Find out what changed VERSION, "
+                "then re-run vrg-release."
+            ),
+        )
+    _head_gates(repo, repo_root, release_version, superseded)
+    _develop_cd_gate(repo)
+
+
+def _merge_deps_outcomes(first: _DepsGateOutcome, second: _DepsGateOutcome) -> _DepsGateOutcome:
+    """The dependency-update gate's outcome over its pre-check and its run after the disarm.
+
+    The PRs closed and the branches left undeleted by either run are kept,
+    each once. The PRs bypassed are the second run's: the set it judged can
+    no longer change.
+    """
+    return _DepsGateOutcome(
+        cleared=list(dict.fromkeys([*first.cleared, *second.cleared])),
+        bypassed=second.bypassed,
+        undeleted=list(dict.fromkeys([*first.undeleted, *second.undeleted])),
+    )
+
+
+def _holder_identity() -> str:
+    """The GitHub login this release runs as, from ``gh api user``'s JSON."""
+    try:
+        login = github.read_output("api", "user", "--jq", ".login")
+    except Exception as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="gh api user --jq .login",
+            message="Could not read the GitHub login the release lock names as its holder.",
+            detail=error_text(exc),
+        ) from exc
+    if not login:
+        raise ReleaseError(
+            phase="preflight",
+            command="gh api user --jq .login",
+            message="gh api user returned no login for the release lock's holder.",
+        )
+    return login
+
+
+def _lock_error(what: str, exc: Exception) -> ReleaseError:
+    return ReleaseError(
+        phase="preflight",
+        command=f"release lock on {what}",
+        message=str(exc),
+    )
+
+
+def _held_refusal(repo: str) -> ReleaseError:
+    """The refusal for a lock another holder has, naming it as read now."""
+    try:
+        held = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        return ReleaseError(
+            phase="preflight",
+            command=f"take {lock_refs.LOCK_REF}",
+            message=(
+                f"The release lock on {repo} is held by another release, and reading it to "
+                f"name the holder failed: {exc}. Check it with `vrg-release-lock status`."
+            ),
+        )
+    if held.record is not None:
+        rec = held.record
+        holder = (
+            f"held by {rec.holder_identity} on {rec.holder_host} for release {rec.version}"
+            f" (stage {rec.stage}, health {rec.health}, tracking issue"
+            f" {rec.tracking_issue or 'not yet created'})"
+        )
+    elif held.sha is not None:
+        holder = f"held, but unreadable ({held.error})"
+    else:
+        holder = "held when this run tried to take it, and released since"
+    return ReleaseError(
+        phase="preflight",
+        command=f"take {lock_refs.LOCK_REF}",
+        message=(
+            f"Another release holds the release lock on {repo}: it is {holder}. One "
+            "release runs at a time; nothing was disarmed. Wait for it to finish (see "
+            "`vrg-release-lock status`), then re-run vrg-release."
+        ),
+    )
+
+
+def _lock_and_quiesce(repo: str, release_version: str, guard: UnlockGuard) -> LockOwner:
+    """Reclaim a stale lock, take the lock, arm *guard* and quiesce ``develop``.
+
+    Spec §5.3 steps 1.2-1.4 and §5.6 of epic vergil-project/.github#1664. A
+    lock held by another release, and not stale, refuses naming its holder,
+    version and tracking issue, before anything is disarmed. *guard* is armed
+    the moment the lock is taken, and told when the disarm sweep starts.
+    """
+    identity = _holder_identity()
+    host = socket.gethostname()
+    try:
+        reclaimed = reclaim.reclaim_if_stale(repo, actor=f"{identity} on {host} (vrg-release)")
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: reclaiming a stale lock", exc) from exc
+    if reclaimed is not None:
+        print(
+            f"Reclaimed a stale release lock on {repo} (was at {reclaimed.old_sha}): "
+            f"{reclaimed.reason}"
+        )
+    now = utc_now()
+    record = LockRecord(
+        holder_identity=identity,
+        holder_host=host,
+        version=release_version,
+        worktree="",
+        tracking_issue="",
+        stage="preflight",
+        health="running",
+        broken_stage="",
+        started_at=now,
+        heartbeat_at=now,
+        token=new_token(),
+    )
+    try:
+        owner = LockOwner.take(repo, record)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: taking the lock", exc) from exc
+    if owner is None:
+        raise _held_refusal(repo)
+    guard.arm(repo, owner)
+    print(f"Took the release lock on {repo} for release {release_version}")
+    try:
+        result = sweeps.quiesce(repo, on_disarm=guard.disarm_started)
+    except ReleaseLockError as exc:
+        raise _lock_error(f"{repo}: quiescing develop", exc) from exc
+    print(
+        f"Quiesced develop: disarmed {len(result.disarmed) + len(result.late)} PR(s)"
+        + (f", deleted {len(result.expired)} expired arming ref(s)" if result.expired else "")
+    )
+    return owner
 
 
 def _release_bump(
@@ -313,25 +560,6 @@ def _resume_context(
     resume_at = first or "nothing left undone"
     print(f"Preflight passed: {repo} v{resume_version} — resuming at {resume_at} in {where}")
     return ctx
-
-
-def _trusted_read(repo: str, number: int) -> trust.IssueContent:
-    """:func:`trust.read_issue` of *repo*#*number*, its skips reported on stderr.
-
-    A read that cannot complete raises :class:`ReleaseError`: who wrote the
-    content is never guessed.
-    """
-    try:
-        content = trust.read_issue(repo, number)
-    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"read_issue {repo}#{number}",
-            message=f"Could not read who wrote {repo}#{number}; refusing to release blind.",
-            detail=str(exc),
-        ) from exc
-    trust.report_skipped(content.skipped, stream=sys.stderr)
-    return content
 
 
 def _deps_pr_number(url: str) -> int:
@@ -1275,23 +1503,6 @@ def _open_release_recovery(repo: str, ver: str, number: int, body: str) -> str:
             f"Fix the block, then finish it with `vrg-release --resume {ver}`."
         )
     return f"release {ver} ({url}) is open. Finish it with `vrg-release --resume {ver}`."
-
-
-def _trusted_release_issues(
-    issues: Sequence[tuple[str, int, str]], repo: str
-) -> list[tuple[str, int, str]]:
-    """The *issues* whose body is trusted, each with that trusted body.
-
-    A ``release:`` issue with an untrusted body (an outsider's, or one an
-    untrusted identity edited) is no release in flight: it is reported on
-    stderr, metadata only, and never blocks the start (GHSA-777j-j57r-92ff).
-    """
-    trusted: list[tuple[str, int, str]] = []
-    for ver, number, _listed_body in issues:
-        body = _trusted_read(repo, number).body
-        if body is not None:
-            trusted.append((ver, number, body))
-    return trusted
 
 
 def _check_no_open_release(repo: str, *, exempt: int | None = None) -> None:

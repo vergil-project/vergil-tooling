@@ -9,13 +9,17 @@ import pytest
 
 from tests.vergil_tooling.release_stubs import (
     BRANCH_LOOKUP,
+    FakeLockOwner,
     branch_lookup,
     branch_pr,
     fork_skip,
 )
 from vergil_tooling.lib import github, retry, trust
+from vergil_tooling.lib.pending_release import PendingRelease, ReleaseTags
+from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.prepare import _create_pr, prepare
+from vergil_tooling.lib.release_lock.model import RefWriteError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -525,3 +529,70 @@ def test_prepare_create_that_really_failed_is_retried_then_raised() -> None:
     assert create.call_count == attempts
     assert lookup.call_count == attempts
     assert sleep.call_count == retry.MAX_RETRIES
+
+
+# --- The tracking issue in the release lock (spec §5.2 of epic #1664) ---------------
+
+_TRACKING_GH = "vergil_tooling.lib.release.tracking.github.read_output"
+
+
+def _locked_ctx(owner: FakeLockOwner) -> ReleaseContext:
+    ctx = _ctx()
+    ctx.issue_number = None
+    ctx.issue_url = None
+    ctx.progress_block = checklist.render(["audit", "prepare"], checked={"audit"})
+    ctx.cut = "c" * 40
+    ctx.pending_release = PendingRelease(
+        tags=ReleaseTags(latest=None, rolling=None, rolling_target=None),
+        main_moved_ts=0.0,
+        changes=(),
+    )
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+    return ctx
+
+
+def test_tracking_issue_written_into_lock_immediately() -> None:
+    owner = FakeLockOwner()
+    ctx = _locked_ctx(owner)
+    at_branch: list[list[tuple[object, ...]]] = []
+    with (
+        patch(_TRACKING_GH, return_value="https://github.com/owner/repo/issues/43"),
+        patch("vergil_tooling.lib.release.tracking.github.run"),
+        patch(
+            _MOD + "._prepare_branch", side_effect=lambda c: at_branch.append(list(owner.events))
+        ),
+        patch(_MOD + "._close_superseded"),
+    ):
+        prepare(ctx)
+    # Written into the lock straight after the issue is created, before the branch work.
+    assert at_branch == [[("update", {"tracking_issue": "owner/repo#43"})]]
+    assert owner.record.tracking_issue == "owner/repo#43"
+
+
+def test_tracking_issue_lock_write_failure_stops_prepare() -> None:
+    owner = FakeLockOwner()
+    owner.update_error = RefWriteError("lock push rejected")
+    ctx = _locked_ctx(owner)
+    with (
+        patch(_TRACKING_GH, return_value="https://github.com/owner/repo/issues/43"),
+        patch("vergil_tooling.lib.release.tracking.github.run"),
+        patch(_MOD + "._prepare_branch") as m_branch,
+        pytest.raises(RefWriteError, match="lock push rejected"),
+    ):
+        prepare(ctx)
+    m_branch.assert_not_called()
+
+
+def test_tracking_issue_without_lock_writes_none() -> None:
+    owner = FakeLockOwner()
+    ctx = _locked_ctx(owner)
+    ctx.lock = None
+    with (
+        patch(_TRACKING_GH, return_value="https://github.com/owner/repo/issues/43"),
+        patch("vergil_tooling.lib.release.tracking.github.run"),
+        patch(_MOD + "._prepare_branch"),
+        patch(_MOD + "._close_superseded"),
+    ):
+        prepare(ctx)
+    assert ctx.issue_number == 43
+    assert owner.events == []

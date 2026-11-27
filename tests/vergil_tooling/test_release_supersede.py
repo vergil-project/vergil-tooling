@@ -389,6 +389,10 @@ def _fresh_preflight(
         patch(_PREFLIGHT + "._check_packages_unpublished"),
         patch(_PREFLIGHT + ".pending_deps_prs", return_value=[]),
         patch(_PREFLIGHT + "._develop_cd_gate"),
+        # The lock and quiesce, and the head the gates judged (unmoved), have tests
+        # of their own in test_release_preflight.py.
+        patch(_PREFLIGHT + "._develop_head", return_value="d" * 40),
+        patch(_PREFLIGHT + "._lock_and_quiesce"),
         patch(_PREFLIGHT + "._acquire_release_worktree", return_value=wt) as m_worktree,
         patch(_PREFLIGHT + "._release_contents", return_value=("c" * 40, _pending(), ())),
         patch(_PREFLIGHT + ".os.chdir"),

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.process_errors import command_text, error_text
@@ -19,6 +20,7 @@ from vergil_tooling.lib.release.finalize import close_tracking, finalize, teardo
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
 from vergil_tooling.lib.release.handoff import holds
 from vergil_tooling.lib.release.install import install, minor
+from vergil_tooling.lib.release.lock_guard import UnlockGuard
 from vergil_tooling.lib.release.merge import (
     ReleaseConflictError,
     known_pr_state,
@@ -38,6 +40,7 @@ from vergil_tooling.lib.release.tracking import (
     write_state,
 )
 from vergil_tooling.lib.release.update_deps_stage import update_deps
+from vergil_tooling.lib.release_lock.holder import LockLost
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,6 +94,11 @@ class ReleaseState:
     allow_pending_deps: bool = False
     # The open release a fresh start supersedes (vrg-release --supersede X.Y.Z).
     supersede: str | None = None
+    # The early-exit unlock path (spec §5.3 step 1 of epic
+    # vergil-project/.github#1664): armed by preflight when it takes the lock,
+    # spent once prepare records the tracking issue in it. It spans two
+    # stages, so it lives here, around the stage loop (:func:`_guarded`).
+    unlock_guard: UnlockGuard = field(default_factory=UnlockGuard)
 
 
 def _audit_stage(state: ReleaseState) -> None:
@@ -107,6 +115,7 @@ def _preflight_stage(state: ReleaseState) -> None:
         allow_pending_deps=state.allow_pending_deps,
         stages=_stage_names(),
         supersede=state.supersede,
+        guard=state.unlock_guard,
     )
     ctx.resume = state.resume
     ctx.without_deps = _without_deps(ctx, given=state.without_deps)
@@ -176,6 +185,8 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             mark_warn(reason)
             return
         try:
+            if ctx.lock is not None:
+                ctx.lock.update(stage=name)
             _check_worktree_present(ctx, name)
             fn(ctx)
             _record_done(ctx, name)
@@ -185,7 +196,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             raise
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
-            _record_failure(ctx, name)
+            _record_failure(ctx, name, exc)
             raise
         except Exception as exc:
             wrapped = ReleaseError(
@@ -195,7 +206,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)
-            _record_failure(ctx, name)
+            _record_failure(ctx, name, wrapped)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
         names = _checklist_names()
@@ -273,7 +284,7 @@ def _reported(ctx: ReleaseContext, name: str, index: int) -> str | None:
     return ctx.install_reported[index]
 
 
-def _record_failure(ctx: ReleaseContext, name: str) -> None:
+def _record_failure(ctx: ReleaseContext, name: str, exc: ReleaseError) -> None:
     """List failed stage *name* on *ctx*, for the hold rule and publish-status.
 
     A deferred publish (``cd-publish``, ``package-index``) is listed like any
@@ -281,8 +292,27 @@ def _record_failure(ctx: ReleaseContext, name: str) -> None:
     ``install``, but ``close-tracking`` needs it, so the tracking issue stays
     open for ``vrg-release --resume`` (spec §4.4 and §4.5 of epic
     vergil-project/.github#1440).
+
+    The first failure this run records, a deferred one included, also marks
+    the release lock ``broken`` at *name* (spec §5.2 of epic
+    vergil-project/.github#1664); a later one leaves the broken stage as it
+    is. A lost lock (*exc* is :class:`LockLost`) is no longer this run's to
+    write. A failed write raises a :class:`ReleaseError` naming both it and
+    *exc*, never hiding either.
     """
     ctx.deferred_failures.append(name)
+    lock = ctx.lock
+    if lock is None or isinstance(exc, LockLost) or lock.record.health == "broken":
+        return
+    try:
+        lock.update(health="broken", broken_stage=name)
+    except Exception as lock_exc:
+        raise ReleaseError(
+            phase=name,
+            command=exc.command,
+            message=f"{exc} Marking the release lock broken at {name} then failed too: {lock_exc}",
+            detail=exc.detail,
+        ) from lock_exc
 
 
 def _stage_names() -> list[str]:
@@ -302,8 +332,48 @@ def _checklist_names() -> list[str]:
     return [name for name in _stage_names() if name not in _UNLISTED]
 
 
+def _guarded(fn: Callable[[ReleaseState], None]) -> Callable[[ReleaseState], None]:
+    """Run stage *fn*, and the early-exit unlock path on any exit while the guard is armed.
+
+    The guard is armed from preflight's lock take until prepare records the
+    tracking issue in the lock (:class:`UnlockGuard`). A stage that raises
+    while it is armed, a refusal, a failure or an interrupt, first runs the
+    unlock path: the lock is released, then the PRs re-armed if the disarm
+    had started. The stage's own error is then raised again; a failure of
+    the path is raised instead, as a :class:`ReleaseError` naming both. An
+    interrupt stays an interrupt: a failed unlock path is printed first.
+    """
+
+    def stage(state: ReleaseState) -> None:
+        try:
+            fn(state)
+        except BaseException as exc:
+            guard = state.unlock_guard
+            if not guard.armed:
+                raise
+            if isinstance(exc, KeyboardInterrupt):
+                try:
+                    guard.unlock(exc)
+                except ReleaseError as unlock_exc:
+                    print(f"ERROR: {unlock_exc}", file=sys.stderr)
+                raise
+            guard.unlock(exc)
+            raise
+
+    return stage
+
+
 def build_stages() -> list[Stage]:
-    """The vrg-release pipeline, in execution order."""
+    """The vrg-release pipeline, in execution order.
+
+    Every stage runs under :func:`_guarded`, so an exit while the early-exit
+    unlock path is armed releases the lock whichever stage it is.
+    """
+    return [replace(stage, fn=_guarded(stage.fn)) for stage in _stages()]
+
+
+def _stages() -> list[Stage]:
+    """The vrg-release stages, in execution order, unguarded."""
     return [
         Stage("audit", _audit_stage, mode="fail_fast", skip_flag="skip_audit"),
         Stage("preflight", _preflight_stage, mode="fail_fast"),
