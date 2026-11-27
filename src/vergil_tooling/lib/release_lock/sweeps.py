@@ -362,6 +362,7 @@ def quiesce(
     *,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    on_disarm: Callable[[], None] | None = None,
 ) -> QuiesceResult:
     """Quiesce ``develop`` of *repo* for a release that has written the lock.
 
@@ -369,9 +370,14 @@ def quiesce(
     :func:`disarm_all` again if the wait deleted any arming ref, then the
     final check: the arming refs are listed once more, and every open PR's
     auto-merge state, any PR found armed being turned off. *clock* and
-    *sleep* are the wait's. Any failure raises :class:`SweepError`.
+    *sleep* are the wait's. *on_disarm*, when given, is called once the wait
+    is over and before the first disarm sweep, so the caller knows from then
+    on that PRs may have been disarmed: the release's early-exit unlock path
+    re-arms only then. Any failure raises :class:`SweepError`.
     """
     expired = wait_for_arming_refs(repo, clock=clock, sleep=sleep)
+    if on_disarm is not None:
+        on_disarm()
     disarmed = disarm_all(repo)
     if expired:
         disarmed += disarm_all(repo)

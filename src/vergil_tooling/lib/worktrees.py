@@ -26,8 +26,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text, failure_message
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.preflight import _trusted_release_issues
-from vergil_tooling.lib.release.resume import _open_release_issues
+from vergil_tooling.lib.release.resume import _open_release_issues, _trusted_release_issues
 from vergil_tooling.lib.release_lock import refs
 from vergil_tooling.lib.release_lock.model import ReleaseLockError
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
@@ -876,7 +875,7 @@ def release_protection(repo: str, *, lock: ReleaseProtection | None = None) -> R
     it; otherwise the lock is read here. A held lock, readable or not, is
     enough, and the tracking issues are then not read. Otherwise only a
     ``release: X.Y.Z`` issue with a trusted body counts, by the rule a fresh
-    ``vrg-release`` start uses (``preflight._trusted_release_issues``). A
+    ``vrg-release`` start uses (``resume._trusted_release_issues``). A
     read that cannot complete raises :class:`ProtectionReadError`.
     """
     if lock is None:

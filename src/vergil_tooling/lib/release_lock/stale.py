@@ -13,7 +13,7 @@
    asleep mid-release), however old its heartbeat.
 5. A lock that names none is checked for an open release tracking issue of
    its version with a trusted body, by the rule a fresh ``vrg-release``
-   start uses (``preflight._trusted_release_issues``). One found is the
+   start uses (``resume._trusted_release_issues``). One found is the
    lock's issue, and the lock is not stale: the release died after
    ``prepare``. Failing that, the lock is stale once its heartbeat is older
    than the threshold.
@@ -32,8 +32,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import github
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.preflight import _trusted_release_issues
-from vergil_tooling.lib.release.resume import _open_release_issues
+from vergil_tooling.lib.release.resume import _open_release_issues, _trusted_release_issues
 from vergil_tooling.lib.release_lock.model import STALE_AFTER_SECS, ReleaseLockError
 
 if TYPE_CHECKING:

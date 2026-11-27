@@ -9,22 +9,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.vergil_tooling.release_stubs import defer_publish
+from tests.vergil_tooling.release_stubs import FakeLockOwner, defer_publish
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.release import state as release_state
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.guard import TrackingIssueBreach
+from vergil_tooling.lib.release.lock_guard import UnlockGuard
 from vergil_tooling.lib.release.merge import ReleaseConflictError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
     ReleaseWorktreeVanished,
+    _guarded,
     _phase_details,
     _preflight_stage,
     _publish_status_stage,
     _tracked,
     build_stages,
 )
+from vergil_tooling.lib.release_lock import sweeps
+from vergil_tooling.lib.release_lock.holder import LockLost
+from vergil_tooling.lib.release_lock.model import RefWriteError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -174,6 +179,7 @@ def test_preflight_stage_populates_ctx() -> None:
         allow_pending_deps=False,
         stages=[stage.name for stage in build_stages()],
         supersede=None,
+        guard=state.unlock_guard,
     )
     assert state.ctx is ctx
 
@@ -1683,3 +1689,311 @@ def test_no_vanished_check_for_a_run_with_no_worktree() -> None:
     ):
         _tracked("confirm-main", fn)(state)
     fn.assert_called_once_with(state.ctx)
+
+
+# --- The release lock through the pipeline (spec §5.2, §5.3 of epic #1664) ---------
+
+_REARM = "vergil_tooling.lib.release.lock_guard.sweeps.rearm_all"
+_ARMED = "https://github.com/owner/repo/pull/7"
+
+
+def _rearm_result() -> sweeps.RearmResult:
+    return sweeps.RearmResult(armed=[_ARMED], merged=[], held=[], refused=[])
+
+
+def _stage(name: str) -> Stage:
+    return next(s for s in build_stages() if s.name == name)
+
+
+def _locked_preflight(
+    state: ReleaseState, owner: FakeLockOwner, *, disarm: bool, error: BaseException | None
+) -> Callable[..., ReleaseContext]:
+    """A preflight that takes *owner*'s lock (arming the guard), then raises *error*."""
+
+    def run(**kwargs: object) -> ReleaseContext:
+        guard = kwargs["guard"]
+        assert guard is state.unlock_guard
+        state.unlock_guard.arm("owner/repo", owner)  # ty: ignore[invalid-argument-type]
+        if disarm:
+            state.unlock_guard.disarm_started()
+        if error is not None:
+            raise error
+        ctx = _ctx()
+        ctx.issue_number = None
+        ctx.lock = owner  # ty: ignore[invalid-assignment]
+        return ctx
+
+    return run
+
+
+@pytest.mark.parametrize("disarm", [True, False])
+def test_exception_before_tracking_issue_runs_unlock_path(disarm: bool) -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    owner = FakeLockOwner()
+    error = RuntimeError("worktree add crashed")
+    with (
+        patch(
+            _MOD + ".preflight",
+            side_effect=_locked_preflight(state, owner, disarm=disarm, error=error),
+        ),
+        patch(_REARM, return_value=_rearm_result()) as m_rearm,
+        pytest.raises(RuntimeError, match="worktree add crashed"),
+    ):
+        _stage("preflight").fn(state)
+    assert owner.events == [("release",)]
+    if disarm:
+        m_rearm.assert_called_once_with("owner/repo")
+    else:
+        m_rearm.assert_not_called()
+    assert not state.unlock_guard.armed
+
+
+def test_refusal_in_preflight_stage_runs_unlock_path_once() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    owner = FakeLockOwner()
+    error = ReleaseError(phase="preflight", command="deps", message="deps PR open")
+    with (
+        patch(
+            _MOD + ".preflight",
+            side_effect=_locked_preflight(state, owner, disarm=True, error=error),
+        ),
+        patch(_REARM, return_value=_rearm_result()) as m_rearm,
+        pytest.raises(ReleaseError, match="deps PR open"),
+    ):
+        _stage("preflight").fn(state)
+    # The guard is spent: a later exit never runs the path again.
+    assert not state.unlock_guard.armed
+    state.unlock_guard.unlock(RuntimeError("again"))
+    assert owner.events == [("release",)]
+    m_rearm.assert_called_once()
+
+
+def test_interrupt_before_tracking_issue_runs_unlock_path_and_stays_an_interrupt() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    owner = FakeLockOwner()
+    owner.release_error = RefWriteError("push rejected")
+    run = _locked_preflight(state, owner, disarm=True, error=KeyboardInterrupt())
+    with (
+        patch(_MOD + ".preflight", side_effect=run),
+        patch(_REARM) as m_rearm,
+        pytest.raises(KeyboardInterrupt),
+    ):
+        _stage("preflight").fn(state)
+    assert owner.events == [("release",)]
+    m_rearm.assert_not_called()
+
+
+def test_unlock_path_failure_is_raised_with_the_stage_error() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    owner = FakeLockOwner()
+    run = _locked_preflight(state, owner, disarm=True, error=RuntimeError("cut failed"))
+    with (
+        patch(_MOD + ".preflight", side_effect=run),
+        patch(_REARM, side_effect=sweeps.SweepError("gh pr list failed")),
+        pytest.raises(ReleaseError) as info,
+    ):
+        _stage("preflight").fn(state)
+    message = str(info.value)
+    assert "cut failed" in message
+    assert "gh pr list failed" in message
+    assert "still disarmed" in message
+
+
+def _prepare_state(owner: FakeLockOwner) -> ReleaseState:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    ctx = _ctx()
+    ctx.issue_number = None
+    ctx.state = None
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+    state.ctx = ctx
+    state.unlock_guard.arm("owner/repo", owner)  # ty: ignore[invalid-argument-type]
+    state.unlock_guard.disarm_started()
+    return state
+
+
+def test_create_tracking_issue_failure_runs_unlock_path() -> None:
+    owner = FakeLockOwner()
+    state = _prepare_state(owner)
+    with (
+        patch(
+            "vergil_tooling.lib.release.prepare.create_tracking_issue",
+            side_effect=subprocess.CalledProcessError(1, ["gh", "issue", "create"]),
+        ),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_REARM, return_value=_rearm_result()) as m_rearm,
+        pytest.raises(ReleaseError),
+    ):
+        _stage("prepare").fn(state)
+    names = [event[0] for event in owner.events]
+    assert names[-1] == "release"
+    m_rearm.assert_called_once_with("owner/repo")
+
+
+def test_unlock_guard_disarmed_once_tracking_issue_recorded() -> None:
+    owner = FakeLockOwner()
+    state = _prepare_state(owner)
+
+    def created_then_failed(ctx: ReleaseContext) -> None:
+        ctx.issue_number = 42
+        owner.update(tracking_issue="owner/repo#42")
+        raise ReleaseError(phase="prepare", command="git push", message="push failed")
+
+    with (
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_REARM) as m_rearm,
+        pytest.raises(ReleaseError, match="push failed"),
+    ):
+        stage = Stage("prepare", _guarded(_tracked("prepare", created_then_failed)), "fail_fast")
+        stage.fn(state)
+    assert not state.unlock_guard.armed
+    assert ("release",) not in owner.events
+    m_rearm.assert_not_called()
+    # The failure marks the lock broken instead: the lock stays held for --resume.
+    assert owner.record.health == "broken"
+    assert owner.record.broken_stage == "prepare"
+
+
+def test_stage_and_health_written_per_stage() -> None:
+    owner = FakeLockOwner()
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+    state.ctx.lock = owner  # ty: ignore[invalid-assignment]
+    seen: list[str] = []
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
+        _tracked("merge-release", lambda ctx: seen.append(owner.record.stage))(state)
+        _tracked("confirm-main", lambda ctx: seen.append(owner.record.stage))(state)
+    # Each stage is written into the lock before it runs; health stays running.
+    assert seen == ["merge-release", "confirm-main"]
+    assert owner.events == [
+        ("update", {"stage": "merge-release"}),
+        ("update", {"stage": "confirm-main"}),
+    ]
+    assert owner.record.health == "running"
+
+
+def test_deferred_failure_marks_broken_when_recorded() -> None:
+    owner = FakeLockOwner()
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    ctx = state.ctx = _ctx()
+    ctx.lock = owner  # ty: ignore[invalid-assignment]
+
+    def deferred(_ctx: ReleaseContext) -> None:
+        defer_publish(ctx, "pypi / publish")
+        raise ReleaseError(phase="cd-publish", command="cd-publish", message="still failing")
+
+    def later(_ctx: ReleaseContext) -> None:
+        raise ReleaseError(phase="install", command="install", message="install failed")
+
+    with patch(_MOD + ".comment_phase_failed"):
+        with pytest.raises(ReleaseError, match="still failing"):
+            _tracked("cd-publish", deferred)(state)
+        # Marked broken when the deferred failure is recorded, not when the pipeline stops.
+        assert (owner.record.health, owner.record.broken_stage) == ("broken", "cd-publish")
+        with pytest.raises(ReleaseError, match="install failed"):
+            _tracked("install", later)(state)
+    # A later failure leaves the first broken stage in place.
+    assert owner.record.broken_stage == "cd-publish"
+    assert owner.events == [
+        ("update", {"stage": "cd-publish"}),
+        ("update", {"health": "broken", "broken_stage": "cd-publish"}),
+        ("update", {"stage": "install"}),
+    ]
+
+
+def test_failed_broken_mark_reports_both_errors() -> None:
+    owner = FakeLockOwner()
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+    state.ctx.lock = owner  # ty: ignore[invalid-assignment]
+
+    def failing(ctx: ReleaseContext) -> None:
+        owner.update_error = RefWriteError("lock push rejected")
+        raise ReleaseError(phase="install", command="install", message="install failed")
+
+    with patch(_MOD + ".comment_phase_failed"), pytest.raises(ReleaseError) as info:
+        _tracked("install", failing)(state)
+    assert "install failed" in str(info.value)
+    assert "lock push rejected" in str(info.value)
+
+
+def test_lost_lock_is_not_marked_broken() -> None:
+    owner = FakeLockOwner()
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    state.ctx = _ctx()
+    state.ctx.lock = owner  # ty: ignore[invalid-assignment]
+    lost = LockLost("the lock was broken", phase="install", cause=None, outside_change=False)
+    owner.update_error = lost
+    with (
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(LockLost, match="was broken"),
+    ):
+        _tracked("install", MagicMock())(state)
+    # The stage update found the loss; the failure is commented, never written into the lock.
+    m_failed.assert_called_once()
+    assert owner.events == [("update", {"stage": "install"})]
+    assert state.ctx.deferred_failures == ["install"]
+
+
+def test_pipeline_failure_before_tracking_issue_unlocks(tmp_path: Path) -> None:
+    """Through the stage loop: preflight takes the lock, prepare fails before the issue."""
+    state = ReleaseState(version_override=None, repo_root=tmp_path)
+    owner = FakeLockOwner()
+    args = argparse.Namespace(output_format="plain", output_window=None, skip_audit=True)
+    with (
+        patch(
+            _MOD + ".preflight",
+            side_effect=_locked_preflight(state, owner, disarm=True, error=None),
+        ),
+        patch(
+            "vergil_tooling.lib.release.prepare.create_tracking_issue",
+            side_effect=RuntimeError("gh issue create failed"),
+        ),
+        patch(_MOD + ".comment_phase_failed"),
+        patch(_REARM, return_value=_rearm_result()) as m_rearm,
+        patch(_MOD + ".merge_release") as m_merge,
+    ):
+        stages = [
+            s
+            for s in build_stages()
+            if s.name in ("audit", "preflight", "prepare", "merge-release")
+        ]
+        rc = progress.run_pipeline(
+            state, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
+        )
+    assert rc == 1
+    assert owner.events[-1] == ("release",)
+    m_rearm.assert_called_once_with("owner/repo")
+    m_merge.assert_not_called()
+
+
+def test_unlock_guard_refuses_a_second_arm() -> None:
+    guard = UnlockGuard()
+    guard.arm("owner/repo", FakeLockOwner())  # ty: ignore[invalid-argument-type]
+    with pytest.raises(RuntimeError, match="already armed"):
+        guard.arm("owner/repo", FakeLockOwner())  # ty: ignore[invalid-argument-type]
+
+
+def test_unlock_path_reports_prs_not_rearmed(capsys: pytest.CaptureFixture[str]) -> None:
+    guard = UnlockGuard()
+    owner = FakeLockOwner()
+    guard.arm("owner/repo", owner)  # ty: ignore[invalid-argument-type]
+    guard.disarm_started()
+    result = sweeps.RearmResult(
+        armed=[],
+        merged=[],
+        held=["https://github.com/owner/repo/pull/8"],
+        refused=[("https://github.com/owner/repo/pull/9", "draft")],
+    )
+    with patch(_REARM, return_value=result):
+        guard.unlock(RuntimeError("stopped"))
+    out = capsys.readouterr().out
+    assert "Re-armed 0 PR(s) on owner/repo" in out
+    assert (
+        "Not re-armed (refused by the one PR path): https://github.com/owner/repo/pull/9: draft"
+        in out
+    )
+    assert "Not re-armed (held): https://github.com/owner/repo/pull/8" in out

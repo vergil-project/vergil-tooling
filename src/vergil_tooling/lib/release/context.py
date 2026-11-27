@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pending_release import PendingRelease
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
     from vergil_tooling.lib.release.supersede import Superseded
+    from vergil_tooling.lib.release_lock.holder import LockOwner
 
 # The package-index stage's name, by which a deferred index miss is listed.
 INDEX_STAGE = "package-index"
@@ -60,6 +61,12 @@ class ReleaseContext:
     # is read (spec §4.2 of epic vergil-project/.github#1440).
     tracking_warnings: set[str] = field(default_factory=set)
     release_pr_url: str | None = None
+
+    # The release lock this run holds (spec §5.2 of epic
+    # vergil-project/.github#1664): taken by a fresh start's preflight before
+    # the cut, and the one writer of its stage, health, tracking issue and
+    # worktree. None on a resume, and before preflight takes it.
+    lock: LockOwner | None = None
 
     # Managed worktree all release branch work happens in, so the root
     # checkout's HEAD never moves while a release runs (#1578).

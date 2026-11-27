@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.vergil_tooling.release_stubs import FakeLockOwner
 from vergil_tooling.lib import trust
 from vergil_tooling.lib.cd_runs import CDRunLookupError, CDRunReadError, RunView
 from vergil_tooling.lib.checkout_lock import CheckoutLockError, checkout_lock
@@ -18,6 +19,7 @@ from vergil_tooling.lib.pending_release import PendingRelease, PendingReleaseErr
 from vergil_tooling.lib.release import checklist, state
 from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.lock_guard import UnlockGuard
 from vergil_tooling.lib.release.preflight import (
     PendingDepsPr,
     _check_branch_and_tree,
@@ -30,13 +32,20 @@ from vergil_tooling.lib.release.preflight import (
     preflight,
 )
 from vergil_tooling.lib.release.state import IssueEntry
+from vergil_tooling.lib.release_lock import sweeps
+from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError, RefWriteError
+from vergil_tooling.lib.release_lock.refs import LockState
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _MOD = "vergil_tooling.lib.release.preflight"
+# The real lock steps, before the autouse fixture stubs them out of every run.
+_REAL_LOCK_AND_QUIESCE = preflight_module._lock_and_quiesce
+_REAL_HOLDER_IDENTITY = preflight_module._holder_identity
+_REAL_DEVELOP_HEAD = preflight_module._develop_head
 
 
 # The bodies the trust layer reads, by number; a number not listed reads as a
@@ -122,6 +131,24 @@ def develop_cd_gate() -> Iterator[MagicMock]:
     """
     with patch(_MOD + "._develop_cd_gate") as gate:
         yield gate
+
+
+_JUDGED = "d" * 40
+
+
+@pytest.fixture(autouse=True)
+def release_lock() -> Iterator[MagicMock]:
+    """Stub the lock and quiesce, and the develop head read, out of every preflight run.
+
+    Yields the ``_lock_and_quiesce`` stand-in; its return value is the lock
+    owner the context carries. The head reads as unmoved. The lock's own
+    tests below patch the release-lock modules instead.
+    """
+    with (
+        patch(_MOD + "._lock_and_quiesce") as lock,
+        patch(_MOD + "._develop_head", return_value=_JUDGED),
+    ):
+        yield lock
 
 
 _CUT = "c" * 40
@@ -1249,7 +1276,29 @@ def _fresh_patches(pending: list[PendingDepsPr]) -> list[contextlib.AbstractCont
         patch(_MOD + "._check_packages_unpublished"),
         patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
-        patch(_MOD + ".pending_deps_prs", return_value=pending),
+        *_deps_listing(pending),
+    ]
+
+
+def _deps_listing(pending: list[PendingDepsPr]) -> list[contextlib.AbstractContextManager[object]]:
+    """List *pending* as the open deps PRs, a PR the gate closes dropping out of later listings.
+
+    The gate runs twice on a fresh start, before the lock and after the
+    disarm, so its second listing must not show the PRs its first closed.
+    """
+    closed: set[str] = set()
+    real_close = preflight_module._close_landed_deps_pr
+
+    def close(pr: PendingDepsPr) -> None:
+        real_close(pr)
+        closed.add(pr.url)
+
+    return [
+        patch(
+            _MOD + ".pending_deps_prs",
+            side_effect=lambda repo: [pr for pr in pending if pr.url not in closed],
+        ),
+        patch(_MOD + "._close_landed_deps_pr", side_effect=close),
     ]
 
 
@@ -2926,3 +2975,480 @@ def test_post_merge_resume_real_git_runs_without_the_deleted_branch(
     assert _git(root, "rev-parse", "--abbrev-ref", "HEAD") == "develop"
     with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
         assert _post_merge_worktree(root, branch, needed=True) == path
+
+
+# --- The pre-check, lock, quiesce and cut (spec §5.3 step 1, epic #1664) --------------
+
+_LOCK_REPO = "o/r"
+_MOVED = "e" * 40
+_LOCK_WT = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+
+
+class _LockRun:
+    """A fresh preflight whose every step, the lock's included, is logged to :attr:`events`.
+
+    The release-lock calls are stubbed at the modules preflight calls
+    (reclaim, the lock owner's take, the quiesce, the re-arm sweep); the
+    real :func:`preflight._lock_and_quiesce` and the real unlock guard run.
+    """
+
+    def __init__(self, stack: contextlib.ExitStack, *, cd_gate: MagicMock, contents: MagicMock):
+        self.events: list[tuple[object, ...]] = []
+        self.owner = FakeLockOwner(self.events)
+        self.pending: list[list[PendingDepsPr]] = []
+        self.heads = [_JUDGED, _JUDGED]
+        self.taken: list[LockRecord] = []
+        self.take_result: FakeLockOwner | None = self.owner
+        self.held = LockState(sha=None, record=None, error="")
+        self.reclaim_result: object = None
+        self.quiesce_error: Exception | None = None
+        self.versions = ["2.1.0"]
+        log = self.events.append
+
+        def step(name: str, value: object = None) -> MagicMock:
+            def run(*args: object, **kwargs: object) -> object:
+                log((name,))
+                return value
+
+            return MagicMock(side_effect=run)
+
+        def take(repo: str, rec: LockRecord) -> FakeLockOwner | None:
+            log(("take",))
+            self.taken.append(rec)
+            return self.take_result
+
+        def quiesce(repo: str, *, on_disarm: Callable[[], None]) -> sweeps.QuiesceResult:
+            log(("quiesce",))
+            on_disarm()
+            if self.quiesce_error is not None:
+                raise self.quiesce_error
+            return sweeps.QuiesceResult(expired=(), disarmed=(), late=(), arming_at_check=())
+
+        def reclaim_if_stale(repo: str, *, actor: str) -> object:
+            log(("reclaim", actor))
+            return self.reclaim_result
+
+        def deps(repo: str) -> list[PendingDepsPr]:
+            log(("deps",))
+            return self.pending.pop(0) if self.pending else []
+
+        def head() -> str:
+            log(("head",))
+            return self.heads.pop(0)
+
+        def version_show(root: Path) -> str:
+            return self.versions.pop(0) if len(self.versions) > 1 else self.versions[0]
+
+        def rearm(repo: str, *, holder_pass: str | None = None) -> sweeps.RearmResult:
+            log(("rearm", holder_pass))
+            return sweeps.RearmResult(
+                armed=["https://github.com/o/r/pull/7"], merged=[], held=[], refused=[]
+            )
+
+        cd_gate.side_effect = lambda repo: log(("cd",))
+        contents.side_effect = lambda wt, sup=None: (log(("cut",)), (_CUT, _PENDING, _ISSUES))[1]
+        enter = stack.enter_context
+        enter(patch(_MOD + "._lock_and_quiesce", side_effect=_REAL_LOCK_AND_QUIESCE))
+        enter(patch(_MOD + "._develop_head", side_effect=head))
+        enter(patch(_MOD + "._check_host_prerequisites"))
+        enter(patch(_MOD + "._read_and_validate_config"))
+        enter(patch(_MOD + ".check_gh_auth", return_value=_LOCK_REPO))
+        enter(patch(_MOD + ".version.show", side_effect=version_show))
+        enter(patch(_MOD + "._check_branch_and_tree", step("sync")))
+        enter(patch(_MOD + "._check_no_open_release", step("one-release")))
+        enter(patch(_MOD + "._check_main_not_ahead_of_develop", step("main")))
+        enter(patch(_MOD + "._check_version_not_tagged", step("tagged")))
+        enter(patch(_MOD + "._check_packages_unpublished", step("packages")))
+        enter(patch(_MOD + ".pending_deps_prs", side_effect=deps))
+        enter(patch(_MOD + "._acquire_release_worktree", step("worktree", _LOCK_WT)))
+        enter(patch(_MOD + ".os.chdir"))
+        enter(patch(_MOD + "._holder_identity", return_value="maintainer"))
+        enter(patch(_MOD + ".socket.gethostname", return_value="laptop"))
+        enter(patch(_MOD + ".reclaim.reclaim_if_stale", side_effect=reclaim_if_stale))
+        enter(patch(_MOD + ".LockOwner.take", side_effect=take))
+        enter(patch(_MOD + ".lock_refs.read_lock", side_effect=lambda repo: self.held))
+        enter(patch(_MOD + ".sweeps.quiesce", side_effect=quiesce))
+        enter(patch("vergil_tooling.lib.release.lock_guard.sweeps.rearm_all", side_effect=rearm))
+
+    def names(self) -> list[object]:
+        return [event[0] for event in self.events]
+
+    def run(
+        self,
+        *,
+        guard: UnlockGuard | None = None,
+        resume: bool = False,
+        resume_version: str | None = None,
+        resume_issue_number: int | None = None,
+    ) -> ReleaseContext:
+        return preflight(
+            version_override=None,
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            guard=guard,
+            resume=resume,
+            resume_version=resume_version,
+            resume_issue_number=resume_issue_number,
+        )
+
+
+@pytest.fixture
+def lock_run(develop_cd_gate: MagicMock, release_contents: MagicMock) -> Iterator[_LockRun]:
+    with contextlib.ExitStack() as stack:
+        yield _LockRun(stack, cd_gate=develop_cd_gate, contents=release_contents)
+
+
+def test_fresh_start_order_pre_check_lock_quiesce_cut(lock_run: _LockRun) -> None:
+    ctx = lock_run.run()
+    assert lock_run.names() == [
+        "sync",
+        "one-release",
+        "main",
+        "tagged",
+        "packages",
+        "deps",
+        "cd",
+        "head",
+        "reclaim",
+        "take",
+        "quiesce",
+        "sync",
+        "deps",
+        "head",
+        "worktree",
+        "update",
+        "cut",
+    ]
+    assert ctx.lock is lock_run.owner
+    rec = lock_run.taken[0]
+    assert (rec.holder_identity, rec.holder_host, rec.version) == ("maintainer", "laptop", "2.1.0")
+    assert (rec.stage, rec.health, rec.tracking_issue, rec.worktree) == (
+        "preflight",
+        "running",
+        "",
+        "",
+    )
+
+
+def test_precheck_refusal_locks_nothing(lock_run: _LockRun) -> None:
+    lock_run.pending = [
+        [PendingDepsPr(head=_HEAD, url="https://github.com/o/r/pull/9", fix_task=None)]
+    ]
+    with pytest.raises(ReleaseError, match="dependency-update"):
+        lock_run.run()
+    assert "take" not in lock_run.names()
+    assert "quiesce" not in lock_run.names()
+    assert "reclaim" not in lock_run.names()
+
+
+def test_precheck_cd_refusal_locks_nothing(lock_run: _LockRun, develop_cd_gate: MagicMock) -> None:
+    develop_cd_gate.side_effect = ReleaseError(
+        phase="preflight", command="gh run", message="red CD"
+    )
+    with pytest.raises(ReleaseError, match="red CD"):
+        lock_run.run()
+    assert not {"reclaim", "take", "quiesce"} & set(lock_run.names())
+
+
+def test_second_release_refused_before_disarm(lock_run: _LockRun) -> None:
+    other = replace(
+        lock_run.owner.record,
+        holder_identity="other-maintainer",
+        holder_host="desk",
+        version="2.0.9",
+        tracking_issue="o/r#77",
+        stage="merge-release",
+    )
+    lock_run.take_result = None
+    lock_run.held = LockState(sha="a" * 40, record=other, error="", text="")
+    with pytest.raises(ReleaseError) as info:
+        lock_run.run()
+    message = str(info.value)
+    assert "other-maintainer on desk" in message
+    assert "release 2.0.9" in message
+    assert "o/r#77" in message
+    assert "nothing was disarmed" in message
+    # Exactly one create-only take ran, and it lost: nothing disarmed, nothing released.
+    assert lock_run.names().count("take") == 1
+    assert "quiesce" not in lock_run.names()
+    assert "release" not in lock_run.names()
+    assert "rearm" not in lock_run.names()
+
+
+def test_second_release_refusal_names_an_unreadable_lock(lock_run: _LockRun) -> None:
+    lock_run.take_result = None
+    lock_run.held = LockState(sha="a" * 40, record=None, error="not valid JSON", text="{")
+    with pytest.raises(ReleaseError, match="unreadable \\(not valid JSON\\)"):
+        lock_run.run()
+    assert "quiesce" not in lock_run.names()
+
+
+def test_stale_lock_reclaimed_before_take(lock_run: _LockRun) -> None:
+    lock_run.run()
+    names = lock_run.names()
+    assert names.index("reclaim") < names.index("take")
+    reclaim_event = next(e for e in lock_run.events if e[0] == "reclaim")
+    assert reclaim_event[1] == "maintainer on laptop (vrg-release)"
+
+
+def test_reclaim_failure_refuses_with_nothing_locked(lock_run: _LockRun) -> None:
+    with (
+        patch(_MOD + ".reclaim.reclaim_if_stale", side_effect=sweeps.SweepError("re-arm failed")),
+        pytest.raises(ReleaseError, match="re-arm failed"),
+    ):
+        lock_run.run()
+    assert "take" not in lock_run.names()
+
+
+def test_quiesce_runs_before_cut(lock_run: _LockRun) -> None:
+    lock_run.run()
+    names = lock_run.names()
+    assert (
+        names.index("take") < names.index("quiesce") < names.index("worktree") < names.index("cut")
+    )
+    # The worktree is recorded in the lock once it exists, before the cut.
+    update = names.index("update")
+    assert names.index("worktree") < update < names.index("cut")
+    assert lock_run.events[update] == ("update", {"worktree": str(_LOCK_WT)})
+
+
+def test_pending_deps_gate_always_rerun_after_disarm(lock_run: _LockRun) -> None:
+    landed = PendingDepsPr(head=_HEAD, url=_PR9, fix_task=None)
+    lock_run.pending = [[], [landed]]
+    with pytest.raises(ReleaseError, match="dependency-update") as info:
+        lock_run.run()
+    assert _PR9 in str(info.value)
+    names = lock_run.names()
+    runs = [i for i, name in enumerate(names) if name == "deps"]
+    assert len(runs) == 2
+    assert runs[0] < names.index("quiesce") < runs[1]
+    # A refusal after the lock runs the unlock path: release, then re-arm.
+    assert names[-2:] == ["release", "rearm"]
+
+
+def test_merge_between_gates_and_disarm_rejudges_new_head(lock_run: _LockRun) -> None:
+    lock_run.heads = [_JUDGED, _MOVED]
+    lock_run.run()
+    names = lock_run.names()
+    after = names[names.index("quiesce") :]
+    # The new head is judged by the head-judging gates and the develop CD gate again,
+    # after the disarm (develop can no longer move) and before the cut.
+    assert after == [
+        "quiesce",
+        "sync",
+        "deps",
+        "head",
+        "main",
+        "tagged",
+        "packages",
+        "cd",
+        "worktree",
+        "update",
+        "cut",
+    ]
+
+
+def test_moved_head_failing_cd_gate_refuses_and_unlocks(
+    lock_run: _LockRun, develop_cd_gate: MagicMock
+) -> None:
+    lock_run.heads = [_JUDGED, _MOVED]
+    calls: list[str] = []
+
+    def gate(repo: str) -> None:
+        lock_run.events.append(("cd",))
+        calls.append(repo)
+        if len(calls) == 2:
+            raise ReleaseError(phase="preflight", command="gh run", message="new head red")
+
+    develop_cd_gate.side_effect = gate
+    with pytest.raises(ReleaseError, match="new head red"):
+        lock_run.run()
+    assert "worktree" not in lock_run.names()
+    assert lock_run.names()[-2:] == ["release", "rearm"]
+
+
+def test_moved_head_with_changed_version_refuses(lock_run: _LockRun) -> None:
+    lock_run.heads = [_JUDGED, _MOVED]
+    lock_run.versions = ["2.1.0", "2.2.0"]
+    with pytest.raises(ReleaseError, match="VERSION changed from 2.1.0 to 2.2.0"):
+        lock_run.run()
+    assert "worktree" not in lock_run.names()
+
+
+def test_unmoved_head_cut_without_rerunning_head_gates(lock_run: _LockRun) -> None:
+    lock_run.run()
+    names = lock_run.names()
+    for gate in ("main", "tagged", "packages", "cd"):
+        assert names.count(gate) == 1, gate
+    assert names.index("cd") < names.index("take")
+
+
+def test_refusal_after_lock_runs_unlock_path_and_rearms(lock_run: _LockRun) -> None:
+    with (
+        patch(
+            _MOD + "._acquire_release_worktree",
+            side_effect=ReleaseError(
+                phase="preflight", command="git worktree add", message="branch exists"
+            ),
+        ),
+        pytest.raises(ReleaseError, match="branch exists"),
+    ):
+        lock_run.run()
+    names = lock_run.names()
+    assert names[-2:] == ["release", "rearm"]
+    # The re-arm runs with no holder's pass: the lock is gone.
+    assert lock_run.events[-1] == ("rearm", None)
+
+
+def test_failure_before_disarm_releases_without_rearm(lock_run: _LockRun) -> None:
+    def quiesce(repo: str, *, on_disarm: Callable[[], None]) -> sweeps.QuiesceResult:
+        lock_run.events.append(("quiesce",))
+        raise sweeps.SweepError("arming refs still there")
+
+    with (
+        patch(_MOD + ".sweeps.quiesce", side_effect=quiesce),
+        pytest.raises(ReleaseError, match="arming refs still there"),
+    ):
+        lock_run.run()
+    assert lock_run.names()[-1] == "release"
+    assert "rearm" not in lock_run.names()
+
+
+def test_unlock_path_failure_reports_both_errors(lock_run: _LockRun) -> None:
+    lock_run.owner.release_error = RefWriteError("push rejected")
+    with (
+        patch(
+            _MOD + "._acquire_release_worktree",
+            side_effect=ReleaseError(
+                phase="preflight", command="git worktree add", message="branch exists"
+            ),
+        ),
+        pytest.raises(ReleaseError) as info,
+    ):
+        lock_run.run()
+    message = str(info.value)
+    assert "branch exists" in message
+    assert "push rejected" in message
+    assert "vrg-release-lock break" in message
+    # The lock may still be held, so nothing is re-armed under it.
+    assert "rearm" not in lock_run.names()
+
+
+def test_orchestrator_guard_leaves_unlock_to_the_orchestrator(lock_run: _LockRun) -> None:
+    guard = UnlockGuard()
+    with (
+        patch(
+            _MOD + "._acquire_release_worktree",
+            side_effect=ReleaseError(
+                phase="preflight", command="git worktree add", message="branch exists"
+            ),
+        ),
+        pytest.raises(ReleaseError, match="branch exists"),
+    ):
+        lock_run.run(guard=guard)
+    # preflight armed the caller's guard and left the unlock path to it.
+    assert guard.armed
+    assert "release" not in lock_run.names()
+
+
+def test_one_release_check_kept_as_second_guard(lock_run: _LockRun) -> None:
+    # No lock is held (a release past its unlock), but its tracking issue is open:
+    # the one-release check still refuses, before any lock step.
+    with (
+        patch(_MOD + "._check_no_open_release", side_effect=_check_no_open_release),
+        patch(_RESUME_READ, return_value=[_release_issue("2.0.9", 99, _state_body("2.0.9"))]),
+        pytest.raises(ReleaseError, match="One release runs at a time"),
+    ):
+        lock_run.run()
+    assert not {"reclaim", "take", "quiesce"} & set(lock_run.names())
+
+
+def test_open_tracking_issue_refused_before_take(lock_run: _LockRun) -> None:
+    with (
+        patch(_MOD + "._check_no_open_release", side_effect=_check_no_open_release),
+        patch(_RESUME_READ, return_value=[_release_issue("2.0.9", 99, _state_body("2.0.9"))]),
+        pytest.raises(ReleaseError, match="issues/99"),
+    ):
+        lock_run.run()
+    names = lock_run.names()
+    # Refused first: before the pre-check gates, the reclaim, the take and the disarm.
+    assert names == ["sync"]
+    assert lock_run.taken == []
+
+
+def test_resume_takes_no_lock(lock_run: _LockRun) -> None:
+    with patch(_MOD + "._resume_context", return_value=MagicMock()):
+        lock_run.run(resume=True, resume_version="2.1.0", resume_issue_number=42)
+    assert lock_run.events == []
+
+
+def test_holder_identity_reads_the_login_from_json() -> None:
+    with patch(_MOD + ".github.read_output", return_value="maintainer") as read:
+        assert _REAL_HOLDER_IDENTITY() == "maintainer"
+    read.assert_called_once_with("api", "user", "--jq", ".login")
+
+
+def test_holder_identity_failure_refuses() -> None:
+    with (
+        patch(_MOD + ".github.read_output", side_effect=subprocess.CalledProcessError(1, "gh")),
+        pytest.raises(ReleaseError, match="GitHub login"),
+    ):
+        _REAL_HOLDER_IDENTITY()
+
+
+def test_holder_identity_empty_login_refuses() -> None:
+    with (
+        patch(_MOD + ".github.read_output", return_value=""),
+        pytest.raises(ReleaseError, match="no login"),
+    ):
+        _REAL_HOLDER_IDENTITY()
+
+
+def test_second_release_refusal_when_the_lock_cannot_be_read(lock_run: _LockRun) -> None:
+    lock_run.take_result = None
+    with (
+        patch(_MOD + ".lock_refs.read_lock", side_effect=RefReadError("ls-remote failed")),
+        pytest.raises(ReleaseError, match="ls-remote failed") as info,
+    ):
+        lock_run.run()
+    assert "vrg-release-lock status" in str(info.value)
+    assert "quiesce" not in lock_run.names()
+
+
+def test_second_release_refusal_when_the_lock_went_since(lock_run: _LockRun) -> None:
+    lock_run.take_result = None
+    with pytest.raises(ReleaseError, match="released since"):
+        lock_run.run()
+    assert "quiesce" not in lock_run.names()
+
+
+def test_reclaimed_stale_lock_is_reported(
+    lock_run: _LockRun, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock_run.reclaim_result = MagicMock(old_sha="a" * 40, reason="heartbeat 1200s old")
+    lock_run.run()
+    out = capsys.readouterr().out
+    assert f"Reclaimed a stale release lock on o/r (was at {'a' * 40}): heartbeat 1200s old" in out
+
+
+def test_take_failure_refuses_with_nothing_disarmed(lock_run: _LockRun) -> None:
+    with (
+        patch(_MOD + ".LockOwner.take", side_effect=RefWriteError("push failed: HTTP 500")),
+        pytest.raises(ReleaseError, match="HTTP 500"),
+    ):
+        lock_run.run()
+    assert "quiesce" not in lock_run.names()
+    assert "release" not in lock_run.names()
+
+
+def test_develop_head_reads_rev_parse() -> None:
+    with patch(_MOD + ".git.read_output", return_value=_JUDGED) as read:
+        assert _REAL_DEVELOP_HEAD() == _JUDGED
+    read.assert_called_once_with("rev-parse", "HEAD")
+
+
+def test_develop_head_failure_refuses() -> None:
+    with (
+        patch(_MOD + ".git.read_output", side_effect=subprocess.CalledProcessError(128, "git")),
+        pytest.raises(ReleaseError, match="develop head"),
+    ):
+        _REAL_DEVELOP_HEAD()

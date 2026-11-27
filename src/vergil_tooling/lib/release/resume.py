@@ -14,11 +14,13 @@ from __future__ import annotations
 import functools
 import re
 import subprocess
+import sys
 from typing import TYPE_CHECKING, cast
 
-from vergil_tooling.lib import git, github, host_versions, version
+from vergil_tooling.lib import git, github, host_versions, trust, version
 from vergil_tooling.lib.release import state
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -94,6 +96,42 @@ def _open_release_issues(repo: str, *, phase: str = "resume") -> list[tuple[str,
         if match:
             issues.append((match.group(1), int(str(item["number"])), str(item.get("body", ""))))
     return issues
+
+
+def _trusted_read(repo: str, number: int) -> trust.IssueContent:
+    """:func:`trust.read_issue` of *repo*#*number*, its skips reported on stderr.
+
+    A read that cannot complete raises :class:`ReleaseError`: who wrote the
+    content is never guessed.
+    """
+    try:
+        content = trust.read_issue(repo, number)
+    except (trust.TrustReadError, TrustedAuthorsNotConfiguredError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"read_issue {repo}#{number}",
+            message=f"Could not read who wrote {repo}#{number}; refusing to release blind.",
+            detail=str(exc),
+        ) from exc
+    trust.report_skipped(content.skipped, stream=sys.stderr)
+    return content
+
+
+def _trusted_release_issues(
+    issues: Sequence[tuple[str, int, str]], repo: str
+) -> list[tuple[str, int, str]]:
+    """The *issues* whose body is trusted, each with that trusted body.
+
+    A ``release:`` issue with an untrusted body (an outsider's, or one an
+    untrusted identity edited) is no release in flight: it is reported on
+    stderr, metadata only, and never blocks the start (GHSA-777j-j57r-92ff).
+    """
+    trusted: list[tuple[str, int, str]] = []
+    for ver, number, _listed_body in issues:
+        body = _trusted_read(repo, number).body
+        if body is not None:
+            trusted.append((ver, number, body))
+    return trusted
 
 
 def _found_state(version: str, number: int, body: str, stages: Sequence[str]) -> StateBlock:
