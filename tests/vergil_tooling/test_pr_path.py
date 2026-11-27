@@ -1050,7 +1050,8 @@ def test_arm_takes_over_a_stale_arming_ref_and_arms(
     assert no_wait[0] == pytest.approx(ARMING_EXPIRY_SECS)
     tail = lock.events[lock.events.index("renew") - 1 :]
     assert tail == ["read_lock", "renew", "read_lock", "renew", "enable", "delete"]
-    assert lock.events.count("read_auto_merge") == ARMING_EXPIRY_SECS // ARMING_COLLISION_POLL_SECS + 1
+    polls = ARMING_EXPIRY_SECS // ARMING_COLLISION_POLL_SECS + 1
+    assert lock.events.count("read_auto_merge") == polls
     assert fake.mutations == [{"id": "PR_kw7", "head": HEAD, "method": "SQUASH"}]
     assert lock.arming == {}
 
@@ -1116,7 +1117,11 @@ def test_arm_collision_ref_gone_creates_its_own_and_arms(
     """The other caller ended without arming (held, refused or failed) and deleted its ref."""
     fake.events = lock.events
     lock.arming = {7: OTHER}
-    lock.on_current = lambda: lock.arming.pop(7, None)
+
+    def other_caller_deletes_its_ref() -> None:
+        lock.arming.pop(7, None)
+
+    lock.on_current = other_caller_deletes_its_ref
 
     result = arm(PR, clone=clone)
 
@@ -1133,6 +1138,40 @@ def test_arm_collision_ref_gone_creates_its_own_and_arms(
     ]
     assert lock.arming == {}
     assert no_wait[0] == 0
+
+
+def test_arm_collision_ref_gone_then_a_third_caller_wins_the_create(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    lock: FakeLock,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock.arming = {7: OTHER}
+    fake.other_arms_after = 2  # the third caller arms it
+    creates = [0]
+    real_create = lock.create
+
+    def create(repo: str, pr: int) -> str | None:
+        creates[0] += 1
+        if creates[0] == 2:
+            lock.arming[pr] = "e" * 40  # the third caller's create lands first
+        return real_create(repo, pr)
+
+    def other_caller_deletes_its_ref() -> None:
+        if lock.arming.get(7) == OTHER:
+            del lock.arming[7]
+
+    monkeypatch.setattr(arming, "create", create)
+    lock.on_current = other_caller_deletes_its_ref
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "armed"
+    assert creates[0] == 2
+    assert "renew" not in lock.events
+    assert fake.mutations == []
 
 
 def test_arm_collision_ref_read_failure_raises(
