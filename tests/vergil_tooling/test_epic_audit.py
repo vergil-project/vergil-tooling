@@ -1349,7 +1349,12 @@ def test_render_epic_children_lists_children_with_states() -> None:
 def test_render_epic_children_empty_when_no_children() -> None:
     epic = epics.IssueRef("vergil-project", ".github", 201)
     out = json.loads(epic_audit.render_epic_children(epic, [], containers=1))
-    assert out == {"epic": "vergil-project/.github#201", "containers": 1, "children": []}
+    assert out == {
+        "epic": "vergil-project/.github#201",
+        "containers": 1,
+        "children": [],
+        "groups": [],
+    }
 
 
 # -- orphan pass and label retirement (epic .github#176, Task 5) ---------------
@@ -3071,7 +3076,7 @@ def test_render_epic_children_primary_key_only_on_a_proxy() -> None:
         epic_audit.render_epic_children(_PROXY, children, containers=1, primary=_PRIMARY)
     )
     assert on_proxy["primary"] == "vergil-project/.github#1417"
-    assert list(on_proxy) == ["epic", "primary", "containers", "children"]
+    assert list(on_proxy) == ["epic", "primary", "containers", "children", "groups"]
     plain = json.loads(epic_audit.render_epic_children(_PRIMARY, children, containers=1))
     assert "primary" not in plain
 
