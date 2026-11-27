@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.bin.vrg_pr_await import (
     EXIT_CANNOT_MERGE,
     EXIT_ERROR,
+    EXIT_HELD_BY_RELEASE,
     EXIT_MERGED,
     is_permission_error,
     main,
@@ -20,6 +21,7 @@ from vergil_tooling.bin.vrg_pr_await import (
 )
 from vergil_tooling.lib import finalize_watch, github
 from vergil_tooling.lib.pr_await import AwaitResult, PrAwaitError
+from vergil_tooling.lib.release_lock.watch import LockWatch
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_await import Reason
@@ -47,7 +49,33 @@ def _cannot(reason: Reason, detail: str, **kwargs: Any) -> AwaitResult:
 
 
 def test_exit_codes_are_distinct() -> None:
-    assert (EXIT_MERGED, EXIT_CANNOT_MERGE, EXIT_ERROR) == (0, 1, 2)
+    assert (EXIT_MERGED, EXIT_CANNOT_MERGE, EXIT_ERROR, EXIT_HELD_BY_RELEASE) == (0, 1, 2, 6)
+
+
+def test_held_by_release_exits_6_with_json(capsys: pytest.CaptureFixture[str]) -> None:
+    held = _cannot("held_by_release", "still held by release 2.1.400 (stage cut, running)")
+    with patch(_WAIT, return_value=held):
+        assert main([_PR]) == EXIT_HELD_BY_RELEASE
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["outcome"] == "held_by_release"
+    assert payload["reason"] == "held_by_release"
+    assert "held by release (held_by_release): still held by release 2.1.400" in captured.err
+    assert "cannot merge" not in captured.err
+
+
+def test_main_waits_under_the_lock_watch() -> None:
+    with patch(_WAIT, return_value=_merged()) as wait:
+        main([_PR])
+    assert isinstance(wait.call_args.kwargs["lock"], LockWatch)
+
+
+def test_help_lists_exit_6(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "6 held by release" in out
+    assert "auto_merge_off" not in out
 
 
 def test_parse_args_takes_the_pr() -> None:
@@ -88,7 +116,7 @@ def test_merged_exits_0_with_json(capsys: pytest.CaptureFixture[str]) -> None:
     [
         ("check_failed", {"failed_checks": ("test / unit",)}, "failed_checks", ["test / unit"]),
         ("conflict", {}, None, None),
-        ("auto_merge_off", {}, None, None),
+        ("refused", {}, None, None),
         ("closed", {}, None, None),
         ("orphaned_check", {"orphaned_checks": ("CodeQL",)}, "orphaned_checks", ["CodeQL"]),
         ("timed_out", {}, None, None),

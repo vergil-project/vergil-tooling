@@ -5,9 +5,11 @@ the tooling opens or arms is armed here, by :func:`arm`, and nothing else
 turns auto-merge on or merges a PR into ``develop``. ``vrg-submit-pr``, the
 mechanized automation (:func:`vergil_tooling.lib.mechanized_pr.open_sync_pr`),
 update-deps (:func:`vergil_tooling.lib.update_deps.pr.arm_and_wait`), the
-release's back-merge (:func:`vergil_tooling.lib.release.bump.back_merge_and_bump`)
-and the release lock's re-arm sweep
-(:func:`vergil_tooling.lib.release_lock.sweeps.rearm_all`) are its callers.
+release's back-merge (:func:`vergil_tooling.lib.release.bump.back_merge_and_bump`),
+the release lock's re-arm sweep
+(:func:`vergil_tooling.lib.release_lock.sweeps.rearm_all`) and the merge
+watch's re-arm of its own unarmed PR when no lock is held
+(:class:`vergil_tooling.lib.release_lock.watch.LockWatch`) are its callers.
 Only the release lock's disarm sweep
 (:func:`vergil_tooling.lib.release_lock.sweeps.disarm_all`) turns auto-merge
 off. The release

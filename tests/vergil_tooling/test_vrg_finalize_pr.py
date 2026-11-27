@@ -15,7 +15,9 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from vergil_tooling.bin import vrg_pr_await
 from vergil_tooling.bin.vrg_finalize_pr import (
+    EXIT_HELD_BY_RELEASE,
     CDUnreadableError,
     FinalizeContext,
     FinalizeError,
@@ -48,6 +50,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
 )
 from vergil_tooling.lib import (
     closing_refs,
+    finalize_watch,
     github,
     progress,
     security_records,
@@ -72,6 +75,7 @@ from vergil_tooling.lib.live_branches import RepoSetError
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.release_lock.model import LockRecord, RefReadError
 from vergil_tooling.lib.release_lock.refs import LockState
+from vergil_tooling.lib.release_lock.watch import LockWatch
 from vergil_tooling.lib.trust import PRRef, Role, TrustReadError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.versions import VersionsError
@@ -3850,7 +3854,7 @@ def test_settle_once_after_mixed_batch(tmp_path: Path, capsys: pytest.CaptureFix
     with _settle_env(tmp_path, calls), patch(_MOD + ".finalize_watch.watch", watch):
         rc = main([f"{_PR_A},{_PR_B},{_PR_C}"])
     assert rc == 3
-    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C])
+    watch.assert_called_once_with([_PR_A, _PR_B, _PR_C], lock=ANY)
     assert calls == _SETTLED
     assert "Validate: passed" in capsys.readouterr().out
 
@@ -3889,6 +3893,53 @@ def test_all_merged_is_full_success(tmp_path: Path) -> None:
 
 def test_exit_3_when_one_failed(tmp_path: Path) -> None:
     watch = _watch_returning(_pr_result(_PR_A), _pr_result(_PR_B, "failed: closed"))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([f"{_PR_A},{_PR_B}"]) == 3
+
+
+# --- held by release (epic vergil-project/.github#1664, Task 26) --------------------
+
+_HELD = "still held by release 2.1.400 (stage cut, running) at the 7200s batch deadline"
+
+
+def test_exit_held_by_release_is_6_in_both_commands(capsys: pytest.CaptureFixture[str]) -> None:
+    assert EXIT_HELD_BY_RELEASE == 6
+    assert vrg_pr_await.EXIT_HELD_BY_RELEASE == 6
+    assert finalize_watch.EXIT_HELD_BY_RELEASE == 6
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "6 every PR that did not merge is held by release" in out
+
+
+def test_watch_runs_under_the_lock_watch(tmp_path: Path) -> None:
+    watch = _watch_returning(_pr_result(_PR_A))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        main([_PR_A])
+    assert isinstance(watch.call_args.kwargs["lock"], LockWatch)
+
+
+def test_all_held_exits_held_by_release(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    watch = _watch_returning(_pr_result(_PR_A), _pr_result(_PR_B, "held by release", _HELD))
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([f"{_PR_A},{_PR_B}"]) == 6
+    out = capsys.readouterr().out
+    assert f"held by release: {_HELD}" in out
+    assert f"next: a release holds the lock; run `vrg-finalize-pr {_PR_B}` again" in out
+
+
+def test_finalize_batch_failed_and_held_exits_not_all_merged(tmp_path: Path) -> None:
+    watch = _watch_returning(
+        _pr_result(_PR_A, "held by release", _HELD), _pr_result(_PR_B, "failed: CI", "why")
+    )
+    with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
+        assert main([f"{_PR_A},{_PR_B}"]) == 3
+
+
+def test_held_and_provenance_violation_exits_not_all_merged(tmp_path: Path) -> None:
+    watch = _watch_returning(
+        _pr_result(_PR_A, violation=True), _pr_result(_PR_B, "held by release", _HELD)
+    )
     with _settle_env(tmp_path, []), patch(_MOD + ".finalize_watch.watch", watch):
         assert main([f"{_PR_A},{_PR_B}"]) == 3
 
@@ -4194,7 +4245,12 @@ def test_report_title_is_truncated() -> None:
         ("failed: conflict", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("failed: closed", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
         ("timed out", f"hand it to an agent, then rerun `vrg-finalize-pr {_PR_B}`"),
-        ("failed: auto-merge off", "investigate before re-enabling auto-merge"),
+        (
+            "failed: refused",
+            "the one PR path refused to re-arm it; deal with its reason, then rerun"
+            f" `vrg-finalize-pr {_PR_B}`",
+        ),
+        ("held by release", f"a release holds the lock; run `vrg-finalize-pr {_PR_B}` again"),
         ("failed: not a develop PR", "finalize watches develop PRs only"),
     ],
 )
@@ -4329,7 +4385,7 @@ def test_merged_violation_blocks_release(
         patch(_MOD + ".subprocess.run", run),
     ):
         assert main([_PR_A, "--release"]) == 3
-    watch.assert_called_once_with([_PR_A])
+    watch.assert_called_once_with([_PR_A], lock=ANY)
     assert calls == _SETTLED  # develop still settles: the PR is merged
     run.assert_not_called()
     out = capsys.readouterr().out
@@ -4402,7 +4458,7 @@ def test_all_selects_worktree_prs(tmp_path: Path) -> None:
         patch(_MOD + ".finalize_watch.watch", side_effect=_all_merged) as watch,
     ):
         assert main(["--all"]) == 0
-    watch.assert_called_once_with([_PR7.url, _PR8.url])
+    watch.assert_called_once_with([_PR7.url, _PR8.url], lock=ANY)
 
 
 def test_all_with_no_open_prs_returns_zero(
@@ -5278,7 +5334,7 @@ def test_watch_keeps_close_refs_cd_and_advisory_stages(tmp_path: Path) -> None:
         patch(_MOD + ".finalize_watch.watch", watch),
     ):
         assert main([_PR_A]) == 0
-    watch.assert_called_once_with([_PR_A])
+    watch.assert_called_once_with([_PR_A], lock=ANY)
     assert calls == [
         "close-refs:False",
         "advisory",

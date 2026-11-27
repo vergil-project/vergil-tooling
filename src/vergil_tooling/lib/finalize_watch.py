@@ -6,10 +6,33 @@ each until it reaches a terminal :data:`Outcome` or the batch deadline
 (:func:`deadline_secs`) passes. It holds no lock and changes nothing locally;
 the settle phase that follows is the caller's.
 
-The watch never merges a PR and never turns auto-merge on or off
-(epic vergil-project/.github#1664, spec §5, phase 1): it watches and
-reports. Auto-merge found off, at the start or mid-watch, is an exception
-for the human, reported as ``failed: auto-merge off`` and never repaired.
+The watch never merges a PR and never turns auto-merge on or off itself
+(epic vergil-project/.github#1664, spec §5): it watches and reports. An
+open PR's auto-merge is the release lock's business (spec §5.5, §5.7
+layer 2): on every read of an open PR the watch asks its *lock* rule
+(:class:`LockRule`; ``vrg-finalize-pr`` passes
+:class:`vergil_tooling.lib.release_lock.watch.LockWatch`), before it would
+judge auto-merge off, and the answer (a :class:`LockView`) decides:
+
+- **No lock held:** an armed PR is judged as below. An unarmed one is
+  re-armed through the one PR path (:func:`vergil_tooling.lib.pr_path.arm`,
+  never by the watch itself); a re-arm the path refuses ends the PR as
+  ``failed: refused``, naming the path's reason, with no further re-arm or
+  poll.
+- **Held by a live release:** the PR is reported as
+  ``held by release <version> (stage <stage>, <health>)`` and the watch
+  polls at its normal pace.
+- **Held by a broken release, or one whose heartbeat is stale:** it is
+  reported as such, the watch polls every :data:`BROKEN_WATCH_POLL_SECS`,
+  and a stale lock is reclaimed.
+- **Held but unreadable:** reported as ``held by an unreadable release
+  lock (<error>)``, polled every :data:`BROKEN_WATCH_POLL_SECS`, never
+  reclaimed: only ``vrg-release-lock break`` clears it.
+
+So auto-merge off never ends a PR: there is no ``failed: auto-merge off``.
+A PR still pending at the deadline while the lock holds it ends
+``held by release``, which ``vrg-finalize-pr`` exits
+:data:`EXIT_HELD_BY_RELEASE` for when every PR that did not merge ended so.
 The watch judges no head of an open PR: the one PR path
 (:mod:`vergil_tooling.lib.pr_path`) runs the provenance check and the
 agent gates on every head the tooling arms or pushes, before it is armed
@@ -30,7 +53,8 @@ judge it in this order:
    the result carries ``provenance_violation=True``, printed loudly. The
    caller treats such a run as not a full success.
 3. **Closed** without merging: ``failed: closed``.
-4. **Auto-merge off:** ``failed: auto-merge off``.
+4. **The release lock**, as above: a refused re-arm is ``failed: refused``;
+   every other answer leaves the PR to the steps below.
 5. **A required check concluded in failure:** ``failed: CI``, naming the
    check. :func:`check_failures` judges the snapshot's checks, and leaves
    out a failed or cancelled check-run of a superseded workflow run. When
@@ -96,17 +120,20 @@ pushed head and :func:`gates_before_push` a head about to be pushed. Each:
 A head the gates do not pass is returned as the reasons, and any read or
 fetch the gates cannot complete as the reason too, never as a pass.
 
-A PR still pending at the deadline is ``timed out``; its auto-merge stays on.
-Every failure to read a PR or to run the provenance check raises; none is
-read as a pending or a clean PR.
+A PR still pending at the deadline is ``timed out``, its auto-merge left as
+it is, or ``held by release`` when the lock held it at its last read.
+Every failure to read a PR, to run the provenance check, or to read the
+lock, re-arm the PR or reclaim a stale lock raises; none is read as a
+pending or a clean PR.
 
 **A status table** (issue #4677) is built after start-up and after every
 poll: one row per PR in the batch, a PR that has ended included, with its
-number, its shortened title, its state (``checks pending (<n>)``,
-``checks green, merging``, ``behind develop``, ``waiting (<merge state>)``,
-or the outcome it ended with) and how long it has waited since the watch
-started, frozen when it ended. A totals line closes it: merged, pending and
-failed, and the time left before the batch deadline. It goes to
+number, its shortened title, its state (``held by release …`` while the
+lock holds it, ``checks pending (<n>)``, ``checks green, merging``,
+``behind develop``, ``waiting (<merge state>)``, or the outcome it ended
+with) and how long it has waited since the watch started, frozen when it
+ended. A totals line closes it: merged, pending, failed and held by
+release, and the time left before the batch deadline. It goes to
 :func:`vergil_tooling.lib.progress.status_block` (issue #4694), marked
 changed when some PR's state has changed since the last one: on a TTY it
 is redrawn in place every poll; off a TTY it is printed only when it
@@ -123,7 +150,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from vergil_tooling.lib import (
     agent_gates,
@@ -139,6 +166,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release_lock.model import BROKEN_WATCH_POLL_SECS
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
@@ -157,10 +185,64 @@ Outcome = Literal[
     "failed: cancelled",
     "failed: conflict",
     "failed: closed",
-    "failed: auto-merge off",
+    "failed: refused",
     "failed: not a develop PR",
     "timed out",
+    "held by release",
 ]
+
+#: The exit code of ``vrg-finalize-pr`` and ``vrg-pr-await`` when the PRs
+#: that did not merge are all still held by a release at the deadline
+#: (spec §5.5): the caller runs the same watch again.
+EXIT_HELD_BY_RELEASE = 6
+
+#: What the release lock means for one open PR, at one read (see the module docstring).
+#: ``free``: no lock held, the PR armed or just re-armed. ``held``: a live
+#: release holds it. ``broken``: a broken or heartbeat-stale release holds it.
+#: ``unreadable``: a lock is held that cannot be read. ``refused``: no lock
+#: held, and the one PR path refused to re-arm the PR.
+LockState = Literal["free", "held", "broken", "unreadable", "refused"]
+_HELD_STATES = frozenset({"held", "broken", "unreadable"})
+_SLOW_STATES = frozenset({"broken", "unreadable"})
+
+
+@dataclass(frozen=True)
+class LockView:
+    """What the release lock means for one open PR at one read.
+
+    *detail* is what the watch reports: for a held state, the status it
+    shows (``held by release <version> (stage <stage>, <health>)``); for
+    ``refused``, the path's reason; for ``free``, what was done (a re-arm
+    or a reclaim), ``""`` when nothing was.
+    """
+
+    state: LockState
+    detail: str = ""
+
+    @property
+    def held(self) -> bool:
+        """Whether the lock holds the PR: it cannot merge until the lock is released."""
+        return self.state in _HELD_STATES
+
+    @property
+    def slow(self) -> bool:
+        """Whether the watch polls every :data:`BROKEN_WATCH_POLL_SECS`, not at its normal pace."""
+        return self.state in _SLOW_STATES
+
+
+#: The view of a PR the lock does not touch.
+FREE = LockView("free")
+
+
+class LockRule(Protocol):
+    """The release lock's answer for an open PR, read on every poll before auto-merge is judged.
+
+    A lock, re-arm or reclaim step that cannot be completed raises
+    :class:`FinalizeWatchError`, naming the PR.
+    """
+
+    def __call__(self, snap: Snapshot, /) -> LockView: ...
+
 
 #: The batch deadline's environment variable: a positive whole number of
 #: seconds covering the whole watch phase.
@@ -349,7 +431,7 @@ def confirmed_head(snap: Snapshot) -> str | None:
     names no repo and number, or a read the layer cannot complete, raises
     :class:`FinalizeWatchError`.
     """
-    repo, number = _pr_repo_and_number(snap)
+    repo, number = pr_repo_and_number(snap)
     try:
         prs, skipped = trust.prs_for_branch(repo, snap.head_ref, state="all")
     except trust.TrustReadError as exc:
@@ -423,7 +505,7 @@ def _git(clone: Path, *args: str) -> str:
     return git.read_output("-C", str(clone), *args)
 
 
-def _pr_repo_and_number(snap: Snapshot) -> tuple[str, int]:
+def pr_repo_and_number(snap: Snapshot) -> tuple[str, int]:
     match = _PR_URL_RE.search(snap.url)
     if match is None:
         msg = f"{snap.url}: cannot read the repository and number from the PR's URL"
@@ -572,7 +654,7 @@ def _gates_at(
     *clone*. *pusher_is_agent* makes the PR agent-involved whatever its
     GitHub actors and ready state say.
     """
-    repo, number = _pr_repo_and_number(snap)
+    repo, number = pr_repo_and_number(snap)
     require_clone_of(clone, repo, snap.url)
     try:
         authors = load_trusted_authors()
@@ -803,7 +885,8 @@ class _Watched:
 
     *branch* is the head branch :func:`confirmed_head` gave at start-up, or
     ``None`` when the trust layer did not confirm the PR. *violation* is the
-    provenance violation found on the merged PR.
+    provenance violation found on the merged PR. *lock* is the release
+    lock's view of the PR at its last read.
     """
 
     required: frozenset[str] | None
@@ -811,6 +894,7 @@ class _Watched:
     conflict: ConflictSettle
     branch: str | None
     violation: str = ""
+    lock: LockView = FREE
 
 
 def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) -> PRResult:
@@ -827,7 +911,16 @@ def _result(snap: Snapshot, outcome: Outcome, detail: str, watched: _Watched) ->
     )
 
 
-def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
+def _read_lock(snap: Snapshot, watched: _Watched, lock: LockRule) -> LockView:
+    """Ask *lock* about open PR *snap*, record the view, and print it when it changed."""
+    view = lock(snap)
+    if view != watched.lock and view.detail:
+        print(f"{snap.url}: {view.detail}")
+    watched.lock = view
+    return view
+
+
+def _judge(snap: Snapshot, watched: _Watched, *, now: float, lock: LockRule) -> PRResult | None:
     """*snap*'s terminal result, in the module docstring's order, or ``None`` while pending."""
     why = _not_develop(snap, watched.branch)
     if why is not None:
@@ -843,9 +936,10 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float) -> PRResult | None:
         return _result(snap, "merged", watched.violation, watched)
     if snap.state == "CLOSED":
         return _result(snap, "failed: closed", "closed without merging", watched)
-    if not snap.auto_merge_on:
-        detail = "auto-merge is off; investigate before re-enabling auto-merge"
-        return _result(snap, "failed: auto-merge off", detail, watched)
+    view = _read_lock(snap, watched, lock)
+    if view.state == "refused":
+        detail = f"the one PR path refused to re-arm it: {view.detail}"
+        return _result(snap, "failed: refused", detail, watched)
     checks = check_failures(snap, watched.required)
     if checks.failed:
         detail = f"required check failed: {', '.join(checks.failed)}"
@@ -889,6 +983,8 @@ def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
 
 def _pending_state(snap: Snapshot, watched: _Watched) -> str:
     """The status table's state for *snap*'s PR while it is still pending."""
+    if watched.lock.held:
+        return watched.lock.detail
     if watched.cancel.names:
         return f"checks cancelled ({len(watched.cancel.names)}), awaiting a re-run"
     if watched.conflict.settling:
@@ -942,13 +1038,14 @@ def _shorten(title: str) -> str:
 
 
 def _totals(results: Collection[PRResult], pending: int, left: float) -> str:
-    """The table's totals: merged, pending and failed, and the time left."""
+    """The table's totals: merged, pending, failed and held by release, and the time left."""
     merged = sum(r.outcome == "merged" for r in results)
     failed = sum(r.outcome.startswith("failed") for r in results)
-    return (
-        f"{merged} merged, {pending} pending, {failed} failed; "
-        f"{_duration(left)} left before the batch deadline"
-    )
+    held = sum(r.outcome == "held by release" for r in results)
+    counts = f"{merged} merged, {pending} pending, {failed} failed"
+    if held:
+        counts += f", {held} held by release"
+    return f"{counts}; {_duration(left)} left before the batch deadline"
 
 
 def _status_lines(rows: Sequence[_Row], totals: str, elapsed: float) -> list[str]:
@@ -994,38 +1091,53 @@ class _StatusTable:
 
 
 def summarize(results: Sequence[PRResult]) -> str:
-    """One line for the watch's collapsed stage: ``4 merged, 1 failed[, 1 timed out]``."""
+    """One line for the watch's stage, such as ``4 merged, 1 failed, 1 held by release``.
+
+    The failed count is always there; the timed-out and held counts only when not zero.
+    """
     merged = sum(r.outcome == "merged" for r in results)
     failed = sum(r.outcome.startswith("failed") for r in results)
     timed_out = sum(r.outcome == "timed out" for r in results)
+    held = sum(r.outcome == "held by release" for r in results)
     text = f"{merged} merged, {failed} failed"
-    return f"{text}, {timed_out} timed out" if timed_out else text
+    if timed_out:
+        text += f", {timed_out} timed out"
+    if held:
+        text += f", {held} held by release"
+    return text
 
 
 def watch(
     prs: Sequence[str],
     *,
+    lock: LockRule,
     poll_interval: float = 15.0,
+    broken_poll: float = BROKEN_WATCH_POLL_SECS,
     cancel_grace: float = CANCEL_GRACE_SECS,
     conflict_settle: float = CONFLICT_SETTLE_SECS,
 ) -> list[PRResult]:
     """Watch *prs* until each reaches a terminal :data:`Outcome` or the deadline passes.
 
     Returns one :class:`PRResult` per distinct PR, in the order given. The
-    deadline (:func:`deadline_secs`) and *poll_interval* are checked before any
-    PR is read. Each open PR is read once at start-up and once per interval,
-    and the status table is shown after start-up and after each poll. A PR
+    deadline (:func:`deadline_secs`), *poll_interval* and *broken_poll* are
+    checked before any PR is read. Each open PR is read once at start-up and
+    once per interval, and *lock* is asked about it on each read; the
+    interval is *broken_poll* while the lock's view of any pending PR is
+    slow (:attr:`LockView.slow`), *poll_interval* otherwise. The status
+    table is shown after start-up and after each poll. A PR
     that ended on its checks alone is read again on every later poll, and
     ends ``merged`` once GitHub reports it merged. *cancel_grace* is how long
     a cancelled required check with no newer run holds a PR pending, and
     *conflict_settle* how long a conflict must be reported at one head
-    before the PR ends failed: conflict. No head of an open PR is judged
-    and auto-merge is never touched: see the module docstring.
+    before the PR ends failed: conflict. No head of an open PR is judged,
+    and the watch turns auto-merge on only through *lock*'s re-arm: see the
+    module docstring.
     """
     deadline = deadline_secs()
-    if poll_interval <= 0:
-        msg = f"poll_interval must be positive, got {poll_interval!r}"
-        raise ValueError(msg)
+    for name, value in (("poll_interval", poll_interval), ("broken_poll", broken_poll)):
+        if value <= 0:
+            msg = f"{name} must be positive, got {value!r}"
+            raise ValueError(msg)
     results: dict[str, PRResult] = {}
     pending: dict[str, tuple[_Watched, Snapshot]] = {}
     # The PRs that ended on their checks alone, re-read while the watch goes on.
@@ -1037,7 +1149,7 @@ def watch(
 
     def judge(snap: Snapshot, watched: _Watched) -> None:
         now = time.monotonic()
-        result = _judge(snap, watched, now=now)
+        result = _judge(snap, watched, now=now, lock=lock)
         if result is None:
             pending[snap.url] = (watched, snap)
             rows[snap.url] = _row(snap, watched, _pending_state(snap, watched), now - start)
@@ -1071,7 +1183,8 @@ def watch(
         remaining = end - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(poll_interval, remaining))
+        slow = any(watched.lock.slow for watched, _ in pending.values())
+        time.sleep(min(broken_poll if slow else poll_interval, remaining))
         for url, watched in list(reread.items()):
             snap = snapshot(url)
             if snap.state == "MERGED":
@@ -1084,6 +1197,11 @@ def watch(
         table.show(rows_now, list(results.values()), len(pending), now - start, end - now)
 
     for url, (watched, snap) in pending.items():
-        detail = f"still pending at the {deadline}s batch deadline ({DEADLINE_ENV})"
-        results[url] = _result(snap, "timed out", f"{detail}; its auto-merge stays on", watched)
+        at = f"at the {deadline}s batch deadline ({DEADLINE_ENV})"
+        if watched.lock.held:
+            detail = f"still {watched.lock.detail} {at}; run the watch again"
+            results[url] = _result(snap, "held by release", detail, watched)
+        else:
+            detail = f"still pending {at}; its auto-merge stays on"
+            results[url] = _result(snap, "timed out", detail, watched)
     return [results[url] for url in order]

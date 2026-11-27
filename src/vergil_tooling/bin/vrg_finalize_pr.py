@@ -2,14 +2,22 @@
 
 ``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
 its required checks pass. ``vrg-finalize-pr`` never merges a PR and never
-turns auto-merge on or off (epic vergil-project/.github#1218, spec §6.3;
-epic vergil-project/.github#1664, spec §5, phase 1). It:
+turns auto-merge off (epic vergil-project/.github#1218, spec §6.3;
+epic vergil-project/.github#1664, spec §5). It:
 
 1. **Watches** every listed PR (``lib/finalize_watch.py``), holding no lock,
    until each ends ``merged`` or ``failed: …`` (CI, cancelled, conflict,
-   closed, auto-merge off, not a develop PR), or the batch deadline
+   closed, refused, not a develop PR), or the batch deadline
    (``$VRG_FINALIZE_DEADLINE`` seconds, default 7200) passes and it is
-   ``timed out``. A PR that merged before the run started counts as merged.
+   ``timed out``, or ``held by release`` when the release lock still holds
+   it. A PR that merged before the run started counts as merged. The watch
+   reads the release lock on every poll (``lib/release_lock/watch.py``,
+   spec §5.5): a PR a release holds is reported as held, naming the
+   release, its version, its stage and its health, never as auto-merge
+   off; a broken release slows the poll, and a stale lock is reclaimed.
+   With no lock held, an unarmed PR is re-armed through the one PR path,
+   the one way the watch turns auto-merge on, and a re-arm the path
+   refuses ends it ``failed: refused``.
    The watch judges no head of an open PR: the one PR path
    (``lib/pr_path.py``) runs the provenance check and the gates on every
    head the tooling arms or pushes, before it is armed or pushed. It runs
@@ -73,8 +81,12 @@ job merges on GitHub. Its exit codes are a watched run's.
   provenance violation);
 - 4: develop did not validate: the validate failed or could not run (the dev
   image could not be provisioned included), or, with ``--wait-cd``, CD did
-  not succeed. 4 takes precedence over 1 and 3;
-- 5: full success, but the chained release failed.
+  not succeed. 4 takes precedence over 1, 3 and 6;
+- 5: full success, but the chained release failed;
+- 6: develop is healthy, and every PR that did not merge is ``held by
+  release`` (``EXIT_HELD_BY_RELEASE``, shared with ``vrg-pr-await``). Not a
+  failure: run the same command again. 3 takes precedence when any PR
+  failed, timed out or merged with a provenance violation.
 
 **Removed flags** are refused by name before any side effect:
 ``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
@@ -154,6 +166,7 @@ from vergil_tooling.lib.pr_workflow import github_transport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.progress import Stage, StageResult, StageStatus
 from vergil_tooling.lib.release import gate
+from vergil_tooling.lib.release_lock.watch import LockWatch
 from vergil_tooling.lib.repo_init import prompt_choice
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
@@ -180,8 +193,21 @@ EXIT_ERROR = 1
 EXIT_NOT_ALL_MERGED = 3
 EXIT_DEVELOP_BROKEN = 4
 EXIT_RELEASE_FAILED = 5
+EXIT_HELD_BY_RELEASE = finalize_watch.EXIT_HELD_BY_RELEASE
 # What progress.run_pipeline returns when the run is interrupted.
 EXIT_INTERRUPTED = 130
+
+_EPILOG = f"""\
+exit status:
+  {EXIT_OK}  full success
+  {EXIT_ERROR}  a tool or usage error
+  {EXIT_NOT_ALL_MERGED}  develop is healthy, but not every PR merged (or one merged with a
+     provenance violation)
+  {EXIT_DEVELOP_BROKEN}  develop did not validate (or, with --wait-cd, CD did not succeed)
+  {EXIT_RELEASE_FAILED}  full success, but the chained release failed
+  {EXIT_HELD_BY_RELEASE}  every PR that did not merge is held by release: the release lock
+     still held it at the deadline; run the same command again
+"""
 
 NO_WAIT_CD_REMOVED = (
     "vrg-finalize-pr: --no-wait-cd was removed; not waiting on CD is now the "
@@ -229,9 +255,12 @@ _VALIDATE_LOG_COMMAND = "vrg-finalize-validate"
 _REPORT_COLUMNS = ("PR", "BRANCH", "TYPE", "OUTCOME", "TITLE")
 
 _NEXT_STEP = "hand it to an agent, then rerun `vrg-finalize-pr {pr}`"
-_INVESTIGATE = "investigate before re-enabling auto-merge"
 _NEXT_STEP_BY_OUTCOME: dict[str, str] = {
-    "failed: auto-merge off": _INVESTIGATE,
+    "failed: refused": (
+        "the one PR path refused to re-arm it; deal with its reason, then rerun"
+        " `vrg-finalize-pr {pr}`"
+    ),
+    "held by release": "a release holds the lock; run `vrg-finalize-pr {pr}` again",
     "failed: cancelled": "re-run its cancelled checks, then rerun `vrg-finalize-pr {pr}`",
     "failed: not a develop PR": (
         "finalize watches develop PRs only; a release PR goes through vrg-release"
@@ -343,7 +372,9 @@ def _flag_refusal(args: argparse.Namespace) -> str | None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Watch a batch of auto-merging PRs, then settle develop once."
+        description="Watch a batch of auto-merging PRs, then settle develop once.",
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # A PR list, --all and --cleanup-only each name what the run settles.
     target = parser.add_mutually_exclusive_group()
@@ -440,7 +471,7 @@ def _run_watched(args: argparse.Namespace, root: Path, prs: list[str]) -> int:
         try:
             results = progress.run_stage(
                 "watch",
-                lambda: finalize_watch.watch(prs),
+                lambda: finalize_watch.watch(prs, lock=LockWatch()),
                 args=args,
                 log=log,
                 describe=_describe_watch,
@@ -494,9 +525,19 @@ def _blocking_violation(result: PRResult) -> bool:
 
 
 def _watch_exit(results: Sequence[PRResult]) -> int:
-    """0 when every PR merged with no provenance violation, else 3."""
-    if all(r.outcome == "merged" and not _blocking_violation(r) for r in results):
+    """0 when every PR merged with no provenance violation, 6 when the rest are held, else 3.
+
+    6 (:data:`EXIT_HELD_BY_RELEASE`) applies only when every PR that did not
+    merge is ``held by release`` and no merged PR broke provenance: any
+    other outcome makes it 3.
+    """
+    if any(_blocking_violation(r) for r in results):
+        return EXIT_NOT_ALL_MERGED
+    unmerged = [r for r in results if r.outcome != "merged"]
+    if not unmerged:
         return EXIT_OK
+    if all(r.outcome == "held by release" for r in unmerged):
+        return EXIT_HELD_BY_RELEASE
     return EXIT_NOT_ALL_MERGED
 
 

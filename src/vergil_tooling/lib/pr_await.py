@@ -3,7 +3,7 @@
 ``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
 its required checks pass. :func:`wait_for_merge` waits on one such PR until it
 merges, until it can no longer merge as it stands, or until the deadline
-passes. It never merges a PR, never turns auto-merge on or off, and changes
+passes. It never merges a PR, never turns auto-merge off, and changes
 nothing locally.
 
 There is no webhook ingress on a laptop, so it polls: one
@@ -14,8 +14,18 @@ order:
 1. **Merged:** the wait ends in success, with the merge commit. A PR that
    merged before the wait started counts too.
 2. **Closed** without merging: reason ``closed``.
-3. **Auto-merge off:** reason ``auto_merge_off``. Auto-merge stays pinned to
-   the head submit pushed, so a push that turns it off ends the wait here.
+3. **The release lock** (epic vergil-project/.github#1664, spec §5.5), the
+   rule ``vrg-finalize-pr``'s watch applies: the wait's *lock* rule
+   (:class:`vergil_tooling.lib.release_lock.watch.LockWatch`) is asked
+   about the open PR before auto-merge off is judged, so auto-merge off
+   never ends the wait. Under a held lock the PR is reported as held (the
+   release, its version, its stage and its health, on stderr when it
+   changes) and the wait goes on, every
+   :data:`~vergil_tooling.lib.release_lock.model.BROKEN_WATCH_POLL_SECS`
+   while the release is broken or its lock unreadable, reclaiming a stale
+   lock. With no lock held an unarmed PR is re-armed through the one PR
+   path; a re-arm the path refuses ends the wait with reason ``refused``,
+   naming the path's reason.
 4. **A required check concluded in failure:** reason ``check_failed``,
    naming the checks, judged by
    :func:`vergil_tooling.lib.finalize_watch.check_failures` as the finalize
@@ -42,8 +52,12 @@ order:
    (#3431), so the same pending set must stay orphaned for the grace period
    (``$VRG_ORPHAN_GRACE``, 300s by default) first.
 8. **Deadline:** a PR still pending when the deadline passes is reason
-   ``timed_out``. The deadline is ``$VRG_FINALIZE_DEADLINE`` seconds (default
-   7200), the epic's batch deadline (:func:`finalize_watch.deadline_secs`).
+   ``timed_out``, or ``held_by_release`` when the lock held it at its last
+   read (``vrg-pr-await`` exits
+   :data:`~vergil_tooling.lib.finalize_watch.EXIT_HELD_BY_RELEASE` for it,
+   and the caller runs the same wait again). The deadline is
+   ``$VRG_FINALIZE_DEADLINE`` seconds (default 7200), the epic's batch
+   deadline (:func:`finalize_watch.deadline_secs`).
 
 A new review or a new commit never ends the wait: a review after submit is
 advisory and never holds the merge (spec §6.2).
@@ -60,19 +74,23 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from vergil_tooling.lib import finalize_watch, github
+from vergil_tooling.lib.release_lock.model import BROKEN_WATCH_POLL_SECS
 
 _POLL_INTERVAL = 15.0
 
-#: Every reason a PR cannot merge as it stands.
+#: Every reason a PR has not merged when the wait ends.
 Reason = Literal[
     "check_failed",
     "check_cancelled",
     "conflict",
-    "auto_merge_off",
+    "refused",
     "closed",
     "orphaned_check",
     "timed_out",
+    "held_by_release",
 ]
+
+_HELD_BY_RELEASE: Reason = "held_by_release"
 
 _PENDING_BUCKET = "pending"
 _PENDING_CONTEXT_STATES = frozenset({"PENDING", "EXPECTED"})
@@ -87,7 +105,8 @@ class AwaitResult:
     """How the wait ended.
 
     *reason* is ``None`` exactly when the PR merged; *merge_commit* is then
-    its merge commit. *detail* says in words why the PR cannot merge.
+    its merge commit. *detail* says in words why the PR cannot merge, or,
+    for ``held_by_release``, which release still holds it.
     """
 
     pr: str
@@ -104,11 +123,23 @@ class AwaitResult:
         """True when the PR merged."""
         return self.reason is None
 
+    @property
+    def held(self) -> bool:
+        """True when the deadline passed while a release held the PR."""
+        return self.reason == _HELD_BY_RELEASE
+
+    @property
+    def outcome(self) -> str:
+        """``merged``, ``held_by_release`` or ``cannot_merge``."""
+        if self.merged:
+            return "merged"
+        return _HELD_BY_RELEASE if self.held else "cannot_merge"
+
     def to_output(self) -> dict[str, object]:
         """The JSON object ``vrg-pr-await`` prints."""
         return {
             "pr": self.pr,
-            "outcome": "merged" if self.merged else "cannot_merge",
+            "outcome": self.outcome,
             "reason": self.reason,
             "detail": self.detail,
             "head_sha": self.head_sha,
@@ -147,7 +178,10 @@ def judge(
 ) -> AwaitResult | None:
     """*snap*'s terminal result, steps 1-6 of the module docstring, or ``None``.
 
-    *required* ``None`` counts every check as required. *cancel* tracks the
+    Step 3, the release lock, is not judged here: :func:`wait_for_merge`
+    asks its lock rule about an open PR before calling this, and a single
+    read (:func:`standing_block`) does not judge it, so auto-merge off is
+    never a result. *required* ``None`` counts every check as required. *cancel* tracks the
     cancelled checks' grace period at *now*; with none, as for one read, a
     cancelled check is reported at once. *conflict* tracks how long a
     conflict has been reported at one head, at *now*; with none, as for one
@@ -167,8 +201,6 @@ def judge(
         )
     if snap.state == "CLOSED":
         return _cannot_merge(snap, "closed", "the PR was closed without merging")
-    if not snap.auto_merge_on:
-        return _cannot_merge(snap, "auto_merge_off", "auto-merge is off for the PR")
     checks = finalize_watch.check_failures(snap, required)
     if checks.failed:
         detail = f"required check failed: {', '.join(checks.failed)}"
@@ -267,23 +299,30 @@ def standing_block(pr: str) -> AwaitResult | None:
 def wait_for_merge(
     pr: str,
     *,
+    lock: finalize_watch.LockRule,
     poll_interval: float = _POLL_INTERVAL,
+    broken_poll: float = BROKEN_WATCH_POLL_SECS,
     orphan_grace: float | None = None,
     cancel_grace: float = finalize_watch.CANCEL_GRACE_SECS,
     conflict_settle: float = finalize_watch.CONFLICT_SETTLE_SECS,
 ) -> AwaitResult:
     """Block until *pr* merges or cannot merge; see the module docstring.
 
+    *lock* is asked about the PR on every read while it is open (step 3);
+    the wait polls every *broken_poll* seconds while its view is slow
+    (:attr:`finalize_watch.LockView.slow`), every *poll_interval* otherwise.
     *conflict_settle* is how long a conflict must be reported at one head
     before the wait ends with reason ``conflict``. The deadline, the grace
-    period and *poll_interval* are checked before the PR is read: a
-    malformed value raises :class:`ValueError`.
+    period, *poll_interval* and *broken_poll* are checked before the PR is
+    read: a malformed value raises :class:`ValueError`. A lock step that
+    cannot be completed raises :class:`finalize_watch.FinalizeWatchError`.
     """
     deadline = finalize_watch.deadline_secs()
     grace = github.orphan_grace_secs() if orphan_grace is None else orphan_grace
-    if poll_interval <= 0:
-        msg = f"poll_interval must be positive, got {poll_interval!r}"
-        raise ValueError(msg)
+    for name, value in (("poll_interval", poll_interval), ("broken_poll", broken_poll)):
+        if value <= 0:
+            msg = f"{name} must be positive, got {value!r}"
+            raise ValueError(msg)
     snap = finalize_watch.snapshot(pr)
     required = github.required_check_names(snap.url) if snap.state == "OPEN" else None
     end = time.monotonic() + deadline
@@ -292,7 +331,16 @@ def wait_for_merge(
     cancel = finalize_watch.CancelGrace(cancel_grace)
     conflict = finalize_watch.ConflictSettle(conflict_settle)
     announced: str | None = None
+    view = finalize_watch.FREE
     while True:
+        if snap.state == "OPEN":
+            # Merged and closed come first (steps 1 and 2), so only an open PR asks the lock.
+            seen, view = view, lock(snap)
+            if view != seen and view.detail:
+                print(f"vrg-pr-await: {snap.url}: {view.detail}", file=sys.stderr)
+            if view.state == "refused":
+                detail = f"the one PR path refused to re-arm it: {view.detail}"
+                return _cannot_merge(snap, "refused", detail)
         result = judge(snap, required, cancel, time.monotonic(), conflict)
         if result is not None:
             return result
@@ -327,10 +375,10 @@ def wait_for_merge(
                 return _cannot_merge(snap, "orphaned_check", detail, orphaned=tuple(orphaned))
         remaining = end - now
         if remaining <= 0:
-            detail = (
-                f"still pending at the {deadline}s deadline ({finalize_watch.DEADLINE_ENV}); "
-                "its auto-merge stays on"
-            )
-            return _cannot_merge(snap, "timed_out", detail)
-        time.sleep(min(poll_interval, remaining))
+            at = f"at the {deadline}s deadline ({finalize_watch.DEADLINE_ENV})"
+            if view.held:
+                detail = f"still {view.detail} {at}; run the wait again"
+                return _cannot_merge(snap, _HELD_BY_RELEASE, detail)
+            return _cannot_merge(snap, "timed_out", f"still pending {at}; its auto-merge stays on")
+        time.sleep(min(broken_poll if view.slow else poll_interval, remaining))
         snap = finalize_watch.snapshot(snap.url)

@@ -220,7 +220,7 @@ removed and refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 | Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--release`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--no-finalize`, `--install`, `--no-install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
 | Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
-| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed), 4 develop did not validate, 5 the release failed; 1 a usage error, a refusal, or a tool error from finalize |
+| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed, and 3 in place of a 6), 4 develop did not validate, 5 the release failed, 6 every PR that did not merge held by release; 1 a usage error, a refusal, or a tool error from finalize |
 | Status | Active |
 
 ### vrg-pr-workflow
@@ -370,11 +370,19 @@ longer merge as it stands, then print the outcome as JSON. Used by the
 A new review or a new commit does not end the wait: a review after submit
 never holds the merge, and auto-merge stays pinned to the head submit pushed.
 
-On exit 0 or 1 it prints one JSON object with `pr`, `outcome` (`merged` or
-`cannot_merge`), `reason` (`null` when merged), `detail`, `head_sha`,
-`merge_commit` (`null` unless merged), `merge_state_status`, `failed_checks`
-and `orphaned_checks`. On exit 1 the reason is also printed on stderr. The
-reasons are:
+It reads the release lock on every poll, as `vrg-finalize-pr`'s watch does
+(see [Under the release lock](dev/finalize-pr.md#under-the-release-lock)):
+a PR a release holds is reported as held on stderr, naming the release,
+its version, its stage and its health, and the wait goes on, every five
+minutes while the release is broken or the lock unreadable, reclaiming a
+stale lock. With no lock held, an unarmed PR is re-armed through the one
+PR path.
+
+On exit 0, 1 or 6 it prints one JSON object with `pr`, `outcome` (`merged`,
+`cannot_merge` or `held_by_release`), `reason` (`null` when merged),
+`detail`, `head_sha`, `merge_commit` (`null` unless merged),
+`merge_state_status`, `failed_checks` and `orphaned_checks`. On exit 1 or 6
+the reason is also printed on stderr. The reasons are:
 
 - `check_failed`: a required check concluded in failure; `failed_checks`
   names it. A failed or cancelled check-run of a workflow run that a newer
@@ -388,21 +396,25 @@ reasons are:
   the conflict the push resolved, so the wait goes on first and says so on
   stderr. A new head starts the two minutes again, and any other merge
   state clears the conflict. It is the rule `vrg-finalize-pr` applies.
-- `auto_merge_off`: auto-merge is off, at the start or after a push.
+- `refused`: the PR was unarmed with no release lock held, and the one PR
+  path refused to re-arm it; `detail` names the path's reason.
 - `closed`: the PR was closed without merging.
 - `orphaned_check`: every pending check is stuck after its workflow run
   completed, for longer than `$VRG_ORPHAN_GRACE` (default 300s);
   `orphaned_checks` names them.
 - `timed_out`: the deadline passed with the PR still pending. The deadline is
   `$VRG_FINALIZE_DEADLINE` seconds, default 7200, as for `vrg-finalize-pr`.
+- `held_by_release` (exit 6): the deadline passed while the release lock
+  held the PR; `detail` names the release. Not a failure: run the same
+  wait again.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_await` |
 | Args | `pr` (positional, URL or number). `--since-sha` and `--since-reviews` are removed and are an error |
 | Preconditions | GitHub App credentials for the PR's org |
-| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR or bad arguments exit 2 with a message on stderr and nothing on stdout |
-| Exit codes | 0 merged, 1 cannot merge, 2 any other error |
+| Failure mode | Exit 1 only when the PR cannot merge. A malformed `$VRG_FINALIZE_DEADLINE` or `$VRG_ORPHAN_GRACE` (checked before any waiting), a GitHub API or permission failure, an unreadable PR, a release lock read, re-arm or reclaim that failed, or bad arguments exit 2 with a message on stderr and nothing on stdout |
+| Exit codes | 0 merged, 1 cannot merge, 2 any other error, 6 held by release |
 | Status | Active |
 
 ### vrg-pr-review-comments
@@ -801,12 +813,17 @@ validation or a release. See the
 
 Watch a batch of auto-merging pull requests, then settle `develop` once
 (epic vergil-project/.github#1218). It never merges a PR and never turns
-auto-merge on or off: `vrg-submit-pr` turned auto-merge on, and GitHub
+auto-merge off: `vrg-submit-pr` turned auto-merge on, and GitHub
 merges each PR once its required checks pass. The watch judges no head of
 an open PR (the one PR path judges each before it is pushed), and follows
 every listed PR until it has merged or failed (CI, cancelled, a conflict,
-closed, auto-merge off, not a develop PR), or the
-batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes. If any PR
+closed, refused, not a develop PR), or the
+batch deadline (`$VRG_FINALIZE_DEADLINE`, default 7200s) passes (a PR the
+release lock still holds then ends *held by release*). The watch reads the
+release lock on every poll: a PR a release holds is reported as held, a
+stale lock is reclaimed, and with no lock held an unarmed PR is re-armed
+through the one PR path, the one way it turns auto-merge on (see
+[Under the release lock](dev/finalize-pr.md#under-the-release-lock)). If any PR
 merged, the settle phase closes any issue GitHub left open and syncs the
 security advisories that the closed `security` issues name (a broken pair or
 a failed sync exits 1; see
@@ -848,7 +865,7 @@ commit and one changelog entry per issue. See
 | Args | `PR` (a number or URL, or a comma list of them; optional), `--all`, `--cleanup-only`, `--target-branch` (default: develop), `--wait-cd`, `--release`, `--clean-dirty`, `--dry-run`, `--yes`. `--strategy`, `--no-wait-cd`, `--skip-post-checks`, `--install`, `--no-install` and `--allow-provenance-violation` are removed and are an error |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
 | Failure mode | An unmerged PR exits 3 and a develop that did not validate exits 4; a watch that cannot read a PR, a failed or ambiguous branch PR lookup, a failed close of an issue, a failed sync or cleanup, or a dirty working tree exits 1 |
-| Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed |
+| Exit codes | 0 full success, 1 a tool or usage error, 3 develop healthy but not every PR merged (or one merged with a provenance violation), 4 develop did not validate (with `--wait-cd`, or CD did not succeed), 5 the chained release failed, 6 develop healthy and every PR that did not merge held by release (run it again) |
 | Status | Active |
 
 ### vrg-branch-sweep

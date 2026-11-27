@@ -18,15 +18,17 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import pytest
 
+from tests.vergil_tooling.watch_lock_stubs import FakeLock, broken, record, stale_heartbeat
 from vergil_tooling.lib import (
     agent_gates,
     finalize_watch,
     git,
     github,
+    pr_path,
     pr_provenance,
     progress,
     trust,
@@ -40,6 +42,9 @@ from vergil_tooling.lib.finalize_watch import (
     watch,
 )
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.release_lock import reclaim, stale
+from vergil_tooling.lib.release_lock.model import BROKEN_WATCH_POLL_SECS, RefReadError
+from vergil_tooling.lib.release_lock.watch import LockWatch
 from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
@@ -123,6 +128,7 @@ class FakeGitHub:
     run_reads: list[tuple[str, str]] = field(default_factory=list)
     last_pr: str = ""
     branch_lookups: list[tuple[str, str, str]] = field(default_factory=list)
+    lock: FakeLock = field(default_factory=FakeLock)
 
     def prs_for_branch(
         self, repo: str, branch: str, *, state: str
@@ -216,11 +222,12 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(trust, "prs_for_branch", api.prs_for_branch)
     clock = SimpleNamespace(monotonic=api.monotonic, sleep=api.sleep)
     monkeypatch.setattr(finalize_watch, "time", clock)
+    api.lock.install(monkeypatch)
     return api
 
 
 def run(prs: list[str], *, poll: float = 15.0) -> list[PRResult]:
-    return watch(prs, poll_interval=poll)
+    return watch(prs, lock=LockWatch(), poll_interval=poll)
 
 
 # --- start-up ------------------------------------------------------------------
@@ -323,14 +330,14 @@ def test_non_develop_base_not_watched(fake: FakeGitHub) -> None:
     assert fake.provenance_checks == []
 
 
-def test_auto_merge_off_at_start_is_exception(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1, autoMergeRequest=None))
+def test_auto_merge_off_at_start_is_rearmed_through_the_path(fake: FakeGitHub) -> None:
+    fake.script(1, pr_state(1, autoMergeRequest=None), merged(1))
 
     [result] = run([url(1)])
 
-    assert result.outcome == "failed: auto-merge off"
-    assert "investigate" in result.detail
-    # Never turned back on: no GraphQL call at all, so no enable.
+    assert result.outcome == "merged"
+    assert fake.lock.arms == [url(1)]
+    # The watch turns nothing on itself: the one PR path does.
     assert fake.graphql_queries == []
 
 
@@ -530,7 +537,7 @@ def test_cancelled_check_with_no_newer_run_ends_after_the_grace(fake: FakeGitHub
         ),
     )
 
-    [result] = watch([url(1)], cancel_grace=60)
+    [result] = watch([url(1)], lock=LockWatch(), cancel_grace=60)
 
     assert result.outcome == "failed: cancelled"
     assert result.detail == (
@@ -570,7 +577,7 @@ def test_cancelled_check_on_a_run_not_yet_completed_is_pending(fake: FakeGitHub)
     )
     fake.script(1, rerun, rerun, rerun, merged(1))
 
-    [result] = watch([url(1)], cancel_grace=1)
+    [result] = watch([url(1)], lock=LockWatch(), cancel_grace=1)
 
     assert result.outcome == "merged"
 
@@ -736,7 +743,7 @@ def test_a_new_head_starts_the_conflict_settle_again(fake: FakeGitHub) -> None:
     dirty_b = pr_state(1, mergeStateStatus="DIRTY", headRefOid=HEAD_B)
     fake.script(1, dirty_a, dirty_a, dirty_b)
 
-    [result] = watch([url(1)], conflict_settle=30)
+    [result] = watch([url(1)], lock=LockWatch(), conflict_settle=30)
 
     assert result.outcome == "failed: conflict"
     assert result.head == HEAD_B
@@ -767,13 +774,259 @@ def test_closed(fake: FakeGitHub) -> None:
     assert result.outcome == "failed: closed"
 
 
-def test_auto_merge_turned_off_midwatch(fake: FakeGitHub) -> None:
-    fake.script(1, pr_state(1), pr_state(1), pr_state(1, autoMergeRequest=None))
+# --- the watch under the release lock (epic vergil-project/.github#1664, Task 26) ----
+
+
+def unarmed(n: int, **overrides: Any) -> dict[str, Any]:
+    """An open develop PR of :func:`pr_state` with auto-merge off."""
+    return pr_state(n, autoMergeRequest=None, **overrides)
+
+
+def test_auto_merge_off_is_retired_from_the_outcomes() -> None:
+    assert "failed: auto-merge off" not in get_args(finalize_watch.Outcome)
+    assert {"failed: refused", "held by release"} <= set(get_args(finalize_watch.Outcome))
+    assert finalize_watch.EXIT_HELD_BY_RELEASE == 6
+
+
+def test_held_pr_never_reported_auto_merge_off(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unarmed under a held lock is held; once the lock is gone, the watch re-arms it."""
+    fake.lock.states = [record(), record(), None]
+    fake.script(1, unarmed(1), unarmed(1), unarmed(1), merged(1))
 
     [result] = run([url(1)])
 
-    assert result.outcome == "failed: auto-merge off"
+    assert result.outcome == "merged"
+    assert fake.lock.arms == [url(1)]
+    assert fake.lock.reads == ["o/r"] * 3
+    assert "auto-merge off" not in capsys.readouterr().out
+
+
+def test_watch_reports_release_version_stage_health(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.lock.states = [record()]
+    fake.script(1, unarmed(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    out = capsys.readouterr().out
+    assert "held by release 2.1.400 (stage cut, running)" in out
+    # A live release is polled at the normal pace, and never reclaimed or re-armed.
+    assert fake.sleeps == [15.0]
+    assert fake.lock.reclaims == []
+    assert fake.lock.arms == []
+
+
+def test_armed_pr_under_a_held_lock_is_not_rearmed(fake: FakeGitHub) -> None:
+    """An armed PR may still merge before the cut; the watch never touches it."""
+    fake.lock.states = [record()]
+    fake.script(1, pr_state(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.lock.arms == []
+
+
+@pytest.mark.parametrize(
+    ("lock", "health"),
+    [
+        (broken(), "(stage cut, broken)"),
+        (record(heartbeat_at=stale_heartbeat()), "(stage cut, running, heartbeat"),
+    ],
+)
+def test_broken_release_slows_poll(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str], lock: object, health: str
+) -> None:
+    fake.lock.states = [lock]
+    fake.script(1, unarmed(1), unarmed(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.sleeps == [float(BROKEN_WATCH_POLL_SECS)] * 2
+    assert f"held by release 2.1.400 {health}" in capsys.readouterr().out
+
+
+def test_watch_does_not_reclaim_broken_with_open_issue(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A broken release whose tracking issue is open is the human's: no reclaim, no re-arm."""
+    fake.lock.states = [broken()]
+    fake.lock.issue_state = "OPEN"
+    fake.script(1, unarmed(1), merged(1))
+
+    run([url(1)])
+
+    assert fake.lock.issue_reads == ["o/r#5300"]
+    assert fake.lock.reclaims == []
+    assert fake.lock.arms == []
+    assert "not reclaimed: its tracking issue o/r#5300 is open" in capsys.readouterr().out
+
+
+def test_watch_reclaims_stale_lock(fake: FakeGitHub, capsys: pytest.CaptureFixture[str]) -> None:
+    """A broken release whose tracking issue is closed is stale: the watch reclaims it."""
+    fake.lock.states = [broken()]
+    fake.lock.issue_state = "CLOSED"
+    # The reclaim's re-arm sweep armed the PR; the watch then sees it armed.
+    fake.script(1, unarmed(1), pr_state(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    [(repo, actor)] = fake.lock.reclaims
+    assert repo == "o/r"
+    assert " on " in actor
+    assert fake.lock.arms == []
+    out = capsys.readouterr().out
+    assert "reclaimed the stale release lock of release 2.1.400" in out
+    # Reclaimed, so back to the normal pace.
+    assert fake.sleeps == [15.0, 15.0]
+
+
+def test_watch_lost_reclaim_reads_the_lock_again(fake: FakeGitHub) -> None:
+    """A reclaim another reclaimer won leaves the PR to the next poll, at the normal pace."""
+    fake.lock.states = [broken(), None]
+    fake.lock.issue_state = "CLOSED"
+    fake.lock.reclaimed = False
+    fake.script(1, unarmed(1), unarmed(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert len(fake.lock.reclaims) == 1
+    assert fake.lock.arms == [url(1)]
+    assert fake.sleeps == [15.0, 15.0]
+
+
+def test_unreadable_lock_reported_slow_poll_no_reclaim(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error = "refs/vergil/release-lock is unreadable: the lock is not valid JSON"
+    fake.lock.states = [error]
+    fake.script(1, unarmed(1), unarmed(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.sleeps == [float(BROKEN_WATCH_POLL_SECS)] * 2
+    assert fake.lock.reclaims == []
+    assert fake.lock.arms == []
+    assert f"held by an unreadable release lock ({error})" in capsys.readouterr().out
+
+
+def test_watch_rearms_own_pr_when_unlocked(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.script(1, pr_state(1), unarmed(1), pr_state(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.lock.arms == [url(1)]
     assert fake.graphql_queries == []
+    assert f"{url(1)}: auto-merge was off with no release lock held: re-armed" in (
+        capsys.readouterr().out
+    )
+
+
+def test_rearm_finding_the_lock_taken_is_held(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A release that takes the lock between the read and the arm leaves the PR held."""
+    fake.lock.arm_outcome = "held"
+    fake.lock.arm_detail = "held for release 2.1.401"
+    fake.lock.states = [None, record(version="2.1.401")]
+    fake.script(1, unarmed(1), unarmed(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.lock.arms == [url(1)]
+    assert "held for release 2.1.401" in capsys.readouterr().out
+
+
+def test_watch_refused_rearm_ends_failed_refused(fake: FakeGitHub) -> None:
+    fake.lock.arm_outcome = "refused"
+    fake.lock.arm_detail = "provenance violations found (mallory (outsider): edited)"
+    fake.script(1, unarmed(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: refused"
+    assert result.detail == (
+        "the one PR path refused to re-arm it: "
+        "provenance violations found (mallory (outsider): edited)"
+    )
+    # No further re-arm or poll.
+    assert fake.lock.arms == [url(1)]
+    assert fake.sleeps == []
+
+
+def test_deadline_while_held_exits_held(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "60")
+    fake.lock.states = [record()]
+    fake.script(1, unarmed(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "held by release"
+    assert result.detail == (
+        "still held by release 2.1.400 (stage cut, running) at the 60s batch deadline "
+        f"({DEADLINE_ENV}); run the watch again"
+    )
+    assert sum(fake.sleeps) == 60
+
+
+def test_deadline_while_unarmed_held_by_a_broken_release_exits_held(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "600")
+    fake.lock.states = [broken()]
+    fake.script(1, unarmed(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "held by release"
+    assert "held by release 2.1.400 (stage cut, broken)" in result.detail
+
+
+@pytest.mark.parametrize(
+    ("setup", "match"),
+    [
+        ("read", "reading the release lock failed: boom"),
+        ("arm", "re-arming it through the one PR path failed"),
+        ("reclaim", "reclaiming the stale release lock failed"),
+        ("issue", "judging the release lock failed"),
+    ],
+)
+def test_lock_failures_stop_the_watch(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, setup: str, match: str
+) -> None:
+    """No silent failure: a lock read, re-arm or reclaim that fails stops the watch."""
+
+    if setup == "read":
+        fake.lock.states = [RefReadError("boom")]
+    elif setup == "arm":
+        fake.lock.arm_outcome = pr_path.PRPathError(f"{url(1)}: reading the PR failed")
+    elif setup == "reclaim":
+        fake.lock.states = [broken()]
+        fake.lock.issue_state = "CLOSED"
+        fake.lock.reclaim_error = reclaim.ReclaimError("recording the reclaim failed")
+    else:
+
+        def no_issue(ref: str) -> str:
+            raise stale.IssueReadError(f"could not read {ref}")
+
+        fake.lock.states = [broken()]
+        monkeypatch.setattr(stale, "_issue_state", no_issue)
+    fake.script(1, unarmed(1))
+
+    with pytest.raises(FinalizeWatchError, match=match):
+        run([url(1)])
 
 
 def test_base_changed_midwatch_not_a_develop_pr(fake: FakeGitHub) -> None:
@@ -1115,6 +1368,9 @@ def test_summarize() -> None:
     assert finalize_watch.summarize([result("merged"), result("timed out")]) == (
         "1 merged, 0 failed, 1 timed out"
     )
+    assert finalize_watch.summarize(
+        [result("held by release"), result("failed: refused"), result("timed out")]
+    ) == ("0 merged, 1 failed, 1 timed out, 1 held by release")
 
 
 @pytest.mark.parametrize(
@@ -1342,7 +1598,7 @@ def gated(fake: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 def _watch_gated(gated: Gated, prs: list[str] | None = None) -> list[PRResult]:
     """Watch *prs* (PR 1 by default) with the real gates in place, to show they never run."""
     assert gated.clone.is_dir()
-    return watch(prs or [url(1)])
+    return watch(prs or [url(1)], lock=LockWatch())
 
 
 def _gates(gated: Gated, head: str) -> str:
