@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.352/">
       
       
         <link rel="next" href="../v2.1.350/">
@@ -1507,6 +1507,8 @@
       
         
       
+        
+      
     
     
     
@@ -1562,6 +1564,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.352/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.352
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18992,6 +19022,7 @@
 <li><strong>re-capture the RHEL 9 dnf fixtures and show the repo keyring before the race (#5285)</strong>
   Re-ran capture.sh in prod-pkg-rhel:9. The race case runs with the vergil key already in dnf's repo keyring; the import block in its stderr is dnf 4.14 re-importing the repo key (named by its signing subkey 0xB8142851) and retrying after the bad repomd signature. capture.sh now lists that keyring before the race, and the fixtures README explains why the RHEL 9 race and declined-import stderr are identical. Refs #5209.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.351/v2.1.351-ci-evidence.tar.gz">Download →</a></p>
 
 
 

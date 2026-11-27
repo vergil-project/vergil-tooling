@@ -1498,6 +1498,8 @@
       
         
       
+        
+      
     
     
     
@@ -1550,6 +1552,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.352/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.352
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -18839,6 +18869,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#waiting-for-a-cd-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for a CD run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stale-job-records" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19351,6 +19392,17 @@
     <span class="md-ellipsis">
       
         A failed back-merge-bump
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#waiting-for-a-cd-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for a CD run
       
     </span>
   </a>
@@ -20337,6 +20389,27 @@ it has the same title and head commit, and carries on as for a PR it just
 opened; an adopted dependency-update PR gets its <code>dependency-update</code> label
 again. Any other such PR fails the stage, naming the PR. With none open, a
 transient error is retried with backoff.</p>
+<h3 id="waiting-for-a-cd-run">Waiting for a CD run<a class="headerlink" href="#waiting-for-a-cd-run" title="Permanent link">&para;</a></h3>
+<p><code>confirm-main</code>, <code>confirm-develop</code> and <code>cd-publish</code> wait for a CD run by
+reading it with <code>gh run view</code> until the attempt they are waiting for is
+<code>completed</code>, and then judge its jobs. After a re-run, that is the new
+attempt the re-run started, never the one that already finished. They
+never take <code>gh run watch</code>'s exit status as the run's result: it can
+fail while the run is still going.</p>
+<p>A read that fails is classified first. A transient GitHub error, a 404
+on the just-listed run, or a reply that cannot be parsed is retried with
+back-off. Any other error stops the stage at once. The stage fails, and
+says which, only on one of these:</p>
+<ul>
+<li><strong>The run's result:</strong> the attempt completed and its jobs did not pass,
+  judged as each stage describes.</li>
+<li><strong>A read failure:</strong> the run could not be read, either for a
+  non-transient error, for seven failed reads in a row, or for a read
+  still failing when the wait ran out. This is not the run's result:
+  check the run, then resume.</li>
+<li><strong>Result unknown:</strong> the attempt was still not complete after
+  <code>$VRG_CD_TIMEOUT</code> seconds (default 5400). Once it finishes, resume.</li>
+</ul>
 <h3 id="stale-job-records">Stale job records<a class="headerlink" href="#stale-job-records" title="Permanent link">&para;</a></h3>
 <p>The confirm stages wait a bounded time for every CD job to reach
 <code>completed</code> in the GitHub jobs API, because a job's record can lag the
@@ -20829,7 +20902,10 @@ by its commit, the way <code>vrg-finalize-pr</code> finds the synced head's run:
 <li><strong>Queued, pending or in progress.</strong> The gate waits for it, up to
   <code>$VRG_CD_TIMEOUT</code> seconds (default 5400). A run still not complete at
   the deadline refuses, as "result unknown": re-run <code>vrg-release</code> once
-  it finishes.</li>
+  it finishes. The wait reads the run as the confirm stages do
+  (<a href="#waiting-for-a-cd-run">waiting for a CD run</a>): a run that cannot be
+  read refuses as a read failure naming its cause, never as a run still
+  in progress.</li>
 <li><strong>Succeeded.</strong> The release goes ahead.</li>
 <li><strong>Failed.</strong> The release refuses, naming the failed jobs and linking the
   run. A failure only in a docs job is the exception: <code>confirm-develop</code>
@@ -20867,7 +20943,8 @@ succeed, with a direct link to the log. The wait is bounded by
 <code>VRG_CD_TIMEOUT</code> (seconds, default 90 minutes). A run still going at the
 deadline is reported as "still in progress; result unknown", with the
 run URL and how to re-check it, not as a failed run. It still fails the
-wait (issue #3316).</p>
+wait (issue #3316). A run that cannot be read while finalize waits is
+an error naming its cause, never a run still in progress (issue #5174).</p>
 <p>For deeper investigation, view recent runs directly:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">"Documentation"</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>

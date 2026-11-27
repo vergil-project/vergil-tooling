@@ -1500,6 +1500,8 @@
       
         
       
+        
+      
     
     
     
@@ -1552,6 +1554,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.352/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.352
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -20931,7 +20961,13 @@ forms), denied subcommands (<code>commit</code>, <code>gc</code> and others; use
 <code>rebase -i</code> without <code>--autosquash</code>), the worktree convention, the
 <code>&lt;type&gt;/&lt;N&gt;-&lt;slug&gt;</code> branch form for an open, non-epic issue opened by a
 trusted author, and the
-report-ready freeze. It protects origin, not the local checkout: <code>reset</code>,
+report-ready freeze. A plain push to the branch of an open PR into
+<code>develop</code> is refused, naming <code>vrg-submit-pr --push</code>, on every destination
+the refspecs name (a bare push by its <code>@{push}</code> target, else its
+upstream), and every push under <code>refs/vergil/release-lock</code> is refused;
+both fail closed and have no bypass (see
+<a href="../../guides/permission-model/#push-to-an-open-prs-branch">Push to an Open PR's Branch</a>).
+It protects origin, not the local checkout: <code>reset</code>,
 <code>clean</code>, a pathspec <code>checkout</code> and <code>rebase -i --autosquash</code> run only on a
 branch that is neither protected nor frozen, and fail closed when the
 PR-workflow state cannot be read. Remote operations run with the GitHub App installation
@@ -20993,6 +21029,11 @@ denied for the user identity. An agent's <code>issue close</code> of an operatio
 task as completed is refused until a trusted comment on it records
 <code>Outcome: SUCCESS</code> (see
 <a href="../../guides/permission-model/#operational-task-close">Operational task close</a>).
+An agent's <code>pr update-branch</code> (with or without <code>--rebase</code>) of a PR into
+<code>develop</code> is refused, naming the one PR path: update the branch locally and
+push it with <code>vrg-submit-pr --push</code>; the PR's base is read first, and a read
+that fails refuses the update (see
+<a href="../../guides/permission-model/#server-side-branch-update">Server-side branch update</a>).
 Its own <code>run job-log --repo &lt;owner&gt;/&lt;repo&gt; --job
 &lt;job-id&gt;</code> prints one Actions job's log from the read-only per-job log endpoint,
 for every identity, with terminal control sequences stripped (see
