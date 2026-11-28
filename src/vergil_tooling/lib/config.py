@@ -156,7 +156,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "dependencies": frozenset({"vergil"}),
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests", "primary-version", "images"}),
-    "publish": frozenset({"release", "docs", "install", _DEPRECATED_INSTALL_KEY}),
+    "publish": frozenset({"release", "docs", "install", _DEPRECATED_INSTALL_KEY, "reload-plugins"}),
     "container": frozenset(
         {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
     ),
@@ -268,6 +268,10 @@ class PublishConfig:
     # The install stage's command block, with <VERSION> and <MINOR>
     # placeholders; None when none is configured.
     install: str | None
+    # Whether a finished release tells the human to run /reload-plugins (or
+    # restart) in every running Claude Code session. Only a plugin repo sets
+    # it; default false.
+    reload_plugins: bool = False
 
 
 @dataclass
@@ -1289,6 +1293,19 @@ def _publish_install(publish_raw: dict[str, Any], source: str) -> str | None:
     return value
 
 
+def _publish_reload_plugins(publish_raw: dict[str, Any], source: str) -> bool:
+    """``[publish].reload-plugins``, default false; a non-bool value is an error.
+
+    Strictly boolean, so a mistyped opt-in (e.g. ``reload-plugins = "true"``)
+    surfaces loudly rather than being coerced.
+    """
+    value = publish_raw.get("reload-plugins", False)
+    if not isinstance(value, bool):
+        msg = f"{source}: [publish].reload-plugins must be a boolean (got {value!r})"
+        raise ConfigError(msg)
+    return value
+
+
 def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilConfig:
     """Parse and validate a raw TOML dict into VergilConfig.
 
@@ -1377,6 +1394,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         release=bool(publish_raw.get("release", False)),
         docs=bool(publish_raw.get("docs", True)),
         install=_publish_install(publish_raw, source),
+        reload_plugins=_publish_reload_plugins(publish_raw, source),
     )
 
     container_raw = raw.get("container")

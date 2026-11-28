@@ -607,6 +607,31 @@ def test_publish_install_must_be_a_string(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
+def test_publish_reload_plugins_defaults_false(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.reload_plugins is False
+
+
+def test_publish_reload_plugins_true_parsed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + "\n[publish]\nreload-plugins = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.reload_plugins is True
+    # A known key: no unrecognized-key warning.
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("value", ['"true"', "1", "0"])
+def test_publish_reload_plugins_must_be_a_bool(tmp_path: Path, value: str) -> None:
+    toml = _VALID_TOML + f"\n[publish]\nreload-plugins = {value}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[publish\]\.reload-plugins must be a boolean"):
+        read_config(tmp_path)
+
+
 # -- unrecognized-key warnings ------------------------------------------------
 
 _EXTRA_PROJECT_KEY_TOML = (

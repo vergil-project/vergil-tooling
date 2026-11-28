@@ -8,7 +8,7 @@ import sys
 
 from vergil_tooling.lib import git, github, identity_mode, progress
 from vergil_tooling.lib.cli import cli_main
-from vergil_tooling.lib.release import gate
+from vergil_tooling.lib.release import gate, reload_reminder
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
@@ -115,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
     if state.ctx is not None and state.ctx.install_message:
         print()
         print(state.ctx.install_message)
+    # A plugin repo's finished release ends with the reload reminder, printed
+    # last so it is what the human reads. Never on failure.
+    if rc == 0 and state.ctx is not None and state.ctx.reload_plugins:
+        print()
+        print(reload_reminder.REMINDER)
     return rc
 
 

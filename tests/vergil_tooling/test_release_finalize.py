@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.release import reload_reminder
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.finalize import (
     _build_summary,
@@ -151,6 +152,20 @@ def test_build_summary_labels_back_merge_pr() -> None:
     ctx = _ctx()
     summary = _build_summary(ctx)
     assert "Back-merge PR" in summary
+
+
+def test_build_summary_includes_reload_reminder_with_flag() -> None:
+    ctx = _ctx()
+    ctx.reload_plugins = True
+    summary = _build_summary(ctx)
+    assert summary.endswith(reload_reminder.REMINDER)
+    assert "### Reload Claude Code" in summary
+
+
+def test_build_summary_omits_reload_reminder_without_flag() -> None:
+    summary = _build_summary(_ctx())
+    assert "Reload Claude Code" not in summary
+    assert "/reload-plugins" not in summary
 
 
 def test_teardown_worktree_chdirs_root_and_removes(monkeypatch) -> None:

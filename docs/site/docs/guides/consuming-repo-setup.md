@@ -240,7 +240,10 @@ refuses a repo whose `release` is not `true`; `install`, the shell lines the
 release's `install` stage runs, with `<VERSION>` and `<MINOR>` expanded to
 the release's `X.Y.Z` and `X.Y`, none by default; its deprecated name
 `consumer-refresh` is still read, with a warning, and setting both is an
-error) and
+error; `reload-plugins`, a boolean, default `false`, which only a Claude
+Code plugin repo sets to `true` so that its finished release ends with the
+reminder to run `/reload-plugins` in every running session, see
+[the reload reminder](releasing.md#the-reload-reminder)) and
 `[ci].integration-tests` (default `false`) are optional, as is
 `[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
 calls a repo-local `ci-images.yml` as job `images` sets; it makes
@@ -295,6 +298,7 @@ What each key drives in such a repo:
 | `[ci].integration-tests` | `false`, the default, which `vrg-github-repo-init` always writes. `true` would require a `test / integration / <version>` check per resolved version, and this repo resolves none. |
 | `[publish].release` | `false`: `vrg-release` refuses the repo, and `vrg-repo-status` shows no pending-release section. With `docs` also `false`, `vrg-github-repo-init` writes no `cd.yml`. |
 | `[publish].docs` | `false` keeps `docs / docs` out of the required checks, and `vrg-github-repo-init` then writes no docs job and no docs site. Leaving the key out means `true`, which requires a `docs / docs` check that the repo's `ci.yml` must report on every pull request. |
+| `[publish].reload-plugins` | `false`, the default, adds nothing to a release. `true`, which only a Claude Code plugin repo sets, makes a finished release end with the reminder to run `/reload-plugins`, or restart, in every running session; see [the reload reminder](releasing.md#the-reload-reminder). |
 | `[dependencies].vergil` | The Vergil release line: the ref the version window is read at, the pin on every vergil-actions workflow, and the vergil-tooling that CI installs. |
 
 Leave two keys out:

@@ -184,9 +184,9 @@ def preflight(
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
-    _read_and_validate_config(repo_root)
+    reload_plugins = _read_and_validate_config(repo_root)
     if resume:
-        return _resume_context(
+        resumed = _resume_context(
             repo,
             repo_root,
             version_override=version_override,
@@ -194,6 +194,8 @@ def preflight(
             resume_issue_number=resume_issue_number,
             stages=stages,
         )
+        resumed.reload_plugins = reload_plugins
+        return resumed
     _check_branch_and_tree(repo_root)
     current_version = _current_version(repo_root)
 
@@ -271,6 +273,7 @@ def preflight(
         superseded=superseded,
         lock=lock,
         lock_takeover="" if takeover is None else takeover.note,
+        reload_plugins=reload_plugins,
     )
     return ctx
 
@@ -1612,8 +1615,9 @@ def check_gh_auth() -> str:
         ) from exc
 
 
-def _read_and_validate_config(repo_root: Path) -> None:
-    config.read_config(repo_root)
+def _read_and_validate_config(repo_root: Path) -> bool:
+    """Validate ``vergil.toml`` and return its ``[publish].reload-plugins`` (issue #5434)."""
+    return config.read_config(repo_root).publish.reload_plugins
 
 
 class DevelopDivergedError(Exception):

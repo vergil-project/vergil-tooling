@@ -663,7 +663,29 @@ def test_read_and_validate_config(tmp_path: Path) -> None:
         "[dependencies]\n"
         'vergil = "v2.0"\n'
     )
-    _read_and_validate_config(tmp_path)
+    assert _read_and_validate_config(tmp_path) is False
+
+
+@pytest.mark.parametrize(("flag", "expected"), [("", False), ("reload-plugins = true\n", True)])
+def test_read_and_validate_config_returns_reload_plugins(
+    tmp_path: Path, flag: str, expected: bool
+) -> None:
+    from vergil_tooling.lib.release.preflight import _read_and_validate_config
+
+    (tmp_path / "vergil.toml").write_text(
+        "[project]\n"
+        'repository-type = "tooling"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        'primary-language = "python"\n'
+        "[publish]\n"
+        "release = true\n" + flag + "[ci]\n"
+        'versions = ["3.12"]\n'
+        "[dependencies]\n"
+        'vergil = "v2.0"\n'
+    )
+    assert _read_and_validate_config(tmp_path) is expected
 
 
 def testaudit_repo_config_success() -> None:

@@ -7,11 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_release import main, parse_args
+from vergil_tooling.lib.release import reload_reminder
 from vergil_tooling.lib.release.context import ReleaseContext
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from vergil_tooling.lib.release.orchestrator import ReleaseState
 
@@ -320,6 +321,62 @@ def test_main_prints_nothing_when_no_install_message(
     ):
         assert main([]) == 0
     assert capsys.readouterr().out == ""
+
+
+def _pipeline_with_ctx(
+    rc: int, *, install_message: str | None = None, reload_plugins: bool = False
+) -> Callable[..., int]:
+    """A fake run_pipeline that leaves a release context behind and returns *rc*."""
+
+    def fake_pipeline(state: ReleaseState, *args: object, **kwargs: object) -> int:
+        state.ctx = ReleaseContext(
+            repo="owner/repo",
+            version="2.1.0",
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            version_override=None,
+            install_message=install_message,
+            reload_plugins=reload_plugins,
+        )
+        return rc
+
+    return fake_pipeline
+
+
+def test_main_prints_reload_reminder_last_on_success(capsys: pytest.CaptureFixture[str]) -> None:
+    message = "Install commands for v2.1.0:\n\nuv tool install pkg@v2.1.0"
+    with (
+        patch(_MOD + ".git"),
+        patch(
+            _MOD + ".progress.run_pipeline",
+            side_effect=_pipeline_with_ctx(0, install_message=message, reload_plugins=True),
+        ),
+    ):
+        assert main([]) == 0
+    out = capsys.readouterr().out
+    assert out.endswith(reload_reminder.REMINDER + "\n")
+    # The reminder comes after the install message, so it is the last output.
+    assert out.index("uv tool install pkg@v2.1.0") < out.index("/reload-plugins")
+
+
+def test_main_no_reload_reminder_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", side_effect=_pipeline_with_ctx(0)),
+    ):
+        assert main([]) == 0
+    assert "/reload-plugins" not in capsys.readouterr().out
+
+
+def test_main_no_reload_reminder_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(
+            _MOD + ".progress.run_pipeline",
+            side_effect=_pipeline_with_ctx(1, reload_plugins=True),
+        ),
+    ):
+        assert main([]) == 1
+    assert "/reload-plugins" not in capsys.readouterr().out
 
 
 def test_main_passes_version_override() -> None:

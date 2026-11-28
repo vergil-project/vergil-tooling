@@ -86,6 +86,12 @@ absent it refuses up front, before the resume lookup or any stage, and
 changes nothing. `vrg-finalize-pr` and `vrg-submit-pr` refuse
 `--release` on such a repo the same way, before any push, PR or watch.
 
+`[publish] reload-plugins = true` is the opt-in for the reload reminder. Only
+a Claude Code plugin repo sets it (default `false`; a non-boolean value is
+refused). A finished release then ends with a final line telling the human to
+run `/reload-plugins`, or restart, in every running Claude Code session. See
+[the reload reminder](../../guides/releasing.md#the-reload-reminder).
+
 ## Usage
 
 ```bash
