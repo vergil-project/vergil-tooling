@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tests.vergil_tooling.group_rule_stubs import GroupRule, judge_pr_up_to_the_rule, two_member_group
+from tests.vergil_tooling.group_rule_stubs import (
+    GroupRule,
+    judge_pr_up_to_the_rule,
+    two_member_group,
+)
 from tests.vergil_tooling.release_lock_stubs import REPO, Origin, make_origin
 from vergil_tooling.lib import github, pr_path
 from vergil_tooling.lib.epics import IssueRef

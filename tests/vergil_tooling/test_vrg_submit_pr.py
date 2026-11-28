@@ -5298,7 +5298,10 @@ class TestPushMode:
         # closes #1 of a group whose other member #9 it does not, so nothing is pushed.
         rule = GroupRule().install(monkeypatch)
         rule.closes = [("o/r", 1)]
-        rule.groups = {epics.IssueRef("o", "r", 1): [_GROUP_OF_1], epics.IssueRef("o", "r", 9): [_GROUP_OF_1]}
+        rule.groups = {
+            epics.IssueRef("o", "r", 1): [_GROUP_OF_1],
+            epics.IssueRef("o", "r", 9): [_GROUP_OF_1],
+        }
         judge_pr_up_to_the_rule(monkeypatch, repo="o/r", number=7)
         pr = trust.PRRef(
             number=7,
