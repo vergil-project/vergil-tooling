@@ -185,11 +185,12 @@ def _key(ref: epics.IssueRef) -> tuple[str, str, int]:
 
 
 def _recorded(latest: record.Group, members: Sequence[epics.IssueRef], dissolved: bool) -> bool:
-    """True when *latest* already holds the request: dissolved, or the same membership."""
+    """True when *latest* already holds the request: dissolved, or the same membership.
+
+    A set on a dissolved group is refused before this is asked, so a set only compares members.
+    """
     if dissolved:
         return latest.dissolved
-    if latest.dissolved:
-        return False
     return {_key(m) for m in latest.members} == {_key(m) for m in members}
 
 

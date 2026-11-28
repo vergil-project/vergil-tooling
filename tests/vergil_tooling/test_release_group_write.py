@@ -9,6 +9,7 @@ each read from a table, so a test names only what it changes; a failure is raise
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from vergil_tooling.lib.release_groups.rules import Holder
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
 EPIC = IssueRef("org", "repo", 40)
 PROXY = IssueRef("org", "repo", 60)
@@ -90,6 +92,7 @@ class World:
     holds: dict[IssueRef, list[Holder]] = field(default_factory=dict)
     hold_error: Exception | None = None
     origin: str = ORIGIN
+    origin_error: Exception | None = None
     post_error: Exception | None = None
     posts: list[tuple[IssueRef, str]] = field(default_factory=list)
 
@@ -141,6 +144,8 @@ class World:
         return list(self.holds.get(task, []))
 
     def remote_url(self, remote: str = "origin", repo: Path | None = None) -> str:
+        if self.origin_error is not None:
+            raise self.origin_error
         return self.origin
 
     def post_comment(self, owner: str, repo: str, number: int, body: str) -> None:
@@ -381,7 +386,9 @@ def test_incoming_task_in_another_live_group_refused(world: World) -> None:
 
 @pytest.mark.parametrize("kind", ["open PR", "handed-off batch"])
 @pytest.mark.parametrize("at_batch_stop", [False, True])
-def test_change_refused_while_frozen(world: World, kind: str, at_batch_stop: bool) -> None:
+def test_change_refused_while_frozen(
+    world: World, kind: Literal["open PR", "handed-off batch"], at_batch_stop: bool
+) -> None:
     world.log = _log(_group("G1", 1, ref(1), ref(2)))
     world.holds[ref(2)] = [Holder(ref(2), kind, "where-it-is")]
     message = _refused(lambda: _set([ref(1), ref(2), ref(3)], at_batch_stop=at_batch_stop))
@@ -552,3 +559,46 @@ def test_failed_post_names_what_may_have_landed(world: World) -> None:
     message = _refused(lambda: _set([ref(1)]))
     assert "could not post G1 rev 1 on org/repo#40" in message
     assert "may have landed" in message
+
+
+def test_set_names_no_members_refused(world: World) -> None:
+    message = _refused(lambda: _set([]))
+    assert "names at least one member" in message
+    assert world.posts == []
+
+
+def test_set_refuses_a_group_id_that_is_not_one(world: World) -> None:
+    message = _refused(lambda: _set([ref(1)], group="G01"))
+    assert "not a group ID" in message
+    assert world.posts == []
+
+
+def test_multi_line_reason_refused(world: World) -> None:
+    message = _refused(lambda: _set([ref(1)], reason="one line\nand another"))
+    assert "the record cannot be written" in message
+    assert world.posts == []
+
+
+def test_unreadable_origin_refused(world: World) -> None:
+    world.origin_error = subprocess.CalledProcessError(128, ["git", "remote", "get-url"])
+    message = _refused(lambda: _set([ref(1)]))
+    assert "its origin remote cannot be read" in message
+    assert world.posts == []
+
+
+def test_incoming_task_beside_another_live_group_allowed(world: World) -> None:
+    world.log = _log(_group("G1", 1, ref(1)), _group("G2", 1, ref(5)))
+    result = _set([ref(1), ref(3)])
+    assert result == write.WriteResult(posted=True, rev=2)
+
+
+@pytest.mark.parametrize("step", ["read", "post"])
+def test_missing_token_propagates(world: World, step: str) -> None:
+    token_error = github.MissingGitHubTokenError(1, ["gh", "api"], output="no token")
+    if step == "read":
+        world.log = token_error
+    else:
+        world.log = _log(_group("G1", 1, ref(1)))
+        world.post_error = token_error
+    with pytest.raises(github.MissingGitHubTokenError):
+        _set([ref(1), ref(2)] if step == "post" else [ref(1)])
