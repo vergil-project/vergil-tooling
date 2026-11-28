@@ -2305,3 +2305,40 @@ def test_update_held_pr_that_cannot_fetch_raises_naming_the_pr(
     with pytest.raises(PRPathError, match=f"(?s){PR}: bringing the held PR up to date failed"):
         pr_path.update_held_pr(PR)
     assert pushes.calls == []
+
+
+def test_update_held_pr_outside_any_clone_is_not_updated_and_does_not_raise(
+    fake: FakeGitHub, tmp_path: Path, pushes: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Not a clone: git's search stops at tmp_path, so no enclosing repository counts.
+    not_a_clone = tmp_path / "plain"
+    not_a_clone.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.chdir(not_a_clone)
+
+    update = pr_path.update_held_pr(PR)
+
+    assert update.outcome == "not_updated"
+    assert update.pr_url == PR
+    assert "the current clone or its origin cannot be read here" in update.detail
+    assert "if the PR is behind develop, update it from its own worktree" in update.detail
+    assert pushes.calls == []
+
+
+def test_update_held_pr_from_a_clone_whose_origin_is_not_github_is_not_updated(
+    fake: FakeGitHub,
+    held_clone: Path,
+    pushes: Pushes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(github, "github_remote_repo", lambda _url: None)
+    before = _git(held_clone, "rev-parse", "HEAD")
+
+    update = pr_path.update_held_pr(PR)
+
+    assert update.outcome == "not_updated"
+    assert "the origin of" in update.detail
+    assert "is not a GitHub repository" in update.detail
+    assert "update it from its own worktree" in update.detail
+    assert _git(held_clone, "rev-parse", "HEAD") == before
+    assert pushes.calls == []

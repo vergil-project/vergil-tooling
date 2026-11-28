@@ -201,8 +201,10 @@ is waiting on:
   `origin/develop` and pushed with the lease on its old head, and
   auto-merge stays on. That runs only from the PR's own worktree (the
   clone with its branch checked out at the PR's head and a clean tree).
-  From anywhere else the watch reports that the PR is behind and must be
-  updated from its worktree, and does not guess. A pushed rebase shows as
+  From anywhere else (a directory that is no git clone, or a clone whose
+  `origin` is not GitHub) the watch cannot update the PR, so it reports that
+  and says to update it from its worktree if it is behind; it does not guess,
+  and the watch does not fail on it. A pushed rebase shows as
   `rebased onto develop and pushed <sha> (was <sha>); CI re-running`, and
   the PR stays pending until the next read, which re-arms it if auto-merge
   is off. A rebase that conflicts is aborted, pushes nothing, and ends the

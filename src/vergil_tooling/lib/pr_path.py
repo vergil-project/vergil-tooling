@@ -882,9 +882,9 @@ _ORIGIN_DEVELOP = f"refs/remotes/origin/{_DEVELOP}"
 #: What :func:`update_held_pr` did with a PR a release lock held. ``current``: its head
 #: already contains ``origin/develop``, nothing was done. ``not_updated``: nothing was done,
 #: and *detail* says why (the path does not accept the PR, or it is behind and this clone
-#: cannot update it). ``updated``: rebased onto ``origin/develop`` and pushed, from
-#: *old_head* to *new_head*. ``conflicted``: the rebase conflicts; it was aborted, the
-#: branch is unchanged, and *detail* names the files.
+#: cannot update it, or no clone can be read here). ``updated``: rebased onto
+#: ``origin/develop`` and pushed, from *old_head* to *new_head*. ``conflicted``: the rebase
+#: conflicts; it was aborted, the branch is unchanged, and *detail* names the files.
 HeldUpdateOutcome = Literal["current", "not_updated", "updated", "conflicted"]
 
 
@@ -980,7 +980,11 @@ def _rebase_onto_develop(clone: Path, url: str, branch: str, head: str) -> HeldU
 def update_held_pr(pr_url: str) -> HeldUpdate:
     """Bring *pr_url*, a PR a release lock held, up to ``origin/develop``; see the module docstring.
 
-    Run from the PR's own worktree, the current clone (:func:`_here`). The PR
+    Run from the PR's own worktree, the current clone (:func:`_here`). When
+    that clone or its origin cannot be read (the directory is not a git
+    clone, or its origin is not a GitHub repository), nothing is read or
+    changed and the result is ``not_updated``, saying why and what to do, so
+    a caller run from anywhere else is not failed. The PR
     is read and judged by :func:`_refusal`; a PR the path does not accept is
     ``not_updated``. Its head is fetched with ``develop`` and tested with
     ``git merge-base --is-ancestor``: a head that contains ``origin/develop``
@@ -989,10 +993,19 @@ def update_held_pr(pr_url: str) -> HeldUpdate:
     otherwise it is ``not_updated``, with the reason and what to do. The
     clone's origin must be the PR's repository, else ``not_updated``.
 
-    A step that cannot be completed (a read, a fetch, the rebase, its abort,
-    the push's own refusal) raises :class:`PRPathError`, naming the PR.
+    A step that cannot be completed once the clone exists (a read, a fetch,
+    the rebase, its abort, the push's own refusal) raises :class:`PRPathError`,
+    naming the PR.
     """
-    clone, origin = _here()
+    try:
+        clone, origin = _here()
+    except PRPathError as exc:
+        detail = (
+            f"not updated: the current clone or its origin cannot be read here ({exc}); if the "
+            f"PR is behind {_DEVELOP}, update it from its own worktree: rebase its branch onto "
+            f"origin/{_DEVELOP}, then vrg-submit-pr --push --force-with-lease"
+        )
+        return HeldUpdate("not_updated", pr_url, detail=detail)
     repo, _number = _repo_and_number(pr_url)
     if origin.lower() != repo.lower():
         detail = (
