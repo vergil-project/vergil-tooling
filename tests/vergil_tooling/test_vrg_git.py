@@ -2437,6 +2437,103 @@ class TestNetworkRetry:
         mock_sleep.assert_not_called()
 
 
+class TestFetchRefLockRaceRaw:
+    """vrg-git's raw fetch retries a ref-lock race under its own budget (#5431)."""
+
+    _NEW = "008583f35026556afdb9f1468b7eda56d187e6f9"
+    _OLD = "3111ea2754d0e73fba8aaee3ddd771f07a9f7b89"
+    _LOCK = (
+        f"error: cannot lock ref 'refs/remotes/origin/gh-pages': is at {_NEW} but expected {_OLD}\n"
+        " ! 3111ea27..008583f3  gh-pages   -> origin/gh-pages  (unable to update local ref)\n"
+    )
+    _TRANSPORT = "fatal: Could not read from remote repository.\n"
+
+    @staticmethod
+    def _lock_fail() -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["git"], returncode=1, stdout="", stderr=TestFetchRefLockRaceRaw._LOCK
+        )
+
+    @staticmethod
+    def _ok() -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+
+    def test_lock_race_that_clears_on_retry_succeeds(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch(
+                "vergil_tooling.bin.vrg_git.subprocess.run",
+                side_effect=[self._lock_fail(), self._ok()],
+            ) as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            rc = main(["fetch", "--tags", "--force", "origin"])
+        assert rc == 0
+        assert mock_run.call_count == 2
+        assert mock_sleep.call_count == 1
+        err = capsys.readouterr().err
+        assert "ref-lock race" in err
+        assert "attempt 1/" in err
+
+    def test_lock_race_that_persists_returns_the_last_failing_result(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            mock_run.return_value = self._lock_fail()
+            rc = main(["fetch", "--tags", "--force", "origin"])
+        assert rc == 1
+        assert mock_run.call_count == vrg_git.LOCK_RACE_RETRIES + 1
+        assert mock_sleep.call_count == vrg_git.LOCK_RACE_RETRIES
+        # The real error still surfaces after the loud retries, never hidden.
+        assert "cannot lock ref" in capsys.readouterr().err
+
+    def test_non_matching_fetch_failure_returns_first_result(self) -> None:
+        failure = subprocess.CompletedProcess(
+            args=["git"], returncode=1, stdout="", stderr="fatal: couldn't find remote ref nope\n"
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run", return_value=failure) as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            rc = main(["fetch", "origin", "nope"])
+        assert rc == 1
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()
+
+    def test_lock_race_budget_is_independent_of_network_budget(self) -> None:
+        transient = subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="", stderr=self._TRANSPORT
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch(
+                "vergil_tooling.bin.vrg_git.subprocess.run",
+                side_effect=[self._lock_fail(), transient, self._ok()],
+            ) as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            rc = main(["fetch", "origin", "develop"])
+        assert rc == 0
+        assert mock_run.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_fetch_env_pins_locale(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LC_ALL", raising=False)
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run", return_value=self._ok()) as mock_run,
+        ):
+            main(["fetch", "origin", "develop"])
+        assert mock_run.call_args.kwargs["env"]["LC_ALL"] == "C"
+
+
 # -- worktree convention -------------------------------------------------------
 
 

@@ -68,6 +68,42 @@ def workflow_push_refusal_text() -> str:
     )
 
 
+# Retries of git's ref-lock race on a ``fetch`` (#5431): another fetch in the
+# same clone moved a remote-tracking ref between this fetch's read and its
+# update, so git refuses the update and exits 1. The budget is separate from
+# the network budget (``retry.MAX_RETRIES``): a lock race never spends it.
+LOCK_RACE_RETRIES = 3
+
+# One whole ``error:`` line of git's ref-lock race, as git prints it.
+_LOCK_RACE_LINE_RE = re.compile(
+    r"^error: cannot lock ref '[^'\n]+': is at [0-9a-f]{40,64} but expected [0-9a-f]{40,64}$",
+)
+# A line that git reports as an error or a fatal error, wherever it appears.
+_ERROR_MARK_RE = re.compile(r"error:|fatal:")
+
+
+def is_fetch_ref_lock_race(subcommand: str, returncode: int, stderr: str | None) -> bool:
+    """Return True when a failed git run is a ref-lock race on a ``fetch`` (#5431).
+
+    Matches only a ``fetch`` that exited 1 whose every ``error:``/``fatal:``
+    line is a whole ``error: cannot lock ref '<ref>': is at <sha> but expected
+    <sha>`` line, with at least one such line. Any other error line, another
+    exit status, or another subcommand is not a match, so it fails as before.
+    Status lines such as `` ! ... (unable to update local ref)`` carry no
+    error mark and are ignored.
+    """
+    if subcommand != "fetch" or returncode != 1 or stderr is None:
+        return False
+    lock_lines = 0
+    for line in stderr.splitlines():
+        if not _ERROR_MARK_RE.search(line):
+            continue
+        if not _LOCK_RACE_LINE_RE.match(line):
+            return False
+        lock_lines += 1
+    return lock_lines > 0
+
+
 def _retry_network[T](subcommand: str, run_once: Callable[[], T]) -> T:
     """Invoke *run_once* for a network *subcommand*, retrying transient failures.
 
@@ -75,21 +111,40 @@ def _retry_network[T](subcommand: str, run_once: Callable[[], T]) -> T:
     failure. Every retry is announced on stderr so a genuinely non-transient
     failure (e.g. a real SSH auth error, not a GitHub backend blip) still
     surfaces before the final raise — no silent masking (#2835).
+
+    A ``fetch`` that loses a ref-lock race (:func:`is_fetch_ref_lock_race`) is
+    retried under its own budget, :data:`LOCK_RACE_RETRIES`, with the same
+    backoff and announcement. Once either budget is spent the original
+    ``CalledProcessError`` is raised unchanged (#5431).
     """
-    for attempt in range(retry.MAX_RETRIES + 1):
+    network_retries = 0
+    lock_race_retries = 0
+    while True:
         try:
             return run_once()
         except subprocess.CalledProcessError as exc:
-            if attempt == retry.MAX_RETRIES or not retry.is_retryable(exc):
+            if is_fetch_ref_lock_race(subcommand, exc.returncode, exc.stderr):
+                if lock_race_retries == LOCK_RACE_RETRIES:
+                    raise
+                delay = retry.compute_delay(lock_race_retries)
+                lock_race_retries += 1
+                print(
+                    f"git {subcommand}: ref-lock race (another fetch moved a ref), retrying in "
+                    f"{delay:.1f}s (attempt {lock_race_retries}/{LOCK_RACE_RETRIES + 1})",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+                continue
+            if network_retries == retry.MAX_RETRIES or not retry.is_retryable(exc):
                 raise
-            delay = retry.compute_delay(attempt)
+            delay = retry.compute_delay(network_retries)
             print(
                 f"git {subcommand}: transient GitHub failure, retrying in "
-                f"{delay:.1f}s (attempt {attempt + 1}/{retry.MAX_RETRIES + 1})",
+                f"{delay:.1f}s (attempt {network_retries + 1}/{retry.MAX_RETRIES + 1})",
                 file=sys.stderr,
             )
+            network_retries += 1
             time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _git_auth_env(token: str) -> dict[str, str]:
@@ -153,15 +208,20 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
     if _needs_token(args):
         source_token = github.registered_token()
         if source_token is not None:
-            return _git_auth_env(source_token)
-        repo = _split_repo(args)[0]
-        token = (
-            github.repo_installation_token(repo)
-            if repo is not None
-            else github.get_installation_token()
-        )
-        if token is not None:
-            env = _git_auth_env(token)
+            env = _git_auth_env(source_token)
+        else:
+            repo = _split_repo(args)[0]
+            token = (
+                github.repo_installation_token(repo)
+                if repo is not None
+                else github.get_installation_token()
+            )
+            if token is not None:
+                env = _git_auth_env(token)
+    if _subcommand(args) == "fetch":
+        # Pin the locale so git's ref-lock race message is the English text
+        # is_fetch_ref_lock_race matches (#5431).
+        env["LC_ALL"] = "C"
     return env
 
 
