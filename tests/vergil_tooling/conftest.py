@@ -47,10 +47,32 @@ from vergil_tooling.lib.versions import window
 from vergil_tooling.lib.versions.resolve import Resolution
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
 # Modules that test identity resolution directly and set the signals themselves.
 _RESOLVER_TEST_MODULES = frozenset({"test_identity_mode", "test_vrg_whoami"})
+
+
+@pytest.fixture(autouse=True)
+def _github_leak_guard() -> Iterator[None]:
+    """Fail a test that leaves a callable on ``vergil_tooling.lib.github`` replaced (#5299).
+
+    A context-manager patch or mock in a fixture can exit in the wrong order
+    relative to a test's own ``monkeypatch`` of the same name: the test's undo
+    then restores the fixture's mock, and the replacement outlives the test. Use
+    ``monkeypatch`` in fixtures instead. This guard must be set up before any
+    fixture that requests ``monkeypatch``, so its teardown runs after every
+    monkeypatch undo. Pytest sets up same-module autouse fixtures in alphabetical
+    order, so the name sorts before ``_hermetic_identity``. A leaked name is
+    restored so it cannot cascade into later tests, then the test fails.
+    """
+    before = {name: value for name, value in vars(github).items() if callable(value)}
+    yield
+    leaked = sorted(name for name, value in before.items() if vars(github).get(name) is not value)
+    for name in leaked:
+        setattr(github, name, before[name])
+    if leaked:
+        pytest.fail(f"the test left vergil_tooling.lib.github replaced: {leaked} (#5299)")
 
 
 @pytest.fixture(autouse=True)
