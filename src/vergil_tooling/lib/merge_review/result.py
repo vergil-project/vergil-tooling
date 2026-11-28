@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib.merge_review.schema import (
     CHANGE_CLASSES,
@@ -50,6 +50,9 @@ from vergil_tooling.lib.merge_review.schema import (
     step_id_prefix,
 )
 from vergil_tooling.lib.rulings.marker import MARKER_PREFIX
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _RULE_SHAPE = "rule 1 (shape)"
 _RULE_FIELDS = "rule 2 (fields)"
@@ -94,12 +97,20 @@ class Finding:
 
 @dataclass(frozen=True)
 class Result:
-    """A checked result. ``fix_status`` maps each listed ID to its status (empty in a review)."""
+    """A checked result.
+
+    ``fix_status`` maps each listed ID to its status (empty in a review).
+    ``normalised`` names the coverage lines whose count was normalised: each
+    is ``"Diff read"`` or ``"Fix diff read"``, and it is empty when no count
+    was normalised. A line is normalised when it reads ``N+1`` on a patch
+    ending in a newline (see :func:`parse_result`).
+    """
 
     step: str
     request_id: str
     findings: tuple[Finding, ...]
     fix_status: dict[str, str]
+    normalised: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,8 +128,19 @@ class Request:
     fix_diff_lines: int | None
 
 
-def parse_result(text: str, request: dict[str, object]) -> Result:
+def parse_result(
+    text: str,
+    request: dict[str, object],
+    *,
+    patch_ends_with_newline: Callable[[str], bool] | None = None,
+) -> Result:
     """Check the reply ``text`` against ``request`` and return the checked result.
+
+    ``patch_ends_with_newline`` is called with ``"diff"`` or ``"fix"`` only
+    when a coverage line reports ``N+1`` lines read, where ``N`` is the
+    request's count for that diff. It returns whether that patch file's last
+    byte is a newline. ``None`` (no way to look at the patch) fails closed:
+    an ``N+1`` line is then refused.
 
     Raises :class:`ResultError` naming the rule broken; nothing is returned
     for a result that fails any rule.
@@ -134,8 +156,8 @@ def parse_result(text: str, request: dict[str, object]) -> Result:
     _check_identity(block, req)
     findings = _check_findings(block["findings"], req)
     fix_status = _check_fix_status(block["fix_status"], req) if is_check(step) else {}
-    _check_coverage(text, req)
-    return Result(step, req.request_id, findings, fix_status)
+    normalised = _check_coverage(text, req, patch_ends_with_newline)
+    return Result(step, req.request_id, findings, fix_status, normalised)
 
 
 def check_request(request: dict[str, object]) -> Request:
@@ -213,54 +235,95 @@ def _check_parts(request: dict[str, object], key: str, total: int) -> None:
         raise ResultError(msg)
 
 
-def _check_coverage(text: str, req: Request) -> None:
+def _check_coverage(
+    text: str,
+    req: Request,
+    patch_ends_with_newline: Callable[[str], bool] | None,
+) -> tuple[str, ...]:
     """Rule 11: the reply's last non-empty line reports the whole diff as read.
 
-    That line must read ``Diff read: <read> of <total> lines``, with ``<total>``
-    the request's ``diff_lines`` and ``<read>`` equal to it. In a check, the
-    non-empty line before it must read ``Fix diff read: <read> of <total>
-    lines`` the same way, against the request's ``fix_diff_lines``. Trailing
-    whitespace and a CR are stripped before the match.
+    That line must read ``Diff read: through line <n>``, where ``<n>`` is the
+    last line number ``Read`` showed the reviewer. In a check, the non-empty
+    line before it must read ``Fix diff read: through line <n>`` the same way,
+    for the fix diff. Each ``<n>`` is judged against the request's count for
+    its diff by :func:`_judge_read`. The old ``<read> of <total> lines`` form is
+    accepted for one release, with ``<read>`` judged as ``<n>`` and ``<total>``
+    never consulted. Trailing whitespace and a CR are stripped before the
+    match.
+
+    Returns the labels of the lines whose count was normalised (see
+    :class:`Result`).
     """
     lines = [stripped for stripped in (line.rstrip() for line in text.split("\n")) if stripped]
     diff_match = DIFF_READ_RE.fullmatch(lines[-1]) if lines else None
     if diff_match is None:
-        msg = (
-            f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: <read> of"
-            " <total> lines'"
-        )
+        msg = f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: through line <n>'"
         raise ResultError(msg)
-    _check_read(diff_match, "Diff read", req.diff_lines)
+    normalised: list[str] = []
+    if _judge_read(diff_match, "Diff read", req.diff_lines, "diff", patch_ends_with_newline):
+        normalised.append("Diff read")
     if is_check(req.step):
         fix_match = FIX_READ_RE.fullmatch(lines[-2]) if len(lines) >= 2 else None
         if fix_match is None:
             msg = (
                 f"{_RULE_COVERAGE}: the non-empty line before the last must read"
-                " 'Fix diff read: <read> of <total> lines'"
+                " 'Fix diff read: through line <n>'"
             )
             raise ResultError(msg)
-        _check_read(fix_match, "Fix diff read", req.fix_diff_lines)
+        if _judge_read(
+            fix_match,
+            "Fix diff read",
+            # check_request gives every check an integer fix_diff_lines.
+            cast("int", req.fix_diff_lines),
+            "fix",
+            patch_ends_with_newline,
+        ):
+            normalised.append("Fix diff read")
+    return tuple(normalised)
 
 
-def _check_read(match: re.Match[str], label: str, total: int | None) -> None:
-    """Refuse a coverage line whose total is not *total*, or that reads less than all of it.
+def _judge_read(
+    match: re.Match[str],
+    label: str,
+    count: int,
+    which: str,
+    patch_ends_with_newline: Callable[[str], bool] | None,
+) -> bool:
+    """Judge a coverage line's ``<n>`` against *count*, the driver's N for the diff.
 
-    A *total* of ``None`` (a check's count missing from the request, which
-    :func:`check_request` already refuses) matches no line and so fails closed.
+    ``<n>`` is group 1 of the current form and group 2 (``<read>``) of the old
+    one. It must be N, or N+1 when the patch ends with a newline, which
+    ``Read`` shows as a phantom line: *patch_ends_with_newline* is called with
+    *which* (``"diff"`` or ``"fix"``) only then. Returns whether the line was
+    normalised (N+1 accepted). Anything else is refused.
     """
-    read, stated = int(match.group(1)), int(match.group(2))
-    if stated != total:
+    through = match.group(1) if match.group(1) is not None else match.group(2)
+    reads = int(through)
+    if reads == count:
+        return False
+    if reads == count + 1:
+        if patch_ends_with_newline is not None and patch_ends_with_newline(which):
+            return True
+        # Named by the count only: the patch's bytes are never shown.
+        ending = (
+            "cannot be checked" if patch_ends_with_newline is None else "does not end in a newline"
+        )
         msg = (
-            f"{_RULE_COVERAGE}: the {label} line gives {stated} lines in total,"
-            f" but the diff has {total}"
+            f"{_RULE_COVERAGE}: the {label} line reads through line {reads}, one past"
+            f" the {count} lines of the diff, and the diff {ending}: its last line is {count}"
         )
         raise ResultError(msg)
-    if read != total:
+    if reads < count:
         msg = (
-            f"{_RULE_COVERAGE}: the {label} line reads {read} of {total} lines:"
-            " the whole diff was not read"
+            f"{_RULE_COVERAGE}: the {label} line reads through line {reads}, but the diff"
+            f" has {count} lines: the whole diff was not read"
         )
         raise ResultError(msg)
+    msg = (
+        f"{_RULE_COVERAGE}: the {label} line reads through line {reads}, past the"
+        f" {count} lines of the diff"
+    )
+    raise ResultError(msg)
 
 
 def _check_earlier_ids(raw: object, step: str) -> tuple[str, ...]:

@@ -20,7 +20,12 @@ from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
-from vergil_tooling.lib.merge_review.schema import diff_part_file, fix_part_file
+from vergil_tooling.lib.merge_review.schema import (
+    diff_file,
+    diff_part_file,
+    fix_file,
+    fix_part_file,
+)
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.progress import StageResult
 from vergil_tooling.lib.proxies import ProxyLinkError
@@ -445,9 +450,9 @@ def _full_coverage(request: dict[str, Any]) -> str:
     lines = []
     if "fix_diff_lines" in request:
         fix = request["fix_diff_lines"]
-        lines.append(f"Fix diff read: {fix} of {fix} lines")
+        lines.append(f"Fix diff read: through line {fix}")
     diff = request["diff_lines"]
-    lines.append(f"Diff read: {diff} of {diff} lines")
+    lines.append(f"Diff read: through line {diff}")
     return "\n".join(lines)
 
 
@@ -771,9 +776,8 @@ def test_small_check_carries_no_fix_parts(repo: Path, capsys: Cap) -> None:
 def test_check_refuses_a_short_read_of_the_review_diff(repo: Path, capsys: Cap) -> None:
     _large_change(repo)
     review = _built(_argv(repo), capsys)
-    total = review["diff_lines"]
     result = _store_result(
-        repo, "review", [_finding("R1")], coverage=f"Diff read: 2000 of {total} lines"
+        repo, "review", [_finding("R1")], coverage="Diff read: through line 2000"
     )
     _fix(repo)
     code, out, err = _run(_check_argv(repo, review["head_sha"], [result], fix=("R1",)), capsys)
@@ -1710,6 +1714,56 @@ def test_check_refuses_bad_earlier_request(
     assert message in err
 
 
+def _review_reply_reading(repo: Path, capsys: Cap, extra: int) -> tuple[Path, str]:
+    """Store a review reply reading ``N + extra`` diff lines; return ``(private dir, path)``."""
+    review = _built(_argv(repo), capsys)
+    result = _store_result(
+        repo,
+        "review",
+        [_finding("R1")],
+        coverage=f"Diff read: through line {review['diff_lines'] + extra}",
+    )
+    return _merge_review_dir(repo), result
+
+
+def test_earlier_result_reading_n_plus_one_on_newline_patch_is_accepted(
+    repo: Path, capsys: Cap
+) -> None:
+    directory, result = _review_reply_reading(repo, capsys, 1)
+    assert (directory / "diff-review.patch").read_bytes().endswith(b"\n")
+    checked = req.read_earlier_results(directory, "check", [result])
+    assert [path for path, _ in checked] == [result]
+    assert checked[0][1].normalised == ("Diff read",)
+
+
+def test_earlier_result_reading_n_plus_one_on_unterminated_patch_is_refused(
+    repo: Path, capsys: Cap
+) -> None:
+    directory, result = _review_reply_reading(repo, capsys, 1)
+    patch = directory / "diff-review.patch"
+    patch.write_bytes(patch.read_bytes().rstrip(b"\n"))
+    with pytest.raises(req.RequestError, match="fails the result check") as exc:
+        req.read_earlier_results(directory, "check", [result])
+    assert exc.value.exit_code == 1
+
+
+def test_earlier_result_reading_n_plus_one_with_missing_patch_is_refused(
+    repo: Path, capsys: Cap
+) -> None:
+    directory, result = _review_reply_reading(repo, capsys, 1)
+    (directory / "diff-review.patch").unlink()
+    with pytest.raises(req.RequestError, match="cannot read the diff patch file") as exc:
+        req.read_earlier_results(directory, "check", [result])
+    assert exc.value.exit_code == 1
+
+
+def test_earlier_result_reading_n_passes_without_reading_the_patch(repo: Path, capsys: Cap) -> None:
+    directory, result = _review_reply_reading(repo, capsys, 0)
+    (directory / "diff-review.patch").unlink()
+    checked = req.read_earlier_results(directory, "check", [result])
+    assert checked[0][1].normalised == ()
+
+
 def test_check_refuses_wrong_earlier_result_count(repo: Path, capsys: Cap) -> None:
     review_head, result = _reviewed(repo, capsys, [_finding("R1")])
     argv = _check_argv(repo, review_head, [result], step="check-2", fix=("R1",))
@@ -1852,8 +1906,8 @@ def test_check_fix_base_refuses_unreadable_stored_request(
 
 def test_file_names() -> None:
     assert req.request_file("check-2") == "request-check-2.json"
-    assert req.diff_file("review") == "diff-review.patch"
-    assert req.fix_file("check") == "fix-check.patch"
+    assert diff_file("review") == "diff-review.patch"
+    assert fix_file("check") == "fix-check.patch"
     assert req.commits_file("check") == "commits-check.patch"
     assert diff_part_file("review", 1) == "diff-review.part-01.patch"
     assert diff_part_file("check-2", 12) == "diff-check-2.part-12.patch"

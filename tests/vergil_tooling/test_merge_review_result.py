@@ -92,16 +92,14 @@ def _check_block(**over: Any) -> dict[str, Any]:
     return _block(**fields)
 
 
-def _coverage(
-    step: str = "review",
-    *,
-    diff: tuple[int, int] = (DIFF_LINES, DIFF_LINES),
-    fix: tuple[int, int] = (FIX_LINES, FIX_LINES),
-) -> str:
-    """The reply's closing coverage lines: the fix line before the diff line in a check."""
-    lines = [f"Diff read: {diff[0]} of {diff[1]} lines"]
+def _coverage(step: str = "review", *, diff: int = DIFF_LINES, fix: int = FIX_LINES) -> str:
+    """The reply's closing coverage lines, through line *diff* (and *fix* in a check).
+
+    The fix line comes before the diff line.
+    """
+    lines = [f"Diff read: through line {diff}"]
     if is_check(step):
-        lines.insert(0, f"Fix diff read: {fix[0]} of {fix[1]} lines")
+        lines.insert(0, f"Fix diff read: through line {fix}")
     return "\n".join(lines)
 
 
@@ -121,9 +119,15 @@ def _render(block: dict[str, Any]) -> str:
     return _wrap(json.dumps(block, indent=2), step=str(block["step"]))
 
 
-def _refused(text: str, request: dict[str, object] | None = None) -> str:
+def _refused(
+    text: str, request: dict[str, object] | None = None, *, patch: _Patch | None = None
+) -> str:
     with pytest.raises(ResultError) as excinfo:
-        parse_result(text, request if request is not None else _request())
+        parse_result(
+            text,
+            request if request is not None else _request(),
+            patch_ends_with_newline=patch,
+        )
     message = str(excinfo.value)
     assert SECRET not in message
     return message
@@ -980,92 +984,350 @@ def _bad_request(request: dict[str, object], expected: str) -> None:
     assert message.startswith("the request: ") and expected in message
 
 
-def test_full_read_of_a_large_diff_accepted() -> None:
-    text = _wrap(json.dumps(_block(), indent=2), coverage=f"Diff read: {LARGE} of {LARGE} lines")
-    assert parse_result(text, _large_review()).step == "review"
+class _Patch:
+    """Stands in for the patch check: records each call and answers *ends* for each."""
+
+    def __init__(self, ends: bool) -> None:
+        self.ends = ends
+        self.calls: list[str] = []
+
+    def __call__(self, which: str) -> bool:
+        self.calls.append(which)
+        return self.ends
 
 
-def test_full_read_of_a_small_diff_accepted_with_trailing_space_and_cr() -> None:
+def _reply(coverage: str, step: str = "review") -> str:
+    """A reply whose block is the default block for *step*, closed by *coverage*."""
+    body = _check_block() if is_check(step) else _block()
+    return _wrap(json.dumps(body, indent=2), step=step, coverage=coverage)
+
+
+def test_through_line_full_read_of_a_large_diff_accepted() -> None:
+    checked = parse_result(_reply(f"Diff read: through line {LARGE}"), _large_review())
+    assert checked.step == "review"
+    assert checked.normalised == ()
+
+
+def test_through_line_full_read_of_a_small_diff_accepted_with_trailing_space_and_cr() -> None:
+    patch = _Patch(ends=True)
+    checked = parse_result(
+        _reply(f"Diff read: through line {DIFF_LINES} \r"),
+        _request(),
+        patch_ends_with_newline=patch,
+    )
+    # N is read as it stands: the patch is not looked at.
+    assert checked.normalised == ()
+    assert patch.calls == []
+
+
+def test_old_form_full_read_of_a_small_diff_accepted_with_trailing_space_and_cr() -> None:
     line = f"Diff read: {DIFF_LINES} of {DIFF_LINES} lines \r"
-    text = _wrap(json.dumps(_block(), indent=2), coverage=line)
-    assert parse_result(text, _request()).step == "review"
+    assert parse_result(_reply(line), _request()).normalised == ()
+
+
+def test_old_form_total_is_never_consulted() -> None:
+    # The read, 2500, is judged against N = 2500; the stated 2600 total is ignored.
+    checked = parse_result(_reply(f"Diff read: {LARGE} of 2600 lines"), _large_review())
+    assert checked.normalised == ()
+
+
+def test_old_form_80_of_80_on_a_114_line_diff_refused() -> None:
+    # A reply that stopped early and gave its own total: the total does not make it whole.
+    message = _refused(_reply("Diff read: 80 of 80 lines"), _request(diff_lines=114))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 80, but the diff has"
+        " 114 lines: the whole diff was not read"
+    )
+
+
+def test_through_line_stopped_early_refused() -> None:
+    message = _refused(_reply("Diff read: through line 80"), _request(diff_lines=114))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 80, but the diff has"
+        " 114 lines: the whole diff was not read"
+    )
+
+
+def test_through_line_n_accepted_without_looking_at_the_patch() -> None:
+    patch = _Patch(ends=True)
+    checked = parse_result(
+        _reply(f"Diff read: through line {DIFF_LINES}"), _request(), patch_ends_with_newline=patch
+    )
+    assert checked.normalised == ()
+    assert patch.calls == []
+
+
+def test_through_line_n_plus_one_normalised_on_a_newline_ended_patch() -> None:
+    patch = _Patch(ends=True)
+    checked = parse_result(
+        _reply(f"Diff read: through line {DIFF_LINES + 1}"),
+        _request(),
+        patch_ends_with_newline=patch,
+    )
+    assert checked.normalised == ("Diff read",)
+    assert patch.calls == ["diff"]
+
+
+def test_old_form_368_of_368_normalised_on_a_newline_ended_patch() -> None:
+    # 368 is N+1 for a 367-line diff whose patch ends in a newline: the phantom line.
+    patch = _Patch(ends=True)
+    checked = parse_result(
+        _reply("Diff read: 368 of 368 lines"),
+        _request(diff_lines=367),
+        patch_ends_with_newline=patch,
+    )
+    assert checked.normalised == ("Diff read",)
+    assert patch.calls == ["diff"]
+
+
+def test_old_form_368_of_368_refused_on_a_patch_without_a_final_newline() -> None:
+    message = _refused(
+        _reply("Diff read: 368 of 368 lines"),
+        _request(diff_lines=367),
+        patch=_Patch(ends=False),
+    )
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 368, one past the 367"
+        " lines of the diff, and the diff does not end in a newline: its last line is 367"
+    )
+
+
+def test_old_form_368_of_368_refused_without_a_patch_check() -> None:
+    message = _refused(_reply("Diff read: 368 of 368 lines"), _request(diff_lines=367))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 368, one past the 367"
+        " lines of the diff, and the diff cannot be checked: its last line is 367"
+    )
+
+
+def test_through_line_n_plus_one_refused_on_a_patch_without_a_final_newline() -> None:
+    message = _refused(_reply(f"Diff read: through line {DIFF_LINES + 1}"), patch=_Patch(False))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 11, one past the 10"
+        " lines of the diff, and the diff does not end in a newline: its last line is 10"
+    )
+
+
+def test_through_line_n_plus_one_refused_without_a_patch_check() -> None:
+    message = _refused(_reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 11, one past the 10"
+        " lines of the diff, and the diff cannot be checked: its last line is 10"
+    )
+
+
+@pytest.mark.parametrize(
+    ("read", "expected"),
+    [
+        (9, "reads through line 9, but the diff has 10 lines: the whole diff was not read"),
+        (0, "reads through line 0, but the diff has 10 lines: the whole diff was not read"),
+        (12, "reads through line 12, past the 10 lines of the diff"),
+        (2500, "reads through line 2500, past the 10 lines of the diff"),
+    ],
+)
+def test_through_line_neither_n_nor_n_plus_one_refused(read: int, expected: str) -> None:
+    # The patch is never consulted for a line that is not N+1.
+    patch = _Patch(ends=True)
+    message = _refused(_reply(f"Diff read: through line {read}"), patch=patch)
+    assert message.startswith("rule 11 (coverage): the Diff read line ")
+    assert expected in message
+    assert patch.calls == []
+
+
+def test_check_fix_line_n_plus_one_normalised_alone() -> None:
+    patch = _Patch(ends=True)
+    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES}"
+    checked = parse_result(
+        _reply(coverage, "check"), _request("check"), patch_ends_with_newline=patch
+    )
+    assert checked.normalised == ("Fix diff read",)
+    assert patch.calls == ["fix"]
+
+
+def test_check_both_lines_n_plus_one_normalised() -> None:
+    patch = _Patch(ends=True)
+    coverage = (
+        f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    )
+    checked = parse_result(
+        _reply(coverage, "check"), _request("check"), patch_ends_with_newline=patch
+    )
+    assert checked.normalised == ("Diff read", "Fix diff read")
+    assert patch.calls == ["diff", "fix"]
+
+
+def test_check_fix_line_n_plus_one_refused_on_a_patch_without_a_final_newline() -> None:
+    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES}"
+    message = _refused(_reply(coverage, "check"), _request("check"), patch=_Patch(ends=False))
+    assert message == (
+        "rule 11 (coverage): the Fix diff read line reads through line 5, one past the 4"
+        " lines of the diff, and the diff does not end in a newline: its last line is 4"
+    )
+
+
+def test_check_fix_line_n_plus_one_refused_without_a_patch_check() -> None:
+    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES}"
+    message = _refused(_reply(coverage, "check"), _request("check"))
+    assert message == (
+        "rule 11 (coverage): the Fix diff read line reads through line 5, one past the 4"
+        " lines of the diff, and the diff cannot be checked: its last line is 4"
+    )
+
+
+def test_check_old_form_totals_are_never_consulted() -> None:
+    coverage = "Fix diff read: 4 of 9 lines\nDiff read: 10 of 2 lines"
+    checked = parse_result(_reply(coverage, "check"), _request("check"))
+    assert checked.normalised == ()
 
 
 @pytest.mark.parametrize(
     ("coverage", "expected"),
     [
-        ("Diff read: 2000 of 2500 lines", "reads 2000 of 2500 lines: the whole diff"),
-        ("Diff read: 0 of 2500 lines", "reads 0 of 2500 lines"),
-        ("Diff read: 2500 of 2600 lines", "gives 2600 lines in total, but the diff has 2500"),
-        ("Diff read: 2000 of 2000 lines", "gives 2000 lines in total, but the diff has 2500"),
+        (
+            "Fix diff read: through line 3\nDiff read: through line 10",
+            "the Fix diff read line reads through line 3, but the diff has 4 lines",
+        ),
+        (
+            "Fix diff read: 3 of 4 lines\nDiff read: through line 10",
+            "the Fix diff read line reads through line 3, but the diff has 4 lines",
+        ),
+        (
+            "Fix diff read: through line 6\nDiff read: through line 10",
+            "the Fix diff read line reads through line 6, past the 4 lines of the diff",
+        ),
+        (
+            "Fix diff read: through line 4\nDiff read: through line 9",
+            "the Diff read line reads through line 9, but the diff has 10 lines",
+        ),
+        (
+            "Fix diff read: through line 4\nDiff read: through line 12",
+            "the Diff read line reads through line 12, past the 10 lines of the diff",
+        ),
+        (
+            "Diff read: through line 10",
+            "the non-empty line before the last must read 'Fix diff read:",
+        ),
+        (
+            "Fix diff read: through line 4\nafter\nDiff read: through line 10",
+            "the non-empty line before the last must read 'Fix diff read:",
+        ),
+        (
+            "Fix diff read: through line 4\nDiff read: through line 10\nafter",
+            "the last non-empty line must read 'Diff read:",
+        ),
+    ],
+)
+def test_check_short_or_missing_coverage_refused(coverage: str, expected: str) -> None:
+    message = _refused(_reply(coverage, "check"), _request("check"), patch=_Patch(ends=True))
+    assert message.startswith("rule 11 (coverage): ") and expected in message
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Diff read: through line 08",
+        "Diff read: through line",
+        "Diff read: Through line 5",
+        "Diff read: through line 5 and more",
+        "Diff read: through line 5.",
+        "Diff read: through line +5",
+        "Diff read: through line -1",
+        "Diff read: through  line 5",
+        "Diff read: through line 10 lines",
+        "Diff read: through line 10 of 10 lines",
+        "diff read: through line 10",
+        "Diff read:",
+    ],
+)
+def test_malformed_through_line_refused(line: str) -> None:
+    message = _refused(_reply(line), patch=_Patch(ends=True))
+    assert message == (
+        "rule 11 (coverage): the last non-empty line must read 'Diff read: through line <n>'"
+    )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Fix diff read: through line 04",
+        "Fix diff read: through line",
+        "Fix diff read: Through line 4",
+        "Fix diff read: through line 4 lines",
+        "fix diff read: through line 4",
+    ],
+)
+def test_check_malformed_fix_line_refused(line: str) -> None:
+    coverage = f"{line}\nDiff read: through line {DIFF_LINES}"
+    message = _refused(_reply(coverage, "check"), _request("check"), patch=_Patch(ends=True))
+    assert message == (
+        "rule 11 (coverage): the non-empty line before the last must read"
+        " 'Fix diff read: through line <n>'"
+    )
+
+
+def test_check_diff_line_is_judged_before_the_fix_line() -> None:
+    # A bad diff line is refused whatever the fix line says.
+    coverage = "Fix diff read: through line 4\nDiff read: through line 2"
+    message = _refused(_reply(coverage, "check"), _request("check"), patch=_Patch(ends=True))
+    assert "the Diff read line reads through line 2, but the diff has 10 lines" in message
+
+
+@pytest.mark.parametrize(
+    ("coverage", "expected"),
+    [
+        ("Diff read: through line 2000", "reads through line 2000, but the diff has 2500"),
+        ("Diff read: through line 0", "reads through line 0, but the diff has 2500"),
+        ("Diff read: 2000 of 2500 lines", "reads through line 2000, but the diff has 2500"),
+        ("Diff read: 2000 of 2000 lines", "reads through line 2000, but the diff has 2500"),
+        ("Diff read: through line 2502", "reads through line 2502, past the 2500 lines"),
         ("", "the last non-empty line must read 'Diff read:"),
         ("Diff read: 2500 lines", "the last non-empty line must read 'Diff read:"),
         ("Diff read: +2500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
         ("Diff read: 02500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
         ("Diff read: 2500 of 2500 lines.", "the last non-empty line must read 'Diff read:"),
         ("diff read: 2500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
-        (f"Diff read: {LARGE} of {LARGE} lines\nAfterthought.", "must read 'Diff read:"),
-    ],
-)
-def test_short_missing_or_malformed_diff_read_refused(coverage: str, expected: str) -> None:
-    text = _wrap(json.dumps(_block(), indent=2), coverage=coverage)
-    message = _refused(text, _large_review())
-    assert message.startswith("rule 11 (coverage): ") and expected in message
-
-
-def test_small_short_read_refused() -> None:
-    text = _wrap(json.dumps(_block(), indent=2), coverage="Diff read: 9 of 10 lines")
-    assert "reads 9 of 10 lines" in _refused(text)
-
-
-def test_full_read_of_a_large_fix_diff_accepted() -> None:
-    coverage = f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
-    checked = parse_result(text, _large_check())
-    assert checked.fix_status == {"R1": "fixed", "R2": "not-fixed"}
-
-
-@pytest.mark.parametrize(
-    ("coverage", "expected"),
-    [
+        ("Diff read: through line 02500", "the last non-empty line must read 'Diff read:"),
+        ("Diff read: through line 2500.", "the last non-empty line must read 'Diff read:"),
         (
-            f"Fix diff read: 2000 of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines",
-            "the Fix diff read line reads 2000 of 2500 lines",
-        ),
-        (
-            f"Fix diff read: {LARGE} of 2600 lines\nDiff read: {LARGE} of {LARGE} lines",
-            "gives 2600 lines in total, but the diff has 2500",
-        ),
-        (
-            f"Diff read: {LARGE} of {LARGE} lines",
-            "the non-empty line before the last must read 'Fix diff read:",
-        ),
-        (
-            f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: 2000 of {LARGE} lines",
-            "the Diff read line reads 2000 of 2500 lines",
-        ),
-        (
-            f"Fix diff read: {LARGE} of {LARGE} lines\nafter\nDiff read: {LARGE} of {LARGE} lines",
-            "the non-empty line before the last must read 'Fix diff read:",
-        ),
-        (
-            f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines\nafter",
+            f"Diff read: through line {LARGE}\nAfterthought.",
             "the last non-empty line must read 'Diff read:",
         ),
     ],
 )
-def test_check_short_or_missing_fix_coverage_refused(coverage: str, expected: str) -> None:
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
-    message = _refused(text, _large_check())
+def test_short_missing_or_malformed_diff_read_refused(coverage: str, expected: str) -> None:
+    message = _refused(_reply(coverage), _large_review())
     assert message.startswith("rule 11 (coverage): ") and expected in message
 
 
-def test_check_small_fix_short_read_refused() -> None:
-    coverage = (
-        f"Fix diff read: 3 of {FIX_LINES} lines\nDiff read: {DIFF_LINES} of {DIFF_LINES} lines"
+def test_large_phantom_line_judged_against_the_large_count() -> None:
+    patch = _Patch(ends=True)
+    checked = parse_result(
+        _reply(f"Diff read: through line {LARGE + 1}"),
+        _large_review(),
+        patch_ends_with_newline=patch,
     )
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
-    assert "the Fix diff read line reads 3 of 4 lines" in _refused(text, _request("check"))
+    assert checked.normalised == ("Diff read",)
+
+
+def test_small_short_read_refused() -> None:
+    message = _refused(_reply("Diff read: through line 9"))
+    assert message == (
+        "rule 11 (coverage): the Diff read line reads through line 9, but the diff has 10"
+        " lines: the whole diff was not read"
+    )
+
+
+def test_full_read_of_a_large_fix_diff_accepted() -> None:
+    coverage = f"Fix diff read: through line {LARGE}\nDiff read: through line {LARGE}"
+    checked = parse_result(_reply(coverage, "check"), _large_check())
+    assert checked.fix_status == {"R1": "fixed", "R2": "not-fixed"}
+    assert checked.normalised == ()
+
+
+def test_check_small_fix_short_read_refused() -> None:
+    coverage = "Fix diff read: through line 3\nDiff read: through line 10"
+    message = _refused(_reply(coverage, "check"), _request("check"))
+    assert "the Fix diff read line reads through line 3, but the diff has 4 lines" in message
 
 
 def test_check_full_small_read_accepted() -> None:
@@ -1074,9 +1336,8 @@ def test_check_full_small_read_accepted() -> None:
 
 def test_check_coverage_must_follow_the_prose_line() -> None:
     # The lines are read from the bottom: a Fix line above prose is not the one before the last.
-    coverage = f"Fix diff read: {FIX_LINES} of {FIX_LINES} lines\nprose\nDiff read: 10 of 10 lines"
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
-    message = _refused(text, _request("check"))
+    coverage = "Fix diff read: through line 4\nprose\nDiff read: through line 10"
+    message = _refused(_reply(coverage, "check"), _request("check"))
     assert "the non-empty line before the last must read 'Fix diff read:" in message
 
 
@@ -1194,35 +1455,182 @@ def test_valid_manifests_accepted_by_check_request() -> None:
 def test_cli_short_read_of_a_large_diff_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = _wrap(json.dumps(_block(), indent=2), coverage="Diff read: 2000 of 2500 lines")
+    text = _reply("Diff read: through line 2000")
     assert vrg_merge_review_check.main(_files(tmp_path, text, _large_review())) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("ERROR: rule 11 (coverage): the Diff read line reads 2000 of")
+    assert captured.err == (
+        "ERROR: rule 11 (coverage): the Diff read line reads through line 2000,"
+        " but the diff has 2500 lines: the whole diff was not read\n"
+    )
 
 
 def test_cli_full_read_of_a_large_diff_passes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = _wrap(json.dumps(_block(), indent=2), coverage=f"Diff read: {LARGE} of {LARGE} lines")
+    text = _reply(f"Diff read: through line {LARGE}")
     assert vrg_merge_review_check.main(_files(tmp_path, text, _large_review())) == 0
-    assert json.loads(capsys.readouterr().out)["step"] == "review"
+    out = json.loads(capsys.readouterr().out)
+    assert out["step"] == "review"
+    assert "count_normalised" not in out
 
 
 def test_cli_short_read_of_a_large_fix_diff_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    coverage = f"Fix diff read: 2000 of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    coverage = f"Fix diff read: through line 2000\nDiff read: through line {LARGE}"
+    text = _reply(coverage, "check")
     assert vrg_merge_review_check.main(_files(tmp_path, text, _large_check())) == 1
     err = capsys.readouterr().err
-    assert err.startswith("ERROR: rule 11 (coverage): the Fix diff read line reads 2000 of")
+    assert err.startswith(
+        "ERROR: rule 11 (coverage): the Fix diff read line reads through line 2000"
+    )
 
 
 def test_cli_full_read_of_a_large_fix_diff_passes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    coverage = f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
-    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    coverage = f"Fix diff read: through line {LARGE}\nDiff read: through line {LARGE}"
+    text = _reply(coverage, "check")
     assert vrg_merge_review_check.main(_files(tmp_path, text, _large_check())) == 0
-    assert json.loads(capsys.readouterr().out)["fix_status"] == {"R1": "fixed", "R2": "not-fixed"}
+    out = json.loads(capsys.readouterr().out)
+    assert out["fix_status"] == {"R1": "fixed", "R2": "not-fixed"}
+    assert "count_normalised" not in out
+
+
+def test_cli_no_patch_is_read_unless_a_count_reads_one_past(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No patch file exists: a reply at N never asks for one.
+    args = _files(tmp_path, _reply(f"Diff read: through line {DIFF_LINES}"))
+    assert vrg_merge_review_check.main(args) == 0
+    assert "count_normalised" not in json.loads(capsys.readouterr().out)
+
+
+def test_cli_phantom_line_normalised_on_a_newline_ended_patch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    _write_patch(tmp_path, "diff-review.patch", b"+x\n" * DIFF_LINES)
+    assert vrg_merge_review_check.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["count_normalised"] == "Diff read"
+    assert out["step"] == "review"
+
+
+def test_cli_old_form_368_of_368_normalised_against_367(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply("Diff read: 368 of 368 lines"), _request(diff_lines=367))
+    _write_patch(tmp_path, "diff-review.patch", b"\n" * 367)
+    assert vrg_merge_review_check.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["count_normalised"] == "Diff read"
+
+
+def test_cli_old_form_368_of_368_refused_on_a_patch_without_a_final_newline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply("Diff read: 368 of 368 lines"), _request(diff_lines=367))
+    _write_patch(tmp_path, "diff-review.patch", b"\n" * 366 + b"x")
+    assert vrg_merge_review_check.main(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(
+        "ERROR: rule 11 (coverage): the Diff read line reads through line 368, one past the 367"
+    )
+
+
+def test_cli_old_form_80_of_80_on_a_114_line_diff_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply("Diff read: 80 of 80 lines"), _request(diff_lines=114))
+    assert vrg_merge_review_check.main(args) == 1
+    assert capsys.readouterr().err.startswith(
+        "ERROR: rule 11 (coverage): the Diff read line reads through line 80, but the diff has 114"
+    )
+
+
+def test_cli_phantom_line_on_a_patch_without_a_final_newline_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    _write_patch(tmp_path, "diff-review.patch", b"\n" * (DIFF_LINES - 1) + b"x")
+    assert vrg_merge_review_check.main(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(
+        "ERROR: rule 11 (coverage): the Diff read line reads through line 11, one past the 10"
+        " lines of the diff, and the diff does not end in a newline"
+    )
+
+
+def test_cli_empty_patch_does_not_end_in_a_newline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    _write_patch(tmp_path, "diff-review.patch", b"")
+    assert vrg_merge_review_check.main(args) == 1
+    assert "does not end in a newline" in capsys.readouterr().err
+
+
+def test_cli_missing_patch_for_a_phantom_line_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = _files(tmp_path, _reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    assert vrg_merge_review_check.main(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("ERROR: cannot read the diff patch file ")
+    assert "diff-review.patch" in captured.err
+
+
+def test_cli_both_counts_normalised_summarised_as_both(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage = (
+        f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    )
+    args = _files(tmp_path, _reply(coverage, "check"), _request("check"))
+    _write_patch(tmp_path, "diff-check.patch", b"\n" * DIFF_LINES)
+    _write_patch(tmp_path, "fix-check.patch", b"\n" * FIX_LINES)
+    assert vrg_merge_review_check.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["count_normalised"] == "both"
+    assert out["fix_status"] == {"R1": "fixed", "R2": "not-fixed"}
+
+
+def test_cli_fix_count_normalised_alone_summarised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES}"
+    args = _files(tmp_path, _reply(coverage, "check"), _request("check"))
+    _write_patch(tmp_path, "fix-check.patch", b"\n" * FIX_LINES)
+    assert vrg_merge_review_check.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["count_normalised"] == "Fix diff read"
+
+
+def test_cli_patch_is_read_from_the_result_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The request lives elsewhere; the patch is found beside the result, not beside the request.
+    private = tmp_path / "private"
+    private.mkdir()
+    args = _files(private, _reply(f"Diff read: through line {DIFF_LINES + 1}"))
+    elsewhere = tmp_path / "request-review.json"
+    (private / "request-review.json").rename(elsewhere)
+    args[1] = str(elsewhere)
+    _write_patch(tmp_path, "diff-review.patch", b"\n" * DIFF_LINES)
+    assert vrg_merge_review_check.main(args) == 1
+    assert capsys.readouterr().err.startswith("ERROR: cannot read the diff patch file ")
+    _write_patch(private, "diff-review.patch", b"\n" * DIFF_LINES)
+    assert vrg_merge_review_check.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["count_normalised"] == "Diff read"
+
+
+def test_summarize_omits_the_key_when_nothing_normalised() -> None:
+    checked = parse_result(_reply(f"Diff read: through line {DIFF_LINES}"), _request())
+    assert "count_normalised" not in vrg_merge_review_check.summarize(checked)
+
+
+def _write_patch(directory: Path, name: str, data: bytes) -> None:
+    (directory / name).write_bytes(data)

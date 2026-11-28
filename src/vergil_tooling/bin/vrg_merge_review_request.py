@@ -268,7 +268,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
         )
         check = req.CheckFields(
             fix_base_sha=fix_base_sha,
-            fix_diff_path=str(private_dir / req.fix_file(step)),
+            fix_diff_path=str(private_dir / schema.fix_file(step)),
             fix_diff_lines=fix_patch.count(b"\n"),
             fix_diff_parts=req.part_manifest(fix_parts),
             earlier_result_paths=[path for path, _result in earlier],
@@ -278,7 +278,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     diff_parts = req.plan_parts(
         diff_bytes, lambda number: private_dir / schema.diff_part_file(step, number)
     )
-    diff_path = private_dir / req.diff_file(step)
+    diff_path = private_dir / schema.diff_file(step)
     commits_path = private_dir / req.commits_file(step)
     batch_request = (
         None

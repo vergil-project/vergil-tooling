@@ -60,15 +60,16 @@ The reviewer's reply is a **result**:
    never routes, decides or posts anything on the strength of the prose.
 3. The reply closes with the coverage lines, which report how much of the
    diff the reviewer read. The last non-empty line is exactly
-   `Diff read: <read> of <total> lines`, where `<total>` is the request's
-   `diff_lines` and `<read>` is the number of its lines the reviewer read;
-   a full read has `<read>` equal to `<total>`. In a check, the non-empty
-   line before that one is exactly `Fix diff read: <read> of <total> lines`,
-   the same way, for the request's `fix_diff_lines`. Trailing whitespace and
-   a CR are not part of the line. The numbers are decimal integers, with no
-   sign and no leading zero except `0`. The reviewer reads a diff over 2000
-   lines in its `diff_parts` (or `fix_diff_parts`), every part in full, and
-   reports the lines it read, which must be all of them.
+   `Diff read: through line <n>`, where `<n>` is the last line number that
+   `Read` showed the reviewer. The line carries no total. In a check, the
+   non-empty line before that one is exactly `Fix diff read: through line
+   <n>`, the same way, for the fix diff. Trailing whitespace and a CR are not
+   part of the line. The number is a decimal integer, with no sign and no
+   leading zero except `0`. The reviewer reads a diff over 2000 lines in its
+   `diff_parts` (or `fix_diff_parts`), every part in full, and reports the
+   last line it read, which must be the diff's last line (rule 11 says how
+   `<n>` is judged). The old form, `Diff read: <read> of <total> lines`, is
+   still accepted for one release; see rule 11.
 
 A reply with a second block of the same info string anywhere is not a
 result.
@@ -395,7 +396,7 @@ The reply opens with one fenced block whose info string is
 
 R1: the prose explains each finding for the human.
 
-Diff read: 10 of 10 lines
+Diff read: through line 10
 ````
 
 | Field | Type | Value |
@@ -458,8 +459,11 @@ on stdout:
 ```
 
 `security` is the number of security findings; `fix_status` maps each
-listed ID to its status (empty in a review). On any violation it exits 1
-with `ERROR: <rule>` on stderr, naming the rule broken. The eleven rules:
+listed ID to its status (empty in a review). The summary also carries
+`count_normalised`, and only when a coverage line's count was normalised
+(rule 11): `"Diff read"`, `"Fix diff read"`, or `"both"`. On any violation it
+exits 1 with `ERROR: <rule>` on stderr, naming the rule broken. The eleven
+rules:
 
 1. **Shape.** The first content of the reply, after optional whitespace, is
    a fenced block with info string `merge-review-result`, and the reply has
@@ -500,12 +504,29 @@ with `ERROR: <rule>` on stderr, naming the rule broken. The eleven rules:
     changed after the capture is refused as such.
 11. **Coverage.** The [result](#the-result)'s closing coverage lines show
     the whole diff was read. The last non-empty line is exactly
-    `Diff read: <read> of <total> lines`, with `<total>` equal to the
-    request's `diff_lines` and `<read>` equal to `<total>`. In a check, the
-    non-empty line before it is exactly `Fix diff read: <read> of <total>
-    lines`, with `<total>` equal to the request's `fix_diff_lines` and
-    `<read>` equal to `<total>`. A missing or malformed line, a short read or
-    a wrong total is refused. The request's own counts are checked first, as
+    `Diff read: through line <n>`. `<n>` is judged against `N`, the driver's
+    own count for the diff: the newline count (`wc -l`) of the patch the
+    request was built from, which is the request's `diff_lines`. `<n>` is
+    accepted when it equals `N`. It is also accepted when it equals `N+1`,
+    but only when the patch file's last byte is a newline, because `Read`
+    shows one phantom line past such a patch. The patch is the whole diff,
+    `diff-<step>.patch`, in the result file's directory. Any other `<n>` is
+    refused: below `N`; `N+1` on a patch that does not end in a newline;
+    `N+2` or more; or a malformed line. A line that reads `N+1` and is
+    accepted is normalised, and the summary's `count_normalised` names it.
+    In a check, the non-empty line before it is exactly `Fix diff read:
+    through line <n>`, judged the same way against the request's
+    `fix_diff_lines` and `fix-<step>.patch`. Each line is judged on its own,
+    and the diff line is judged first.
+
+    The old form, `Diff read: <read> of <total> lines` (and `Fix diff read:
+    <read> of <total> lines`), is accepted for one release. Its `<read>` is
+    read as `<n>` and judged by the same rule against `N`. Its `<total>` is
+    never consulted, so `80 of 80` on a 114-line diff is a short read and is
+    refused, while `368 of 368` against a 367-line diff whose patch ends in a
+    newline is `N+1` and is normalised. A missing or malformed line, a short
+    read, or an `N+1` on a patch without a final newline is refused. The
+    request's own counts are checked first, as
     the request's fields: `diff_lines` (and `fix_diff_lines` in a check) is a
     whole number, and a `diff_parts` (or `fix_diff_parts`) manifest is present
     exactly when its count is over 2000, lists each part's `path` (a string)

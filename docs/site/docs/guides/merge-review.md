@@ -162,10 +162,17 @@ schemas and the result check. In short:
   `merge-review-result` fenced block holding a JSON object, followed by prose
   for the human. The block copies the request's `request_id`, a fresh random
   value per request, which ties the result to the request it answers. It
-  closes with a `Diff read: <read> of <total> lines` line (and, in a check, a
-  `Fix diff read:` line before it) that reports how much of the diff it read.
+  closes with a `Diff read: through line <n>` line (and, in a check, a
+  `Fix diff read: through line <n>` line before it), where `<n>` is the last
+  line number it was shown, so the line reports how much of the diff it read.
   A diff over 2000 lines comes in numbered parts, `diff_parts`, that it reads
-  in full.
+  in full. The check counts the diff's lines itself and accepts `<n>` equal
+  to that count, or one more when the patch ends in a newline, since `Read`
+  shows one phantom line past such a patch. Older replies that close with
+  `Diff read: <read> of <total> lines` are still accepted for one release:
+  the check judges `<read>` the same way and ignores `<total>`. When a count
+  was accepted as one more, the check's summary names it in
+  `count_normalised` (`"Diff read"`, `"Fix diff read"` or `"both"`).
 - **The caller acts only on a checked result.** The result check refuses a
   reply whose coverage line reads less than the whole diff (rule 11), so a
   partial read cannot pass. A result that fails the

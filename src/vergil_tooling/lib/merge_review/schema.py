@@ -7,6 +7,11 @@ Every value here is fixed by ``docs/specs/merge-review-protocol.md``.
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 REQUEST_SCHEMA = "merge-review-request/1"
 RESULT_SCHEMA = "merge-review-result/1"
@@ -56,17 +61,59 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The most lines one ``Read`` call returns: a diff over this is read in parts.
 MAX_READ_LINES = 2000
 
-#: The reviewer's closing coverage line: the whole diff's lines read, of its total.
-DIFF_READ_RE = re.compile(r"^Diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+#: The reviewer's closing coverage line. The current form is
+#: ``Diff read: through line <n>``, where ``<n>`` is the last line number ``Read``
+#: showed the reviewer. The old form ``Diff read: <read> of <total> lines`` is
+#: still accepted for one release: its ``<read>`` is judged as ``<n>`` and its
+#: ``<total>`` is never consulted. Group 1 holds ``<n>`` in the current form and
+#: group 2 holds ``<read>`` in the old one.
+DIFF_READ_RE = re.compile(
+    r"^Diff read: (?:through line (0|[1-9][0-9]*)|(0|[1-9][0-9]*) of (?:0|[1-9][0-9]*) lines)$"
+)
 
 #: A check's coverage line for its fix diff, the line just before the diff line.
-FIX_READ_RE = re.compile(r"^Fix diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+#: It takes the same two forms as :data:`DIFF_READ_RE`.
+FIX_READ_RE = re.compile(
+    r"^Fix diff read: (?:through line (0|[1-9][0-9]*)|(0|[1-9][0-9]*) of (?:0|[1-9][0-9]*) lines)$"
+)
 
 
 def capture_file(step: str) -> str:
     """The capture record's file name for ``step``: ``capture-<step>.json``."""
     step_id_prefix(step)  # refuses a non-step
     return f"capture-{step}.json"
+
+
+def diff_file(step: str) -> str:
+    """The whole branch's diff file name for *step*."""
+    return f"diff-{step}.patch"
+
+
+def fix_file(step: str) -> str:
+    """A check's fix diff file name for *step*."""
+    return f"fix-{step}.patch"
+
+
+def patch_checker(directory: Path, step: str, error: type[Exception]) -> Callable[[str], bool]:
+    """Whether an earlier step's patch ends in a newline, for rule 11's ``N+1`` reads.
+
+    The patch is ``diff-<step>.patch`` or ``fix-<step>.patch`` in *directory*,
+    beside the step's result. It is read only when a count reads ``N+1``. A file
+    that cannot be read raises *error* (the caller's error class), and an empty
+    file does not end in a newline.
+    """
+    names = {"diff": diff_file(step), "fix": fix_file(step)}
+
+    def ends_with_newline(which: str) -> bool:
+        path = directory / names[which]
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            msg = f"cannot read the {which} patch file {path}: {exc.strerror}"
+            raise error(msg) from exc
+        return data.endswith(b"\n")
+
+    return ends_with_newline
 
 
 def diff_part_file(step: str, number: int) -> str:

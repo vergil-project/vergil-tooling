@@ -21,7 +21,12 @@ from vergil_tooling.lib import epic_audit, epic_chain, epics, github, proxies, t
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
 from vergil_tooling.lib.merge_review.result import ResultError, check_request, parse_result
-from vergil_tooling.lib.merge_review.schema import MAX_READ_LINES, REQUEST_SCHEMA, earlier_steps
+from vergil_tooling.lib.merge_review.schema import (
+    MAX_READ_LINES,
+    REQUEST_SCHEMA,
+    earlier_steps,
+    patch_checker,
+)
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import read_stream
 from vergil_tooling.lib.rulings.draft_ref import require_remote_is
@@ -67,16 +72,6 @@ def _unreadable(detail: str) -> NoReturn:
 def request_file(step: str) -> str:
     """The request's file name for *step*."""
     return f"request-{step}.json"
-
-
-def diff_file(step: str) -> str:
-    """The whole branch's diff file name for *step*."""
-    return f"diff-{step}.patch"
-
-
-def fix_file(step: str) -> str:
-    """A check's fix diff file name for *step*."""
-    return f"fix-{step}.patch"
 
 
 def commits_file(step: str) -> str:
@@ -436,8 +431,10 @@ def read_earlier_results(
     checked as ``vrg-merge-review-check`` checks it, against
     ``request-<earlier>.json`` in *private_dir*: first its capture record
     (:func:`check_capture`, rule 10), so a result edited after its own
-    step's check is refused, then :func:`parse_result`. Returns
-    ``(absolute path, checked result)`` pairs.
+    step's check is refused, then :func:`parse_result`. The patches beside
+    each result (``diff-<earlier>.patch``, ``fix-<earlier>.patch``) are read
+    only when a coverage line reports ``N+1`` lines, as the check CLI reads
+    them. Returns ``(absolute path, checked result)`` pairs.
     """
     steps = earlier_steps(step)
     if len(result_paths) != len(steps):
@@ -464,7 +461,16 @@ def read_earlier_results(
                 step=earlier,
                 request_id=check_request(request).request_id,
             )
-            checked.append((str(path), parse_result(text, request)))
+            checked.append(
+                (
+                    str(path),
+                    parse_result(
+                        text,
+                        request,
+                        patch_ends_with_newline=patch_checker(path.parent, earlier, ResultError),
+                    ),
+                )
+            )
         except ResultError as exc:
             refuse(f"the {earlier} result {path} fails the result check: {exc}")
     return checked
