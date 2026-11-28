@@ -101,6 +101,7 @@ class FakeLockOwner:
             heartbeat_at="2026-11-27T10:00:00Z",
             token="t" * 32,
         )
+        self.sha = "5" * 40
         self.update_error: Exception | None = None
         self.release_error: Exception | None = None
 

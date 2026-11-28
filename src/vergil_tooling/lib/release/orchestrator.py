@@ -37,6 +37,7 @@ from vergil_tooling.lib.release.stray import stray_merges
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
+    describe_lock_held,
     ensure_checklist,
     tick_stage,
     write_state,
@@ -670,6 +671,9 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"PR: {ctx.release_pr_url}")
         if ctx.issue_url:
             lines.append(f"Tracking issue: {ctx.issue_url}")
+        if ctx.lock is not None:
+            # Ruling F12: the issue records that the lock was taken, not only released.
+            lines.append(describe_lock_held(ctx.lock))
         if ctx.cleared_deps_prs:
             # #3286: closing a landed dependency-update PR is recorded, never silent.
             prs = ", ".join(ctx.cleared_deps_prs)
