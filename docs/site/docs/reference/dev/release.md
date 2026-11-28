@@ -295,8 +295,8 @@ required checks cannot be read (permissions or an API error), the wait
 prints a warning and falls back to waiting on registered checks only
 (issue #3061).
 
-A required check can also be one a job's upload creates: `Semgrep OSS`,
-`Trivy` and `CodeQL` are registered by GitHub Advanced Security only once
+A required check can also be one a job's upload creates: `Trivy` and
+`CodeQL` are registered by GitHub Advanced Security only once
 the `security / semgrep`, `security / trivy` or `security / codeql` job
 uploads its SARIF results. When that job fails before its upload, the check
 never registers. So when a required check is unregistered and its producing
