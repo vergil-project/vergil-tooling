@@ -291,6 +291,8 @@ def _audit(args: argparse.Namespace, org: str) -> int:
     security_rc = security_records.records_pass(
         org, apply=False, prog="vrg-epic-audit", unlabelled=unlabelled
     )
+    # The release-group audit reads the shared listing and trusted authors; it repairs nothing.
+    group_problems = group_audit.group_findings(org, home=home, listing=home_epics, authors=authors)
     print(
         epic_audit.render(
             tasks,
@@ -314,9 +316,12 @@ def _audit(args: argparse.Namespace, org: str) -> int:
             chain_drift=epic_audit.chain_drift(home, listing=home_epics),
         )
     )
+    if group_problems:
+        print(group_audit.render_findings(group_problems))
     stops.print_summary(sys.stderr)
-    # A preview with a broken proxy link or a stopped item never exits clean.
-    return 1 if proxy_errors or stops.stopped else security_rc
+    # A preview with a broken proxy link, a stopped item or a release-group finding never
+    # exits clean.
+    return 1 if proxy_errors or stops.stopped or group_problems else security_rc
 
 
 def _close(  # noqa: PLR0913 - the passes' shared reads, made once by _audit
@@ -385,8 +390,14 @@ def _close(  # noqa: PLR0913 - the passes' shared reads, made once by _audit
     # which the sweep's scoped token cannot do (vergil-tooling#4313). The
     # human or the user agent runs it with vrg-security-record sync.
     orphan_rc = _apply_orphan_pass(org, issues, stops=stops, authors=authors)
+    # The release-group check runs after the drift-close pass and the other passes, so it reads
+    # the groups as they now stand (epic vergil-project/.github#1672, spec §5.6). It repairs
+    # nothing: each broken group is reported, and the sweep exits 1.
+    group_problems = group_audit.group_findings(org, home=home, listing=home_epics, authors=authors)
+    if group_problems:
+        print(group_audit.render_findings(group_problems))
     stops.print_summary(sys.stderr)
-    return 1 if proxy_errors or stops.stopped or heals.unhealed else orphan_rc
+    return 1 if proxy_errors or stops.stopped or heals.unhealed or group_problems else orphan_rc
 
 
 def _apply_orphan_pass(
@@ -440,9 +451,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "the wrong place (epics outside .github; stray .github issues; "
             "orphans with no epic parent), and each epic's Documents section "
             "(present and well formed; on a closed epic, nothing pending and "
-            "every link naming a file; checked only without --close). "
-            "Read-only by default; pass --close (as a human) to close the drift "
-            "it finds (invariant violations are report-only)."
+            "every link naming a file; checked only without --close), and the "
+            "release groups of each open development or proxy epic that are "
+            "broken (a split, a closed member no merged PR closes, a rule break, "
+            "an edited record, or an unreadable log; a 'Release groups' section, "
+            "and exit 1). Read-only by default; pass --close (as a human) to close "
+            "the drift it finds (invariant violations are report-only)."
         ),
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
@@ -507,9 +521,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
             "orphan to its intake epic through its chain (an intake queue at 95 "
             "open items or more is a line to run intake review; exit 1, after the "
             "rest of the pass, naming each item whose epic refuses it, as a closed "
-            "epic does). --close makes no security-advisory call: it does "
+            "epic does). --close makes "
+            "no security-advisory call: it does "
             "not sync advisory states or check advisory/issue pairs; run "
-            "'vrg-security-record sync' for that. A "
+            "'vrg-security-record sync' for that. Last, report each broken "
+            "release group (a 'Release groups' section; it repairs nothing, and "
+            "exits 1). A "
             "human action (or the scheduled reconciliation sweep) — refused in "
             "interactive agent sessions. Default: read-only."
         ),

@@ -2221,6 +2221,20 @@ and the run exits 1. An org with no `[orgs.<org>]` stanza in the
 configuration is not a Vergil org: the audit says so on stderr and exits 0
 without sweeping it.
 
+**Release groups.** The audit also checks the live release groups of every open
+development epic and every open proxy epic of the org's home; a closed epic is
+never checked. It prints a `Release groups` section, one line per finding, when
+there is any: a `split` (the closed members of a group were closed by different
+merged PRs, both named), a `closed unmerged` member (no merged PR closes it), a
+`rule` break by an open member (the group rules, the dependency-path rule above
+all, read from the current `Blocked-by:` lines), an `edited` record or comment
+skipped for an outsider's edit, and an `unreadable` log or group (a read that
+cannot be completed, or a conflict). A group that still has an open member and
+whose closing PR merged with the others is drift for the drift-close pass, not a
+finding. A closed member that shipped is never reported as a rule break. The
+audit repairs nothing, and any finding makes the run exit 1, with or without
+`--close`.
+
 The security-records preview is the exception to the carry-on rule for
 skipped content: a `security` issue whose body is untrusted is reported on
 stderr (metadata only) and on the preview's `- untrusted:` line, each
