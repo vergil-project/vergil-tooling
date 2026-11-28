@@ -195,9 +195,12 @@ is waiting on:
 - **A PR behind `develop` with no lock held:** a release's bump PR moves
   `develop` on, and a PR the release held still carries the old version,
   so its version check fails until it is rebased. So the first read with no
-  lock held brings each open PR behind `develop` up to date, once, whether
-  or not this watch saw it held (so a run that starts after the release is
-  done updates it too), through the one PR path: the PR's branch is rebased onto
+  lock held brings each open PR behind `develop` up to date, whether or not
+  this watch saw it held (so a run that starts after the release is done
+  updates it too), through the one PR path. It judges each PR once per head:
+  a PR found current or not updatable at its head is not judged again while
+  that head stays, and a read that finds the lock held forgets those
+  judgments, so the next free read judges the PR again: the PR's branch is rebased onto
   `origin/develop` and pushed with the lease on its old head, and
   auto-merge stays on. That runs only from the PR's own worktree (the
   clone with its branch checked out at the PR's head and a clean tree).

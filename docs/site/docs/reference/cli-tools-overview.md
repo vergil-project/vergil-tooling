@@ -404,7 +404,9 @@ its version, its stage and its health, and the wait goes on, every five
 minutes while the release is broken or the lock unreadable, reclaiming a
 stale lock. With no lock held, an unarmed PR is re-armed through the one
 PR path. A PR behind `develop` with no lock held is brought up to date
-first, whether or not this run saw it held: a pushed rebase keeps the wait
+first, whether or not this run saw it held, once per PR head (a PR already
+judged at its head is not judged again until the head moves or a hold is
+seen): a pushed rebase keeps the wait
 going, and a conflicting one ends it with reason `conflict`.
 
 On exit 0, 1 or 6 it prints one JSON object with `pr`, `outcome` (`merged`,

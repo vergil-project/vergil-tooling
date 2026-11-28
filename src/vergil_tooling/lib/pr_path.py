@@ -105,7 +105,8 @@ first: ``vrg-reword`` routes a push to an open PR's branch through
 :func:`push_to_open_pr`, and report-ready refuses one.
 
 :func:`update_held_pr` brings a PR that a release lock held up to date (the
-merge watch calls it once, when the hold ends; vergil-tooling#5414). A PR
+merge watch calls it on a free read, at most once per head until a hold is
+read again; vergil-tooling#5414). A PR
 whose head is behind ``origin/develop`` cannot pass its
 ``version / version-bump`` check, since the release's bump PR moved
 ``develop`` on. Its update runs only from the PR's own worktree (the
