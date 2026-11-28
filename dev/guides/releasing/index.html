@@ -19252,6 +19252,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#agents-during-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agents during a release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-develop-sync" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19775,6 +19786,17 @@
     <span class="md-ellipsis">
       
         One release at a time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agents-during-a-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agents during a release
       
     </span>
   </a>
@@ -21026,6 +21048,23 @@ passes over release <code>X.Y.Z</code>'s own tracking issue, and only it (see
 left with several releases open. If preflight cannot list the open
 issues, or the listing may be truncated, it refuses rather than
 reading that as no release in flight.</p>
+<h3 id="agents-during-a-release">Agents during a release<a class="headerlink" href="#agents-during-a-release" title="Permanent link">&para;</a></h3>
+<p>While a release holds the repository's lock, the release's open PRs into
+<code>develop</code> stay unarmed and the merge watch shows them held (see
+<a href="../../reference/dev/finalize-pr/#under-the-release-lock">Under the release lock</a>).
+Agents may keep working, but a submit does not go out during the lock:
+<code>vrg-submit-pr</code>, in any mode and in push mode too, pushes nothing and opens
+no PR, and exits 7 with the lock's holder, version, stage and health named.
+An agent that must wait re-runs it with <code>--wait-for-release</code>, which polls the
+lock until it clears, within <code>$VRG_FINALIZE_DEADLINE</code> (7200 seconds by
+default), and then pushes once. A push-mode wait rebases onto a <code>develop</code> the
+back-merge moved. The deadline exits 6 with nothing pushed. This reverses the
+earlier stance that CI keeps running on PRs throughout a release, for submit:
+a head pushed during the lock cannot merge until the release is done, and a
+push that lands after the release tags its version but before the back-merge
+bumps <code>develop</code> fails <code>version / version-bump</code> and needs a rebase and a second
+CI run. The full rules are in
+<a href="../../reference/dev/submit-pr/#the-release-lock">The release lock</a>.</p>
 <h3 id="the-develop-sync">The develop sync<a class="headerlink" href="#the-develop-sync" title="Permanent link">&para;</a></h3>
 <p>Preflight does not refuse a root checkout that is merely behind
 <code>origin/develop</code>: another PR may well have merged since you last pulled,
