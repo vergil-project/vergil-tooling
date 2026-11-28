@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.355/">
       
       
         <link rel="next" href="../v2.1.353/">
@@ -1513,6 +1513,8 @@
       
         
       
+        
+      
     
     
     
@@ -1568,6 +1570,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.355/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.355
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19016,6 +19046,7 @@
 <li><strong>run --resume and --supersede under the release lock (#5351)</strong>
   A resume before unlock adopts its own broken or stale lock with a new token, refuses its own live lock (naming the host and heartbeat age) and another release's, and re-takes an absent lock: it records the re-take in the lock history, quiesces develop and, before merge-release, abandons on a stray merge. A resume at unlock deletes its own remaining lock by compare-and-swap or finds none; past it no lock is read. A supersede takes over the superseded release's broken or stale lock by compare-and-swap with no tracking issue, records it in the history and on both tracking issues, and refuses a running, fresh one; with no such lock it takes a fresh lock and quiesces. Ref vergil-project/vergil-tooling#5271</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.354/v2.1.354-ci-evidence.tar.gz">Download →</a></p>
 
 
 

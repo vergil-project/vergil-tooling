@@ -1506,6 +1506,8 @@
       
         
       
+        
+      
     
     
     
@@ -1558,6 +1560,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.355/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.355
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -15228,6 +15258,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-group
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-release-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19990,6 +20031,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-release-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-release-group
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-release-lock" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -21351,12 +21403,30 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
 <li><code>batch-show --issue &lt;N&gt;</code> prints the issue's batch as one JSON object,
   <code>{"issues": ["#10", "#11"], "base_sha": "&lt;sha&gt;"}</code>, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.</li>
-<li><code>batch-extract --issue &lt;N&gt;</code> rewrites every other member's marker without
-  the issue (removing the last one's when fewer than two remain) and removes
-  the issue's whole <code>issue-implement/&lt;N&gt;/</code> directory, its <code>merge-review/</code>
-  state included. It refuses while a <code>security-*.md</code> details file is under
-  that directory.</li>
+<li><code>batch-extract --issue &lt;N&gt; [--issue &lt;M&gt; …] [--check]</code> takes the set out of
+  its batch in one rewrite: every other member's marker is rewritten without
+  the set (the last one's is removed when fewer than two remain), and each
+  issue's whole <code>issue-implement/&lt;N&gt;/</code> directory is removed, its
+  <code>merge-review/</code> state included. It refuses while a <code>security-*.md</code> details
+  file is under any of those directories. It also refuses, naming the group,
+  when the set would split a release group (a member leaving the batch while
+  another member of the group stays in it); a group member outside the batch
+  does not count as staying. The judgment runs before anything is changed.
+  <code>--check</code> makes the same judgment without writing anything, printing
+  <code>{"ok": &lt;bool&gt;, "split": [{"group", "leaving", "staying"}], "remaining": […]}</code>
+  and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
+  the extraction and fails <code>--check</code> too.</li>
 </ul>
+<p><code>batch-gates [--json]</code> judges a batch's merge-review gate before handoff, run in
+the batch's worktree before <code>report-ready</code>. It reads the batch's issues from the
+clone's batch markers, fetches <code>origin/develop</code>, and evaluates the submit gate's
+merge-review rule commit by commit, as <code>vrg-submit-pr</code> would. It writes nothing:
+no state, no marker, and no git write but that fetch. It prints one line per
+commit (issue, short SHA, <code>covered</code> or <code>UNCOVERED</code>, and the reason), or with
+<code>--json</code> the object <code>{"branch", "head", "commits": [{"issue", "sha", "covered",
+"reason"}]}</code>. It exits 0 when every commit is covered, and 1 when one is not, or
+on a read failure (the failure is on stderr). Report-ready removes the markers,
+so after it the probe refuses with exit 1.</p>
 <p><code>batch-check --pr &lt;url&gt; [--head &lt;sha&gt;]</code> checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
 about to push). It reads the PR's base and head, and its body only through the
@@ -21386,7 +21456,7 @@ otherwise.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code>, <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>); global <code>--base</code> (default: origin/develop)</td>
+<td><code>report-ready</code> (<code>--issue</code>, repeatable for a batch, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref, which <code>vrg-submit-pr</code> upgrades to <code>Closes</code> for a managed task), <code>unfreeze</code>, <code>status</code>, <code>batch-start</code>, <code>batch-extract</code> (<code>--issue</code> repeatable, <code>--check</code>), <code>batch-show</code>, <code>batch-check</code> (<code>--pr</code> required, <code>--head</code>), <code>batch-gates</code> (<code>--json</code>); global <code>--base</code> (default: origin/develop)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -21672,6 +21742,51 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 any failure or refusal, 2 usage error (such as <code>--supersede</code> with <code>--resume</code>), 130 interrupted</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-release-group">vrg-release-group<a class="headerlink" href="#vrg-release-group" title="Permanent link">&para;</a></h3>
+<p>List an epic's release groups: a batch of tasks of one development epic (or
+a proxy of one) that ship together (epic vergil-project/.github#1672). A
+group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
+epic's comments, read only from the <code>human</code> and <code>agents</code> roles; a conflict,
+an out-of-order revision, an edited record or a malformed one refuses that
+group, and an outsider's edit of an epic comment refuses the whole epic.
+<code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
+<code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
+and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only: there are no write
+commands yet.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_release_group</code> (library: <code>vergil_tooling.lib.release_groups.record</code>)</td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> (required), <code>--group &lt;id&gt;</code>, <code>--json</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>GitHub App credentials for the epic's org</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Refusals and read failures on stderr, nothing on stdout</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 read, 1 refusal or read failure, 2 usage error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -23793,9 +23908,11 @@ line (or the branch line). The command computes the head and the
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py">change fingerprint</a>
 itself; it takes neither as an argument. For an issue of a batch before
 handoff (it has a batch marker), the change is that issue's own, from the
-previous issue's commit to <code>HEAD</code>, which must hold only the issue's first
-commit and its <code>fixup!</code> commits; folded, its fingerprint is the issue's
-commit's. Otherwise, a fix to an open PR included, it is the change since
+issue's own commit, the one non-fixup commit of <code>origin/develop..HEAD</code> whose
+subject ends in <code>(#N)</code>, with the <code>fixup!</code> commits directly after it folded in,
+from that commit's parent (the marker's <code>base_sha</code> is not used); later
+commits are excluded, and a <code>fixup!</code> of it after another commit is refused,
+since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with <code>origin/develop</code>. Submit, the watch and the audit read
 the records back from the trust layer's comment stream, agent role only,
 skipping an edited comment. A re-run that finds the same comment already
