@@ -49,9 +49,12 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
+
+from vergil_tooling.lib import git, retry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -484,7 +487,7 @@ def git_reachable(url: str, sha: str) -> bool:
     with tempfile.TemporaryDirectory(prefix="vrg-tooling-reach-") as tmp:
         repo = str(Path(tmp) / "refs.git")
         _run_step(("git", "init", "-q", "--bare", repo), env=env, what="creating a git repository")
-        _run_step(
+        _run_fetch(
             (
                 *("git", "-C", repo, "fetch", "-q", "--no-tags", "--filter=tree:0", url),
                 *("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"),
@@ -657,7 +660,7 @@ def install_ref(
         src = Path(tmp) / "src"
         constraints = Path(tmp) / "constraints.txt"
         _run_step(("git", "init", "-q", str(src)), env=env, what="creating a git repository")
-        _run_step(
+        _run_fetch(
             ("git", "-C", str(src), "fetch", "-q", "--depth", "1", GIT_URL, target.fetch),
             env=env,
             what=f"fetching {label} from {GIT_URL}",
@@ -705,22 +708,61 @@ def install_ref(
     return Installed(ref=name, sha=sha)
 
 
-def _run_step(
+def _run_once(
     argv: tuple[str, ...], *, env: Mapping[str, str], what: str, cwd: Path | None = None
-) -> str:
-    """Run one install step, capturing its output; its stdout, or raise naming *what*."""
+) -> subprocess.CompletedProcess[str]:
+    """Run one install step once, capturing its output; raise naming *what* if it cannot run."""
     try:
-        result = subprocess.run(  # noqa: S603
+        return subprocess.run(  # noqa: S603
             argv, capture_output=True, text=True, env=env, cwd=cwd, check=False
         )
     except OSError as exc:
         msg = f"{what} failed: {argv[0]} could not run: {exc}"
         raise ToolingInstallError(msg) from exc
+
+
+def _step_stdout(result: subprocess.CompletedProcess[str], *, what: str) -> str:
+    """The stdout of a finished install step; raise naming *what* when it exited non-zero."""
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "no error output"
         msg = f"{what} failed (exit {result.returncode}): {detail}"
         raise ToolingInstallError(msg)
     return result.stdout
+
+
+def _run_step(
+    argv: tuple[str, ...], *, env: Mapping[str, str], what: str, cwd: Path | None = None
+) -> str:
+    """Run one install step, capturing its output; its stdout, or raise naming *what*."""
+    return _step_stdout(_run_once(argv, env=env, what=what, cwd=cwd), what=what)
+
+
+def _run_fetch(argv: tuple[str, ...], *, env: Mapping[str, str], what: str) -> None:
+    """Run one ``git fetch`` install step, retrying its ref-lock race as ``git.run`` does (#5457).
+
+    The fetch runs with ``LC_ALL=C`` added to *env*, so git's race message is
+    the English text :func:`git.is_fetch_ref_lock_race` matches. A race is
+    retried under :data:`git.LOCK_RACE_RETRIES`, with the same backoff and
+    announcement as ``git.run``. Once that budget is spent, or for any other
+    failure, the :class:`ToolingInstallError` :func:`_run_step` raises is raised
+    unchanged. No other retry applies here.
+    """
+    fetch_env = {**env, "LC_ALL": "C"}
+    lock_race_retries = 0
+    while True:
+        result = _run_once(argv, env=fetch_env, what=what)
+        race = git.is_fetch_ref_lock_race("fetch", result.returncode, result.stderr)
+        if not race or lock_race_retries == git.LOCK_RACE_RETRIES:
+            _step_stdout(result, what=what)
+            return
+        delay = retry.compute_delay(lock_race_retries)
+        lock_race_retries += 1
+        print(
+            "git fetch: ref-lock race (another fetch moved a ref), retrying in "
+            f"{delay:.1f}s (attempt {lock_race_retries}/{git.LOCK_RACE_RETRIES + 1})",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
 
 
 def _check_constraints(path: Path, *, tag: str, sha: str) -> None:
