@@ -3408,9 +3408,11 @@ release from before `skip` existed refuses a record that carries one.
 `--markdown FILE...` is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as
 the common stage would, against the bundled config. A file the common
-stage does not lint (outside its scope, under a `[markdownlint].ignore`
-path, or gitignored) is named and skipped, so the result never disagrees
-with the gate. `--fix` lets markdownlint fix what it can. A bare
+stage does not lint (outside its scope, including the repo's
+`[markdownlint].paths` extras, under a `[markdownlint].ignore` path, or
+gitignored) is named and skipped, so the result never disagrees with the
+gate. Once the release carrying `[markdownlint].paths` is published, a
+file under a listed path is linted here too. `--fix` lets markdownlint fix what it can. A bare
 `markdownlint <file>` uses markdownlint's defaults instead, line length
 included, so it flags lines the gate passes.
 
@@ -3429,8 +3431,10 @@ Not a command on `PATH`: the module `vrg-validate` runs as its common
 stage. Shared validation checks for all repos: the
 [repo-profile](lint/repo-profile.md) check (`vergil.toml` and the
 `README.md` structure), markdownlint on published markdown
-(`docs/site/**/*.md`, `docs/security/**/*.md`, `README.md` and `epics/**/*.md`) using the bundled canonical config,
-the docs-links guard (over the same markdown less `epics/archive/`, a link
+(`docs/site/**/*.md`, `docs/security/**/*.md`, `README.md` and `epics/**/*.md`, plus
+the repo's `[markdownlint].paths` extras) using the bundled canonical config,
+the docs-links guard (over the default markdown less `epics/archive/`; the
+`[markdownlint].paths` extras are not in its scope, a link
 to a mike-versioned Vergil docs site must carry a `latest`, `dev` or
 version-number segment after the site name, and a link to a site the org
 does not publish fails), shellcheck on

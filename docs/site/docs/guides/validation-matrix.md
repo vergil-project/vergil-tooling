@@ -183,8 +183,11 @@ dev images come from
    `README.md` follows the structural conventions. See the
    [repo-profile reference](../reference/lint/repo-profile.md).
 2. markdownlint on `docs/site/**/*.md`, `docs/security/**/*.md`,
-   `README.md` and `epics/`, in one pass with the canonical config bundled in vergil-tooling. See the
-   [Markdown Validation](../reference/lint/markdown-standards.md)
+   `README.md` and `epics/`, in one pass with the canonical config bundled
+   in vergil-tooling. A repo may add more files or folders with
+   `[markdownlint].paths` in `vergil.toml`; see the
+   [Extra paths](../reference/lint/markdown-standards.md#extra-paths)
+   section. See the [Markdown Validation](../reference/lint/markdown-standards.md)
    reference.
 3. docs-links: a link to a mike-versioned Vergil docs site must carry a
    version segment after the site name (`latest`, `dev` or a version

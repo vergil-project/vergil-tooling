@@ -7,6 +7,7 @@ import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -154,7 +155,7 @@ _DEPRECATED_INSTALL_KEY = "consumer-refresh"
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
     "dependencies": frozenset({"vergil"}),
-    "markdownlint": frozenset({"ignore"}),
+    "markdownlint": frozenset({"ignore", "paths"}),
     "ci": frozenset({"versions", "integration-tests", "primary-version", "images"}),
     "publish": frozenset({"release", "docs", "install", _DEPRECATED_INSTALL_KEY, "reload-plugins"}),
     "container": frozenset(
@@ -228,6 +229,9 @@ class ProjectConfig:
 @dataclass
 class MarkdownlintConfig:
     ignore: list[str]
+    # Extra repo-relative markdown the gate lints beyond its default scope: a
+    # directory is searched recursively for ``*.md``, a file is linted as is.
+    paths: list[str] = field(default_factory=list)
 
 
 def _version_sort_key(version: str) -> tuple[int, ...]:
@@ -1357,7 +1361,30 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     if not isinstance(ml_ignore, list) or not all(isinstance(p, str) for p in ml_ignore):
         msg = f"{source}: [markdownlint].ignore must be a list of strings"
         raise ConfigError(msg)
-    markdownlint = MarkdownlintConfig(ignore=ml_ignore)
+    ml_paths = ml_raw.get("paths", [])
+    if not isinstance(ml_paths, list) or not all(isinstance(p, str) for p in ml_paths):
+        msg = f"{source}: [markdownlint].paths must be a list of strings"
+        raise ConfigError(msg)
+    for entry in ml_paths:
+        if not entry:
+            msg = f"{source}: [markdownlint].paths entry '' must name a file or directory"
+            raise ConfigError(msg)
+        if PurePosixPath(entry) == PurePosixPath("."):
+            msg = (
+                f"{source}: [markdownlint].paths entry '{entry}' must name a file or directory, "
+                "not the repo root"
+            )
+            raise ConfigError(msg)
+        if PurePosixPath(entry).is_absolute() or PureWindowsPath(entry).is_absolute():
+            msg = (
+                f"{source}: [markdownlint].paths entry '{entry}' must be repo-relative, "
+                "not absolute"
+            )
+            raise ConfigError(msg)
+        if ".." in re.split(r"[/\\]", entry):
+            msg = f"{source}: [markdownlint].paths entry '{entry}' must not contain '..'"
+            raise ConfigError(msg)
+    markdownlint = MarkdownlintConfig(ignore=ml_ignore, paths=ml_paths)
 
     ci_raw = raw.get("ci")
     if ci_raw is None:

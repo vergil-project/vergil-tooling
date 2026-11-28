@@ -28,6 +28,7 @@ from vergil_tooling.bin.validate_common import (
     main,
 )
 from vergil_tooling.lib import dependabot
+from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.repo_init import RepoInitContext, render_readme
 
 if TYPE_CHECKING:
@@ -460,6 +461,93 @@ def test_find_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
     assert len(result) == 1
 
 
+def test_find_markdown_files_extra_directory(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    (skills / "nested").mkdir(parents=True)
+    (skills / "a.md").write_text("# A\n")
+    (skills / "nested" / "b.md").write_text("# B\n")
+    (skills / "c.txt").write_text("not markdown\n")
+    result = _find_markdown_files(tmp_path, paths=["skills"])
+    assert result == [str(skills / "a.md"), str(skills / "nested" / "b.md")]
+
+
+def test_find_markdown_files_extra_file(tmp_path: Path) -> None:
+    guide = tmp_path / "docs" / "extra" / "guide.md"
+    guide.parent.mkdir(parents=True)
+    guide.write_text("# Guide\n")
+    result = _find_markdown_files(tmp_path, paths=["docs/extra/guide.md"])
+    assert result == [str(guide)]
+
+
+def test_find_markdown_files_extra_path_not_listed_is_not_found(tmp_path: Path) -> None:
+    """A skills/ file is outside the default scope, so it is found only when listed."""
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "a.md").write_text("# A\n")
+    assert _find_markdown_files(tmp_path) == []
+    assert _find_markdown_files(tmp_path, paths=[]) == []
+    assert _find_markdown_files(tmp_path, paths=["skills"]) == [str(skills / "a.md")]
+
+
+def test_find_markdown_files_extra_deduplicated(tmp_path: Path) -> None:
+    """A file reached twice, through a listed directory and a listed file that
+    names it, or through the default scope, appears once."""
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    page = site / "index.md"
+    page.write_text("# Hello\n")
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "a.md").write_text("# A\n")
+    result = _find_markdown_files(
+        tmp_path,
+        paths=["docs/site", "docs/site/index.md", "skills", "skills/a.md"],
+    )
+    assert result == [str(page), str(skills / "a.md")]
+
+
+def test_find_markdown_files_extra_sorted(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "b.md").write_text("# B\n")
+    (skills / "a.md").write_text("# A\n")
+    result = _find_markdown_files(tmp_path, paths=["skills/b.md", "skills"])
+    assert result == sorted(result)
+    assert len(result) == 2
+
+
+def test_find_markdown_files_ignore_applies_to_extra_paths(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    (skills / "drafts").mkdir(parents=True)
+    (skills / "keep.md").write_text("# Keep\n")
+    (skills / "drafts" / "drop.md").write_text("# Drop\n")
+    result = _find_markdown_files(tmp_path, ignore=["skills/drafts"], paths=["skills"])
+    assert result == [str(skills / "keep.md")]
+
+
+def test_find_markdown_files_missing_extra_path_is_error(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"\[markdownlint\]\.paths entry 'skills' does not exist"):
+        _find_markdown_files(tmp_path, paths=["skills"])
+
+
+def test_find_markdown_files_ignore_drops_listed_file(tmp_path: Path) -> None:
+    """A listed file under an ignore path is dropped too, not linted."""
+    drafts = tmp_path / "skills" / "drafts"
+    drafts.mkdir(parents=True)
+    (drafts / "wip.md").write_text("# Wip\n")
+    result = _find_markdown_files(
+        tmp_path, ignore=["skills/drafts"], paths=["skills/drafts/wip.md"]
+    )
+    assert result == []
+
+
+def test_find_markdown_files_extra_non_markdown_file_is_error(tmp_path: Path) -> None:
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "notes.txt").write_text("notes\n")
+    with pytest.raises(ConfigError, match=r"entry 'skills/notes.txt' is not a \.md file"):
+        _find_markdown_files(tmp_path, paths=["skills/notes.txt"])
+
+
 # -- main --------------------------------------------------------------------
 
 
@@ -601,6 +689,63 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
     assert len(md_args) == 1
     assert md_args[0].endswith("index.md")
     assert not any("research" in a for a in md_args)
+
+
+def test_main_markdownlint_honors_paths(tmp_path: Path) -> None:
+    """A listed extra path is linted by the full gate; an unlisted skills/
+    file is not."""
+    toml = _MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "a.md").write_text("# A\n")
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    ml_call = mock_run.call_args_list[0][0][0]
+    assert ml_call[0] == "markdownlint"
+    md_args = ml_call[3:]
+    assert md_args == sorted([str(site / "index.md"), str(skills / "a.md")])
+
+
+def test_main_markdownlint_missing_extra_path_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 1
+    mock_run.assert_not_called()
+    assert "ERROR: " in capsys.readouterr().err
 
 
 def test_main_markdownlint_one_pass_covers_every_scope(tmp_path: Path) -> None:
@@ -782,6 +927,49 @@ def test_lint_markdown_skips_files_the_gate_does_not_lint(
     out = capsys.readouterr().out
     assert f"{ignored} is not linted by vrg-validate" in out
     assert f"{outside} is not linted by vrg-validate" in out
+
+
+def test_lint_markdown_honors_listed_paths(tmp_path: Path) -> None:
+    """A file under a listed extra path is linted, as the full gate lints it."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n')
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    page = skills / "a.md"
+    page.write_text("# A\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(page)])
+    assert rc == 0
+    assert calls[0][:2] == ["markdownlint", "--config"]
+    assert calls[0][3:] == [str(page)]
+
+
+def test_lint_markdown_skips_unlisted_extra_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A skills/ file is outside the scope unless listed, so it is named and skipped."""
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    page = skills / "a.md"
+    page.write_text("# A\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(page)])
+    assert rc == 0
+    assert calls == []
+    assert f"{page} is not linted by vrg-validate" in capsys.readouterr().out
+
+
+def test_lint_markdown_missing_extra_path_is_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n')
+    readme = tmp_path / "README.md"
+    readme.write_text("# Hello\n")
+
+    rc, calls = _lint_markdown(tmp_path, [str(readme)])
+    assert rc == 1
+    assert calls == []
+    assert "ERROR: " in capsys.readouterr().err
 
 
 def test_lint_markdown_only_skipped_files_runs_nothing(tmp_path: Path) -> None:
