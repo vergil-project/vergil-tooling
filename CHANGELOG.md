@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.355] - 2026-11-28
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- add the release-group record, its reader and vrg-release-group list (#5370)
+- chain each batch commit's record to the commits before it (#5371)
+- add the group rules and the holder check (#5372)
+- refuse moving, routing or transferring a grouped task (#5344)
+- batch-extract takes a set and a read-only --check, and refuses a group split (#5345)
+- record a middle batch commit and add the read-only batch-gates probe (#5376)
+
+### Testing
+
+- add a real-git batch fixture and the fold, conflict and rebase tests (#5374)
+- add the review-record, push-mode and batch-check tests after the fold (#5336) (#5375)
+
 ## [2.1.354] - 2026-11-27
 
 ### Bug fixes
