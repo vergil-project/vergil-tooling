@@ -445,9 +445,9 @@ def _full_coverage(request: dict[str, Any]) -> str:
     lines = []
     if "fix_diff_lines" in request:
         fix = request["fix_diff_lines"]
-        lines.append(f"Fix diff read: {fix} of {fix} lines")
+        lines.append(f"Fix diff read: through line {fix}")
     diff = request["diff_lines"]
-    lines.append(f"Diff read: {diff} of {diff} lines")
+    lines.append(f"Diff read: through line {diff}")
     return "\n".join(lines)
 
 
@@ -771,10 +771,7 @@ def test_small_check_carries_no_fix_parts(repo: Path, capsys: Cap) -> None:
 def test_check_refuses_a_short_read_of_the_review_diff(repo: Path, capsys: Cap) -> None:
     _large_change(repo)
     review = _built(_argv(repo), capsys)
-    total = review["diff_lines"]
-    result = _store_result(
-        repo, "review", [_finding("R1")], coverage=f"Diff read: 2000 of {total} lines"
-    )
+    result = _store_result(repo, "review", [_finding("R1")], coverage="Diff read: through line 2000")
     _fix(repo)
     code, out, err = _run(_check_argv(repo, review["head_sha"], [result], fix=("R1",)), capsys)
     assert code == 1
