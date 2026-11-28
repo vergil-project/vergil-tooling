@@ -13,6 +13,7 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 
 from tests.vergil_tooling import trust_stubs
+from tests.vergil_tooling.group_rule_stubs import GroupRule, judge_pr_up_to_the_rule
 from vergil_tooling.bin.vrg_submit_pr import (
     HUMAN_ONLY_REMOVED,
     NO_FINALIZE_REMOVED,
@@ -5286,6 +5287,40 @@ class TestPushMode:
             assert main(["--push"]) == 1
         err = capsys.readouterr().err
         assert f"refused ({_PUSH_PR}): the gates refused the head abc: no record" in err
+
+    def test_submit_push_mode_refused_by_the_rule(
+        self,
+        push_worktree: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # --push runs no submit gate, so push_to_open_pr judges the whole-group rule: the PR
+        # closes #1 of a group whose other member #9 it does not, so nothing is pushed.
+        rule = GroupRule().install(monkeypatch)
+        rule.closes = [("o/r", 1)]
+        rule.groups = {epics.IssueRef("o", "r", 1): [_GROUP_OF_1], epics.IssueRef("o", "r", 9): [_GROUP_OF_1]}
+        judge_pr_up_to_the_rule(monkeypatch, repo="o/r", number=7)
+        pr = trust.PRRef(
+            number=7,
+            url=_PUSH_PR,
+            title="fix: a fix",
+            head=_PUSH_BRANCH,
+            head_oid="0" * 40,
+            base="develop",
+            author_role=trust.Role.AGENTS,
+            state="OPEN",
+        )
+        monkeypatch.setattr(pr_path, "_here", lambda: (push_worktree, "o/r"))
+        monkeypatch.setattr(trust, "prs_for_branch", lambda _repo, _branch, *, state: ([pr], []))
+        run = MagicMock()
+        monkeypatch.setattr(pr_path.git, "run", run)
+        with patch(_PRC + ".check_whole_groups", _REAL_CHECK_WHOLE_GROUPS):
+            assert main(["--push"]) == 1
+        run.assert_not_called()
+        err = capsys.readouterr().err
+        assert f"refused ({_PUSH_PR}): the whole-group rule refuses it: " in err
+        assert "is missing o/r#9" in err
+        assert err.endswith("it was not pushed\n")
 
     def test_push_mode_refuses_branch_with_no_open_develop_pr(
         self, push_worktree: Path, capsys: pytest.CaptureFixture[str]

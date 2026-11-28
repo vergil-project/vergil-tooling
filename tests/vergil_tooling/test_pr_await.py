@@ -17,8 +17,15 @@ from typing import Any, get_args
 
 import pytest
 
+from tests.vergil_tooling.group_rule_stubs import (
+    REAL_ARM,
+    GroupRule,
+    judge_pr_up_to_the_rule,
+    two_member_group,
+)
 from tests.vergil_tooling.watch_lock_stubs import FakeLock, broken, record
-from vergil_tooling.lib import finalize_watch, github, pr_await
+from vergil_tooling.lib import finalize_watch, github, pr_await, pr_path
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.finalize_watch import DEADLINE_ENV, FinalizeWatchError
 from vergil_tooling.lib.pr_await import PrAwaitError, wait_for_merge
 from vergil_tooling.lib.release_lock.model import BROKEN_WATCH_POLL_SECS
@@ -251,6 +258,33 @@ def test_pr_await_rearm_through_path(fake: FakeGitHub, capsys: pytest.CaptureFix
     assert result.merged
     assert fake.lock.arms == [PR]
     assert "auto-merge was off with no release lock held: re-armed" in capsys.readouterr().err
+
+
+@pytest.fixture
+def group_rule(monkeypatch: pytest.MonkeyPatch) -> GroupRule:
+    return GroupRule().install(monkeypatch)
+
+
+def test_merge_watch_rearm_partial_group_refused(
+    fake: FakeGitHub, group_rule: GroupRule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The merge watch re-arms through the real path: a PR closing part of a group is refused."""
+    # The fake lock replaced the path's arm with its own; the watch's re-arm runs the real one.
+    monkeypatch.setattr(pr_path, "arm", REAL_ARM)
+    judge_pr_up_to_the_rule(monkeypatch, repo="o/r", number=1)
+    first, second = IssueRef("o", "r", 900), IssueRef("o", "r", 901)
+    group = two_member_group(first, second)
+    group_rule.closes = [("o/r", 900)]
+    group_rule.groups = {first: [group], second: [group]}
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = wait_for_merge(PR, lock=LockWatch())
+
+    assert result.reason == "refused"
+    assert result.detail.startswith("the one PR path refused to re-arm it: ")
+    assert "is missing o/r#901" in result.detail
+    assert result.to_output()["outcome"] == "cannot_merge"
+    assert fake.sleeps == []
 
 
 def test_pr_await_held_exits_6_never_auto_merge_off(
