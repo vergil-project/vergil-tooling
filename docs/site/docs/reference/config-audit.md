@@ -79,7 +79,8 @@ order:
    A human run also reads the login its sync PR is opened as, for the
    PR body (`gh api user`). If that login cannot be read, for example
    because `gh` is not logged in, the run exits 2 and does not fall back
-   to the job wording. The automation identity reads no login.
+   to the job wording. The automation identity reads no login, so this
+   exit-2 case applies only to a human run.
    A run that passes logs the mode it resolved, such as
    `identity: human` or `identity: automation (<slug>[bot])`.
 2. **The GitHub side.** The same audit and convergence as `apply`. For
