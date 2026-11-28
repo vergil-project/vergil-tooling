@@ -226,11 +226,73 @@ def test_a_behind_pr_this_clone_cannot_update_reports_its_detail_once_per_run(
     assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", detail)
     assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", "")
     assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", "")
-    assert lock.updates == [PR, PR, PR]
+    assert lock.updates == [PR]
     assert lock.arms == []
 
-    # A fresh run reports the detail again, once.
+    # A fresh run judges the PR again, and reports the detail again, once.
     assert watch()(snap(OLD, auto_merge_on=True)) == LockView("free", detail)
+
+
+def test_a_pr_judged_at_its_head_is_not_judged_again_while_the_head_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = FakeLock(states=[None], update=pr_path.HeldUpdate("current", PR)).install(monkeypatch)
+    lock_watch = watch()
+
+    for _ in range(3):
+        assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR]
+    assert lock.arms == []
+
+
+def test_a_changed_head_is_judged_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    detail = "behind develop and not updated from this clone: its tree has changes"
+    lock = FakeLock(
+        states=[None],
+        update=[
+            pr_path.HeldUpdate("not_updated", PR, detail=detail),
+            pr_path.HeldUpdate("current", PR),
+        ],
+    ).install(monkeypatch)
+    lock_watch = watch()
+
+    assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", detail)
+    assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR]
+
+    # Someone pushed a new head: it is judged at once, and is current, so it is not judged again.
+    assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR, PR]
+
+
+#: One hold read of each kind, and the issue state that makes a broken hold stale (reclaimed).
+HOLD_READS: list[tuple[object, str]] = [
+    *((held, "OPEN") for held in HELD_STATES),
+    (broken(), "CLOSED"),
+]
+HOLD_READ_IDS = [*(f"held-{i}" for i in range(len(HELD_STATES))), "reclaimed-stale-hold"]
+
+
+@pytest.mark.parametrize(("held", "issue_state"), HOLD_READS, ids=HOLD_READ_IDS)
+def test_a_held_read_clears_the_judgments_so_the_next_free_read_judges_again(
+    monkeypatch: pytest.MonkeyPatch, held: object, issue_state: str
+) -> None:
+    lock = FakeLock(
+        states=[None, held, None], issue_state=issue_state, update=pr_path.HeldUpdate("current", PR)
+    ).install(monkeypatch)
+    lock_watch = watch()
+
+    assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR]
+
+    # The hold is read (live, unreadable, broken, or reclaimed): nothing is judged in that read.
+    lock_watch(snap(NEW, auto_merge_on=True))
+    assert lock.updates == [PR]
+
+    # The next free read judges the PR again, though its head has not changed.
+    assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR, PR]
 
 
 def test_a_reclaimed_hold_updates_the_pr_on_the_next_read(

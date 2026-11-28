@@ -18,7 +18,7 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   and the watch ends the PR there.
 - **Every open PR, once no lock is held** (including after a hold that a
   reclaim ended, and in a fresh run that never saw the hold): before it is
-  re-armed, it is brought up to date once
+  re-armed, it is brought up to date
   (:func:`vergil_tooling.lib.pr_path.update_held_pr`, vergil-tooling#5414).
   A PR behind ``develop`` is rebased onto ``origin/develop`` and pushed:
   ``updated``, which the watch reports as pending while CI re-runs; the next
@@ -26,8 +26,12 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   ``conflicted``, which the watch ends ``failed: conflict``. A PR that is up
   to date is left alone; one that this clone cannot update reports its
   detail once per watch run (the detail says so), and is then left as the
-  bullet above has it. The watch keeps no record across reads or runs, so a
-  PR freed between two runs is updated by the first read of the next run.
+  bullet above has it. The watch judges a PR at most once per head: a PR
+  judged ``current`` or ``not_updated`` at its head is not judged again while
+  that head stays, and a read of a held lock forgets every such judgment, so
+  the next free read judges each PR again (a fresh release may have moved
+  ``develop`` on). The memory lives in one watch run only, so a PR freed
+  between two runs is judged by the first free read of the next run.
 - **Held, by a live release** (``running``, with a fresh heartbeat):
   ``held``, reported as ``held by release <version> (stage <stage>,
   <health>)``.
@@ -109,6 +113,9 @@ class LockWatch:
         self._updated: dict[str, pr_path.HeldUpdate] = {}
         # The PRs whose not-updated detail this run has reported, so a poll does not repeat it.
         self._reported: set[str] = set()
+        # The head each PR was judged at, when its update was judged current or not_updated:
+        # not judged again while the head stays, and forgotten on every read of a held lock.
+        self._judged: dict[str, str] = {}
 
     def _actor_name(self) -> str:
         if self._actor is None:
@@ -124,6 +131,9 @@ class LockWatch:
             raise LockWatchError(msg) from exc
         if not state.held:
             return self._free(snap)
+        # A hold ends the judgments: the next free read judges every PR again, since the
+        # release that held it may have moved develop on.
+        self._judged.clear()
         return self.judge_held(repo, state, where=snap.url, now=datetime.now(UTC)).view
 
     def judge_held(self, repo: str, state: LockState, *, where: str, now: datetime) -> HeldLock:
@@ -176,9 +186,11 @@ class LockWatch:
 
         A PR this watch pushed a rebase of is ``updated`` (pending) until GitHub
         shows the pushed head; only then is it judged and re-armed again. Any
-        other PR is brought up to date once, before anything else, whether or
-        not this run saw it held. Then an armed PR is ``free``, and an unarmed
-        one is re-armed (:meth:`_rearm`). An update's detail is reported with the view.
+        other PR is judged for an update before anything else, whether or not
+        this run saw it held, unless it was already judged at this head since
+        the last read of a held lock (:meth:`_update_once`). Then an armed PR is
+        ``free``, and an unarmed one is re-armed (:meth:`_rearm`). An update's
+        detail is reported with the view.
         """
         url = snap.url
         pushed = self._updated.get(url)
@@ -186,18 +198,36 @@ class LockWatch:
             if snap.head == pushed.old_head:
                 return LockView("updated", pushed.detail)
             del self._updated[url]
-        update = self._update_held(snap)
-        detail = self._first_report(url, update)
-        if update.outcome == "updated":
-            self._updated[url] = update
-            return LockView("updated", detail)
-        if update.outcome == "conflicted":
-            return LockView("conflicted", detail)
+        detail = ""
+        update = self._update_once(snap)
+        if update is not None:
+            detail = self._first_report(url, update)
+            if update.outcome == "updated":
+                self._updated[url] = update
+                return LockView("updated", detail)
+            if update.outcome == "conflicted":
+                return LockView("conflicted", detail)
         if snap.auto_merge_on:
             return LockView("free", detail) if detail else FREE
         if detail:
             print(f"{url}: {detail}")
         return self._rearm(snap)
+
+    def _update_once(self, snap: Snapshot) -> pr_path.HeldUpdate | None:
+        """*snap*'s update, or ``None`` when its head was already judged current or not updated.
+
+        A judgment that leaves the head as it is (``current``, ``not_updated``) is remembered
+        at that head; any other outcome forgets it.
+        """
+        url = snap.url
+        if self._judged.get(url) == snap.head:
+            return None
+        update = self._update_held(snap)
+        if update.outcome in ("current", "not_updated"):
+            self._judged[url] = snap.head
+        else:
+            self._judged.pop(url, None)
+        return update
 
     def _first_report(self, url: str, update: pr_path.HeldUpdate) -> str:
         """*update*'s detail, left out when this run already reported *url*'s not-updated detail."""
