@@ -19368,7 +19368,7 @@ tries the deletion again.</p>
 </tr>
 <tr>
 <td><code>merge</code></td>
-<td>If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see <a href="../release/#waiting-for-green">Waiting for green</a>). A PR the path refuses is recorded as a merge failure with the path's reason, without a wait</td>
+<td>If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see <a href="../release/#waiting-for-green">Waiting for green</a>). When a release holds the release lock, the path leaves the PR unarmed (held): the stage reports "<code>Dependency update &lt;PR&gt; is held for release &lt;v&gt;; the unlock sweep arms it</code>", records no failure, and returns without waiting. A PR the path refuses is recorded as a merge failure with the path's reason, without a wait</td>
 </tr>
 <tr>
 <td><code>fix-task</code></td>
@@ -19422,7 +19422,7 @@ duplicate.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Updated and merged, nothing to update, or the update for this <code>develop</code> version had already merged</td>
+<td>Updated and merged, nothing to update, the update for this <code>develop</code> version had already merged, or the update's PR was held for a running release (reported, not merged)</td>
 </tr>
 <tr>
 <td>1</td>

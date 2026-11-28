@@ -19648,8 +19648,12 @@ order:</p>
    against <code>develop</code>, then armed through the one PR path, which turns
    squash auto-merge on, pinned to the pushed commit, and reads it back.
    When GitHub refuses auto-merge because the PR can already merge, the
-   path merges it directly and <code>update</code> does not wait. A PR the path
-   refuses to arm fails the run, naming the PR and the path's reason.
+   path merges it directly and <code>update</code> does not wait. When a running
+   release holds the release lock, the path leaves the PR open and
+   unarmed (held), which counts as success: <code>update</code> reports the PR,
+   does not wait, and does not close or replace it, and the release's
+   unlock sweep arms it. A PR the path refuses to arm fails the run,
+   naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.</li>
 <li><strong>Wait until merged.</strong> <code>update</code> then watches the PR until it has
@@ -19660,7 +19664,9 @@ order:</p>
    checks pass. Only where <code>develop</code> still requires an up-to-date
    branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
-   the deadline ends the watch, naming the PR and the reason. The
+   the deadline ends the watch, naming the PR and the reason. If a
+   release takes the lock and disarms the PR during the watch, the
+   watch ends as held, which is still success (see step 4). The
    deadline is <code>$VRG_MECHANIZED_PR_DEADLINE</code> seconds, 2400 (40
    minutes) by default, so the watch ends inside the one hour the ops
    job's App installation token lasts.</li>
@@ -19719,7 +19725,11 @@ minutes, the life of the App's installation token (see the vergil-actions
 <a href="https://vergil-project.github.io/vergil-actions/latest/workflows/ops-github-config/">ops-github-config</a>
 reference).</p>
 <p>Drift that a fixer can correct arrives as one sync PR, which merges
-within the run. Anything <code>update</code> cannot converge, fix or audit gives a
+within the run. When a running release holds the release lock, the PR
+is left open and unarmed (held), which counts as success: <code>update</code>
+reports the PR, does not wait, and does not close or replace it, and the
+release's unlock sweep arms it; the same if a release takes the lock
+during the wait. Anything <code>update</code> cannot converge, fix or audit gives a
 non-zero <a href="#update-exit-codes">exit code</a> and <strong>turns the scheduled run
 red</strong>, so a non-conforming repo cannot silently persist.</p>
 <p><code>vrg-release</code> also runs <code>audit</code> before it releases, so a repo whose
