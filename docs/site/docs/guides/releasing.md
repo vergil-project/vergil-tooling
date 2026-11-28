@@ -214,9 +214,9 @@ stages not recorded done.
 | Stage | Mode | What it does |
 |---|---|---|
 | `audit` | fail-fast | Runs `vrg-github-repo-config audit` on the repo. Releasing vergil-tooling itself adds `--in-tree-templates`, so its managed files are checked against the templates being released, not the installed release's (see the [config audit reference](../reference/config-audit.md#auditing-vergil-tooling-against-its-own-templates)). `--skip-audit` skips it |
-| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth and `vergil.toml`. A [resume](#resuming-a-release) runs only these checks. A fresh start then checks that the root checkout is a clean `develop`, [brings it up to `origin/develop`](#the-develop-sync), runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list) |
-| `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main` |
-| `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand |
+| `preflight` | fail-fast | Checks the host prerequisites, `gh` auth and `vergil.toml`. A [resume](#resuming-a-release) runs only these checks. A fresh start then checks that the root checkout is a clean `develop`, [brings it up to `origin/develop`](#the-develop-sync), runs the [main/develop divergence check](#the-maindevelop-divergence-check), checks the version is not tagged, checks that [no other release is open](#one-release-at-a-time), runs the [package re-publish check](#the-package-re-publish-check), runs the [dependency-update gate](#the-dependency-update-gate), and last runs the [develop-CD gate](#the-develop-cd-gate). It then takes the [release lock](#the-release-lock), quiesces `develop` and judges the dependency-update gate again before the cut. Creates the `release/<version>` managed worktree, or adopts one an [interrupted run](#an-interrupted-release) left with nothing on it. On a fresh start it then reads the release's [contents](#release-tracking-artifacts), pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the [issue list](#the-issue-list). A resume before `unlock` adopts or re-takes its own lock (see [Resuming and superseding under the lock](#resuming-and-superseding-under-the-lock)) |
+| `prepare` | fail-fast | Creates the `release: <version>` tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to `main`. It writes the tracking issue into the release lock first, and states the lock in its comment |
+| `merge-release` | fail-fast | Waits for the release PR's checks and merges it. If the PR conflicts with `main`, it merges `main` into the release branch and pushes it. A conflict in `CHANGELOG.md` alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand. Before the merge it checks for a [stray merge](#stray-merges), which abandons the release |
 | `confirm-main` | fail-fast | Watches CD on `main`. The release job must succeed: a failed one is recorded in the state block, and recovered by the resume (see [A failed release job](#a-failed-release-job)). Every other failed publish job is recorded in the state block, by its run and full name, and deferred to `cd-publish` (see [Stale job records](#stale-job-records)) |
 | `back-merge-bump` | fail-fast | Creates `release/post-<version>` from `main`, bumps the version, refreshes the lockfile (`uv lock` for Python and `cargo update --workspace` for Rust, in the dev container; for TypeScript, a direct edit of `package-lock.json`'s root version fields that runs no npm), opens a PR to `develop`, arms it through the one PR path (a merge commit) and waits until it merges. Records the back-merge's merge commit |
 | `teardown-worktree` | fail-fast | Removes the release worktree and returns to the root checkout. Fail-fast, as every branch-work stage is, so `finalize`, which prunes the release branches, runs only once all of them have succeeded |
@@ -228,6 +228,8 @@ stages not recorded done.
 | `update-deps` | deferred | Runs the dependency update on the new `develop` version (skipped with `--without-deps`); see [Dependency updates](#dependency-updates) |
 | `install` | deferred | Runs the `[publish].install` commands once `promote` is done and `vX.Y` names the release. `none configured` when the repo has none. Success is one check line; a failure prints the full output below the summary |
 | `release-records` | deferred | Posts a [`Released:` record](#released-records) on every issue in the [issue list](#the-issue-list) that has none yet, once no stage before it has failed. It fails naming each issue whose record it could not post; a resume posts only the missing ones |
+| `unlock` | deferred | Checks again for a [stray merge](#stray-merges), which it reports and records without failing, then deletes the [release lock](#the-release-lock) by compare-and-swap. A resume at `unlock` deletes what is left of its own release's lock; none held means the stage is done |
+| `rearm` | deferred | Offers every open, non-draft PR into `develop` with auto-merge off back to the one PR path, listing on the tracking issue any PR the path refused or held. Idempotent: a re-run offers only the PRs still unarmed |
 | `close-tracking` | deferred | Closes the tracking issue with a summary, once no stage before it has failed and the state block records a record posted on every issue |
 | `publish-status` | deferred | When a stage failed, names what is left of the release, any deferred publish and any dependency-update failure, and the one command that finishes it: `vrg-release --resume`, or, for a release that cannot finish, `vrg-release --supersede X.Y.Z`. It warns, never failing a second time |
 
@@ -240,7 +242,7 @@ optional:
   `confirm-develop`. `cd-publish` delivers the jobs the confirm stages
   record, so it waits for `confirm-develop` to succeed and record its own.
 - `install` needs those and `promote`.
-- `release-records` and `close-tracking` need every stage before them.
+- `release-records`, `unlock`, `rearm` and `close-tracking` need every stage before them.
 - Nothing holds back `package-index` or `update-deps`, and the failure of
   `cd-publish`, `package-index` or `update-deps` holds back none of
   `promote`, `finalize` and `install`.
@@ -364,6 +366,7 @@ and `publish-status` run on every run and are never recorded done.
 - **Checks.** `preflight` runs only its host, `gh` auth and config
   checks. The fresh-start checks, the develop sync among them, do not
   run: the release passed them when it started.
+- **The lock.** A resume whose first undone stage is before `unlock` holds the [release lock](#the-release-lock) again: it adopts its own broken or stale lock, re-takes an absent one and quiesces again, and refuses a live one or another release's. At `unlock` it deletes its own release's lock. See [Resuming and superseding under the lock](#resuming-and-superseding-under-the-lock).
 - **Facts are checked, not trusted.** Before any stage runs, the resume
   confirms what the state block records against GitHub and git: the
   release PR is merged once `merge-release` is done, and the back-merge
@@ -478,6 +481,7 @@ Then:
 
 - The [open-release check](#one-release-at-a-time) passes over the
   superseded release's tracking issue, and only it.
+- The new release takes over the superseded release's [release lock](#resuming-and-superseding-under-the-lock) without unfreezing `develop`, and records the takeover in the lock history and on both tracking issues. It refuses a superseded release whose lock is running with a fresh heartbeat. With no lock to take over, it takes a fresh lock and quiesces.
 - The new release **absorbs** the superseded release's issue list,
   read from its state block, into its own. An issue on both lists
   appears once, with the PRs from both. The tracking issue's Contents
@@ -1126,6 +1130,177 @@ left with several releases open. If preflight cannot list the open
 issues, or the listing may be truncated, it refuses rather than
 reading that as no release in flight.
 
+The [release lock](#the-release-lock) is the atomic guard against two releases at once. This check stays as the second guard, for a release past its `unlock` whose tracking issue is still open.
+
+### The release lock
+
+A release holds a per-repository **release lock** from just before the cut
+until its `unlock` stage, so `develop` cannot move under it. Only the
+release's own PRs merge into `develop` while it is held: the back-merge and
+the dependency update, which the release arms with the holder's pass. Every
+other PR is left unarmed (see [Agents during a release](#agents-during-a-release)).
+The lock is enforced by the tooling, not by convention. It is not the GitHub
+lock on the tracking issue (see
+[The lock and the identity rule](#the-lock-and-the-identity-rule)), and not
+the checkout lock of [the develop sync](#the-develop-sync).
+
+The lock is the ref `refs/vergil/release-lock` on `origin`, a one-file commit
+whose JSON record names the holder (identity and host), the release version,
+the release worktree, the tracking issue, the current stage, the health
+(`running`, or `broken` with the stage it broke at), the start time and a
+heartbeat. A release **takes** it with a create-only push, so only one release
+can; it **updates** it by compare-and-swap, so a holder whose lock was broken or
+reclaimed finds out at its next write and stops. A background writer refreshes
+the heartbeat every 60 seconds, through every wait, so a live release always
+has a fresh one. Every break, reclaim and takeover of a lock is recorded in a
+second ref, `refs/vergil/release-lock-history`. The lock is coordination
+among trusted writers, not a security boundary, and is read as written; a lock
+that cannot be read or parsed counts as held, never as absent.
+
+#### Taking the lock
+
+A fresh `vrg-release` runs this in `preflight`, before the cut:
+
+1. **Pre-checks, with nothing locked.** The open-release check, the
+   main/develop divergence check, the dependency-update gate and the
+   develop-CD gate run first. A refusal there exits with nothing locked and
+   nothing disarmed.
+2. **The lock.** A lock found stale is reclaimed (see
+   [Stale locks](#stale-locks-and-breaking-a-lock)). Any other held lock
+   refuses the run, naming its holder, version, stage and health. Otherwise the
+   release takes the lock.
+3. **The quiesce.** The release waits for every arming ref to clear (the
+   short-lived per-PR marker the one PR path writes while it arms a PR; one
+   whose value is unchanged for 300 seconds is expired and deleted; the whole
+   wait is bounded at 900 seconds, past which the release fails naming the
+   refs). It then turns auto-merge off on every open PR into `develop`, again
+   if it deleted an expired ref, and checks every PR's auto-merge state once
+   more. From here `develop` cannot move.
+4. **The cut.** The release syncs `develop` again and runs the dependency-update
+   gate again, since the set of open dependency-update PRs can change before the
+   disarm. If `develop`'s head moved between the pre-checks and the disarm, it
+   runs the head-judging gates again on the new head. It then cuts from that
+   head, so the gates have judged exactly what is cut. Everything merged before
+   the disarm is in the release; a PR still in flight stays at its CI gates.
+
+`prepare` writes the new tracking issue into the lock before it does anything
+else, and its stage comment states the lock the release holds: the holder and
+host, the version, the lock's commit sha and when it was taken. Every exit
+after the lock is taken and before the tracking issue exists, a refusal or a
+failure, runs the full unlock path: the lock is deleted, then, if the disarm
+had started, every disarmed PR is offered back to the one PR path. A PR is
+never left disarmed with no lock held.
+
+#### Holding it, and the stages that end it
+
+The lock's `stage` follows the release, and its `health` turns `broken` at the
+first recorded failure, a deferred failure included. A broken release keeps
+the lock: `develop` stays frozen until the release is finished with
+`vrg-release --resume`, or the human breaks the lock. That is deliberate. A
+broken release is a stop-the-line event, and unlocking early would let
+`develop` move under stages that still work against it.
+
+Two tracked stages end the lock, after `release-records` and before
+`close-tracking`, so the tracking issue stays open until both succeed:
+
+- `unlock` deletes the lock, by compare-and-swap against the holder's last
+  write.
+- `rearm` offers every open, non-draft PR into `develop` with auto-merge off
+  back to the one PR path, which turns it on again. A PR the path refuses or
+  holds is listed on the tracking issue and is not a failure. The sweep is
+  idempotent: a re-run offers only the PRs still unarmed.
+
+Both stages need every stage before them, as `release-records` and
+`close-tracking` do (see [the hold rule](#the-hold-rule)). The stages from
+`unlock` on do not depend on the lock: a release that breaks at `rearm`, or
+later, stays visible through its open tracking issue, and `--resume` finishes it
+without looking for a lock.
+
+#### Stray merges
+
+A PR merged into `develop` after the cut, other than the release's own
+back-merge and dependency update, is a **stray merge**: a human merge, say, or
+an arm that slipped past the quiesce. The release looks for one twice:
+
+- **Before `merge-release`**, while nothing is tagged or published, a stray merge
+  is a hard error that **abandons** the release. The abandon step closes the
+  release PR into `main`, removes the `release/<version>` branch (locally and on
+  `origin`) and the release worktree, closes the tracking issue as not planned
+  with an `abandoned` comment naming the PR, and only then runs the full unlock
+  path. The run exits 1, naming the PR; run a fresh `vrg-release`, whose cut
+  includes it. An interrupted abandon is repeated by `--resume`, which skips the
+  steps already done.
+- **Before `unlock`**, a stray merge is reported and recorded in the `unlock`
+  stage's comment on the tracking issue, and the release goes on. The release
+  is right for what it cut, and the PR goes into the next release.
+
+#### Resuming and superseding under the lock
+
+`vrg-release --resume` at a stage before `unlock` holds the lock again. It
+reads the lock and judges it:
+
+- **Its own lock**, when it names this release's identity and tracking issue
+  (the host is recorded for information only, so a resume on another machine
+  adopts it too), that is `broken` or has a heartbeat older than 900 seconds is
+  adopted, with a new token. The resume marks it `running` again at
+  `preflight`, and posts a `lock-resumed` comment on the tracking issue saying
+  it adopted the lock and its prior health.
+- **Its own lock that is `running` with a fresh heartbeat** is refused, naming
+  its host and the heartbeat's age: the first run may still be alive, and two
+  live runs of one release never both go on. Wait for the heartbeat to go
+  stale, or break the lock.
+- **No lock**, because it was broken or reclaimed, is re-taken by a create-only
+  push, and the re-take is recorded in the lock history and in the `lock-resumed`
+  comment. The break or reclaim ended with a re-arm sweep, so the re-take then
+  quiesces again, exactly as a fresh take does. If the first undone stage is
+  before `merge-release`, it then runs the stray-merge check, and a PR merged
+  after the cut abandons the release as above.
+- **Another release's lock, or one that cannot be read**, is refused, naming it.
+
+A resume that stops after taking the lock marks it `broken` at `preflight`, so
+the next resume adopts it at once. A resume at `unlock` takes and adopts no lock:
+it deletes what is left of its own release's lock, finds none held and goes on,
+and refuses any other. A resume past `unlock` reads no lock.
+
+`vrg-release --supersede X.Y.Z` takes over the superseded release's lock rather
+than taking a new one, by compare-and-swap, so `develop` stays locked
+throughout and no re-arm sweep runs in between. It does so only when that lock
+names the superseded release and is `broken` or has a stale heartbeat; a lock
+`running` with a fresh heartbeat is refused, naming it. The takeover is
+recorded in the lock history and in a `lock-takeover` comment on both tracking
+issues, and clears the lock's tracking issue until the new release's `prepare`
+writes its own, before the superseded release's issue is closed, so the lock
+never names a closed issue while the new release runs. The new release's
+`prepare` comment carries the same lock line as a fresh one. When the
+superseded release holds no lock (it was broken or reclaimed), the new release
+takes a fresh one and quiesces, as a fresh start does.
+
+#### Stale locks and breaking a lock
+
+A lock that is `running` with a heartbeat younger than 900 seconds is live and
+never stale. Otherwise a lock that names a tracking issue is stale exactly when
+that issue is closed: a broken release with an open tracking issue is the
+human's to finish, however old its heartbeat. A lock that names no issue is
+stale once its heartbeat is 900 seconds old, unless an open release tracking
+issue of its version exists. A lock that cannot be read is never stale. A stale
+lock is reclaimed by any trusted identity: the next release's `preflight`
+does it, and so does a merge watch that finds one (see
+[Under the release lock](../reference/dev/finalize-pr.md#under-the-release-lock)).
+
+[`vrg-release-lock status`](../reference/cli-tools-overview.md#vrg-release-lock)
+prints the lock (`--json` for a machine): the holder, version, stage, health,
+start, heartbeat, whether it is stale and why, and the PRs it holds unarmed.
+`vrg-repo-status` shows the same text in its Release lock section.
+`vrg-release-lock break --reason "<why>"` is the human's recorded escape hatch,
+refused to every agent: it removes any held lock, a live or unreadable one
+included, records the reason and the old lock in the lock history and on the
+tracking issue, and re-arms the PRs the lock held. A release whose lock was
+broken finds out at its next write and stops; finish it with
+`vrg-release --resume`, which re-takes the lock. The daily agent audit reports a
+`stale-lock`, an `unreadable-lock`, and any PR left unarmed while no lock is
+held (an `invariant-breach`); see
+[`vrg-agent-audit`](../reference/cli-tools-overview.md#vrg-agent-audit).
+
 ### Agents during a release
 
 While a release holds the repository's lock, the release's open PRs into
@@ -1268,6 +1443,9 @@ a comment when it completes or fails:
   the tracking issue. It also lists any dependency-update PRs the gate
   closed because their fix task completed, and any it let through with
   `--allow-pending-deps`.
+- The `prepare` comment also states the [release lock](#the-release-lock) the release holds: the holder and host, the version, the lock's commit sha and when it was taken. A superseding release's `prepare` comment carries the same line, and a `lock-takeover` comment records the takeover on both tracking issues.
+- A resume that holds the lock again posts a `lock-resumed` comment saying whether it adopted its own lock, with the lock's prior health, or re-took it.
+- The `unlock` comment says the lock is released and names any [stray merge](#stray-merges), and the `rearm` comment lists the PRs it re-armed, merged, left held or saw refused. A release abandoned on a stray merge closes its tracking issue as not planned, with an `abandoned` comment naming the reason.
 - Later comments record the merge, the tag and GitHub Release, the CD
   runs, the back-merge PR and next version, and the promotion.
 - The `update-deps` comment carries the held-back table and either the
