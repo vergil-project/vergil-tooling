@@ -43,6 +43,10 @@ ARMING_COLLISION_WAIT_SECS = ARMING_EXPIRY_SECS + ARM_CALL_BOUND_SECS
 ARMING_COLLISION_POLL_SECS = 10
 #: The watch's poll interval while the lock is held by a broken release.
 BROKEN_WATCH_POLL_SECS = 300
+#: How often ``vrg-submit-pr --wait-for-release`` reads a lock held by a live release.
+#: A broken or unreadable lock is read every :data:`BROKEN_WATCH_POLL_SECS`, as the
+#: merge watch reads it. The wait ends at the deadline (``finalize_watch.deadline_secs``).
+SUBMIT_WAIT_POLL_SECS = 15
 
 Health = Literal["running", "broken"]
 _HEALTH: tuple[str, ...] = get_args(Health)
