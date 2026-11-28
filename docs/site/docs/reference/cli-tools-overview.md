@@ -403,7 +403,9 @@ a PR a release holds is reported as held on stderr, naming the release,
 its version, its stage and its health, and the wait goes on, every five
 minutes while the release is broken or the lock unreadable, reclaiming a
 stale lock. With no lock held, an unarmed PR is re-armed through the one
-PR path.
+PR path. A PR behind `develop` with no lock held is brought up to date
+first, whether or not this run saw it held: a pushed rebase keeps the wait
+going, and a conflicting one ends it with reason `conflict`.
 
 On exit 0, 1 or 6 it prints one JSON object with `pr`, `outcome` (`merged`,
 `cannot_merge` or `held_by_release`), `reason` (`null` when merged),

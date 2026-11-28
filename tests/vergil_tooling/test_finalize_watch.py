@@ -960,6 +960,51 @@ def test_rearm_finding_the_lock_taken_is_held(
     assert "held for release 2.1.401" in capsys.readouterr().out
 
 
+def test_held_pr_updated_under_a_hold_stays_pending_on_its_stale_checks(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hold ends on a PR behind develop: its pushed rebase keeps it pending, not failed: CI.
+
+    The snapshot read as the update lands still carries the old head's failed version check;
+    the watch does not judge it, and re-arms nothing until the pushed head is read.
+    """
+    detail = f"rebased onto develop and pushed {HEAD_B[:12]} (was {HEAD_A[:12]}); CI re-running"
+    fake.lock.states = [record(stage="back-merge-bump"), None]
+    fake.lock.update = [
+        pr_path.HeldUpdate("updated", url(1), detail=detail, old_head=HEAD_A, new_head=HEAD_B),
+        pr_path.HeldUpdate("current", url(1)),
+    ]
+    version_check = failing_check("version / version-bump")
+    fake.failed[url(1)] = ["version / version-bump"]
+    fake.script(
+        1,
+        pr_state(1, autoMergeRequest=None),
+        pr_state(1, statusCheckRollup=[version_check]),
+        pr_state(1, headRefOid=HEAD_B, autoMergeRequest=None),
+        merged(1, headRefOid=HEAD_B),
+    )
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.lock.updates == [url(1), url(1)]
+    assert fake.lock.arms == [url(1)]
+    assert detail in capsys.readouterr().out
+
+
+def test_held_pr_whose_rebase_conflicts_ends_failed_conflict(fake: FakeGitHub) -> None:
+    detail = "the rebase of feature/1-thing onto develop conflicts in VERSION; it was aborted"
+    fake.lock.states = [record(stage="back-merge-bump"), None]
+    fake.lock.update = pr_path.HeldUpdate("conflicted", url(1), detail=detail, old_head=HEAD_A)
+    fake.script(1, pr_state(1, autoMergeRequest=None))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "failed: conflict"
+    assert result.detail == detail
+    assert fake.lock.arms == []
+
+
 def test_watch_refused_rearm_ends_failed_refused(fake: FakeGitHub) -> None:
     fake.lock.arm_outcome = "refused"
     fake.lock.arm_detail = "provenance violations found (mallory (outsider): edited)"

@@ -3,8 +3,8 @@
 ``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
 its required checks pass. :func:`wait_for_merge` waits on one such PR until it
 merges, until it can no longer merge as it stands, or until the deadline
-passes. It never merges a PR, never turns auto-merge off, and changes
-nothing locally.
+passes. It never merges a PR and never turns auto-merge off. Its only change is
+bringing a PR that a release held up to date, from its own worktree (step 3).
 
 There is no webhook ingress on a laptop, so it polls: one
 :func:`vergil_tooling.lib.finalize_watch.snapshot` read per interval, the same
@@ -25,7 +25,10 @@ order:
    while the release is broken or its lock unreadable, reclaiming a stale
    lock. With no lock held an unarmed PR is re-armed through the one PR
    path; a re-arm the path refuses ends the wait with reason ``refused``,
-   naming the path's reason.
+   naming the path's reason. A hold that ends on a PR behind ``develop``
+   brings it up to date first (vergil-tooling#5414): a pushed rebase keeps
+   the wait going, its checks not judged until the next read shows the new
+   head; a rebase that conflicts ends the wait with reason ``conflict``.
 4. **A required check concluded in failure:** reason ``check_failed``,
    naming the checks, judged by
    :func:`vergil_tooling.lib.finalize_watch.check_failures` as the finalize
@@ -341,7 +344,13 @@ def wait_for_merge(
             if view.state == "refused":
                 detail = f"the one PR path refused to re-arm it: {view.detail}"
                 return _cannot_merge(snap, "refused", detail)
-        result = judge(snap, required, cancel, time.monotonic(), conflict)
+            if view.state == "conflicted":
+                return _cannot_merge(snap, "conflict", view.detail)
+        # A pushed rebase's checks are the old head's: the next read judges the new head.
+        pending_update = snap.state == "OPEN" and view.state == "updated"
+        result = None
+        if not pending_update:
+            result = judge(snap, required, cancel, time.monotonic(), conflict)
         if result is not None:
             return result
         now = time.monotonic()

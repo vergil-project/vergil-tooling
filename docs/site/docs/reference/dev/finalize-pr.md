@@ -189,6 +189,21 @@ is waiting on:
 - **No lock held, and the PR unarmed:** the watch re-arms it through the
   one PR path, the one way it turns auto-merge on. A re-arm the path
   refuses ends the PR as *failed: refused*.
+- **A PR behind `develop` with no lock held:** a release's bump PR moves
+  `develop` on, and a PR the release held still carries the old version,
+  so its version check fails until it is rebased. So the first read with no
+  lock held brings each open PR behind `develop` up to date, once, whether
+  or not this watch saw it held (so a run that starts after the release is
+  done updates it too), through the one PR path: the PR's branch is rebased onto
+  `origin/develop` and pushed with the lease on its old head, and
+  auto-merge stays on. That runs only from the PR's own worktree (the
+  clone with its branch checked out at the PR's head and a clean tree).
+  From anywhere else the watch reports that the PR is behind and must be
+  updated from its worktree, and does not guess. A pushed rebase shows as
+  `rebased onto develop and pushed <sha> (was <sha>); CI re-running`, and
+  the PR stays pending until the next read, which re-arms it if auto-merge
+  is off. A rebase that conflicts is aborted, pushes nothing, and ends the
+  PR as *failed: conflict*. A PR that is up to date is left alone.
 
 The watch may reclaim a stale lock, but never takes or breaks one.
 

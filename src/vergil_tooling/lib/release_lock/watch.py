@@ -16,6 +16,18 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   re-arm; ``held`` (a release took the lock meanwhile) is ``held``, naming
   the path's detail; ``refused`` is ``refused``, naming the path's reason,
   and the watch ends the PR there.
+- **Every open PR, once no lock is held** (including after a hold that a
+  reclaim ended, and in a fresh run that never saw the hold): before it is
+  re-armed, it is brought up to date once
+  (:func:`vergil_tooling.lib.pr_path.update_held_pr`, vergil-tooling#5414).
+  A PR behind ``develop`` is rebased onto ``origin/develop`` and pushed:
+  ``updated``, which the watch reports as pending while CI re-runs; the next
+  read re-arms it only if auto-merge is off. A conflicting rebase is
+  ``conflicted``, which the watch ends ``failed: conflict``. A PR that is up
+  to date is left alone; one that this clone cannot update reports its
+  detail once per watch run (the detail says so), and is then left as the
+  bullet above has it. The watch keeps no record across reads or runs, so a
+  PR freed between two runs is updated by the first read of the next run.
 - **Held, by a live release** (``running``, with a fresh heartbeat):
   ``held``, reported as ``held by release <version> (stage <stage>,
   <health>)``.
@@ -82,6 +94,7 @@ def _health(rec: LockRecord, verdict: stale.Staleness, *, now: datetime) -> str:
     return f"(stage {rec.stage}, {rec.health})"
 
 
+
 class LockWatch:
     """The release lock rule of the merge watch (see the module docstring).
 
@@ -92,6 +105,10 @@ class LockWatch:
 
     def __init__(self, *, actor: str | None = None) -> None:
         self._actor = actor
+        # The PRs this watch pushed a rebase of, with that update, until GitHub shows the new head.
+        self._updated: dict[str, pr_path.HeldUpdate] = {}
+        # The PRs whose not-updated detail this run has reported, so a poll does not repeat it.
+        self._reported: set[str] = set()
 
     def _actor_name(self) -> str:
         if self._actor is None:
@@ -106,7 +123,7 @@ class LockWatch:
             msg = f"{snap.url}: reading the release lock failed: {exc}"
             raise LockWatchError(msg) from exc
         if not state.held:
-            return FREE if snap.auto_merge_on else self._rearm(snap)
+            return self._free(snap)
         return self.judge_held(repo, state, where=snap.url, now=datetime.now(UTC)).view
 
     def judge_held(self, repo: str, state: LockState, *, where: str, now: datetime) -> HeldLock:
@@ -153,6 +170,52 @@ class LockWatch:
             f"reclaimed the stale release lock of release {version}, as stale: {result.reason};"
             f" the re-arm sweep armed {armed} PR(s)",
         )
+
+    def _free(self, snap: Snapshot) -> LockView:
+        """The view of open PR *snap* while no lock is held (see the module docstring).
+
+        A PR this watch pushed a rebase of is ``updated`` (pending) until GitHub
+        shows the pushed head; only then is it judged and re-armed again. Any
+        other PR is brought up to date once, before anything else, whether or
+        not this run saw it held. Then an armed PR is ``free``, and an unarmed
+        one is re-armed (:meth:`_rearm`). An update's detail is reported with the view.
+        """
+        url = snap.url
+        pushed = self._updated.get(url)
+        if pushed is not None:
+            if snap.head == pushed.old_head:
+                return LockView("updated", pushed.detail)
+            del self._updated[url]
+        update = self._update_held(snap)
+        detail = self._first_report(url, update)
+        if update.outcome == "updated":
+            self._updated[url] = update
+            return LockView("updated", detail)
+        if update.outcome == "conflicted":
+            return LockView("conflicted", detail)
+        if snap.auto_merge_on:
+            return LockView("free", detail) if detail else FREE
+        if detail:
+            print(f"{url}: {detail}")
+        return self._rearm(snap)
+
+    def _first_report(self, url: str, update: pr_path.HeldUpdate) -> str:
+        """*update*'s detail, left out when this run already reported *url*'s not-updated detail."""
+        if update.outcome != "not_updated":
+            return update.detail
+        if url in self._reported:
+            return ""
+        self._reported.add(url)
+        return update.detail
+
+    @staticmethod
+    def _update_held(snap: Snapshot) -> pr_path.HeldUpdate:
+        """Bring *snap*'s PR up to date through the one PR path; a step that fails raises."""
+        try:
+            return pr_path.update_held_pr(snap.url)
+        except pr_path.PRPathError as exc:
+            msg = f"{snap.url}: bringing the held PR up to date failed: {exc}"
+            raise LockWatchError(msg) from exc
 
     @staticmethod
     def _rearm(snap: Snapshot) -> LockView:

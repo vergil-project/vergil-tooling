@@ -15,8 +15,10 @@ a spy, and the clones the gates judge in are real git repositories.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -60,7 +62,6 @@ from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 PR = "https://github.com/o/r/pull/7"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
@@ -2046,3 +2047,261 @@ def test_held_unarmed_auto_merge_read_failure_raises(
 
     with pytest.raises(PRPathError, match="reading auto-merge failed"):
         pr_path.held_unarmed(PR)
+
+
+# --- bringing a held PR up to date (vergil-tooling#5414) -----------------------------
+
+#: The PR's branch in :func:`held_clone`: it changes ``src/a.txt`` and not ``VERSION``.
+FEATURE = "feature/7-fix"
+#: The release that moved ``develop`` on: its bump PR changed ``VERSION``.
+DEVELOP_VERSION = "2.1.357"
+
+
+def _git(where: Path, *args: str) -> str:
+    """Run git in *where* (a real repository in these tests) and return its stripped stdout."""
+    done = subprocess.run(
+        ("git", "-C", str(where), *args), check=True, capture_output=True, text=True
+    )
+    return done.stdout.strip()
+
+
+def _write(where: Path, name: str, text: str) -> None:
+    (where / name).parent.mkdir(parents=True, exist_ok=True)
+    (where / name).write_text(text)
+
+
+def _commit(where: Path, message: str) -> None:
+    _git(where, "add", "-A")
+    _git(where, "commit", "--quiet", "-m", message)
+
+
+def _identity(where: Path) -> None:
+    _git(where, "config", "user.name", "Tester")
+    _git(where, "config", "user.email", "tester@example.invalid")
+
+
+@pytest.fixture
+def pushes(monkeypatch: pytest.MonkeyPatch) -> Pushes:
+    """Record the path's pushes only: every other git call runs for real, in real clones."""
+    spy = Pushes()
+    monkeypatch.setattr(pr_path.git, "run", spy.run)
+    return spy
+
+
+@pytest.fixture
+def held_clone(
+    tmp_path: Path,
+    fake: FakeGitHub,
+    gates: Gates,
+    pusher: Pusher,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """The PR's worktree: branch :data:`FEATURE` at its head, behind a ``develop`` that moved on.
+
+    The repositories are real: a seed makes ``develop`` (``VERSION`` 2.1.356, then the release's
+    bump to :data:`DEVELOP_VERSION`) and the feature branch (its own ``src/a.txt`` change, with
+    ``VERSION`` still at the tag), a bare repository is origin, and the clone is the worktree.
+    Its origin reads as ``o/r``, the PR's repository, and the gates' fetch of develop is fixed.
+    """
+    seed, origin, clone = tmp_path / "seed", tmp_path / "origin.git", tmp_path / "clone"
+    subprocess.run(("git", "init", "--quiet", "-b", "develop", str(seed)), check=True)
+    _identity(seed)
+    _write(seed, "VERSION", "2.1.356\n")
+    _write(seed, "src/a.txt", "one\ntwo\nthree\n")
+    _commit(seed, "base")
+    _git(seed, "checkout", "--quiet", "-b", FEATURE)
+    _write(seed, "src/a.txt", "one\nfixed\nthree\n")
+    _commit(seed, "fix")
+    _git(seed, "checkout", "--quiet", "develop")
+    _write(seed, "VERSION", f"{DEVELOP_VERSION}\n")
+    _commit(seed, "bump")
+    subprocess.run(("git", "init", "--quiet", "--bare", str(origin)), check=True)
+    _git(seed, "push", "--quiet", str(origin), "develop", FEATURE)
+    subprocess.run(("git", "clone", "--quiet", str(origin), str(clone)), check=True)
+    _git(clone, "checkout", "--quiet", "-b", FEATURE, f"origin/{FEATURE}")
+    _identity(clone)
+    fake.head, fake.head_ref = _git(clone, "rev-parse", "HEAD"), FEATURE
+    real_remote_repo = github.github_remote_repo
+
+    def remote_repo(url: str) -> str | None:
+        return "o/r" if url == str(origin) else real_remote_repo(url)
+
+    monkeypatch.setattr(github, "github_remote_repo", remote_repo)
+    monkeypatch.setattr(finalize_watch, "_fetch_develop_for_gates", lambda _c, _h: "base-sha")
+    monkeypatch.chdir(clone)
+    return clone
+
+
+def test_update_held_pr_rebases_a_behind_pr_and_pushes_with_the_lease(
+    fake: FakeGitHub, held_clone: Path, gates: Gates, pushes: Pushes
+) -> None:
+    old = fake.head
+
+    update = pr_path.update_held_pr(PR)
+
+    new = _git(held_clone, "rev-parse", "HEAD")
+    assert update == pr_path.HeldUpdate(
+        outcome="updated",
+        pr_url=PR,
+        detail=(f"rebased onto develop and pushed {new[:12]} (was {old[:12]}); CI re-running"),
+        old_head=old,
+        new_head=new,
+    )
+    assert new != old
+    assert _git(held_clone, "rev-parse", "HEAD^") == _git(held_clone, "rev-parse", "origin/develop")
+    assert _git(held_clone, "show", "HEAD:VERSION") == DEVELOP_VERSION
+    assert pushes.calls == [
+        ("push", f"--force-with-lease={FEATURE}:{old}", "origin", f"{new}:refs/heads/{FEATURE}")
+    ]
+    assert gates.calls == [(held_clone.resolve(), new, "o/r")]
+
+
+def test_update_held_pr_leaves_an_up_to_date_pr_alone(
+    fake: FakeGitHub, held_clone: Path, gates: Gates, pushes: Pushes
+) -> None:
+    _git(held_clone, "rebase", "--quiet", "origin/develop")
+    _git(held_clone, "push", "--quiet", "--force", "origin", FEATURE)
+    before = _git(held_clone, "rev-parse", "HEAD")
+    fake.head = before
+
+    assert pr_path.update_held_pr(PR) == pr_path.HeldUpdate("current", PR)
+    assert _git(held_clone, "rev-parse", "HEAD") == before
+    assert pushes.calls == []
+    assert gates.calls == []
+
+
+def test_update_held_pr_conflicting_rebase_is_aborted_and_pushes_nothing(
+    fake: FakeGitHub, held_clone: Path, pushes: Pushes
+) -> None:
+    _write(held_clone, "VERSION", "2.1.356.1\n")
+    _commit(held_clone, "a fix that also changes VERSION")
+    _git(held_clone, "push", "--quiet", "origin", FEATURE)
+    head = _git(held_clone, "rev-parse", "HEAD")
+    fake.head = head
+
+    update = pr_path.update_held_pr(PR)
+
+    assert update.outcome == "conflicted"
+    assert update.old_head == head
+    assert "conflicts in VERSION" in update.detail
+    assert _git(held_clone, "rev-parse", "HEAD") == head
+    assert _git(held_clone, "status", "--porcelain") == ""
+    assert not (held_clone / ".git" / "rebase-merge").exists()
+    assert not (held_clone / ".git" / "rebase-apply").exists()
+    assert pushes.calls == []
+
+
+def _check_out_develop(clone: Path, fake: FakeGitHub) -> None:
+    _git(clone, "checkout", "--quiet", "develop")
+
+
+def _uncommitted(clone: Path, fake: FakeGitHub) -> None:
+    _write(clone, "scratch.txt", "not committed\n")
+
+
+def _head_moved(clone: Path, fake: FakeGitHub) -> None:
+    _write(clone, "src/a.txt", "a local commit the PR does not have\n")
+    _commit(clone, "local only")
+
+
+def _draft(clone: Path, fake: FakeGitHub) -> None:
+    fake.draft = True
+
+
+@pytest.mark.parametrize(
+    ("setup", "reason"),
+    [
+        (_check_out_develop, "this clone has 'develop' checked out, not feature/7-fix"),
+        (_uncommitted, "this clone's tree has uncommitted changes"),
+        (_head_moved, "in this clone, not the PR's head"),
+        (_draft, "the one PR path does not accept it: it is a draft"),
+    ],
+)
+def test_update_held_pr_not_updated_from_this_clone(
+    fake: FakeGitHub,
+    held_clone: Path,
+    pushes: Pushes,
+    setup: Callable[[Path, FakeGitHub], None],
+    reason: str,
+) -> None:
+    setup(held_clone, fake)
+    before = _git(held_clone, "rev-parse", "HEAD")
+
+    update = pr_path.update_held_pr(PR)
+
+    assert update.outcome == "not_updated"
+    assert reason in update.detail
+    assert _git(held_clone, "rev-parse", "HEAD") == before
+    assert pushes.calls == []
+
+
+def test_update_held_pr_from_a_clone_of_another_repo_is_not_updated(
+    fake: FakeGitHub, held_clone: Path, pushes: Pushes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pr_path, "_here", lambda: (held_clone, "other/repo"))
+
+    update = pr_path.update_held_pr(PR)
+
+    assert update.outcome == "not_updated"
+    assert "cannot be checked from this clone of other/repo" in update.detail
+    assert pushes.calls == []
+
+
+def test_update_held_pr_refused_push_raises_naming_the_pr(
+    fake: FakeGitHub, held_clone: Path, gates: Gates, pushes: Pushes
+) -> None:
+    gates.ok = False
+
+    with pytest.raises(
+        PRPathError, match=f"(?s){PR}: the rebased head .* was not pushed: the gates refused"
+    ):
+        pr_path.update_held_pr(PR)
+    assert pushes.calls == []
+
+
+def test_update_held_pr_rebase_failure_that_is_no_conflict_raises(
+    fake: FakeGitHub,
+    held_clone: Path,
+    pushes: Pushes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No committer identity: the rebase cannot make its commit, and git refuses to guess one.
+    _git(held_clone, "config", "--unset", "user.name")
+    _git(held_clone, "config", "--unset", "user.email")
+    _git(held_clone, "config", "user.useConfigOnly", "true")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for name in ("GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(name, raising=False)
+    before = _git(held_clone, "rev-parse", "HEAD")
+
+    with pytest.raises(PRPathError, match=f"(?s){PR}: rebasing {FEATURE} onto develop failed"):
+        pr_path.update_held_pr(PR)
+    assert _git(held_clone, "rev-parse", "HEAD") == before
+    assert _git(held_clone, "status", "--porcelain") == ""
+    assert pushes.calls == []
+
+
+def test_update_held_pr_rebase_refused_before_it_starts_raises_with_no_state_left(
+    fake: FakeGitHub, held_clone: Path, pushes: Pushes
+) -> None:
+    hook = held_clone / ".git" / "hooks" / "pre-rebase"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    before = _git(held_clone, "rev-parse", "HEAD")
+
+    with pytest.raises(PRPathError, match=f"(?s){PR}: rebasing {FEATURE} onto develop failed"):
+        pr_path.update_held_pr(PR)
+    assert _git(held_clone, "rev-parse", "HEAD") == before
+    assert not (held_clone / ".git" / "rebase-merge").exists()
+    assert pushes.calls == []
+
+
+def test_update_held_pr_that_cannot_fetch_raises_naming_the_pr(
+    fake: FakeGitHub, held_clone: Path, pushes: Pushes, tmp_path: Path
+) -> None:
+    Path(_git(held_clone, "remote", "get-url", "origin")).rename(tmp_path / "moved.git")
+
+    with pytest.raises(PRPathError, match=f"(?s){PR}: bringing the held PR up to date failed"):
+        pr_path.update_held_pr(PR)
+    assert pushes.calls == []

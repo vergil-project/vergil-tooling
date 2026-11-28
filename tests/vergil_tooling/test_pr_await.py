@@ -309,6 +309,48 @@ def test_pr_await_held_exits_6_never_auto_merge_off(
     assert "held by release 2.1.400 (stage cut, running)" in capsys.readouterr().err
 
 
+def test_pr_await_held_pr_updated_under_a_hold_is_not_judged_until_its_new_head_is_read(
+    fake: FakeGitHub,
+) -> None:
+    """The wait keeps going through a pushed rebase, and re-arms only once the new head reads."""
+    detail = f"rebased onto develop and pushed {HEAD_B[:12]} (was {HEAD_A[:12]}); CI re-running"
+    fake.lock.states = [record(), None]
+    # The rebase at the old head; then, once the new head is read, the rebase is already there.
+    fake.lock.update = [
+        pr_path.HeldUpdate("updated", PR, detail=detail, old_head=HEAD_A, new_head=HEAD_B),
+        pr_path.HeldUpdate("current", PR),
+    ]
+    version_check = run_check("version / version-bump", 1, "FAILURE")
+    fake.script(
+        pr_state(autoMergeRequest=None),
+        pr_state(autoMergeRequest=None, statusCheckRollup=[version_check]),
+        pr_state(headRefOid=HEAD_B, autoMergeRequest=None),
+        merged(headRefOid=HEAD_B),
+    )
+
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
+
+    assert result.merged
+    assert fake.lock.updates == [PR, PR]
+    assert fake.lock.arms == [PR]
+
+
+def test_pr_await_conflicting_rebase_under_a_hold_ends_cannot_merge_conflict(
+    fake: FakeGitHub,
+) -> None:
+    detail = "the rebase of feature/1-thing onto develop conflicts in VERSION; it was aborted"
+    fake.lock.states = [record(), None]
+    fake.lock.update = pr_path.HeldUpdate("conflicted", PR, detail=detail, old_head=HEAD_A)
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = wait_for_merge(PR, lock=LockWatch())
+
+    assert not result.merged
+    assert result.reason == "conflict"
+    assert result.detail == detail
+    assert fake.lock.arms == []
+
+
 def test_pr_await_broken_release_slows_poll(fake: FakeGitHub) -> None:
     fake.lock.states = [broken()]
     fake.script(pr_state(autoMergeRequest=None), pr_state(autoMergeRequest=None), merged())
