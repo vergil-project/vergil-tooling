@@ -156,9 +156,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "dependencies": frozenset({"vergil"}),
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests", "primary-version", "images"}),
-    "publish": frozenset(
-        {"release", "docs", "install", _DEPRECATED_INSTALL_KEY, "reload-plugins"}
-    ),
+    "publish": frozenset({"release", "docs", "install", _DEPRECATED_INSTALL_KEY, "reload-plugins"}),
     "container": frozenset(
         {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
     ),

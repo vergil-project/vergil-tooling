@@ -118,6 +118,11 @@ class ReleaseContext:
     # none configured.
     install_message: str | None = None
 
+    # Whether the repo declares [publish].reload-plugins = true (issue #5434):
+    # the finished release then ends by telling the human to run
+    # /reload-plugins. Read once by preflight from vergil.toml.
+    reload_plugins: bool = False
+
     # The version-expanded [publish].install command block the stage runs
     # (issue #1643). None when no install is configured.
     install_commands: str | None = None

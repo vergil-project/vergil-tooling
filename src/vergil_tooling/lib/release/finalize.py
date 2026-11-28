@@ -168,7 +168,7 @@ def _build_summary(ctx: ReleaseContext) -> str:
         lines.extend(f"- {ref}" for ref in posted)
     else:
         lines.append("- None: the release's PRs close no issues.")
-    if reload_reminder.reload_plugins_enabled(ctx.repo_root):
+    if ctx.reload_plugins:
         lines.append("")
         lines.append("### Reload Claude Code")
         lines.append("")

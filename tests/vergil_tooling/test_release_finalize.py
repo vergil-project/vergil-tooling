@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -19,14 +18,6 @@ from vergil_tooling.lib.release.finalize import (
 from vergil_tooling.lib.release.state import initial_state
 
 _MOD = "vergil_tooling.lib.release.finalize"
-_REMINDER_MOD = "vergil_tooling.lib.release.reload_reminder"
-
-
-@pytest.fixture(autouse=True)
-def _no_reload_reminder() -> Iterator[None]:
-    """Default every summary test to a repo without the reload flag (its root does not exist)."""
-    with patch(_REMINDER_MOD + ".reload_plugins_enabled", return_value=False):
-        yield
 
 
 def _ctx() -> ReleaseContext:
@@ -165,16 +156,14 @@ def test_build_summary_labels_back_merge_pr() -> None:
 
 def test_build_summary_includes_reload_reminder_with_flag() -> None:
     ctx = _ctx()
-    with patch(_REMINDER_MOD + ".reload_plugins_enabled", return_value=True):
-        summary = _build_summary(ctx)
+    ctx.reload_plugins = True
+    summary = _build_summary(ctx)
     assert summary.endswith(reload_reminder.REMINDER)
     assert "### Reload Claude Code" in summary
 
 
 def test_build_summary_omits_reload_reminder_without_flag() -> None:
-    ctx = _ctx()
-    with patch(_REMINDER_MOD + ".reload_plugins_enabled", return_value=False):
-        summary = _build_summary(ctx)
+    summary = _build_summary(_ctx())
     assert "Reload Claude Code" not in summary
     assert "/reload-plugins" not in summary
 

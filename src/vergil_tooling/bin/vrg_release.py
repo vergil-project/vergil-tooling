@@ -117,11 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         print(state.ctx.install_message)
     # A plugin repo's finished release ends with the reload reminder, printed
     # last so it is what the human reads. Never on failure.
-    if (
-        rc == 0
-        and state.ctx is not None
-        and reload_reminder.reload_plugins_enabled(state.ctx.repo_root)
-    ):
+    if rc == 0 and state.ctx is not None and state.ctx.reload_plugins:
         print()
         print(reload_reminder.REMINDER)
     return rc
