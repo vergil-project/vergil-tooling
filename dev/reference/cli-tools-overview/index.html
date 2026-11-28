@@ -21381,7 +21381,7 @@ previews what its PR does with the epic's planning issue, as <code>planning_clos
 the check again when it builds the body (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
-<p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
+<p>The batch hard rules are: 2 to 20 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly blocked by an open deployment task (through a <code>Blocked-by:</code> line or a
 native GitHub blocked-by relationship) and opened by a trusted author,
@@ -23914,8 +23914,9 @@ from that commit's parent (the marker's <code>base_sha</code> is not used); late
 commits are excluded, and a <code>fixup!</code> of it after another commit is refused,
 since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with <code>origin/develop</code>. Submit, the watch and the audit read
-the records back from the trust layer's comment stream, agent role only,
-skipping an edited comment. A re-run that finds the same comment already
+the records back from the trust layer's comment stream, human and agent
+comments alike as <code>vrg-issue-read</code> reads them; only an agent-posted comment,
+skipping an edited one, can be a record. A re-run that finds the same comment already
 posted by the agent prints its ID and posts nothing.</p>
 <table>
 <thead>

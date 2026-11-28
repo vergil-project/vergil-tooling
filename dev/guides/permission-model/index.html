@@ -18518,6 +18518,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#closing-lines-on-pr-edit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing lines on pr edit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#gh-api-by-identity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19378,6 +19389,17 @@
     <span class="md-ellipsis">
       
         Server-side branch update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#closing-lines-on-pr-edit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closing lines on pr edit
       
     </span>
   </a>
@@ -20362,6 +20384,22 @@ more than one owner), a read that fails, or a response with no base
 refuses the update. The tooling's own server-side updates are limited to
 named sites by a guard test
 (<code>tests/vergil_tooling/test_branch_push_guard.py</code>).</p>
+<h3 id="closing-lines-on-pr-edit">Closing lines on <code>pr edit</code><a class="headerlink" href="#closing-lines-on-pr-edit" title="Permanent link">&para;</a></h3>
+<p>A PR into <code>develop</code> keeps its closing lines as checked. For every
+identity, <code>vrg-gh pr edit</code> that sets the body (<code>--body</code>, <code>-b</code>,
+<code>--body-file</code> or <code>-F</code>), or moves the PR into <code>develop</code> with <code>--base</code>,
+refuses when the multiset of the body's <code>Ref</code> lines and closing-keyword
+references differs from the current body's. The closing-keyword family
+is <code>Closes</code> (and its variants) and the autoclose family <code>Fixes</code> and
+<code>Resolves</code>, plain or in <code>- &lt;label&gt;:</code> form. Prose edits pass, and so do
+edits on any other base and title-only edits.</p>
+<p>The wrapper reads the current base and body with <code>gh pr view</code> on the
+same target and <code>--repo</code>. The lookup fails closed: a read that fails, a
+response with no base or body, a body given more than one way, or a
+new body that cannot be read refuses the edit. A new body from stdin
+(<code>--body-file -</code>) on a PR into <code>develop</code> is refused, since the wrapper
+cannot read it without consuming it; pass the body inline or from a
+file.</p>
 <h3 id="gh-api-by-identity"><code>gh api</code> by Identity<a class="headerlink" href="#gh-api-by-identity" title="Permanent link">&para;</a></h3>
 <p><code>gh api</code> can perform any GitHub API operation — create repos,
 delete branches, modify settings, push code via the Contents API.
