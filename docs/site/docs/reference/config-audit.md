@@ -76,6 +76,10 @@ order:
    the AI agent modes, `user` and `audit`, by name, and exits 2. It also
    exits 2 when the identity cannot be resolved, for example when
    `VRG_AUTOMATION_APP` is set but the token belongs to another App.
+   A human run also reads the login its sync PR is opened as, for the
+   PR body (`gh api user`). If that login cannot be read, for example
+   because `gh` is not logged in, the run exits 2 and does not fall back
+   to the job wording. The automation identity reads no login.
    A run that passes logs the mode it resolved, such as
    `identity: human` or `identity: automation (<slug>[bot])`.
 2. **The GitHub side.** The same audit and convergence as `apply`. For
@@ -109,6 +113,8 @@ order:
    naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.
+   The PR body names who opened it: the repo-config sync job, or, for a
+   hand run, the person's login.
 5. **Wait until merged.** `update` then watches the PR until it has
    merged. The watch never merges the PR itself: GitHub's auto-merge
    merges it once its checks are green, and a PR whose auto-merge is
@@ -139,7 +145,7 @@ to date.
 |---|---|
 | 0 | The GitHub side converged and the managed files are in sync: no sync PR was needed, or the one opened this run merged |
 | 1 | Drift that could not be fixed: a check with no fixer, a fix that cannot be computed, an undeclared ruleset parameter, a branch named like a rolling tag, which must be deleted by hand, or a workflow GitHub disabled for inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is still opened, and exit 1 applies once it has merged |
-| 2 | Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
+| 2 | Something could not be audited or converged: an agent identity, the human's login unreadable, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing |
 
 ## The `apply` command (deprecated)
 
