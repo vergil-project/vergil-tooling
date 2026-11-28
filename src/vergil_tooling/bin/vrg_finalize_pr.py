@@ -89,9 +89,9 @@ job merges on GitHub. Its exit codes are a watched run's.
   failed, timed out or merged with a provenance violation.
 
 **Removed flags** are refused by name before any side effect:
-``--strategy`` (submit chooses the merge method), ``--no-wait-cd`` (not
-waiting is the default), ``--skip-post-checks`` (one run watches the whole
-batch, then settles develop once), ``--install`` and ``--no-install``
+``--strategy`` (the one PR path chooses the merge method), ``--no-wait-cd``
+(not waiting is the default), ``--skip-post-checks`` (one run watches the
+whole batch, then settles develop once), ``--install`` and ``--no-install``
 (install is part of every release, spec §4.8 of epic
 vergil-project/.github#1440) and ``--allow-provenance-violation`` (a
 provenance violation always fails; fix its cause or the classifier).
@@ -214,9 +214,10 @@ NO_WAIT_CD_REMOVED = (
     "default (use --wait-cd to wait)"
 )
 STRATEGY_REMOVED = (
-    "vrg-finalize-pr: --strategy was removed; finalize no longer merges. "
-    "vrg-submit-pr now chooses the merge method when it turns auto-merge on "
-    "(squash for a single-issue PR, rebase for a batch PR)"
+    "vrg-finalize-pr: --strategy was removed; finalize no longer merges, and "
+    "the one PR path chooses the merge method from the PR when vrg-submit-pr "
+    "turns auto-merge on (squash for a single-issue PR, rebase for a batch PR, "
+    "a merge commit for a back-merge or a dependency-update PR)"
 )
 SKIP_POST_CHECKS_REMOVED = (
     "vrg-finalize-pr: --skip-post-checks was removed; one run now watches every "
