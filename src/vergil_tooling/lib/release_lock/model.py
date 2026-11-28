@@ -31,6 +31,11 @@ ARM_CALL_BOUND_SECS = 60
 BASE_MOVED_ATTEMPTS = 5
 #: The pause before the arm call tries again after such a refusal.
 BASE_MOVED_RETRY_SECS = 3.0
+#: How many re-arms the merge watch refuses in a row, each because the base branch moved,
+#: before it gives up on the PR and raises (vergil-tooling#5390). Each such re-arm is one
+#: whole :data:`BASE_MOVED_ATTEMPTS` run, so a PR that stays unarmed through this many
+#: runs is not a transient move: the watch then stops loudly rather than poll on.
+BASE_MOVED_WATCH_ATTEMPTS = 5
 #: The release's total wait on arming refs before it fails, naming them.
 ARMING_WAIT_BOUND_SECS = 900
 #: How often the release lists the arming refs while it waits on them.

@@ -68,7 +68,8 @@ class FakeLock:
     Each read takes the next of *states* and the last one repeats; a state is
     a :class:`LockRecord` (held), ``None`` (free), a string (held but
     unreadable, the string its error) or an exception (the read fails).
-    *arm_outcome* is what ``pr_path.arm`` returns, or an exception it raises.
+    *arm_outcome* is what ``pr_path.arm`` returns, or an exception it raises, or
+    a list of those, one per call (the last repeats, as *states* does).
     *reclaimed* is whether a reclaim wins; a won reclaim frees the lock for
     every later read. *update* is what ``pr_path.update_held_pr`` returns, or an
     exception it raises, or a list of those, one per call (the last repeats, as
@@ -77,7 +78,7 @@ class FakeLock:
 
     states: list[object] = field(default_factory=lambda: [None])
     issue_state: str = "OPEN"
-    arm_outcome: ArmOutcome | Exception = "armed"
+    arm_outcome: ArmOutcome | Exception | list[ArmOutcome | Exception] = "armed"
     arm_detail: str = ""
     pr_state: str = "open, auto-merge off"
     reclaimed: bool = True
@@ -146,10 +147,14 @@ class FakeLock:
 
     def arm(self, pr_url: str, **_kw: object) -> pr_path.ArmResult:
         self.arms.append(pr_url)
-        if isinstance(self.arm_outcome, Exception):
-            raise self.arm_outcome
+        outcome: object = self.arm_outcome
+        if isinstance(outcome, list):
+            outcome = outcome.pop(0) if len(outcome) > 1 else outcome[0]
+        if isinstance(outcome, Exception):
+            raise outcome
+        assert isinstance(outcome, str), outcome
         return pr_path.ArmResult(
-            outcome=self.arm_outcome,
+            outcome=outcome,
             pr_url=pr_url,
             head="a" * 40,
             method="SQUASH",

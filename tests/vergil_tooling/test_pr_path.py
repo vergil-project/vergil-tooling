@@ -37,6 +37,7 @@ from vergil_tooling.lib import (
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_path import (
     ArmResult,
+    BaseMovedError,
     PRPathError,
     PushResult,
     accepts,
@@ -755,12 +756,29 @@ def test_arm_direct_merge_refused_past_the_bound_fails_naming_it(
     fake.clean = True
     fake.base_moved_merges = 100
 
-    with pytest.raises(PRPathError, match="Base branch was modified") as info:
+    with pytest.raises(BaseMovedError, match="Base branch was modified") as info:
         arm(PR, clone=clone)
 
     assert f"{BASE_MOVED_ATTEMPTS} times" in str(info.value)
     assert len(fake.merges) == BASE_MOVED_ATTEMPTS
     # The refusal landed nothing, so its arming ref is deleted.
+    assert lock.arming == {}
+
+
+def test_arm_enable_refused_for_a_moved_base_past_the_bound_raises_base_moved(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    fake.base_moved_enables = 100
+
+    with pytest.raises(BaseMovedError, match="Base branch was modified") as info:
+        arm(PR, clone=clone)
+
+    # Typed as a PRPathError too, so every caller that catches the path's errors still does.
+    assert isinstance(info.value, PRPathError)
+    assert f"{BASE_MOVED_ATTEMPTS} times" in str(info.value)
+    assert len(fake.mutations) == BASE_MOVED_ATTEMPTS
+    assert fake.merges == []
+    # The refusal landed nothing, so the arming ref is deleted and the PR can be offered again.
     assert lock.arming == {}
 
 

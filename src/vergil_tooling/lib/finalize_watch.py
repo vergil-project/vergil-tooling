@@ -19,7 +19,12 @@ judge auto-merge off, and the answer (a :class:`LockView`) decides:
   re-armed through the one PR path (:func:`vergil_tooling.lib.pr_path.arm`,
   never by the watch itself); a re-arm the path refuses ends the PR as
   ``failed: refused``, naming the path's reason, with no further re-arm or
-  poll.
+  poll. A re-arm refused only because the base branch kept moving
+  (:class:`vergil_tooling.lib.pr_path.BaseMovedError`) is not a refusal: the
+  PR is ``retrying``, still pending and judged as below, and re-armed again on
+  the next poll (vergil-tooling#5390). After
+  :data:`~vergil_tooling.lib.release_lock.model.BASE_MOVED_WATCH_ATTEMPTS` such
+  refusals in a row the watch raises instead.
 - **Held by a live release:** the PR is reported as
   ``held by release <version> (stage <stage>, <health>)`` and the watch
   polls at its normal pace.
@@ -211,8 +216,12 @@ EXIT_HELD_BY_RELEASE = 6
 #: held, and the one PR path refused to re-arm the PR. ``updated``: no lock
 #: held, and the PR, behind ``develop`` when its hold ended, was rebased and
 #: pushed (pending while CI re-runs). ``conflicted``: no lock held, and that
-#: rebase conflicted, so the PR cannot merge as it stands.
-LockState = Literal["free", "held", "broken", "unreadable", "refused", "updated", "conflicted"]
+#: rebase conflicted, so the PR cannot merge as it stands. ``retrying``: no lock
+#: held, and the re-arm was refused only because the base branch kept moving: the
+#: PR stays open and watched, pending, and is re-armed on the next poll.
+LockState = Literal[
+    "free", "held", "broken", "unreadable", "refused", "updated", "conflicted", "retrying"
+]
 _HELD_STATES = frozenset({"held", "broken", "unreadable"})
 _SLOW_STATES = frozenset({"broken", "unreadable"})
 
@@ -952,6 +961,7 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float, lock: LockRule) -> 
     if view.state == "updated":
         # This snapshot's checks are the old head's: the next read judges the new head.
         return None
+    # A ``retrying`` PR is not terminal: its checks are judged as on any open PR.
     checks = check_failures(snap, watched.required)
     if checks.failed:
         detail = f"required check failed: {', '.join(checks.failed)}"
@@ -997,7 +1007,7 @@ def _pending_state(snap: Snapshot, watched: _Watched) -> str:
     """The status table's state for *snap*'s PR while it is still pending."""
     if watched.lock.held:
         return watched.lock.detail
-    if watched.lock.state == "updated":
+    if watched.lock.state in ("updated", "retrying"):
         return watched.lock.detail
     if watched.cancel.names:
         return f"checks cancelled ({len(watched.cancel.names)}), awaiting a re-run"
@@ -1218,6 +1228,10 @@ def watch(
         if watched.lock.held:
             detail = f"still {watched.lock.detail} {at}; run the watch again"
             results[url] = _result(snap, "held by release", detail, watched)
+        elif watched.lock.state == "retrying":
+            # Its auto-merge is off (the re-arm was refused), so it does not stay on.
+            detail = f"still {watched.lock.detail} {at}; run the watch again"
+            results[url] = _result(snap, "timed out", detail, watched)
         else:
             detail = f"still pending {at}; its auto-merge stays on"
             results[url] = _result(snap, "timed out", detail, watched)
