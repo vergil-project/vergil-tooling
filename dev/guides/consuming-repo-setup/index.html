@@ -19756,7 +19756,10 @@ refuses a repo whose <code>release</code> is not <code>true</code>; <code>instal
 release's <code>install</code> stage runs, with <code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded to
 the release's <code>X.Y.Z</code> and <code>X.Y</code>, none by default; its deprecated name
 <code>consumer-refresh</code> is still read, with a warning, and setting both is an
-error) and
+error; <code>reload-plugins</code>, a boolean, default <code>false</code>, which only a Claude
+Code plugin repo sets to <code>true</code> so that its finished release ends with the
+reminder to run <code>/reload-plugins</code> in every running session, see
+<a href="../releasing/#the-reload-reminder">the reload reminder</a>) and
 <code>[ci].integration-tests</code> (default <code>false</code>) are optional, as is
 <code>[ci].images</code> (a boolean, default <code>false</code>), which only a repo whose <code>ci.yml</code>
 calls a repo-local <code>ci-images.yml</code> as job <code>images</code> sets; it makes
@@ -19831,6 +19834,10 @@ nothing to version or release. Its canonical <code>vergil.toml</code> is the fil
 <tr>
 <td><code>[publish].docs</code></td>
 <td><code>false</code> keeps <code>docs / docs</code> out of the required checks, and <code>vrg-github-repo-init</code> then writes no docs job and no docs site. Leaving the key out means <code>true</code>, which requires a <code>docs / docs</code> check that the repo's <code>ci.yml</code> must report on every pull request.</td>
+</tr>
+<tr>
+<td><code>[publish].reload-plugins</code></td>
+<td><code>false</code>, the default, adds nothing to a release. <code>true</code>, which only a Claude Code plugin repo sets, makes a finished release end with the reminder to run <code>/reload-plugins</code>, or restart, in every running session; see <a href="../releasing/#the-reload-reminder">the reload reminder</a>.</td>
 </tr>
 <tr>
 <td><code>[dependencies].vergil</code></td>

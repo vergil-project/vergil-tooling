@@ -18947,6 +18947,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-reload-reminder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The reload reminder
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#an-interrupted-release" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19484,6 +19495,17 @@
         
       </ul>
     </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-reload-reminder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The reload reminder
+      
+    </span>
+  </a>
   
 </li>
         
@@ -20307,6 +20329,18 @@ demoted with <code>vrg-promote</code> is followed by the dev-container cache,
 <code>vrg-vm</code> and <code>vrg-tooling-install</code> alike. Once the release's packages
 appear in the index, <code>vrg-release --resume</code> records them listed and
 closes the issue.</p>
+<h3 id="the-reload-reminder">The reload reminder<a class="headerlink" href="#the-reload-reminder" title="Permanent link">&para;</a></h3>
+<p>A running Claude Code session keeps the plugin agent definitions it
+loaded until it runs <code>/reload-plugins</code> or restarts, while skills are read
+fresh when invoked. After a plugin release, a session that is not reloaded
+pairs the new skills with the old agents (issue #5434).</p>
+<p>A repo opts in with <code>reload-plugins = true</code> in its <code>[publish]</code> table of
+<code>vergil.toml</code> (default <code>false</code>; a non-boolean value is refused). The key is
+keyed on the repo's setting, not its name, so only a plugin repo sets it.
+When it is set, a release that finishes ends with a final line telling the
+human to run <code>/reload-plugins</code>, or restart, in every running Claude Code
+session, on the host and in every VM. The tracking issue's summary carries
+the same reminder as its last section. A failed release prints no reminder.</p>
 <h3 id="an-interrupted-release">An interrupted release<a class="headerlink" href="#an-interrupted-release" title="Permanent link">&para;</a></h3>
 <p>An interrupt (Ctrl-C) or a crash can stop <code>vrg-release</code> at any point.
 What a re-run does depends on how far the stopped run got:</p>

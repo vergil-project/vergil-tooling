@@ -19064,7 +19064,10 @@ but only on the Mac that runs that release. On any other host, run
 <code>vrg-tooling-install vX.Y.Z</code> with the new version to upgrade; see
 <a href="../guides/consuming-repo-setup/#keeping-up-to-date">Keeping up to date</a>. If
 an installed <code>vrg-tooling-install</code> ever fails, these two lines are also the
-way to reinstall by hand.</p>
+way to reinstall by hand. A release of a Claude Code plugin repo, which
+sets <code>[publish].reload-plugins = true</code> in its <code>vergil.toml</code>, also ends with
+a reminder to run <code>/reload-plugins</code> (or restart) in every running Claude
+Code session; see <a href="../guides/releasing/#the-reload-reminder">the reload reminder</a>.</p>
 <p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>.
 <code>uv</code>'s official installer already puts that directory on <code>PATH</code>; with
 a Homebrew-installed <code>uv</code>, run <code>uv tool update-shell</code> once to add it.</p>

@@ -19175,6 +19175,11 @@ under an agent identity.</p>
 absent it refuses up front, before the resume lookup or any stage, and
 changes nothing. <code>vrg-finalize-pr</code> and <code>vrg-submit-pr</code> refuse
 <code>--release</code> on such a repo the same way, before any push, PR or watch.</p>
+<p><code>[publish] reload-plugins = true</code> is the opt-in for the reload reminder. Only
+a Claude Code plugin repo sets it (default <code>false</code>; a non-boolean value is
+refused). A finished release then ends with a final line telling the human to
+run <code>/reload-plugins</code>, or restart, in every running Claude Code session. See
+<a href="../../../guides/releasing/#the-reload-reminder">the reload reminder</a>.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-release<span class="w"> </span><span class="o">[</span>minor<span class="p">|</span>major<span class="o">]</span><span class="w"> </span>--supersede<span class="w"> </span>X.Y.Z<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>

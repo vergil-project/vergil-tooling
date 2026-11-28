@@ -21766,7 +21766,10 @@ new <code>develop</code> version, the install, which runs the <code>[publish].in
 commands once <code>promote</code> has moved <code>vX.Y</code> to the release, a <code>Released:</code>
 record on every issue the release contains, and finally the
 close of the tracking issue, which any failed stage or missing record holds back, so a
-<code>--resume</code> can finish the release. On a fresh start, preflight refuses while any
+<code>--resume</code> can finish the release. When <code>[publish].reload-plugins</code> is <code>true</code>, a
+finished release ends with the reload reminder for running Claude Code
+sessions; see <a href="../../guides/releasing/#the-reload-reminder">the reload reminder</a>.
+On a fresh start, preflight refuses while any
 <code>release: X.Y.Z</code> tracking issue is open, naming its recovery (only
 <code>--supersede X.Y.Z</code>, which starts a fresh release that absorbs open release
 <code>X.Y.Z</code>'s issues and closes its tracking issue, passes over that release), and while an open PR
