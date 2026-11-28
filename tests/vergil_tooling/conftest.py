@@ -32,6 +32,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.vergil_tooling.batch_repo import batch_repo as batch_repo
 from vergil_tooling.lib import (
     automation_identity,
     conan_token,

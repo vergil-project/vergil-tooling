@@ -331,11 +331,30 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
 - `batch-show --issue <N>` prints the issue's batch as one JSON object,
   `{"issues": ["#10", "#11"], "base_sha": "<sha>"}`, and exits 0, exits 1 with nothing on stdout when the issue is in no batch, and
   exits 2 on any other failure.
-- `batch-extract --issue <N>` rewrites every other member's marker without
-  the issue (removing the last one's when fewer than two remain) and removes
-  the issue's whole `issue-implement/<N>/` directory, its `merge-review/`
-  state included. It refuses while a `security-*.md` details file is under
-  that directory.
+- `batch-extract --issue <N> [--issue <M> …] [--check]` takes the set out of
+  its batch in one rewrite: every other member's marker is rewritten without
+  the set (the last one's is removed when fewer than two remain), and each
+  issue's whole `issue-implement/<N>/` directory is removed, its
+  `merge-review/` state included. It refuses while a `security-*.md` details
+  file is under any of those directories. It also refuses, naming the group,
+  when the set would split a release group (a member leaving the batch while
+  another member of the group stays in it); a group member outside the batch
+  does not count as staying. The judgment runs before anything is changed.
+  `--check` makes the same judgment without writing anything, printing
+  `{"ok": <bool>, "split": [{"group", "leaving", "staying"}], "remaining": […]}`
+  and exiting 0 when ok and 1 otherwise. A group that cannot be read refuses
+  the extraction and fails `--check` too.
+
+`batch-gates [--json]` judges a batch's merge-review gate before handoff, run in
+the batch's worktree before `report-ready`. It reads the batch's issues from the
+clone's batch markers, fetches `origin/develop`, and evaluates the submit gate's
+merge-review rule commit by commit, as `vrg-submit-pr` would. It writes nothing:
+no state, no marker, and no git write but that fetch. It prints one line per
+commit (issue, short SHA, `covered` or `UNCOVERED`, and the reason), or with
+`--json` the object `{"branch", "head", "commits": [{"issue", "sha", "covered",
+"reason"}]}`. It exits 0 when every commit is covered, and 1 when one is not, or
+on a read failure (the failure is on stderr). Report-ready removes the markers,
+so after it the probe refuses with exit 1.
 
 `batch-check --pr <url> [--head <sha>]` checks a submitted batch PR before a
 push to it, from a clone of the PR's repo (pr-watch runs it on the head it is
@@ -356,7 +375,7 @@ otherwise.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_pr_workflow` |
-| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract`, `batch-show`, `batch-check` (`--pr` required, `--head`); global `--base` (default: origin/develop) |
+| Args | `report-ready` (`--issue`, repeatable for a batch, `--title`, `--summary`, `--notes` required; `--linkage` default Ref, which `vrg-submit-pr` upgrades to `Closes` for a managed task), `unfreeze`, `status`, `batch-start`, `batch-extract` (`--issue` repeatable, `--check`), `batch-show`, `batch-check` (`--pr` required, `--head`), `batch-gates` (`--json`); global `--base` (default: origin/develop) |
 | Preconditions | Git repo; run from the worktree whose branch is being staged |
 | Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, nothing to unfreeze, or a relay ref unfreeze could not update) |
 | Exit codes | 0 success, 1 error |
@@ -520,6 +539,28 @@ and the [Releasing guide](../guides/releasing.md).
 | Preconditions | Human identity; `gh` authenticated and a reachable container runtime (docker or nerdctl) for `vrg-container-run`, which runs `git-cliff`. A fresh start also needs the root checkout on a clean `develop` that has not diverged from `origin/develop` (one that is only behind is fast-forwarded); a `--resume` runs only the host, auth and config checks |
 | Failure mode | Fail-fast stages stop the run; deferred stages (including `update-deps`) record the failure, let later stages run except those the hold rule holds back, and are summarized at the end, with the tracking issue left open for `--resume` |
 | Exit codes | 0 success, 1 any failure or refusal, 2 usage error (such as `--supersede` with `--resume`), 130 interrupted |
+| Status | Active |
+
+### vrg-release-group
+
+List an epic's release groups: a batch of tasks of one development epic (or
+a proxy of one) that ship together (epic vergil-project/.github#1672). A
+group's membership is the latest `release-group <id> rev <n>` record in the
+epic's comments, read only from the `human` and `agents` roles; a conflict,
+an out-of-order revision, an edited record or a malformed one refuses that
+group, and an outsider's edit of an epic comment refuses the whole epic.
+`list --epic <owner>/<repo>#<N>` prints one line per group,
+`G1 rev 3: <ref> <ref>` or `G2 rev 2: dissolved`; `--group <id>` narrows it
+and `--json` prints `{"epic", "groups"}`. Read-only: there are no write
+commands yet.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_release_group` (library: `vergil_tooling.lib.release_groups.record`) |
+| Args | `list --epic <owner>/<repo>#<N>` (required), `--group <id>`, `--json` |
+| Preconditions | GitHub App credentials for the epic's org |
+| Failure mode | Refusals and read failures on stderr, nothing on stdout |
+| Exit codes | 0 read, 1 refusal or read failure, 2 usage error |
 | Status | Active |
 
 ### vrg-release-lock
@@ -1952,9 +1993,11 @@ line (or the branch line). The command computes the head and the
 [change fingerprint](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/change_fingerprint.py)
 itself; it takes neither as an argument. For an issue of a batch before
 handoff (it has a batch marker), the change is that issue's own, from the
-previous issue's commit to `HEAD`, which must hold only the issue's first
-commit and its `fixup!` commits; folded, its fingerprint is the issue's
-commit's. Otherwise, a fix to an open PR included, it is the change since
+issue's own commit, the one non-fixup commit of `origin/develop..HEAD` whose
+subject ends in `(#N)`, with the `fixup!` commits directly after it folded in,
+from that commit's parent (the marker's `base_sha` is not used); later
+commits are excluded, and a `fixup!` of it after another commit is refused,
+since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with `origin/develop`. Submit, the watch and the audit read
 the records back from the trust layer's comment stream, agent role only,
 skipping an edited comment. A re-run that finds the same comment already

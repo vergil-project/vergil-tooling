@@ -154,13 +154,15 @@ class Approval:
 
     ``fingerprint`` is the change fingerprint the exemption covers.
     ``decision`` is always ``approve``: :func:`verified_approvals` returns no
-    other.
+    other. ``at`` is the approving reply's ``createdAt`` (ISO 8601), never the
+    request's: the approval counts from the moment the human gave it.
     """
 
     kind: RequestKind
     request_id: int
     decision: str
     fingerprint: str
+    at: str
 
 
 def _values(lines: list[str], prefix: str) -> list[str]:
@@ -221,7 +223,7 @@ def _judge(
     decision = parse_decision(reply.body)
     if decision != "approve":
         return None
-    return Approval(kind, request.id, decision, fingerprint)
+    return Approval(kind, request.id, decision, fingerprint, reply.created_at)
 
 
 def verified_approvals(issue_ref: str, *, authors: TrustedAuthors) -> list[Approval]:

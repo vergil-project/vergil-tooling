@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin import vrg_pr_workflow
-from vergil_tooling.lib import epics, pr_path, trust
+from vergil_tooling.lib import agent_gates, epics, pr_path, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.github import ClosingIssue, MissingGitHubTokenError, PRClosingReferences
 from vergil_tooling.lib.planning_close import PlanningClose
@@ -29,7 +29,9 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
+from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups.record import Group, GroupRecordError
+from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -168,26 +170,216 @@ def test_batch_start_refuses_a_malformed_issue(
     rules.assert_not_called()
 
 
-def test_batch_extract_rewrites_the_batch(clone: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.fixture()
+def groups(monkeypatch: pytest.MonkeyPatch) -> list[Group]:
+    """The live groups the faked ``groups_of`` answers with, each by its members."""
+    live: list[Group] = []
+
+    def groups_of(task: IssueRef, *, authors: object = None) -> list[Group]:
+        return [group for group in live if task in group.members]
+
+    monkeypatch.setattr(record, "groups_of", groups_of)
+    return live
+
+
+def _group(group_id: str, *numbers: int) -> Group:
+    members = tuple(IssueRef("acme", "tools", number) for number in numbers)
+    return Group(
+        epic=IssueRef("acme", "tools", 1672),
+        group=group_id,
+        rev=1,
+        members=members,
+        dissolved=False,
+        comment_id="1",
+    )
+
+
+def test_batch_extract_rewrites_the_batch(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
     sha = "c" * 40
     write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
     assert _run("batch-extract", "--issue", "acme/tools#11") == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"ok": True, "extracted": "#11", "remaining": ["#10", "#12"], "batch": True}
+    assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10", "#12"], "batch": True}
     assert not _state_dir(clone, 11).exists()
     assert read_marker(clone, "#12") == Marker(["#10", "#12"], sha)
 
 
-def test_batch_extract_to_one_member(clone: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_batch_extract_to_one_member(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
     write_markers(clone, ["#10", "#11"], base_sha="c" * 40)
     assert _run("batch-extract", "--issue", "11") == 0
     out = json.loads(capsys.readouterr().out)
-    assert out == {"ok": True, "extracted": "#11", "remaining": ["#10"], "batch": False}
+    assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10"], "batch": False}
     assert read_marker(clone, "#10") is None
 
 
+def test_check_writes_nothing(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = "c" * 40
+    write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
+    assert _run("batch-extract", "--check", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "split": [], "remaining": ["#10", "#12"]}
+    assert _state_dir(clone, 11).is_dir()
+    assert read_marker(clone, "#11") == Marker(["#10", "#11", "#12"], sha)
+
+
+def test_batch_extract_check_reports_a_split_and_exits_1(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "ok": False,
+        "split": [{"group": "G1", "leaving": ["#11"], "staying": ["#10"]}],
+        "remaining": ["#10", "#12"],
+    }
+    assert read_marker(clone, "#11") is not None
+
+
+def test_extract_split_refused_before_marker_change(
+    clone: Path,
+    groups: list[Group],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+
+    def extract_must_not_run(*_args: object) -> None:
+        msg = "extract ran after a refused split"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(vrg_pr_workflow.batch_marker, "extract", extract_must_not_run)
+    assert _run("batch-extract", "--issue", "11") == 1
+    err = capsys.readouterr().err
+    assert "G1" in err
+    assert "#11" in err
+    assert read_marker(clone, "#10") == Marker(["#10", "#11", "#12"], "c" * 40)
+    assert _state_dir(clone, 11).is_dir()
+
+
+def test_extract_whole_group_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"ok": True, "extracted": ["#10", "#11"], "remaining": ["#12"], "batch": False}
+    assert read_marker(clone, "#12") is None
+    assert not _state_dir(clone, 10).exists()
+
+
+def test_extract_standalone_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 11))
+    assert _run("batch-extract", "--issue", "12") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["remaining"] == ["#10", "#11"]
+
+
+def test_handoff_set_whole_groups_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12", "#13"], base_sha="c" * 40)
+    groups.extend([_group("G1", 10, 11), _group("G2", 12, 13)])
+    assert _run("batch-extract", "--check", "--issue", "10", "--issue", "11") == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["remaining"] == ["#12", "#13"]
+    assert read_marker(clone, "#12") == Marker(["#12", "#13"], "c" * 40)
+
+
+def test_unbatch_all_allowed(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10))
+    assert _run("batch-extract", "--issue", "10", "--issue", "11", "--issue", "12") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "ok": True,
+        "extracted": ["#10", "#11", "#12"],
+        "remaining": [],
+        "batch": False,
+    }
+    for number in (10, 11, 12):
+        assert not _state_dir(clone, number).exists()
+
+
+def test_group_member_outside_the_batch_is_not_staying(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #99 is grouped with #10 but is not in the batch, so it does not stay in it.
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.append(_group("G1", 10, 99))
+    assert _run("batch-extract", "--check", "--issue", "10") == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_collapsed_batch_under_group_rules(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+    groups.extend([_group("G1", 10, 11), _group("G2", 12, 13)])
+    assert _run("batch-extract", "--issue", "10", "--issue", "11") == 0
+    capsys.readouterr()
+    # The one issue left is no longer in a batch: its marker went with the rest.
+    assert read_marker(clone, "#12") is None
+    assert _run("batch-show", "--issue", "12") == 1
+
+
+def test_check_read_failure_exits_1(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+
+    def unreadable(task: IssueRef, *, authors: object = None) -> list[Group]:
+        msg = f"acme/tools#1672 cannot be read: comment 7 for {task.slug} is malformed"
+        raise GroupRecordError(msg)
+
+    monkeypatch.setattr(record, "groups_of", unreadable)
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    assert "cannot be read" in capsys.readouterr().err
+    assert read_marker(clone, "#11") is not None
+
+
+def test_batch_extract_read_failure_refuses_before_any_change(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_markers(clone, ["#10", "#11", "#12"], base_sha="c" * 40)
+
+    def unreadable(task: IssueRef, *, authors: object = None) -> list[Group]:
+        msg = f"acme/tools#1672 cannot be read: {task.slug}"
+        raise GroupRecordError(msg)
+
+    monkeypatch.setattr(record, "groups_of", unreadable)
+    assert _run("batch-extract", "--issue", "11") == 1
+    assert "cannot be read" in capsys.readouterr().err
+    assert read_marker(clone, "#10") == Marker(["#10", "#11", "#12"], "c" * 40)
+
+
+def test_batch_extract_check_refuses_an_issue_in_no_batch(
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("batch-extract", "--check", "--issue", "11") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not in a batch" in captured.err
+
+
 def test_batch_extract_refuses_while_security_details_exist(
-    clone: Path, capsys: pytest.CaptureFixture[str]
+    clone: Path, groups: list[Group], capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_markers(clone, ["#10", "#11"], base_sha="c" * 40)
     review = _state_dir(clone, 11) / "merge-review"
@@ -1178,3 +1370,242 @@ def test_report_ready_records_the_agent_identity_in_file_and_relay(
     payload = json.loads(_state_file(ready_clone).read_text())
     assert payload["recorded_by"] == "user"
     assert relay.return_value.write.call_args.args[0].recorded_by == "user"
+
+
+# --- batch-gates: the read-only probe ------------------------------------------------
+
+
+def _commit_file(repo: Path, name: str, text: str, subject: str) -> str:
+    (repo / name).write_text(text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture()
+def probe_clone(clone: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The clone with a local ``origin`` holding develop, and a feature branch of two issues.
+
+    The clone names acme/tools for the probe; the main clone's markers are in a
+    directory of their own, which the tests fill as they need.
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    _git(clone, "remote", "set-url", "origin", str(origin))
+    _git(clone, "push", "-q", "origin", "develop")
+    _git(clone, "checkout", "-q", "-b", "feature")
+    _commit_file(clone, "a.txt", "one\n", "the first issue (#7)")
+    _commit_file(clone, "b.txt", "two\n", "the second issue (#8)")
+    monkeypatch.setattr(vrg_pr_workflow, "_clone_repo", lambda: "acme/tools")
+    main_root = tmp_path / "main"
+    main_root.mkdir()
+    monkeypatch.setattr(vrg_pr_workflow.git, "main_worktree_root", lambda: main_root)
+    return clone
+
+
+def _mark_branch(clone: Path) -> None:
+    """Write the batch markers for #7 and #8, with origin/develop as the base."""
+    base = _git(clone, "rev-parse", "origin/develop")
+    write_markers(vrg_pr_workflow.git.main_worktree_root(), ["#7", "#8"], base_sha=base)
+
+
+def test_batch_gates_usage_exits_2(probe_clone: Path) -> None:
+    del probe_clone
+    with pytest.raises(SystemExit) as caught:
+        _run("batch-gates", "--issue", "7")
+    assert caught.value.code == 2
+    with pytest.raises(SystemExit) as caught:
+        _run("batch-gates", "extra")
+    assert caught.value.code == 2
+
+
+def test_batch_gates_refuses_after_report_ready(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no batch marker" in captured.err
+    assert "report-ready removes the markers" in captured.err
+
+
+def test_batch_gates_refuses_a_detached_head(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(probe_clone, "checkout", "-q", "--detach")
+    assert _run("batch-gates") == 1
+    assert "HEAD is detached" in capsys.readouterr().err
+
+
+def test_batch_gates_fetch_failure_exits_1(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    _git(probe_clone, "remote", "set-url", "origin", "/nonexistent/origin.git")
+    assert _run("batch-gates", "--json") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cannot fetch origin develop" in captured.err
+
+
+def _stub_verdicts(
+    monkeypatch: pytest.MonkeyPatch, verdicts: agent_gates.CommitVerdicts
+) -> dict[str, object]:
+    """Replace the per-commit evaluation; return what it was called with."""
+    seen: dict[str, object] = {}
+
+    def fake(repo: Path, *, base: str, head: str, issue_refs: list[str], authors: object) -> object:
+        seen.update(repo=repo, base=base, head=head, refs=issue_refs, authors=authors)
+        return verdicts
+
+    monkeypatch.setattr(vrg_pr_workflow.agent_gates, "evaluate_commits", fake)
+    monkeypatch.setattr(
+        vrg_pr_workflow,
+        "load_trusted_authors",
+        lambda: TrustedAuthors(human=("human",), agents=("agent",)),
+    )
+    return seen
+
+
+def test_batch_gates_json_shape_and_inputs(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    seven = _git(probe_clone, "rev-parse", "HEAD~1")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(
+            agent_gates.CommitVerdict("acme/tools#7", seven, True, None),
+            agent_gates.CommitVerdict("acme/tools#8", head, False, "a reason"),
+        )
+    )
+    seen = _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates", "--json") == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "branch": "feature",
+        "head": head,
+        "commits": [
+            {"issue": "acme/tools#7", "sha": seven, "covered": True, "reason": None},
+            {"issue": "acme/tools#8", "sha": head, "covered": False, "reason": "a reason"},
+        ],
+    }
+    assert seen["base"] == "origin/develop"
+    assert seen["head"] == head
+    assert seen["refs"] == ["acme/tools#7", "acme/tools#8"]
+
+
+def test_batch_gates_exits_0_and_prints_a_line_per_commit(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(
+            agent_gates.CommitVerdict("acme/tools#7", None, True, None),
+            agent_gates.CommitVerdict("acme/tools#8", head, True, None),
+        )
+    )
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "acme/tools#7  (no single commit)  covered",
+        f"acme/tools#8  {head[:12]}  covered",
+    ]
+
+
+def test_batch_gates_extra_reasons_go_to_stderr_and_fail(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    head = _git(probe_clone, "rev-parse", "HEAD")
+    verdicts = agent_gates.CommitVerdicts(
+        commits=(agent_gates.CommitVerdict("acme/tools#8", head, True, None),),
+        extra_reasons=("merge review: commit abc123 (fixup! x) is no issue's own commit",),
+    )
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert "is no issue's own commit" in captured.err
+    assert "covered" in captured.out
+
+
+def test_batch_gate_candidates_name_each_issue_once() -> None:
+    commits = [
+        ("a", "x (#7)"),
+        ("b", "y (#8)"),
+        ("c", "fixup! x (#7)"),
+        ("d", "z (#7)"),
+        ("e", "a commit naming no issue"),
+    ]
+    assert vrg_pr_workflow._batch_gate_candidates(commits) == [7, 8]
+
+
+def test_batch_gates_refuses_a_merge_commit(
+    probe_clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    _git(probe_clone, "checkout", "-q", "-b", "side", "HEAD~1")
+    _commit_file(probe_clone, "side.txt", "side\n", "a side line")
+    _git(probe_clone, "checkout", "-q", "feature")
+    _git(probe_clone, "merge", "-q", "--no-edit", "--no-ff", "side")
+    assert _run("batch-gates") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "is a merge commit" in captured.err
+
+
+def test_batch_gates_refuses_when_head_cannot_be_read(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    real = vrg_pr_workflow.git.read_output
+
+    def unreadable(*args: str) -> str:
+        if "HEAD^{commit}" in args:
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse"])
+        return real(*args)
+
+    monkeypatch.setattr(vrg_pr_workflow.git, "read_output", unreadable)
+    assert _run("batch-gates") == 1
+    assert "cannot read HEAD" in capsys.readouterr().err
+
+
+def test_batch_gates_refuses_a_clone_whose_repo_is_unknown(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+
+    def unknown() -> str:
+        raise vrg_pr_workflow.WrongCloneError("cannot tell which repo this clone is")
+
+    monkeypatch.setattr(vrg_pr_workflow, "_clone_repo", unknown)
+    assert _run("batch-gates") == 1
+    assert "cannot tell which repo this clone is" in capsys.readouterr().err
+
+
+def test_batch_gates_refuses_without_trusted_authors(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+
+    def unset() -> TrustedAuthors:
+        raise TrustedAuthorsNotConfiguredError("no trusted authors are configured")
+
+    monkeypatch.setattr(vrg_pr_workflow, "load_trusted_authors", unset)
+    assert _run("batch-gates") == 1
+    assert "no trusted authors are configured" in capsys.readouterr().err
+
+
+def test_batch_gates_read_failure_exits_1_with_the_failure_on_stderr(
+    probe_clone: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mark_branch(probe_clone)
+    failure = "merge review: lookup failed for origin/develop...HEAD: the comment stream is gone"
+    verdicts = agent_gates.CommitVerdicts(commits=(), extra_reasons=(failure,), read_failure=True)
+    _stub_verdicts(monkeypatch, verdicts)
+    assert _run("batch-gates", "--json") == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "the comment stream is gone" in captured.err
+    assert "nothing was written" in captured.err

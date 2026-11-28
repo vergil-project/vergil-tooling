@@ -139,8 +139,8 @@ def _response(request_id: int, reply_id: int) -> str:
     return f"Done.\n\n<!-- vrg-ruling kind=response request={request_id} reply={reply_id} -->"
 
 
-def _exemption(request_id: int) -> Approval:
-    return Approval("merge-review-exemption", request_id, "approve", FINGERPRINT)
+def _exemption(request_id: int, at: str = trust_stubs.CREATED) -> Approval:
+    return Approval("merge-review-exemption", request_id, "approve", FINGERPRINT, at)
 
 
 @pytest.fixture
@@ -165,6 +165,17 @@ def test_verified_approvals_reads_every_approved_exemption(items: trust_stubs.Fa
         trust_stubs.comment(22, _response(20, 21), AGENT_ACTOR),
     )
     assert verified_approvals(REF, authors=AUTHORS) == [_exemption(10), _exemption(20)]
+
+
+def test_approval_time_is_the_approving_reply_not_the_request(items: trust_stubs.FakeItems) -> None:
+    _on_issue(
+        items,
+        trust_stubs.comment(10, EXEMPTION, AGENT_ACTOR, created="2026-11-01T09:00:00Z"),
+        trust_stubs.comment(11, APPROVE, HUMAN, created="2026-11-05T17:30:00Z"),
+    )
+    assert verified_approvals(REF, authors=AUTHORS) == [
+        Approval("merge-review-exemption", 10, "approve", FINGERPRINT, "2026-11-05T17:30:00Z")
+    ]
 
 
 def test_verified_approvals_reads_the_whole_stream(

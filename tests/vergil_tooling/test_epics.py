@@ -5067,3 +5067,50 @@ def test_list_open_issues_refuses_a_parent_read_cut_short(monkeypatch: pytest.Mo
     monkeypatch.setattr(github, "graphql", lambda _query, **_variables: page)
     with pytest.raises(RuntimeError, match="did not say whether it has a parent"):
         epics.list_open_issues("org/tool")
+
+
+def _labels_by_ref(labels: dict[IssueRef, set[str]]) -> Callable[[IssueRef], set[str]]:
+    def fake(ref: IssueRef) -> set[str]:
+        return labels[ref]
+
+    return fake
+
+
+def test_epic_kind_of_a_development_epic_is_itself() -> None:
+    labels = {EPIC: {"epic"}}
+    with (
+        patch("vergil_tooling.lib.epics._labels", side_effect=_labels_by_ref(labels)),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+    ):
+        assert epics.epic_kind(EPIC) == (EPIC, epics.DEVELOPMENT_KIND)
+
+
+def test_epic_kind_reads_a_proxy_and_a_standing_kind() -> None:
+    labels = {EPIC: {"epic", "proxy"}, TASK: {"epic", "ad-hoc"}}
+    with (
+        patch("vergil_tooling.lib.epics._labels", side_effect=_labels_by_ref(labels)),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+    ):
+        assert epics.epic_kind(EPIC) == (EPIC, "proxy")
+        assert epics.epic_kind(TASK) == (TASK, "ad-hoc")
+
+
+def test_epic_kind_of_an_issue_without_the_epic_label_is_not_epic() -> None:
+    labels = {TASK: {"bug"}}
+    with patch("vergil_tooling.lib.epics._labels", side_effect=_labels_by_ref(labels)):
+        assert epics.epic_kind(TASK) == (TASK, epics.NOT_EPIC_KIND)
+
+
+def test_epic_kind_of_an_archive_is_archive() -> None:
+    labels = {EPIC: {"archive", "epic", "ad-hoc"}}
+    with patch("vergil_tooling.lib.epics._labels", side_effect=_labels_by_ref(labels)):
+        assert epics.epic_kind(EPIC) == (EPIC, epics.ARCHIVE_KIND)
+
+
+def test_epic_kind_of_a_continuation_is_its_heads() -> None:
+    labels = {TASK: {"epic", "continuation"}, EPIC: {"epic", "proxy"}}
+    with (
+        patch("vergil_tooling.lib.epics._labels", side_effect=_labels_by_ref(labels)),
+        patch("vergil_tooling.lib.epic_chain.head_of", return_value=EPIC),
+    ):
+        assert epics.epic_kind(TASK) == (EPIC, "proxy")
