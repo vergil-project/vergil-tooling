@@ -7,13 +7,19 @@ checks the hook's capture record, ``capture-<step>.json`` in the result's
 directory (``<step>`` from the request), and refuses a result whose bytes are
 not the ones the hook captured (rule 10). It then checks the coverage line
 (rule 11): the reply's last non-empty line must read
-``Diff read: <read> of <total> lines``, with ``<total>`` the diff's line count
-from the request and ``<read>`` equal to it, so a partial read is refused. In
-a check, the line before it must read ``Fix diff read: <read> of <total>
-lines`` the same way, for the fix diff. A diff over 2000 lines is also listed
-in parts in the request (``diff_parts``, ``fix_diff_parts``), which the check
-verifies sum to the total. On success it exits 0 and prints a
-JSON summary on stdout::
+``Diff read: through line <n>``, where ``<n>`` is the last line number ``Read``
+showed the reviewer. The driver's count for the diff is ``N``, the request's
+``diff_lines`` (the newline count of the patch). ``<n>`` must be ``N``, or
+``N+1`` when the patch file ends in a newline (``Read``'s phantom line); the
+check reads ``diff-<step>.patch`` in the result's directory for that. Anything
+else is refused, so a partial read is refused. In a check, the line before it
+must read ``Fix diff read: through line <n>`` the same way, judged against
+``fix_diff_lines`` and ``fix-<step>.patch``. The old form,
+``Diff read: <read> of <total> lines`` (and its fix form), is still accepted
+for one release: ``<read>`` is judged as ``<n>`` and ``<total>`` is never
+consulted. A diff over 2000 lines is also listed in parts in the request
+(``diff_parts``, ``fix_diff_parts``), which the check verifies sum to the
+total. On success it exits 0 and prints a JSON summary on stdout::
 
     {"step": "review",
      "counts": {"defect": 1, "design-question": 0, "out-of-scope": 0, "pre-existing": 0},
@@ -22,9 +28,12 @@ JSON summary on stdout::
 
 ``counts`` counts every finding by kind, ``security`` is the number of
 security findings and ``fix_status`` maps each ID the request listed to its
-status (empty in a review). On any violation it prints ``ERROR: <rule>`` on
-stderr, naming the rule broken but never the refused value, and exits 1.
-It reads only the two files and the capture record, and writes nothing.
+status (empty in a review). A summary carries ``count_normalised`` only when
+a coverage line's count was normalised (it read ``N+1``): ``"Diff read"``,
+``"Fix diff read"`` or ``"both"``. On any violation it prints ``ERROR: <rule>``
+on stderr, naming the rule broken but never the refused value, and exits 1.
+It reads only the two files, the capture record and the patch file, and
+writes nothing.
 
 Exit codes: ``0`` the result passed, ``1`` it failed or a file could not be
 read, ``2`` a usage error.
@@ -36,9 +45,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
+from vergil_tooling.lib.merge_review.request import diff_file, fix_file
 from vergil_tooling.lib.merge_review.result import (
     Result,
     ResultError,
@@ -46,6 +57,9 @@ from vergil_tooling.lib.merge_review.result import (
     parse_result,
 )
 from vergil_tooling.lib.merge_review.schema import KINDS
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -65,7 +79,11 @@ def main(argv: list[str] | None = None) -> int:
             step=checked.step,
             request_id=checked.request_id,
         )
-        result = parse_result(_decode(result_bytes, result_path, "result"), request)
+        result = parse_result(
+            _decode(result_bytes, result_path, "result"),
+            request,
+            patch_ends_with_newline=_patch_checker(result_path.parent, checked.step),
+        )
     except ResultError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -84,16 +102,41 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def summarize(result: Result) -> dict[str, object]:
-    """The JSON summary printed for a result that passed."""
+    """The JSON summary printed for a result that passed.
+
+    It carries ``count_normalised`` only when a coverage line's count was
+    normalised: ``"both"`` when both were, else the one that was.
+    """
     counts = dict.fromkeys(KINDS, 0)
     for finding in result.findings:
         counts[finding.kind] += 1
-    return {
+    summary: dict[str, object] = {
         "step": result.step,
         "counts": counts,
         "security": sum(1 for finding in result.findings if finding.security),
         "fix_status": dict(result.fix_status),
     }
+    if len(result.normalised) == 2:
+        summary["count_normalised"] = "both"
+    elif result.normalised:
+        summary["count_normalised"] = result.normalised[0]
+    return summary
+
+
+def _patch_checker(directory: Path, step: str) -> Callable[[str], bool]:
+    """The check rule 11 makes when a count reads N+1: whether that patch ends in a newline.
+
+    The patch is the whole diff (``diff-<step>.patch``) or the fix diff
+    (``fix-<step>.patch``), beside the result. It is read only when a line
+    reports N+1. A file that cannot be read is refused; an empty one does not
+    end in a newline.
+    """
+    names = {"diff": diff_file(step), "fix": fix_file(step)}
+
+    def ends_with_newline(which: str) -> bool:
+        return _read_bytes(directory / names[which], f"{which} patch").endswith(b"\n")
+
+    return ends_with_newline
 
 
 def _read_text(path: Path, what: str) -> str:

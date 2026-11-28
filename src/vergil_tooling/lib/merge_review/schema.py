@@ -56,11 +56,21 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The most lines one ``Read`` call returns: a diff over this is read in parts.
 MAX_READ_LINES = 2000
 
-#: The reviewer's closing coverage line: the whole diff's lines read, of its total.
-DIFF_READ_RE = re.compile(r"^Diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+#: The reviewer's closing coverage line. The current form is
+#: ``Diff read: through line <n>``, where ``<n>`` is the last line number ``Read``
+#: showed the reviewer. The old form ``Diff read: <read> of <total> lines`` is
+#: still accepted for one release: its ``<read>`` is judged as ``<n>`` and its
+#: ``<total>`` is never consulted. Group 1 holds ``<n>`` in the current form and
+#: group 2 holds ``<read>`` in the old one.
+DIFF_READ_RE = re.compile(
+    r"^Diff read: (?:through line (0|[1-9][0-9]*)|(0|[1-9][0-9]*) of (?:0|[1-9][0-9]*) lines)$"
+)
 
 #: A check's coverage line for its fix diff, the line just before the diff line.
-FIX_READ_RE = re.compile(r"^Fix diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+#: It takes the same two forms as :data:`DIFF_READ_RE`.
+FIX_READ_RE = re.compile(
+    r"^Fix diff read: (?:through line (0|[1-9][0-9]*)|(0|[1-9][0-9]*) of (?:0|[1-9][0-9]*) lines)$"
+)
 
 
 def capture_file(step: str) -> str:
