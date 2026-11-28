@@ -199,9 +199,12 @@ def test_batch_extract_rewrites_the_batch(
 ) -> None:
     sha = "c" * 40
     write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
+    ledger = _state_dir(clone, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
     assert _run("batch-extract", "--issue", "acme/tools#11") == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10", "#12"], "batch": True}
+    assert not ledger.exists()
     assert not _state_dir(clone, 11).exists()
     assert read_marker(clone, "#12") == Marker(["#10", "#12"], sha)
 
@@ -906,6 +909,23 @@ def test_report_ready_batch_removes_markers_on_success(
     # Only the marker goes: the merge-review state beside it is the skill's.
     assert review.is_dir()
     assert not _state_dir(ready_clone, 11).exists()
+
+
+def test_report_ready_batch_keeps_the_writer_commits_ledger(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+) -> None:
+    _branch(ready_clone, "feat: a (#10)", "feat: b (#11)")
+    write_markers(ready_clone, ["#10", "#11"], base_sha="c" * 40)
+    ledger = _state_dir(ready_clone, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
+    assert _report("10", "11") == 0
+    assert read_marker(ready_clone, "#11") is None
+    # Only the marker goes: the ledger stays until the PR merges.
+    assert ledger.read_text() == f"commit\t{'d' * 40}\tfeat: b (#11)\n"
+    assert _state_dir(ready_clone, 11).is_dir()
 
 
 def test_report_ready_batch_removes_markers_from_a_worktree(

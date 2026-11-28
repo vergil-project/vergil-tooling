@@ -329,6 +329,26 @@ def test_extract_to_one_member_keeps_its_merge_review_state(tmp_path: Path) -> N
     assert review.is_dir()
 
 
+def test_extract_removes_the_writer_commits_ledger_with_its_dir(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    ledger = _issue_dir(tmp_path, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
+    assert extract(tmp_path, ["#11"]) == ["#10", "#12"]
+    assert not ledger.exists()
+    assert not _issue_dir(tmp_path, 11).exists()
+
+
+def test_extract_to_one_member_keeps_its_writer_commits_ledger(tmp_path: Path) -> None:
+    write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
+    ledger = _issue_dir(tmp_path, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
+    assert extract(tmp_path, ["#10"]) == ["#11"]
+    assert read_marker(tmp_path, "#11") is None
+    # The ledger keeps the directory: only the marker went.
+    assert ledger.read_text() == f"commit\t{'d' * 40}\tfeat: b (#11)\n"
+    assert _issue_dir(tmp_path, 11).is_dir()
+
+
 def test_extract_refuses_an_issue_without_a_marker(tmp_path: Path) -> None:
     with pytest.raises(BatchMarkerError, match="not in a batch"):
         extract(tmp_path, ["#10"])
@@ -385,6 +405,18 @@ def test_remove_markers_removes_markers_and_empty_dirs(tmp_path: Path) -> None:
     assert not _issue_dir(tmp_path, 10).exists()
     assert read_marker(tmp_path, "#11") is None
     assert review.is_dir()
+
+
+def test_remove_markers_leaves_the_writer_commits_ledger(tmp_path: Path) -> None:
+    # The ledger stays until the PR merges: report-ready only drops the marker.
+    write_markers(tmp_path, ["#10", "#11"], base_sha=SHA)
+    ledger = _issue_dir(tmp_path, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
+    remove_markers(tmp_path, ["#10", "#11"])
+    assert read_marker(tmp_path, "#11") is None
+    assert ledger.read_text() == f"commit\t{'d' * 40}\tfeat: b (#11)\n"
+    assert _issue_dir(tmp_path, 11).is_dir()
+    assert not _issue_dir(tmp_path, 10).exists()
 
 
 def test_remove_markers_refuses_a_bad_ref_before_removing_any(tmp_path: Path) -> None:
@@ -474,6 +506,19 @@ def test_extract_set_of_every_member_unbatches_all(tmp_path: Path) -> None:
     write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
     assert extract(tmp_path, ["#10", "#11", "#12"]) == []
     for number in (10, 11, 12):
+        assert not _issue_dir(tmp_path, number).exists()
+
+
+def test_extract_set_of_every_member_removes_every_writer_commits_ledger(
+    tmp_path: Path,
+) -> None:
+    write_markers(tmp_path, ["#10", "#11", "#12"], base_sha=SHA)
+    for number in (10, 11, 12):
+        ledger = _issue_dir(tmp_path, number) / "writer-commits"
+        ledger.write_text(f"commit\t{'e' * 40}\tfeat: {number} (#{number})\n")
+    assert extract(tmp_path, ["#10", "#11", "#12"]) == []
+    for number in (10, 11, 12):
+        assert not (_issue_dir(tmp_path, number) / "writer-commits").exists()
         assert not _issue_dir(tmp_path, number).exists()
 
 
