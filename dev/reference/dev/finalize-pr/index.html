@@ -19741,7 +19741,13 @@ is waiting on:</p>
   minutes, and never reclaimed: only <code>vrg-release-lock break</code> clears it.</li>
 <li><strong>No lock held, and the PR unarmed:</strong> the watch re-arms it through the
   one PR path, the one way it turns auto-merge on. A re-arm the path
-  refuses ends the PR as <em>failed: refused</em>.</li>
+  refuses ends the PR as <em>failed: refused</em>. A re-arm refused only because
+  the base branch moved (another PR merged into <code>develop</code> while the path
+  tried, through its own retries) does not end it: the PR shows as
+  <code>re-arm refused because the base branch moved; ... (attempt k/5)</code>, stays
+  pending, and the next poll re-reads it and re-arms it. Five such
+  refusals in a row for one PR stop the run with exit 1, naming the PR. A
+  read that finds a release lock held starts the count again.</li>
 <li><strong>A PR behind <code>develop</code> with no lock held:</strong> a release's bump PR moves
   <code>develop</code> on, and a PR the release held still carries the old version,
   so its version check fails until it is rebased. So the first read with no
