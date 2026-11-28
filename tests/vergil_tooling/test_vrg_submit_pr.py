@@ -2488,6 +2488,25 @@ def test_unexpected_error_after_the_pr_opens_names_the_pr() -> None:
     ]
 
 
+def test_failed_state_read_does_not_mask_the_original_error() -> None:
+    """A state read that raises does not replace the original error (#5446)."""
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".pr_provenance.check_pr", side_effect=KeyError("boom")),
+        patch(_MOD + ".pr_path.arm") as enable,
+        patch(_MOD + ".pr_path.describe_state", side_effect=RuntimeError("read boom")),
+        pytest.raises(KeyError) as raised,
+    ):
+        _submit_all([_submission(record_in=None)], _ARGS)
+    enable.assert_not_called()
+    assert raised.value.__notes__ == [
+        "https://x/pull/9 was opened at h0; the provenance check failed; "
+        "the PR is now unknown (its state could not be read: "
+        "RuntimeError: read boom)."
+    ]
+
+
 def test_submission_recorded_when_auto_merge_fails() -> None:
     """An opened PR is recorded even when auto-merge then fails, so no second PR opens."""
     with (

@@ -1238,7 +1238,15 @@ class _SubmitRun:
             self.left_open.append(pr_url)
             raise progress.StageFailedError(f"{_pr_label(pr_url)} {reason}") from exc
         except Exception as exc:
-            state = pr_path.describe_state(pr_url)
+            # The state read runs while the original error is in flight: a read
+            # failure must not replace it, so it is named in the note instead.
+            try:
+                state = pr_path.describe_state(pr_url)
+            except Exception as read_exc:
+                state = (
+                    f"unknown (its state could not be read: "
+                    f"{type(read_exc).__name__}: {read_exc})"
+                )
             exc.add_note(
                 f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed; "
                 f"the PR is now {state}."
