@@ -27,8 +27,9 @@ vergil-project/.github#1664, spec §5.4), which opens nothing: run in the
 worktree of an open PR's branch, it pushes the checked-out ``HEAD`` to that
 branch through the one PR path (:func:`vergil_tooling.lib.pr_path.push_to_open_pr`),
 which runs the provenance check and the agent gates against the new head
-before it pushes, and never pushes a head that fails them. Auto-merge stays
-on throughout. ``--force-with-lease`` is for a rebased head: the lease is
+before it pushes, and never pushes a head that fails them. It never changes
+the PR's auto-merge: that is left as it was, which is off while a release
+holds the PR. ``--force-with-lease`` is for a rebased head: the lease is
 the branch's remote-tracking ref, the head this clone last saw on origin. A
 branch frozen by ``report-ready`` is refused, as ``vrg-git`` refuses its
 push. It exits 0 once the head is pushed, 1 when it is refused, naming why.
@@ -430,8 +431,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Push mode: from the worktree of an open PR's branch into develop, push "
         "HEAD to that branch through the one PR path, which runs the provenance check "
-        "and the agent gates on the new head before pushing it. Opens no PR and leaves "
-        "auto-merge on. Takes no other mode's arguments.",
+        "and the agent gates on the new head before pushing it. Opens no PR and does not "
+        "change auto-merge. Takes no other mode's arguments.",
     )
     parser.add_argument(
         "--force-with-lease",

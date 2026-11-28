@@ -208,8 +208,11 @@ refused to agents.
   a back-merge or a dependency-update PR.
 - Always runs `vrg-finalize-pr` on the PR (see step 5), so it returns
   only once the PR has merged or cannot merge.
+- Refuses while a release holds the repository's lock: it pushes nothing, opens no PR and exits 7, naming the release (its holder, version, stage and health). `--wait-for-release` waits for the lock to clear instead, within `$VRG_FINALIZE_DEADLINE`, then goes on; a wait that outlasts the deadline exits 6. See [The release lock](../reference/dev/submit-pr.md#the-release-lock).
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
+
+A PR already open when a release takes the lock is left unarmed, and the merge watch (`vrg-finalize-pr`, `vrg-pr-await`) shows it as held by the release and keeps waiting. At its deadline the watch exits 6, `held by release`, which is not a failure: re-run `vrg-finalize-pr <PR URL>` from the main clone. The release re-arms the PR when it unlocks. Every push to an open PR's branch, a fix or a rebase, goes through `vrg-submit-pr --push` (`--force-with-lease` for a rebased head), which judges the new head before it pushes; it exits 7 too while a release holds the lock. See [Agents during a release](releasing.md#agents-during-a-release).
 
 !!! note "Agent handoff and the post-report-ready freeze"
     In an agent session, the agent submits its own PR. Once the

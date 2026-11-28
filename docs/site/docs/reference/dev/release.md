@@ -22,6 +22,8 @@ issue open. The run then ends naming what is left and the one command
 that finishes it, `vrg-release --resume`, or, for a release that cannot
 finish, `vrg-release --supersede X.Y.Z`.
 
+A release holds the repository's [release lock](../../guides/releasing.md#the-release-lock) from `preflight`'s quiesce until its `unlock` stage, so `develop` cannot move under it, and a PR into `develop` that is not the release's own is left unarmed meanwhile. [`vrg-release-lock`](../cli-tools-overview.md#vrg-release-lock) reads the lock and, for the human, breaks it.
+
 On a fresh start, `preflight` prints the release's contents: the
 pending-release table of `main..<cut>` and the issues the release
 contains, each with its closing PRs, from the trusted closing
@@ -106,8 +108,8 @@ vrg-release [minor|major] --supersede X.Y.Z [options]
 | `minor` / `major` | No | Bump to the next minor or major version before releasing. Default: release the current `develop` version |
 | `--without-deps` | No | Skip the `update-deps` stage. Recorded in the tracking issue's state block, so every later `--resume` skips it too. Allowed with `--resume`, where it skips an update that failed, so the release finishes without it |
 | `--allow-pending-deps` | No | Release even though an open `dependency-update` PR blocks it. For urgent fixes only; the bypassed PRs are listed on the tracking issue |
-| `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major` |
-| `--supersede X.Y.Z` | No | Start a fresh release that supersedes open release `X.Y.Z`, which `--resume` cannot finish: one tagged with only `cd-publish`, `package-index`, `update-deps` or `install` left, or one halted at `confirm-main` with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs `X.Y.Z`'s issues and closes its tracking issue. Combines with `minor`/`major`; passing it with `--resume` is a usage error (exit 2). See [Superseding a release](../../guides/releasing.md#superseding-a-release) |
+| `--resume [X.Y.Z]` | No | Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with `minor`/`major`. Before `unlock` it adopts its own broken or stale [release lock](../../guides/releasing.md#resuming-and-superseding-under-the-lock) or re-takes an absent one, and refuses a live one or another release's. |
+| `--supersede X.Y.Z` | No | Start a fresh release that supersedes open release `X.Y.Z`, which `--resume` cannot finish: one tagged with only `cd-publish`, `package-index`, `update-deps` or `install` left, or one halted at `confirm-main` with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs `X.Y.Z`'s issues and closes its tracking issue. Combines with `minor`/`major`; passing it with `--resume` is a usage error (exit 2). See [Superseding a release](../../guides/releasing.md#superseding-a-release). It takes over the superseded release's lock when that is broken or stale, and refuses a running one. |
 | `--skip-audit` | No | Skip the `audit` stage |
 | `--output-window N` | No | Rolling output window for the terminal renderer (`0` streams everything) |
 | `--output-format` | No | Force the renderer: `rich`, `gha` or `plain` |
@@ -321,6 +323,6 @@ failed checks as its likely cause (issue #4294).
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every stage succeeded |
-| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused |
+| 1 | A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; the command was refused; or the release was abandoned on a [stray merge](../../guides/releasing.md#stray-merges) |
 | 2 | Usage error, such as `--supersede` with `--resume` or a `--supersede` version that is not `X.Y.Z` |
 | 130 | Interrupted (Ctrl-C) |

@@ -826,7 +826,8 @@ def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
     ``--force-with-lease=<branch>:<lease>`` when *lease* is given (a rebased
     head; *lease* is the head the caller expects origin to have), a plain
     push otherwise. A head that fails a check is not pushed. Auto-merge is
-    never touched, so it stays on throughout.
+    never touched: it is left as it was, which is off while a release holds
+    the PR.
 
     A branch with no open PR into ``develop``, a PR the path does not
     accept, a PR that closes part of a release group, and a head that fails a
