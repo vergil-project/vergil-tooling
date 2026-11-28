@@ -19965,7 +19965,7 @@ require these checks. The list is computed from
 <td>CodeQL supports the language (<code>python</code>, <code>go</code>, <code>rust</code>, <code>cpp</code> or <code>typescript</code>)</td>
 </tr>
 <tr>
-<td><code>Trivy</code>, <code>Semgrep OSS</code></td>
+<td><code>Trivy</code></td>
 <td>Always</td>
 </tr>
 <tr>
@@ -19974,10 +19974,13 @@ require these checks. The list is computed from
 </tr>
 </tbody>
 </table>
-<p>The bare <code>CodeQL</code>, <code>Trivy</code> and <code>Semgrep OSS</code> checks come from GitHub
+<p>The bare <code>CodeQL</code> and <code>Trivy</code> checks come from GitHub
 code scanning (GitHub Advanced Security), not from a workflow job. Every
 repository is public, so code scanning is always available and those
-checks are always required.</p>
+checks are always required. The bare <code>Semgrep OSS</code> check is not required:
+Semgrep's result is gated by <code>security / semgrep</code>, and its SARIF is still
+uploaded to code scanning (vergil-project/vergil-tooling#5227), because the
+GHAS check can stay pending long after the scan passes.</p>
 <h3 id="every-check-that-runs-is-a-gate">Every check that runs is a gate<a class="headerlink" href="#every-check-that-runs-is-a-gate" title="Permanent link">&para;</a></h3>
 <p>There is no tier of checks that runs on a PR but does not block it. The
 required set above is pinned by a test so it cannot drift silently.</p>

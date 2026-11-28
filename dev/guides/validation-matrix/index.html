@@ -19459,7 +19459,7 @@ where it runs. No git hooks are installed: every check runs inside a
 <td>GitHub code scanning results</td>
 <td>GitHub, from the uploaded SARIF</td>
 <td>-- (CI-only)</td>
-<td><code>Trivy</code>, <code>Semgrep OSS</code>, <code>CodeQL</code></td>
+<td><code>Trivy</code>, <code>CodeQL</code></td>
 </tr>
 <tr>
 <td>Strict docs build</td>
@@ -19546,9 +19546,9 @@ shell suites (vergil-actions#1108).</p>
 <td>It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy.</td>
 </tr>
 <tr>
-<td><code>Trivy</code>, <code>Semgrep OSS</code>, <code>CodeQL</code></td>
+<td><code>Trivy</code>, <code>CodeQL</code></td>
 <td>CI-only</td>
-<td>GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep and trivy stages cover the findings behind them.</td>
+<td>GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep and trivy stages cover the findings behind them. Semgrep's own result is gated by <code>security / semgrep</code>; its GHAS <code>Semgrep OSS</code> check is not required (vergil-project/vergil-tooling#5227).</td>
 </tr>
 <tr>
 <td><code>version / version-bump</code></td>
