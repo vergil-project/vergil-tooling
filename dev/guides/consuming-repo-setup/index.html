@@ -19751,8 +19751,10 @@ version window.</p>
 </tr>
 </tbody>
 </table>
-<p><code>[publish]</code> (<code>release</code>, default <code>false</code>; <code>docs</code>, default <code>true</code>; <code>vrg-release</code>
-refuses a repo whose <code>release</code> is not <code>true</code>; <code>install</code>, the shell lines the
+<p><code>[publish]</code> (<code>release</code>, a boolean, default <code>false</code>; <code>vrg-release</code>
+refuses a repo whose <code>release</code> is not <code>true</code>; <code>docs</code>, a boolean, default
+<code>true</code>; a non-bool <code>release</code> or <code>docs</code> is an error naming the key, as
+<code>reload-plugins</code> is; <code>install</code>, the shell lines the
 release's <code>install</code> stage runs, with <code>&lt;VERSION&gt;</code> and <code>&lt;MINOR&gt;</code> expanded to
 the release's <code>X.Y.Z</code> and <code>X.Y</code>, none by default; its deprecated name
 <code>consumer-refresh</code> is still read, with a warning, and setting both is an
