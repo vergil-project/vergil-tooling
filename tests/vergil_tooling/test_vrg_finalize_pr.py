@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import subprocess
@@ -92,6 +91,7 @@ _PROJECTS = Path("/vergil/projects")
 _REAL_IS_MAIN_WORKTREE = git.is_main_worktree
 
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Callable, Generator, Iterator
 
     from tests.vergil_tooling.conftest import FakeApp
