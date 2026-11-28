@@ -44,7 +44,7 @@ the dev-tree override venv.
 | [vrg-merge-review-check](cli-tools-overview.md#vrg-merge-review-check) | Check a stored merge-review result against the request it answers |
 | [vrg-merge-review-close](cli-tools-overview.md#vrg-merge-review-close) | Post merge review's closing comment with its record line: the head, the change fingerprint and the outcome |
 | [vrg-change-class](cli-tools-overview.md#vrg-change-class) | Print a branch's merge-review change class: `docs-only` or `code` |
-| [vrg-state-dir](cli-tools-overview.md#vrg-state-dir) | Create and check a task's private state directory and print its path |
+| [vrg-state-dir](cli-tools-overview.md#vrg-state-dir) | Create and check a skill's private state directory and print its path |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
 | [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
 | [vrg-dependabot-audit](dependabot-audit.md) | Fail on any open Dependabot alert |

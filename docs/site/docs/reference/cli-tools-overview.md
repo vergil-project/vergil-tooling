@@ -2176,27 +2176,44 @@ makes there, and writes only to the path it prints.
 
 ### vrg-state-dir
 
-Create and check a task's private state directory,
-`build/.vergil-state/<kind>/<N>/` in the main clone, as
+Create and check a skill's private state directory under `build/.vergil-state/`
+in the main clone, as
 [doctrine §1.5](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories)
-requires, and print its absolute path. `--kind` is `operational` (the
-security items of `issue-validate` and `issue-deploy`), `issue-implement` or
-`upstream-report`. `build` must be a real directory (it is created when
-absent), and each level from `.vergil-state` down to `<N>` must be a real
-directory, not a symlink, with mode exactly 700; an absent level is created
-mode 700. A level that fails stops the command before anything is created
-below it. These are the checks
+requires, and print its absolute path. `--kind` is one of:
+
+- `operational` (the security items of `issue-validate` and `issue-deploy`),
+  `issue-implement` or `upstream-report`, each with `--issue OWNER/NAME#N`,
+  checking `build/.vergil-state/<kind>/<N>/`.
+- `design-review`, with `--issue OWNER/NAME#M` (the planning issue) and
+  `--round ID`, a `S`, `P` or `A` then digits (`S1`, `P12`, `A3`), checking
+  `build/.vergil-state/design-review/<M>/<ID>/`. The tool is idempotent: an
+  existing private round directory is accepted. Whether a round may pre-exist
+  is the caller's decision under doctrine §1.5, not the tool's.
+- `hoshin`, with `--repo OWNER/NAME`, `--date YYYY-MM-DD` (a real calendar
+  date) and `--mode start` or `--mode end`, checking
+  `build/.vergil-state/hoshin/<date>-<mode>/`. There is no issue, so `--issue`
+  does not apply to it.
+
+An option the kind does not take, a required one left out, or a malformed
+`--round`, `--date`, `--repo` or `--mode` is a usage error (exit 2, nothing on
+stdout, nothing created).
+
+`build` must be a real directory (it is created when absent), and each level
+from `.vergil-state` down to the kind's last level must be a real directory,
+not a symlink, with mode exactly 700; an absent level is created mode 700. A
+level that fails stops the command before anything is created below it. These
+are the checks
 [`vrg-merge-review-request --ensure-dir`](#vrg-merge-review-request) makes,
 through the same code. Before it creates or checks anything, it refuses
-unless the current clone's `origin` is the `--issue` repository, naming both
-repositories. The caller runs it before every write it makes there, and
-writes only to the path it prints.
+unless the current clone's `origin` is the `--issue` repository, or the
+`--repo` repository for `hoshin`, naming both repositories. The caller runs it
+before every write it makes there, and writes only to the path it prints.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_state_dir` (library: `lib/merge_review/state.py`, `lib/build_dir.py`) |
-| Args | `--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure` |
-| Preconditions | Run in a clone (or worktree) of the `--issue` repository |
+| Args | `--kind {operational,issue-implement,upstream-report,design-review,hoshin} --ensure`, with `--issue OWNER/NAME#N` (every kind but `hoshin`), `--round ID` (`design-review`), or `--repo OWNER/NAME --date YYYY-MM-DD --mode {start,end}` (`hoshin`) |
+| Preconditions | Run in a clone (or worktree) of the `--issue` repository, or of the `--repo` repository for `hoshin` |
 | Failure mode | `ERROR: <reason>` on stderr, nothing on stdout |
 | Exit codes | 0 the path was printed, 1 a refusal or error, 2 bad arguments |
 | Status | Active |
