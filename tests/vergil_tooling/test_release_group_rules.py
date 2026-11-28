@@ -249,6 +249,25 @@ def test_rule_dependency_path_refused(world: World) -> None:
     assert dependency_paths(members) == [(ref(1), OUTSIDE, ref(2))]
 
 
+def test_dependency_path_break_names_its_start(world: World) -> None:
+    # The group audit filters breaks by member: a path's break is about the member it starts at.
+    world.blockers[ref(1)] = [OUTSIDE]
+    world.blockers[OUTSIDE] = [ref(2)]
+    [path] = [
+        b for b in check_group_rules(EPIC, GROUP, [ref(1), ref(2)]) if b.rule == "dependency path"
+    ]
+    assert path.member == ref(1)
+
+
+def test_breaks_name_their_member_or_none(world: World) -> None:
+    # A per-member break names its member; a break about the group as a whole names none.
+    world.operational[ref(2)] = "validation"
+    other = IssueRef("org", "other", 2)
+    pairs = {(b.rule, b.member) for b in check_group_rules(EPIC, GROUP, [ref(1), ref(2), other])}
+    assert ("not operational", ref(2)) in pairs
+    assert ("one repo", None) in pairs
+
+
 @pytest.mark.parametrize("count", [0, MAX_BATCH + 1], ids=["none", "too many"])
 def test_rule_size_refused(world: World, count: int) -> None:
     members = [ref(n) for n in range(1, count + 1)]

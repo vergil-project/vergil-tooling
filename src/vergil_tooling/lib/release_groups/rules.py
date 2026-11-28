@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 
 # The errors a GitHub, git, trust or configuration read can end in. A read that ends in any of
 # them refuses the rules, never passes them (see batch_rules._READ_ERRORS for the same set).
-_READ_ERRORS: tuple[type[Exception], ...] = (
+# Public so the group audit refuses a read the same way.
+READ_ERRORS: tuple[type[Exception], ...] = (
     subprocess.CalledProcessError,
     OSError,
     RuntimeError,
@@ -59,7 +60,11 @@ class GroupRuleReadError(Exception):
 
 @dataclass(frozen=True)
 class RuleBreak:
-    """One rule of §5.1 a group breaks: the group, the rule's name and what breaks it."""
+    """One rule of §5.1 a group breaks: the group, the rule's name and what breaks it.
+
+    *member* is the member the break is about (a per-member rule, or a dependency path's
+    start), and ``None`` for a rule about the group as a whole.
+    """
 
     group: str
     rule: Literal[
@@ -73,6 +78,7 @@ class RuleBreak:
         "same epic",
     ]
     detail: str
+    member: epics.IssueRef | None = None
 
 
 @dataclass(frozen=True)
@@ -103,7 +109,7 @@ def _read[T](what: str, read: Callable[[], T]) -> T:
         return read()
     except github.MissingGitHubTokenError:
         raise
-    except _READ_ERRORS as exc:
+    except READ_ERRORS as exc:
         raise GroupRuleReadError(f"could not read {what}: {error_text(exc)}") from exc
 
 
@@ -193,22 +199,33 @@ def _member_breaks(group: str, head: epics.IssueRef, member: epics.IssueRef) -> 
     state = _read(f"the state of {slug}", partial(_in_org, member, epics.issue_state))
     non_task = _read(f"the labels of {slug}", partial(_in_org, member, epics.non_task_kind))
     if state != "OPEN":
-        breaks.append(RuleBreak(group, "open code task", f"{slug} is {state.lower()}, not open"))
+        breaks.append(
+            RuleBreak(group, "open code task", f"{slug} is {state.lower()}, not open", member)
+        )
     if non_task is not None:
-        breaks.append(RuleBreak(group, "open code task", f"{slug} is an {non_task}, not a task"))
+        breaks.append(
+            RuleBreak(group, "open code task", f"{slug} is an {non_task}, not a task", member)
+        )
     operational = _read(f"the labels of {slug}", partial(_in_org, member, epics.operational_kind))
     if operational is not None:
         breaks.append(
             RuleBreak(
-                group, "not operational", f"{slug} is labelled {operational}, not PR-workable"
+                group,
+                "not operational",
+                f"{slug} is labelled {operational}, not PR-workable",
+                member,
             )
         )
     if _is_doc_review(member):
-        breaks.append(RuleBreak(group, "not a documentation review", f"{slug} is a doc review"))
+        breaks.append(
+            RuleBreak(group, "not a documentation review", f"{slug} is a doc review", member)
+        )
     placed = _read(f"the epic of {slug}", partial(_in_org, member, epics.task_epic))
     if placed.epic is None or _key(placed.epic) != _key(head):
         where = "no epic" if placed.epic is None else placed.epic.slug
-        breaks.append(RuleBreak(group, "same epic", f"{slug} is under {where}, not {head.slug}"))
+        breaks.append(
+            RuleBreak(group, "same epic", f"{slug} is under {where}, not {head.slug}", member)
+        )
     return breaks
 
 
@@ -318,7 +335,7 @@ def check_group_rules(
             f"{start.slug} waits on {through.slug}, an open task outside the group,"
             f" which waits on {to.slug}"
         )
-        breaks.append(RuleBreak(group, "dependency path", detail))
+        breaks.append(RuleBreak(group, "dependency path", detail, start))
     return breaks
 
 

@@ -65,6 +65,17 @@ body fails the check before this read). Any difference refuses; the references \
 never pass the check, pick an issue or set the commit order."""
 
 [[judged]]
+path = "lib/release_groups/closers.py"
+function = "merged_closers"
+fields = ["body", "closedByPullRequestsReferences", "closingIssuesReferences", "timelineItems", "userContentEdits"]
+judge = ["lib/pending_release.py:trusted_closing_refs"]
+reason = """The group audit's closing PRs are read with CLOSING_FIELDS, the same fields \
+as vrg_release_record's closing-PR read. A PR counts only when trusted_closing_refs, \
+which judges the body through trust.judge_body and each hand link's actor through \
+trust.judge_identity, counts its reference to the task; an untrusted body is never \
+parsed."""
+
+[[judged]]
 path = "bin/vrg_release_record.py"
 function = "_closing_prs"
 fields = ["body", "closedByPullRequestsReferences", "closingIssuesReferences", "timelineItems", "userContentEdits"]
