@@ -15,11 +15,38 @@ Validation targets these files:
 | Security records, such as the Scorecard snapshots | `docs/security/**/*.md` |
 | Project README | `README.md` |
 | Epic specs, plans and retrospectives | `epics/**/*.md` |
+| Extra paths the repo lists in `[markdownlint].paths` | a listed directory's `**/*.md`, or a listed `.md` file |
 
 Other markdown files (changelogs, release notes, internal docs, and the
 rest of `docs/`, such as plans and specs) are not validated by this
-check. The `[markdownlint].ignore` paths in `vergil.toml` drop files
-under `docs/site/`, `docs/security/` and `epics/`.
+check unless the repo lists them in `[markdownlint].paths`. The
+`[markdownlint].ignore` paths in `vergil.toml` drop files under
+`docs/site/`, `docs/security/`, `epics/` and the extra paths.
+
+### Extra paths
+
+A repo that keeps markdown outside the fixed scope, such as a plugin's
+`skills/` tree, names it in `vergil.toml`:
+
+```toml
+[markdownlint]
+paths = ["skills", "docs/guides/extra.md"]
+```
+
+Each entry is a repo-relative path. A directory is searched recursively
+for `*.md`; a file is linted as it is. The listed files join the fixed
+scope in the same single markdownlint pass, against the same bundled
+config, so `vrg-validate` and `vrg-validate --markdown FILE` agree on
+them. An entry that does not exist, or a file that is not `.md`, fails
+the check; it is never skipped silently. An absolute path, a path with a
+`..` component and an empty entry are rejected when `vergil.toml` is
+read. `[markdownlint].ignore` applies to the listed paths too. A markdown
+file outside the fixed scope and not listed is not linted.
+
+The `paths` key takes effect once the release that carries it is
+published. An older release warns on stderr that the key is
+unrecognized and lints the fixed scope only, so a repo should not list
+paths until its pinned vergil-tooling carries the key.
 
 ## Configuration
 
@@ -82,6 +109,8 @@ to markdownlint's defaults, MD013 included.
 Right after markdownlint, the common checks run docs-links over the same
 markdown, less `epics/archive/`. The `[markdownlint].ignore` paths do
 not apply to it: a file left out of the lint still publishes its links.
+Its scope is the fixed default scope only: the `[markdownlint].paths`
+extra paths are not checked by it.
 
 The Vergil docs sites that mike versions serve every page under a
 version segment, so a deep link written as
