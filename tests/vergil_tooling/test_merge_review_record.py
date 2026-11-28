@@ -210,7 +210,7 @@ def test_records_carry_the_comment_time_and_the_record_line_is_unchanged(
     assert render_record(HEAD, FP, "eligible") in body
 
 
-def test_records_narrow_the_stream_to_the_agent_role(
+def test_records_read_the_human_and_agent_streams_and_keep_only_agent_records(
     items: trust_stubs.FakeItems, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[frozenset[trust.Role]] = []
@@ -221,20 +221,24 @@ def test_records_narrow_the_stream_to_the_agent_role(
         return real(repo, number, **kwargs)
 
     monkeypatch.setattr(trust, "read_comment_stream", spy)
-    items.items[KEY] = trust_stubs.item(nodes=[trust_stubs.comment(1, _closing(), AGENT)])
-    assert len(records("o/r#7", authors=AUTHORS)) == 1
-    assert seen == [frozenset({trust.Role.AGENTS})]
+    items.items[KEY] = trust_stubs.item(
+        nodes=[
+            trust_stubs.comment(1, _closing(), trust_stubs.HUMAN),
+            trust_stubs.comment(2, _closing(), AGENT),
+        ]
+    )
+    assert [r.comment_id for r in records("o/r#7", authors=AUTHORS)] == [2]
+    assert seen == [frozenset({trust.Role.HUMAN, trust.Role.AGENTS})]
 
 
-def test_records_call_a_human_scope_change_ignored_and_the_issue_read_trusts_it(
+def test_records_accept_a_human_scope_change_as_vrg_issue_read_does(
     items: trust_stubs.FakeItems, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """#5199: submit's record read and vrg-issue-read agree on a human scope change.
+    """#5387: submit's record read takes the human's scope change, as vrg-issue-read does.
 
-    The merge-review record read, which submit's gate runs, accepts only the
-    agent role, so the human's ``Scope change`` comment is ``not-accepted``
-    there: trusted, left out by design, and reported as ignored, never as
-    untrusted. vrg-issue-read's read (every role) prints it as the human's.
+    The read covers the human and agent roles, so the human's ``Scope change``
+    comment is read, not reported as ``not-accepted``; only the agent's
+    comment can be a record.
     """
     scope = "Scope change\n\nAlso cover the release path."
     items.items[KEY] = trust_stubs.item(
@@ -254,10 +258,8 @@ def test_records_call_a_human_scope_change_ignored_and_the_issue_read_trusts_it(
         )
     ]
     err = capsys.readouterr().err
-    assert err == (
-        "ignored content from a trusted role this reader does not accept:"
-        f" o/r#7 comment human at {trust_stubs.CREATED} on comment 1 (not-accepted)\n"
-    )
+    assert "not-accepted" not in err
+    assert "ignored content" not in err
     content = trust.read_issue("o/r", 7, roles=trust.ALL_ROLES, authors=AUTHORS)
     assert [(c.id, c.role, c.body) for c in content.comments] == [
         ("1", trust.Role.HUMAN, scope),

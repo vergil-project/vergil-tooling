@@ -89,9 +89,9 @@ def test_read_stream_keeps_trusted_and_reports_every_untrusted_comment(
     stream = read_stream("o/r", 7, AUTHORS)
     assert stream == Stream(
         comments=[
-            IssueComment(1, "human", "the human", True, CREATED),
-            IssueComment(2, "vergil-user", "the agent", False, CREATED),
-            IssueComment(8, "vergil-user", "the agent again", True, CREATED),
+            IssueComment(1, "human", "the human", True, CREATED, trust.Role.HUMAN),
+            IssueComment(2, "vergil-user", "the agent", False, CREATED, trust.Role.AGENTS),
+            IssueComment(8, "vergil-user", "the agent again", True, CREATED, trust.Role.AGENTS),
         ],
         all_ids=frozenset(range(1, 9)),
     )
@@ -136,7 +136,7 @@ def test_read_stream_reports_nothing_when_all_are_trusted(
 ) -> None:
     _issue(items, trust_stubs.comment(1, "a note"))
     assert read_stream("o/r", 7, AUTHORS).comments == [
-        IssueComment(1, "human", "a note", False, CREATED)
+        IssueComment(1, "human", "a note", False, CREATED, trust.Role.HUMAN)
     ]
     assert capsys.readouterr().err == ""
 
