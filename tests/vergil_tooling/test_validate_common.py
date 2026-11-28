@@ -530,6 +530,17 @@ def test_find_markdown_files_missing_extra_path_is_error(tmp_path: Path) -> None
         _find_markdown_files(tmp_path, paths=["skills"])
 
 
+def test_find_markdown_files_ignore_drops_listed_file(tmp_path: Path) -> None:
+    """A listed file under an ignore path is dropped too, not linted."""
+    drafts = tmp_path / "skills" / "drafts"
+    drafts.mkdir(parents=True)
+    (drafts / "wip.md").write_text("# Wip\n")
+    result = _find_markdown_files(
+        tmp_path, ignore=["skills/drafts"], paths=["skills/drafts/wip.md"]
+    )
+    assert result == []
+
+
 def test_find_markdown_files_extra_non_markdown_file_is_error(tmp_path: Path) -> None:
     (tmp_path / "skills").mkdir()
     (tmp_path / "skills" / "notes.txt").write_text("notes\n")
@@ -920,9 +931,7 @@ def test_lint_markdown_skips_files_the_gate_does_not_lint(
 
 def test_lint_markdown_honors_listed_paths(tmp_path: Path) -> None:
     """A file under a listed extra path is linted, as the full gate lints it."""
-    (tmp_path / "vergil.toml").write_text(
-        _MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n'
-    )
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n')
     skills = tmp_path / "skills"
     skills.mkdir()
     page = skills / "a.md"
@@ -953,9 +962,7 @@ def test_lint_markdown_skips_unlisted_extra_path(
 def test_lint_markdown_missing_extra_path_is_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "vergil.toml").write_text(
-        _MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n'
-    )
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML + '\n[markdownlint]\npaths = ["skills"]\n')
     readme = tmp_path / "README.md"
     readme.write_text("# Hello\n")
 
