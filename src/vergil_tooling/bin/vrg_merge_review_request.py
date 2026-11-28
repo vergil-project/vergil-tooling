@@ -19,6 +19,16 @@ that started clean at ``HEAD``, exited 0 and passed every stage. The base
 SHA is the merge base of ``--base`` and ``HEAD``; the change class comes
 from the files changed since it, against the allow-list committed there.
 
+One issue of a batch before handoff is the exception: when ``--pr`` is not
+given and the ``--issue`` has a batch marker, the request is scoped to that
+issue's own commit, with its ``fixup!`` commits folded in. Its ``base_sha`` is
+the parent of that commit, read from the branch (the marker's ``base_sha`` and
+``--base`` are not used), so a clean rebase changes no issue's request;
+``diff-<step>.patch`` holds that change alone, and the change class is judged
+from the parent. ``head_sha`` stays ``HEAD``, so a check's fix diff is
+unchanged. A batch member whose own commit cannot be found, or whose fixup
+sits behind another commit, is refused.
+
 The builder reads the body of the ``--issue`` itself, and derives the
 epic's open tasks from its native parent: when the parent carries ``epic``
 and not ``ad-hoc``, its open sub-issues, every page, as ``{"ref",
@@ -83,14 +93,17 @@ from vergil_tooling.lib.build_dir import BuildDirError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.merge_review import open_pr
+from vergil_tooling.lib.merge_review import record as record_module
 from vergil_tooling.lib.merge_review import request as req
-from vergil_tooling.lib.merge_review.change_class import classify_branch
+from vergil_tooling.lib.merge_review.change_class import classify_between, classify_branch
 from vergil_tooling.lib.merge_review.schema import STEP_RE, is_check
 from vergil_tooling.lib.merge_review.state import StateDirError, ensure_private_dir
+from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.validate_record import ValidateRecordError, read_record
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.epics import IssueRef
+    from vergil_tooling.lib.merge_review.record import BatchSpan
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -197,7 +210,14 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     head = git.commit_sha("HEAD")
     record = read_record(worktree)
     req.check_validated(record, head, worktree_clean=git.working_tree_status() == "")
-    base_sha, change_class = classify_branch(args.base, head)
+    span = _member_span(args, issue, worktree, head)
+    if span is None:
+        base_sha, change_class = classify_branch(args.base, head)
+        reviewed_end = head
+    else:
+        base_sha = span.parent
+        change_class = classify_between(span.parent, span.last)
+        reviewed_end = span.last
     batch = (
         []
         if args.pr is None
@@ -257,7 +277,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
         check,
     )
     # The request names the diffs, so it is written last.
-    atomic_write(diff_path, git.diff_patch(base_sha, head))
+    atomic_write(diff_path, git.diff_patch(base_sha, reviewed_end))
     if batch_request is not None:
         atomic_write(commits_path, git.log_patch(base_sha, head))
     if check is not None:
@@ -265,6 +285,27 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     request_path = private_dir / req.request_file(step)
     atomic_write(request_path, json.dumps(request, indent=2) + "\n")
     return request_path
+
+
+def _member_span(
+    args: argparse.Namespace, issue: IssueRef, repo: Path, head: str
+) -> BatchSpan | None:
+    """The span of a batch member's own commit, or ``None`` when the request is not one.
+
+    A request is a batch member's when it has no ``--pr`` and the ``--issue``
+    has a batch marker in the main clone. A marker that cannot be read, or a
+    member whose own commit cannot be found, is a refusal.
+    """
+    if args.pr is not None:
+        return None
+    issue_ref = f"#{issue.number}"
+    try:
+        marker = batch_marker.read_marker(git.main_worktree_root(), issue_ref)
+        if marker is None:
+            return None
+        return record_module.batch_member_span(repo, marker, issue_ref, head)
+    except (batch_marker.BatchMarkerError, record_module.RecordError) as exc:
+        req.refuse(str(exc))
 
 
 def _batch_fields(

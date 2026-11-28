@@ -93,6 +93,15 @@ def allow_list_at(commit: str) -> tuple[str, ...]:
     return allow_list(parse_merge_review_toml(text, f"{CONFIG_FILE} at {commit}").docs_paths)
 
 
+def classify_between(parent: str, head: str) -> str:
+    """Return the class of the change from commit *parent* to commit *head*.
+
+    The allow-list is the one committed at *parent* (:func:`allow_list_at`),
+    so the change is judged by the repository as it stood before it.
+    """
+    return classify(git.diff_name_status(parent, head), allow_list_at(parent))
+
+
 def classify_branch(base: str, head: str) -> tuple[str, str]:
     """Return ``(merge base SHA, class)`` for *head*'s change since its merge base.
 
@@ -101,4 +110,4 @@ def classify_branch(base: str, head: str) -> tuple[str, str]:
     (:func:`allow_list_at`).
     """
     base_sha = git.merge_base(base, head)
-    return base_sha, classify(git.diff_name_status(base_sha, head), allow_list_at(base_sha))
+    return base_sha, classify_between(base_sha, head)

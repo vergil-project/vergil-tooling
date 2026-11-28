@@ -20,6 +20,7 @@ from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
+from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.progress import StageResult
 from vergil_tooling.lib.proxies import ProxyLinkError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
@@ -2251,3 +2252,131 @@ def test_ensure_dir_refuses_pr(capsys: Cap) -> None:
     with pytest.raises(SystemExit) as exc:
         vrg_merge_review_request.main(["--issue", ISSUE, "--ensure-dir", "--pr", "7"])
     assert exc.value.code == 2
+
+
+# -- a batch member: its own commit, never a later issue's ----------------------
+
+MEMBER_PATHS = {41: "src/one.py", 42: "src/two.py", 43: "src/three.py"}
+# Issue 42, the --issue, first, middle and last in the branch.
+MEMBER_ORDERS = [(42, 41, 43), (41, 42, 43), (41, 43, 42)]
+
+
+def _member_repo(
+    repo: Path,
+    order: tuple[int, ...] = (41, 42, 43),
+    *,
+    fixup: bool = False,
+    paths: dict[int, str] | None = None,
+) -> dict[int, str]:
+    """Commit issues 41 to 43 in *order* on a feature branch cut from develop, with their marker.
+
+    The marker lists the three issues and names the develop tip as its
+    ``base_sha``. A *fixup* of issue 42 follows its commit. Returns each
+    issue's own commit, by issue number.
+    """
+    files = {**MEMBER_PATHS, **(paths or {})}
+    _git(repo, "checkout", "-q", "-B", "feature", "develop")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", "develop")
+    develop = _git(repo, "rev-parse", "develop")
+    batch_marker.write_markers(repo, ["#41", "#42", "#43"], base_sha=develop)
+    owns: dict[int, str] = {}
+    for number in order:
+        _write(repo, files[number], f"{number}\n")
+        owns[number] = _commit(repo, f"the issue {number} (#{number})")
+        if fixup and number == 42:
+            _write(repo, files[42], "42, fixed\n")
+            _commit(repo, "fixup! the issue 42 (#42)")
+    _record(repo)
+    return owns
+
+
+def _sha_of_subject(repo: Path, subject: str) -> str:
+    """The sha of the one commit of ``origin/develop..HEAD`` whose subject is *subject*."""
+    lines = _git(repo, "log", "--format=%H%x1f%s", "origin/develop..HEAD").splitlines()
+    found = [line.split("\x1f", 1)[0] for line in lines if line.split("\x1f", 1)[1] == subject]
+    assert len(found) == 1, found
+    return found[0]
+
+
+def _develop_moves_on(repo: Path) -> None:
+    """Commit on develop and move ``origin/develop`` to it; the feature branch is left alone."""
+    _git(repo, "checkout", "-q", "develop")
+    _write(repo, "README.md", "# moved on\n")
+    _commit(repo, "develop moves on")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", "develop")
+    _git(repo, "checkout", "-q", "feature")
+
+
+def _diff_of(request: dict[str, Any]) -> str:
+    return Path(request["diff_path"]).read_text()
+
+
+@pytest.mark.parametrize("order", MEMBER_ORDERS)
+@pytest.mark.parametrize("fixup", [False, True])
+def test_member_review_holds_only_its_own_change(
+    repo: Path, capsys: Cap, order: tuple[int, ...], fixup: bool
+) -> None:
+    owns = _member_repo(repo, order, fixup=fixup)
+    request = _built(_argv(repo), capsys)
+    diff = _diff_of(request)
+    assert "src/two.py" in diff
+    assert ("+42, fixed" in diff) is fixup
+    assert "src/one.py" not in diff
+    assert "src/three.py" not in diff
+    # The parent of issue 42's own commit: the develop tip, or the commit before it.
+    assert request["base_sha"] == _git(repo, "rev-parse", f"{owns[42]}^")
+    assert request["head_sha"] == _git(repo, "rev-parse", "HEAD")
+    assert request["change_class"] == "code"
+
+
+@pytest.mark.parametrize("order", MEMBER_ORDERS)
+@pytest.mark.parametrize("fixup", [False, True])
+def test_member_review_after_a_clean_rebase(
+    repo: Path, capsys: Cap, order: tuple[int, ...], fixup: bool
+) -> None:
+    _member_repo(repo, order, fixup=fixup)
+    stale = batch_marker.read_marker(repo, "#42")
+    assert stale is not None
+    _develop_moves_on(repo)
+    _git(repo, "rebase", "-q", "origin/develop")
+    _record(repo)
+    request = _built(_argv(repo), capsys)
+    own = _sha_of_subject(repo, "the issue 42 (#42)")
+    diff = _diff_of(request)
+    assert "src/two.py" in diff
+    assert ("+42, fixed" in diff) is fixup
+    for path in ("src/one.py", "src/three.py", "README.md"):
+        assert path not in diff
+    # The marker's base is the develop tip from before the rebase: never used.
+    assert request["base_sha"] == _git(repo, "rev-parse", f"{own}^")
+    assert request["base_sha"] != stale.base_sha
+
+
+def test_member_review_classes_its_own_change(repo: Path, capsys: Cap) -> None:
+    _member_repo(repo, paths={42: "docs/guide/two.md"})
+    request = _built(_argv(repo), capsys)
+    assert request["change_class"] == "docs-only"
+    diff = _diff_of(request)
+    assert "docs/guide/two.md" in diff
+    assert "src/three.py" not in diff
+
+
+def test_member_review_refuses_a_fixup_behind_another_commit(repo: Path, capsys: Cap) -> None:
+    _member_repo(repo, (41, 42, 43))
+    _write(repo, MEMBER_PATHS[42], "42, fixed\n")
+    _commit(repo, "fixup! the issue 42 (#42)")
+    _record(repo)
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "fold it into its commit first" in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
+
+
+def test_member_review_refuses_an_unreadable_marker(repo: Path, capsys: Cap) -> None:
+    _member_repo(repo)
+    batch_marker.marker_path(repo, "#42").write_text("{")
+    code, out, err = _run(_argv(repo), capsys)
+    assert code == 1
+    assert out == ""
+    assert "is not valid JSON" in err

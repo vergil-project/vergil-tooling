@@ -305,20 +305,31 @@ def _parent(repo: Path, sha: str) -> str:
         raise RecordError(msg) from exc
 
 
-def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> Covered:
-    """What a record covers for batch issue *issue* (``#N``) at *head*, before handoff.
+@dataclass(frozen=True)
+class BatchSpan:
+    """A batch member's own change, as commits: the fold base and the commits it spans.
 
-    The change is the issue's own commit, the one non-fixup commit of
-    ``origin/develop..head`` whose subject ends in `` (#N)``, with its
-    ``fixup!`` commits folded in: the run of them immediately after it. Its
-    fold base is that commit's parent, so the change holds no other issue's
-    commit, whichever side of it that issue sits on, and the marker's
-    ``base_sha`` is not used. Commits after the run that are not its fixups
-    are excluded. A fixup of the commit that comes after another commit is
-    refused, since it must be folded first.
+    ``parent`` is the first parent of the member's own commit, the fold
+    base; ``own`` is that commit and ``last`` the last commit of its run of
+    ``fixup!`` commits, equal to ``own`` when there is none. The change is
+    ``parent..last``.
+    """
 
-    With no fixup the fingerprint is the commit's ``commit_fingerprint``;
-    otherwise it is the change from the parent to the run's last commit.
+    parent: str
+    own: str
+    last: str
+
+
+def batch_member_span(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> BatchSpan:
+    """The span of batch issue *issue* (``#N``) at *head*: its own commit and its fixups.
+
+    The own commit is the one non-fixup commit of ``origin/develop..head``
+    whose subject ends in `` (#N)``; its ``fixup!`` commits are the run
+    immediately after it. Its parent is the fold base, so the span holds no
+    other issue's commit, whichever side of it that issue sits on, and the
+    marker's ``base_sha`` is not used. Commits after the run that are not its
+    fixups are excluded. A fixup of the commit that comes after another
+    commit is refused, since it must be folded first.
     """
     if issue not in marker.issues:
         msg = f"{issue} is not in the batch {', '.join(marker.issues)}"
@@ -349,10 +360,21 @@ def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, hea
                 " but another commit comes between them; fold it into its commit first"
             )
             raise RecordError(msg)
-    if end == index + 1:
-        return Covered(head=own, fingerprint=commit_fingerprint(repo, own))
-    last = commits[end - 1][0]
-    return Covered(head=last, fingerprint=change_fingerprint(repo, _parent(repo, own), last))
+    return BatchSpan(parent=_parent(repo, own), own=own, last=commits[end - 1][0])
+
+
+def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> Covered:
+    """What a record covers for batch issue *issue* (``#N``) at *head*, before handoff.
+
+    The change is the member's :func:`batch_member_span`: its own commit
+    with its fixups folded in, from its parent. With no fixup the
+    fingerprint is the commit's ``commit_fingerprint``; otherwise it is the
+    change from the parent to the run's last commit.
+    """
+    span = batch_member_span(repo, marker, issue, head)
+    if span.last == span.own:
+        return Covered(head=span.own, fingerprint=commit_fingerprint(repo, span.own))
+    return Covered(head=span.last, fingerprint=change_fingerprint(repo, span.parent, span.last))
 
 
 def covered_change(repo: Path, issue_number: int, *, main_root: Path) -> Covered:
