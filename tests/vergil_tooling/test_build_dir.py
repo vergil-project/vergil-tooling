@@ -11,6 +11,8 @@ import pytest
 from vergil_tooling.lib.build_dir import BuildDirError, ensure_build_dir
 from vergil_tooling.lib.merge_review.state import (
     StateDirError,
+    ensure_design_review_dir,
+    ensure_hoshin_dir,
     ensure_issue_dir,
     ensure_private_dir,
     ensure_task_dir,
@@ -298,4 +300,189 @@ def test_task_dir_refuses_an_unknown_kind(tmp_path: Path, kind: str) -> None:
 def test_task_dir_refuses_non_positive_issue(tmp_path: Path) -> None:
     with pytest.raises(StateDirError, match="issue number must be positive"):
         ensure_task_dir(tmp_path, "operational", 0)
+    assert not (tmp_path / "build").exists()
+
+
+# -- design-review and hoshin directories ------------------------------------------
+
+
+def _design_levels(root: Path, issue: int = 7, round_id: str = "S1") -> list[Path]:
+    state = root / "build" / ".vergil-state"
+    design = state / "design-review"
+    return [state, design, design / str(issue), design / str(issue) / round_id]
+
+
+def _hoshin_levels(root: Path, date: str = "2026-11-28", mode: str = "start") -> list[Path]:
+    state = root / "build" / ".vergil-state"
+    return [state, state / "hoshin", state / "hoshin" / f"{date}-{mode}"]
+
+
+@pytest.mark.parametrize("round_id", ["S1", "P12", "A3"])
+def test_design_review_created_mode_700(tmp_path: Path, round_id: str) -> None:
+    path = ensure_design_review_dir(tmp_path, 7, round_id)
+    levels = _design_levels(tmp_path, 7, round_id)
+    assert path == levels[-1]
+    assert [_mode(level) for level in levels] == [0o700] * 4
+    assert list(path.iterdir()) == []
+
+
+def test_design_review_existing_round_accepted(tmp_path: Path) -> None:
+    first = ensure_design_review_dir(tmp_path, 7, "S1")
+    (first / "security.md").write_text("kept")
+    assert ensure_design_review_dir(tmp_path, 7, "S1") == first
+    assert (first / "security.md").read_text() == "kept"
+
+
+def test_design_review_rounds_share_the_issue_dir(tmp_path: Path) -> None:
+    ensure_design_review_dir(tmp_path, 7, "S1")
+    second = ensure_design_review_dir(tmp_path, 7, "P2")
+    assert second.parent == _design_levels(tmp_path)[2]
+    assert sorted(p.name for p in second.parent.iterdir()) == ["P2", "S1"]
+
+
+def test_design_review_mode_is_700_whatever_the_umask(tmp_path: Path) -> None:
+    (tmp_path / "build").mkdir()
+    old = os.umask(0o277)
+    try:
+        ensure_design_review_dir(tmp_path, 7, "S1")
+    finally:
+        os.umask(old)
+    assert [_mode(level) for level in _design_levels(tmp_path)] == [0o700] * 4
+
+
+@pytest.mark.parametrize("level", [0, 1, 2, 3])
+def test_design_review_refuses_a_wrong_mode_at_any_level(tmp_path: Path, level: int) -> None:
+    ensure_design_review_dir(tmp_path, 7, "S1")
+    _design_levels(tmp_path)[level].chmod(0o750)
+    with pytest.raises(StateDirError, match="has mode 750, not 700"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+
+
+def test_design_review_refuses_a_symlinked_design_review_level(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    state = _design_levels(tmp_path)[0]
+    state.mkdir(parents=True, mode=0o700)
+    (state / "design-review").symlink_to(elsewhere)
+    with pytest.raises(StateDirError, match="design-review is a symlink, not a directory"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_design_review_refuses_a_symlinked_round_creating_nothing(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    ensure_design_review_dir(tmp_path, 7, "P1")
+    _design_levels(tmp_path)[2].joinpath("S1").symlink_to(elsewhere)
+    with pytest.raises(StateDirError, match="S1 is a symlink, not a directory"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_design_review_refuses_a_dangling_symlinked_round(tmp_path: Path) -> None:
+    ensure_design_review_dir(tmp_path, 7, "P1")
+    _design_levels(tmp_path)[2].joinpath("S1").symlink_to(tmp_path / "missing")
+    with pytest.raises(StateDirError, match="S1 is a symlink, not a directory"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+    assert not (tmp_path / "missing").exists()
+
+
+def test_design_review_refuses_a_file_at_the_issue_level(tmp_path: Path) -> None:
+    ensure_design_review_dir(tmp_path, 8, "S1")
+    _design_levels(tmp_path)[2].write_text("not a directory")
+    with pytest.raises(StateDirError, match="7 is not a directory"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+
+
+def test_design_review_stops_before_creating_below_a_public_level(tmp_path: Path) -> None:
+    levels = _design_levels(tmp_path)
+    levels[0].mkdir(parents=True, mode=0o700)
+    levels[1].mkdir(mode=0o755)
+    with pytest.raises(StateDirError, match="design-review has mode 755, not 700"):
+        ensure_design_review_dir(tmp_path, 7, "S1")
+    assert list(levels[1].iterdir()) == []
+
+
+@pytest.mark.parametrize("round_id", ["X1", "S", "S1x", "", "s1", "1S", "SS1", "S-1", "S1\n"])
+def test_design_review_refuses_a_bad_round_creating_nothing(tmp_path: Path, round_id: str) -> None:
+    with pytest.raises(StateDirError, match="round must be S, P or A then digits"):
+        ensure_design_review_dir(tmp_path, 7, round_id)
+    assert not (tmp_path / "build").exists()
+
+
+def test_design_review_refuses_non_positive_issue(tmp_path: Path) -> None:
+    with pytest.raises(StateDirError, match="issue number must be positive"):
+        ensure_design_review_dir(tmp_path, 0, "S1")
+    assert not (tmp_path / "build").exists()
+
+
+@pytest.mark.parametrize(("date", "mode"), [("2026-11-28", "start"), ("2028-02-29", "end")])
+def test_hoshin_created_mode_700(tmp_path: Path, date: str, mode: str) -> None:
+    path = ensure_hoshin_dir(tmp_path, date, mode)
+    levels = _hoshin_levels(tmp_path, date, mode)
+    assert path == levels[-1]
+    assert [_mode(level) for level in levels] == [0o700] * 3
+    assert list(path.iterdir()) == []
+
+
+def test_hoshin_existing_directory_accepted(tmp_path: Path) -> None:
+    first = ensure_hoshin_dir(tmp_path, "2026-11-28", "end")
+    (first / "screen-terms.md").write_text("kept")
+    assert ensure_hoshin_dir(tmp_path, "2026-11-28", "end") == first
+    assert (first / "screen-terms.md").read_text() == "kept"
+
+
+def test_hoshin_mode_is_700_whatever_the_umask(tmp_path: Path) -> None:
+    (tmp_path / "build").mkdir()
+    old = os.umask(0o277)
+    try:
+        ensure_hoshin_dir(tmp_path, "2026-11-28", "start")
+    finally:
+        os.umask(old)
+    assert [_mode(level) for level in _hoshin_levels(tmp_path)] == [0o700] * 3
+
+
+@pytest.mark.parametrize("level", [0, 1, 2])
+def test_hoshin_refuses_a_wrong_mode_at_any_level(tmp_path: Path, level: int) -> None:
+    ensure_hoshin_dir(tmp_path, "2026-11-28", "start")
+    _hoshin_levels(tmp_path)[level].chmod(0o750)
+    with pytest.raises(StateDirError, match="has mode 750, not 700"):
+        ensure_hoshin_dir(tmp_path, "2026-11-28", "start")
+
+
+def test_hoshin_refuses_a_symlinked_date_mode_level(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    levels = _hoshin_levels(tmp_path)
+    levels[0].mkdir(parents=True, mode=0o700)
+    levels[1].mkdir(mode=0o700)
+    levels[1].joinpath("2026-11-28-start").symlink_to(elsewhere)
+    with pytest.raises(StateDirError, match="2026-11-28-start is a symlink, not a directory"):
+        ensure_hoshin_dir(tmp_path, "2026-11-28", "start")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_hoshin_refuses_a_file_at_the_date_mode_level(tmp_path: Path) -> None:
+    levels = _hoshin_levels(tmp_path)
+    levels[0].mkdir(parents=True, mode=0o700)
+    levels[1].mkdir(mode=0o700)
+    levels[2].write_text("not a directory")
+    with pytest.raises(StateDirError, match="2026-11-28-start is not a directory"):
+        ensure_hoshin_dir(tmp_path, "2026-11-28", "start")
+
+
+@pytest.mark.parametrize(
+    "date",
+    ["2026-13-40", "2026-02-29", "2026-1-01", "20261128", "2026-11-28x", "", "2026-11-28\n"],
+)
+def test_hoshin_refuses_a_bad_date_creating_nothing(tmp_path: Path, date: str) -> None:
+    with pytest.raises(StateDirError, match="date must be"):
+        ensure_hoshin_dir(tmp_path, date, "start")
+    assert not (tmp_path / "build").exists()
+
+
+@pytest.mark.parametrize("mode", ["middle", "Start", "", "start\n", "../start"])
+def test_hoshin_refuses_a_bad_mode_creating_nothing(tmp_path: Path, mode: str) -> None:
+    with pytest.raises(StateDirError, match="mode must be one of start, end"):
+        ensure_hoshin_dir(tmp_path, "2026-11-28", mode)
     assert not (tmp_path / "build").exists()

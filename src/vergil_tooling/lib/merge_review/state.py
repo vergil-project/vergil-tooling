@@ -20,11 +20,21 @@ Doctrine §1.5 names other kinds of task state directory beside
 ``issue-implement``, each ``build/.vergil-state/<kind>/<N>/`` under the same
 rules: :func:`ensure_task_dir` makes the same checks down to any such kind's
 ``<N>``, and ``vrg-state-dir`` runs it for the skills.
+
+Two kinds are shaped otherwise, and each has its own function that makes the
+same level checks (through :func:`_ensure_levels`): :func:`ensure_design_review_dir`
+checks ``design-review/<M>/<round>/``, where ``<M>`` is the planning issue and
+``<round>`` a review round, and :func:`ensure_hoshin_dir` checks
+``hoshin/<date>-<mode>/``. Their inputs are validated here too, before anything
+is created, by :func:`check_round_id`, :func:`check_hoshin_date` and
+:func:`check_hoshin_mode`.
 """
 
 from __future__ import annotations
 
 import contextlib
+import datetime
+import re
 import stat
 from typing import TYPE_CHECKING
 
@@ -40,15 +50,25 @@ LEVELS = (".vergil-state", "issue-implement", "{issue}", "merge-review")
 ISSUE_LEVELS = LEVELS[:-1]
 
 #: The kinds of task state directory shaped ``build/.vergil-state/<kind>/<N>/``
-#: (doctrine §1.5). ``design-review`` is not one: it has a ``<round>`` level.
+#: (doctrine §1.5). ``design-review`` and ``hoshin`` are not: see their functions.
 TASK_KINDS = ("issue-implement", "operational", "upstream-report")
+
+#: A ``design-review`` round: ``S``, ``P`` or ``A`` then digits, e.g. ``S1``.
+ROUND_PATTERN = re.compile(r"[SPA][0-9]+")
+
+#: The shape of a ``hoshin`` date, ``YYYY-MM-DD``; :func:`check_hoshin_date`
+#: also requires a real calendar date.
+DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+#: The modes of a ``hoshin`` directory: its start or its end.
+HOSHIN_MODES = ("start", "end")
 
 #: The only permission bits a level may have.
 PRIVATE_MODE = 0o700
 
 
 class StateDirError(Exception):
-    """A level of the private directory is not a private, real directory."""
+    """A level of the private directory is not a private, real directory, or an input is invalid."""
 
 
 def ensure_private_dir(main_clone: Path, issue: int) -> Path:
@@ -86,8 +106,72 @@ def ensure_task_dir(main_clone: Path, kind: str, issue: int) -> Path:
         msg = f"unknown state directory kind {kind!r}: expected one of {', '.join(TASK_KINDS)}"
         raise StateDirError(msg)
     _check_issue(issue)
+    return _ensure_levels(main_clone, (kind, str(issue)))
+
+
+def ensure_design_review_dir(main_clone: Path, issue: int, round_id: str) -> Path:
+    """Check (creating where absent) every level down to ``design-review/<M>/<round>``.
+
+    The checks of :func:`ensure_private_dir`, on ``.vergil-state``, then
+    ``design-review``, the planning issue's directory ``<M>`` and the round's
+    directory, which it returns. An existing private round directory is
+    accepted; whether a round may pre-exist is the caller's decision. Raises
+    :class:`StateDirError` for a non-positive *issue* or a *round_id* that
+    fails :func:`check_round_id`, before anything is created.
+    """
+    _check_issue(issue)
+    check_round_id(round_id)
+    return _ensure_levels(main_clone, ("design-review", str(issue), round_id))
+
+
+def ensure_hoshin_dir(main_clone: Path, date: str, mode: str) -> Path:
+    """Check (creating where absent) every level down to ``hoshin/<date>-<mode>``.
+
+    The checks of :func:`ensure_private_dir`, on ``.vergil-state``, then
+    ``hoshin`` and the ``<date>-<mode>`` directory, which it returns. Raises
+    :class:`StateDirError` for a *date* or *mode* that fails
+    :func:`check_hoshin_date` or :func:`check_hoshin_mode`, before anything
+    is created.
+    """
+    check_hoshin_date(date)
+    check_hoshin_mode(mode)
+    return _ensure_levels(main_clone, ("hoshin", f"{date}-{mode}"))
+
+
+def check_round_id(round_id: str) -> None:
+    """Raise :class:`StateDirError` unless *round_id* is a full match of :data:`ROUND_PATTERN`."""
+    if ROUND_PATTERN.fullmatch(round_id) is None:
+        msg = f"round must be S, P or A then digits (e.g. S1), not {round_id!r}"
+        raise StateDirError(msg)
+
+
+def check_hoshin_date(date: str) -> None:
+    """Raise :class:`StateDirError` unless *date* is ``YYYY-MM-DD`` and a real calendar date."""
+    if DATE_PATTERN.fullmatch(date) is None:
+        msg = f"date must be YYYY-MM-DD, not {date!r}"
+        raise StateDirError(msg)
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError as exc:
+        msg = f"date must be a real calendar date, not {date!r}"
+        raise StateDirError(msg) from exc
+
+
+def check_hoshin_mode(mode: str) -> None:
+    """Raise :class:`StateDirError` unless *mode* is one of :data:`HOSHIN_MODES`."""
+    if mode not in HOSHIN_MODES:
+        msg = f"mode must be one of {', '.join(HOSHIN_MODES)}, not {mode!r}"
+        raise StateDirError(msg)
+
+
+def _ensure_levels(main_clone: Path, levels: tuple[str, ...]) -> Path:
+    """Check (creating where absent) ``build/.vergil-state``, then each of *levels* in turn.
+
+    Returns the path of the last level. A level that fails stops the walk
+    before anything is created below it.
+    """
     path = ensure_state_root(main_clone)
-    for level in (kind, str(issue)):
+    for level in levels:
         path /= level
         _ensure_level(path)
     return path
