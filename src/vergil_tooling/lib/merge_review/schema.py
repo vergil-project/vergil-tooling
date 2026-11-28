@@ -53,11 +53,32 @@ CAPTURE_FIELDS = frozenset({"schema", "step", "request_id", "result_sha256", "ag
 #: A SHA-256 digest as the capture record holds it: 64 lowercase hex characters.
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
+#: The most lines one ``Read`` call returns: a diff over this is read in parts.
+MAX_READ_LINES = 2000
+
+#: The reviewer's closing coverage line: the whole diff's lines read, of its total.
+DIFF_READ_RE = re.compile(r"^Diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+
+#: A check's coverage line for its fix diff, the line just before the diff line.
+FIX_READ_RE = re.compile(r"^Fix diff read: (0|[1-9][0-9]*) of (0|[1-9][0-9]*) lines$")
+
 
 def capture_file(step: str) -> str:
     """The capture record's file name for ``step``: ``capture-<step>.json``."""
     step_id_prefix(step)  # refuses a non-step
     return f"capture-{step}.json"
+
+
+def diff_part_file(step: str, number: int) -> str:
+    """The name of part ``number`` (from 1) of a large diff: ``diff-<step>.part-<NN>.patch``."""
+    step_id_prefix(step)  # refuses a non-step
+    return f"diff-{step}.part-{number:02d}.patch"
+
+
+def fix_part_file(step: str, number: int) -> str:
+    """The name of part ``number`` (from 1) of a large fix diff: ``fix-<step>.part-<NN>.patch``."""
+    step_id_prefix(step)  # refuses a non-step
+    return f"fix-{step}.part-{number:02d}.patch"
 
 
 def is_check(step: str) -> bool:

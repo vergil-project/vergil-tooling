@@ -58,6 +58,17 @@ The reviewer's reply is a **result**:
    `request_id` and `step`.
 2. Free prose follows the block. The prose is for the human. The caller
    never routes, decides or posts anything on the strength of the prose.
+3. The reply closes with the coverage lines, which report how much of the
+   diff the reviewer read. The last non-empty line is exactly
+   `Diff read: <read> of <total> lines`, where `<total>` is the request's
+   `diff_lines` and `<read>` is the number of its lines the reviewer read;
+   a full read has `<read>` equal to `<total>`. In a check, the non-empty
+   line before that one is exactly `Fix diff read: <read> of <total> lines`,
+   the same way, for the request's `fix_diff_lines`. Trailing whitespace and
+   a CR are not part of the line. The numbers are decimal integers, with no
+   sign and no leading zero except `0`. The reviewer reads a diff over 2000
+   lines in its `diff_parts` (or `fix_diff_parts`), every part in full, and
+   reports the lines it read, which must be all of them.
 
 A reply with a second block of the same info string anywhere is not a
 result.
@@ -124,6 +135,8 @@ The refusal names both repositories.
 | `request-<step>.json` | `vrg-merge-review-request` | The request. |
 | `diff-<step>.patch` | `vrg-merge-review-request` | `git diff <base_sha> <head_sha>`: the whole branch; on a batch member before handoff, `git diff <base_sha> <last>`, its own commit alone ([A batch member](#a-batch-member)). |
 | `fix-<step>.patch` | `vrg-merge-review-request` | A check only: `git diff <fix_base_sha> <head_sha>`, the fix alone. |
+| `diff-<step>.part-<NN>.patch` | `vrg-merge-review-request` | Only when the diff is over 2000 lines: the diff's parts, numbered from `01`, of at most 2000 lines each, whose concatenation is `diff-<step>.patch` ([The request](#the-request)). `diff-<step>.patch` is still written whole. |
+| `fix-<step>.part-<NN>.patch` | `vrg-merge-review-request` | A check only, and only when the fix diff is over 2000 lines: the fix diff's parts, in the same way. |
 | `commits-<step>.patch` | `vrg-merge-review-request` | A batch PR only: each commit of `<base_sha>..<head_sha>`, oldest first, with its own patch ([A batch PR](#a-batch-pr)). |
 | `result-<step>.md` | The plugin's capture hook | The reviewer's reply, stored byte for byte. |
 | `reply-<step>.md` | The plugin's capture hook | The same bytes inside a fenced block in a collapsed `<details>` section: the publishable copy. |
@@ -177,6 +190,8 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `head_sha` | string | The commit under review. |
 | `worktree` | string | Absolute path of the worktree, for reading surrounding code. |
 | `diff_path` | string | Absolute path of `diff-<step>.patch`: the change under review, from `base_sha`. |
+| `diff_lines` | integer | The number of newline characters in `diff-<step>.patch`: what `wc -l` prints. |
+| `diff_parts` | list of objects | Present only when `diff_lines` is over 2000. The diff split on line boundaries into numbered parts of at most 2000 lines, in order, each `{"path": "<absolute path>", "lines": <integer>}`; the paths are `diff-<step>.part-<NN>.patch` ([Files](#files)). The `lines` sum to `diff_lines`. A diff that large is read part by part, each part in full. |
 | `change_class` | string | `"docs-only"` or `"code"`. |
 | `design_sources` | list of strings | Absolute paths of the design documents the issue's epic lists, such as its spec and plan; empty when there are none. |
 | `validate_stages` | list of strings | The `vrg-validate` stages that passed at `head_sha`. |
@@ -188,6 +203,8 @@ A check (`check` or `check-<k>`) adds:
 |---|---|---|
 | `fix_base_sha` | string | The `HEAD` the previous step judged: the review's for `check`, the previous check's for `check-<k>`. |
 | `fix_diff_path` | string | Absolute path of `fix-<step>.patch`. |
+| `fix_diff_lines` | integer | The number of newline characters in `fix-<step>.patch`. |
+| `fix_diff_parts` | list of objects | Present only when `fix_diff_lines` is over 2000: the parts of the fix diff, in the same shape as `diff_parts`, at `fix-<step>.part-<NN>.patch`. Their `lines` sum to `fix_diff_lines`. |
 | `earlier_result_paths` | list of strings | Absolute paths of every earlier step's result, in step order: `result-review.md`, then `result-check.md` for a `check-2`, and so on. |
 | `earlier_finding_ids` | list of strings | The earlier finding IDs the implementer was asked to change: every defect, and each item whose ruling calls for a code change. |
 
@@ -377,6 +394,8 @@ The reply opens with one fenced block whose info string is
 ```
 
 R1: the prose explains each finding for the human.
+
+Diff read: 10 of 10 lines
 ````
 
 | Field | Type | Value |
@@ -440,7 +459,7 @@ on stdout:
 
 `security` is the number of security findings; `fix_status` maps each
 listed ID to its status (empty in a review). On any violation it exits 1
-with `ERROR: <rule>` on stderr, naming the rule broken. The rules:
+with `ERROR: <rule>` on stderr, naming the rule broken. The eleven rules:
 
 1. **Shape.** The first content of the reply, after optional whitespace, is
    a fenced block with info string `merge-review-result`, and the reply has
@@ -479,6 +498,19 @@ with `ERROR: <rule>` on stderr, naming the rule broken. The rules:
     the SHA-256 of the result file's bytes as read. This rule is checked
     first, after the request's own fields and before rule 1, so a result
     changed after the capture is refused as such.
+11. **Coverage.** The [result](#the-result)'s closing coverage lines show
+    the whole diff was read. The last non-empty line is exactly
+    `Diff read: <read> of <total> lines`, with `<total>` equal to the
+    request's `diff_lines` and `<read>` equal to `<total>`. In a check, the
+    non-empty line before it is exactly `Fix diff read: <read> of <total>
+    lines`, with `<total>` equal to the request's `fix_diff_lines` and
+    `<read>` equal to `<total>`. A missing or malformed line, a short read or
+    a wrong total is refused. The request's own counts are checked first, as
+    the request's fields: `diff_lines` (and `fix_diff_lines` in a check) is a
+    whole number, and a `diff_parts` (or `fix_diff_parts`) manifest is present
+    exactly when its count is over 2000, lists each part's `path` (a string)
+    and `lines` (from 1 to 2000), and sums to the count. A refusal of either
+    kind names this rule, or the request, and the numbers, never other prose.
 
 A refusal never echoes a refused value: it names the rule, the finding by ID
 (or by position when the ID itself is bad), and for a character, its code

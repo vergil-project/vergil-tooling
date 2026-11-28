@@ -9,6 +9,13 @@ private directory, ``build/.vergil-state/issue-implement/<N>/merge-review/``
 in the main clone, and prints the request's path. See
 ``docs/specs/merge-review-protocol.md``.
 
+The request also carries each diff's line count (``diff_lines``, and
+``fix_diff_lines`` for a check), which the reviewer's closing coverage line
+must report in full. A diff over 2000 lines, one ``Read`` call's limit, is
+also written in numbered parts, ``diff-<step>.part-<NN>.patch`` (and
+``fix-<step>.part-<NN>.patch``), listed in the request as ``diff_parts``
+(``fix_diff_parts``) with each part's line count.
+
 Before it reads or writes anything, in either mode, it refuses unless the
 current clone's ``origin`` is the ``--issue`` repository (every push URL
 names it on github.com); the refusal names both repositories.
@@ -103,7 +110,7 @@ from vergil_tooling.lib.await_file import atomic_write
 from vergil_tooling.lib.build_dir import BuildDirError
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.config import ConfigError
-from vergil_tooling.lib.merge_review import open_pr
+from vergil_tooling.lib.merge_review import open_pr, schema
 from vergil_tooling.lib.merge_review import record as record_module
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.change_class import classify_between, classify_branch
@@ -247,6 +254,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
     private_dir = ensure_private_dir(git.main_worktree_root(), issue.number)
     check: req.CheckFields | None = None
     fix_patch = b""
+    fix_parts: list[tuple[Path, bytes]] = []
     if fix_base_sha is not None:
         earlier = req.read_earlier_results(private_dir, step, args.earlier_result)
         req.check_fix_base(private_dir, step, fix_base_sha)
@@ -255,12 +263,21 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             [result for _path, result in earlier], args.fix_id, args.ruled_id
         )
         fix_patch = git.diff_patch(fix_base_sha, head)
+        fix_parts = req.plan_parts(
+            fix_patch, lambda number: private_dir / schema.fix_part_file(step, number)
+        )
         check = req.CheckFields(
             fix_base_sha=fix_base_sha,
             fix_diff_path=str(private_dir / req.fix_file(step)),
+            fix_diff_lines=fix_patch.count(b"\n"),
+            fix_diff_parts=req.part_manifest(fix_parts),
             earlier_result_paths=[path for path, _result in earlier],
             earlier_finding_ids=finding_ids,
         )
+    diff_bytes = git.diff_patch(base_sha, reviewed_end)
+    diff_parts = req.plan_parts(
+        diff_bytes, lambda number: private_dir / schema.diff_part_file(step, number)
+    )
     diff_path = private_dir / req.diff_file(step)
     commits_path = private_dir / req.commits_file(step)
     batch_request = (
@@ -281,6 +298,8 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             head_sha=head,
             worktree=str(worktree),
             diff_path=str(diff_path),
+            diff_lines=diff_bytes.count(b"\n"),
+            diff_parts=req.part_manifest(diff_parts),
             change_class=change_class,
             design_sources=design_sources,
             validate_stages=list(record.passed),
@@ -290,12 +309,16 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
         ),
         check,
     )
-    # The request names the diffs, so it is written last.
-    atomic_write(diff_path, git.diff_patch(base_sha, reviewed_end))
+    # The request names the diffs and their parts, so it is written last.
+    atomic_write(diff_path, diff_bytes)
+    for part_path, chunk in diff_parts:
+        atomic_write(part_path, chunk)
     if batch_request is not None:
         atomic_write(commits_path, git.log_patch(base_sha, head))
     if check is not None:
         atomic_write(Path(check.fix_diff_path), fix_patch)
+        for part_path, chunk in fix_parts:
+            atomic_write(part_path, chunk)
     request_path = private_dir / req.request_file(step)
     atomic_write(request_path, json.dumps(request, indent=2) + "\n")
     return request_path

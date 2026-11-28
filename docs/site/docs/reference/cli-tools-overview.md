@@ -1996,6 +1996,15 @@ the ID is bad) and, for a bad character, its code point and offset; it
 never repeats the refused value. It reads the two files and the capture
 record, and writes nothing.
 
+Rule 11 (coverage) checks that the reply's last non-empty line reads
+`Diff read: <read> of <total> lines` with `<read>` equal to `<total>`, the
+request's `diff_lines`, and in a check that the line before it reads
+`Fix diff read: <read> of <total> lines` the same way, against the request's
+`fix_diff_lines`. A short read, a wrong total or a missing line is refused.
+The request's line counts and any `diff_parts` or `fix_diff_parts` manifest
+are checked as well: a manifest must sum to its count, and is present exactly
+when the count is over 2000 lines.
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_merge_review_check` (library: `lib/merge_review/`) |
@@ -2083,7 +2092,12 @@ into the task's private directory,
 and prints the request's path. It writes `request-<step>.json`,
 `diff-<step>.patch` (`git diff <base_sha> <head_sha>`, where `base_sha` is
 the merge base of `--base` and `HEAD`) and, for a check,
-`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). Before it reads
+`fix-<step>.patch` (`git diff <fix_base_sha> <head_sha>`). A diff over 2000
+lines is also written in numbered parts, `diff-<step>.part-<NN>.patch` (and
+`fix-<step>.part-<NN>.patch` for a fix), listed in the request as
+`diff_parts` (`fix_diff_parts`), with each part's line count; the request
+carries `diff_lines` (and `fix_diff_lines`) for the reviewer's coverage line.
+Before it reads
 or writes anything, with or without `--ensure-dir`, it refuses unless the
 current clone's `origin` is the `--issue` repository (every push URL names
 it on github.com), naming both repositories. It refuses,
