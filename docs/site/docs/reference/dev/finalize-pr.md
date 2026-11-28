@@ -181,8 +181,11 @@ is waiting on:
   held by that release, with its health, and the watch polls every five
   minutes. A lock that is stale (its tracking issue is closed, or it names
   none and its heartbeat is old) is reclaimed, and the reclaim's re-arm
-  sweep re-arms the PRs it held. A broken release whose tracking issue is
-  open is the human's to finish: the watch says why it is not reclaimed.
+  sweep re-arms the PRs it held. The reclaim ends the hold: the read that
+  reclaims it reports the PR as free and updates nothing, and the next read,
+  which finds the lock free, brings the PR up to date (see below). A broken
+  release whose tracking issue is open is the human's to finish: the watch
+  says why it is not reclaimed.
 - **A lock that cannot be read:** the PR shows as
   `held by an unreadable release lock (<error>)`, polled every five
   minutes, and never reclaimed: only `vrg-release-lock break` clears it.
