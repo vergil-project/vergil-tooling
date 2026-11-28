@@ -18,6 +18,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from tests.vergil_tooling.batch_repo import BatchRepo, RebaseConflictError
+from tests.vergil_tooling.group_rule_stubs import GroupRule
 from tests.vergil_tooling.review_thread import AUTHORS, Thread
 from vergil_tooling.bin import vrg_pr_workflow
 from vergil_tooling.lib import agent_gates, finalize_watch, github, pr_path, trust
@@ -297,6 +298,8 @@ def push_mode(monkeypatch: pytest.MonkeyPatch, batch_repo: BatchRepo, items: obj
     monkeypatch.setattr(
         finalize_watch, "_fetch_develop_for_gates", lambda _clone, _head: "origin/develop"
     )
+    # The whole-group rule's closing read answers no closing reference, so the push passes it.
+    GroupRule().install(monkeypatch)
     return pushes
 
 
@@ -366,6 +369,8 @@ def _batch_check(repo: BatchRepo, monkeypatch: pytest.MonkeyPatch, head: str) ->
         patch(f"{MODULE}.trust.read_issue", return_value=content),
         patch(f"{MODULE}.github.pr_closing_references", return_value=_closing()),
         patch(f"{MODULE}._clone_repo", return_value="o/r"),
+        # batch-check runs the whole-group rule too; no issue here is in a group.
+        patch("vergil_tooling.lib.release_groups.record.groups_of", return_value=[]),
     ):
         return vrg_pr_workflow.main(["--base", "develop", "batch-check", "--pr", PR_URL])
 

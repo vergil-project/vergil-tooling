@@ -26,6 +26,24 @@ def _no_planning_close_preview() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_group_records() -> Iterator[None]:
+    """Read no release-group records from GitHub: every issue is in no group.
+
+    The whole-group rule runs at report-ready and in the batch hard rules; its
+    refusals have their own tests in ``tests/vergil_tooling/test_release_group_pr_check.py``
+    and ``tests/vergil_tooling/pr_workflow/test_batch_rules.py``, which fake the groups
+    they need. The single-issue check also names this clone's repo to parse its ``#N``
+    against; the clones here have a local bare origin, so the repo is the GitHub one it
+    stands for.
+    """
+    with (
+        patch("vergil_tooling.lib.release_groups.record.groups_of", return_value=[]),
+        patch("vergil_tooling.bin.vrg_pr_workflow._clone_repo", return_value="acme/tools"),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _no_open_pr_on_the_branch() -> Iterator[None]:
     """Give report-ready's push a branch with no open PR into ``develop``.
 

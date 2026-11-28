@@ -184,6 +184,7 @@ from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
+from vergil_tooling.lib.release_groups import pr_check
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
@@ -864,16 +865,38 @@ def _qualified(issue_ref: str) -> str:
         return issue_ref
 
 
+def _check_whole_groups(sub: _Submission) -> None:
+    """Hold *sub*'s issues to the whole-group rule (spec §5.2), before anything is pushed.
+
+    A batch's issues are checked in their batch order; a single issue has none.
+    A refusal raises :class:`_SubmitFailedError` with nothing pushed or opened. Issues
+    that cannot be qualified to ``owner/repo#N`` are left to the gate, which refuses
+    them (see :func:`_qualified`): the rule cannot name their groups.
+    """
+    repo = github.current_repo()
+    try:
+        refs = [epics.parse_issue_ref(_qualified(ref), default_repo=repo) for ref in sub.issue_refs]
+    except ValueError:
+        return
+    order = refs if batch_rules.is_batch(sub.issue_refs) else None
+    try:
+        pr_check.check_whole_groups(refs, order=order)
+    except batch_rules.BatchRuleError as exc:
+        raise _SubmitFailedError(f"{exc}. Nothing was pushed and no PR was opened.") from exc
+
+
 def _run_gates(sub: _Submission) -> None:
     """Apply the merge-review gate to *sub* (spec §4.6).
 
-    Runs for every submission, before any push or ``gh pr create``.
+    Runs for every submission, before any push or ``gh pr create``. The
+    whole-group rule (:func:`_check_whole_groups`) runs first, before the fetch.
     ``origin/<base>`` is fetched, and the branch too when *sub.push* is false
     (a pushing submit must not move the ``--force-with-lease`` ref, and its
     head is the local commit); then :func:`agent_gates.evaluate` judges
     ``origin/<base>...<head>``. A failure raises :class:`_SubmitFailedError`
     naming every reason, with nothing pushed or opened.
     """
+    _check_whole_groups(sub)
     authors = load_trusted_authors()
     refs = (sub.base,) if sub.push else (sub.branch, sub.base)
     try:
