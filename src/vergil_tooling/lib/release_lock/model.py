@@ -24,6 +24,13 @@ STALE_AFTER_SECS = 900
 ARMING_EXPIRY_SECS = 300
 #: The bound on the arm call, retries included; well below the arming expiry.
 ARM_CALL_BOUND_SECS = 60
+#: How many times the arm call tries in all when GitHub refuses it because the
+#: base branch moved ("Base branch was modified"): another PR merged into
+#: ``develop`` at that moment. The tries and their pauses all fall inside
+#: :data:`ARM_CALL_BOUND_SECS`.
+BASE_MOVED_ATTEMPTS = 5
+#: The pause before the arm call tries again after such a refusal.
+BASE_MOVED_RETRY_SECS = 3.0
 #: The release's total wait on arming refs before it fails, naming them.
 ARMING_WAIT_BOUND_SECS = 900
 #: How often the release lists the arming refs while it waits on them.

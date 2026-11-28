@@ -80,8 +80,9 @@ vrg-submit-pr \
 - `--notes` (optional): additional notes
 - `--dry-run` (optional): print generated PR without executing
 
-The PR opens against `develop`, with GitHub auto-merge on (squash, or
-rebase for a batch PR), and `vrg-finalize-pr` then watches it merge.
+The PR opens against `develop`, with GitHub auto-merge on (the one PR path
+works the method out from the PR: squash, rebase for a batch PR, or a
+merge commit for a back-merge or dependency-update PR), and `vrg-finalize-pr` then watches it merge.
 
 ## Local deviations
 

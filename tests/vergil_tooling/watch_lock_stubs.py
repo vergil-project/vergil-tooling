@@ -77,6 +77,7 @@ class FakeLock:
     issue_state: str = "OPEN"
     arm_outcome: ArmOutcome | Exception = "armed"
     arm_detail: str = ""
+    pr_state: str = "open, auto-merge off"
     reclaimed: bool = True
     reclaim_error: Exception | None = None
     reads: list[str] = field(default_factory=list)
@@ -89,6 +90,7 @@ class FakeLock:
         monkeypatch.setattr(stale, "_issue_state", self.read_issue)
         monkeypatch.setattr(reclaim, "reclaim_if_stale", self.reclaim_if_stale)
         monkeypatch.setattr(pr_path, "arm", self.arm)
+        monkeypatch.setattr(pr_path, "describe_state", lambda _url: self.pr_state)
         return self
 
     def read_lock(self, repo: str) -> LockState:

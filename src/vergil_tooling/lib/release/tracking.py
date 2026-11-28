@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.pending_release import PendingChange, PendingRelease
     from vergil_tooling.lib.release.context import ReleaseContext
     from vergil_tooling.lib.release.state import IssueEntry, StateBlock
+    from vergil_tooling.lib.release_lock.holder import LockOwner
 
 # GitHub's addComment API rejects any comment body longer than this many
 # characters. Posting a larger body fails with
@@ -209,6 +210,19 @@ def render_contents(
     else:
         lines.append("None: the release's PRs close no issues.")
     return "\n".join(lines)
+
+
+def describe_lock_held(lock: LockOwner) -> str:
+    """The sentence a stage comment states the lock the release holds in (ruling F12).
+
+    Its holder (identity and host), version, the lock's commit sha and when it
+    was taken, so the issue records the take as it records the release.
+    """
+    rec = lock.record
+    return (
+        f"**Release lock held** by {rec.holder_identity} on {rec.holder_host} for release "
+        f"{rec.version}: lock commit `{lock.sha}`, taken {rec.started_at}."
+    )
 
 
 def comment_phase_complete(ctx: ReleaseContext, phase: str, details: str) -> None:

@@ -97,7 +97,7 @@ names what replaced it:
 
 | Flag | Why it is gone |
 | ---- | -------------- |
-| `--strategy` | Finalize no longer merges. `vrg-submit-pr` chooses the merge method when it turns auto-merge on: squash for a single-issue PR, rebase for a batch PR. |
+| `--strategy` | Finalize no longer merges. The one PR path (`lib/pr_path.py`) chooses the merge method from the PR itself when `vrg-submit-pr` turns auto-merge on: squash for a single-issue PR, rebase for a batch PR, a merge commit for a back-merge (`release/post-*`) or a dependency-update PR. |
 | `--no-wait-cd` | Not waiting on CD is the default; `--wait-cd` opts in to waiting. |
 | `--skip-post-checks` | One run watches every listed PR, then settles `develop` once. Pass the PRs as a comma list. |
 | `--install`, `--no-install` | Install is part of every release. |

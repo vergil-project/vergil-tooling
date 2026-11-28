@@ -167,7 +167,8 @@ def _in_target_org(repo: str, run: Callable[[], int]) -> int:
 def _update_repo(args: argparse.Namespace, repo: str) -> int:
     """``update``: converge *repo*'s GitHub side, then sync its managed files by PR.
 
-    The steps: the identity gate; the GitHub-side audit and convergence,
+    The steps: the identity gate, and for a human run the login its sync PR
+    is opened as; the GitHub-side audit and convergence,
     shared with ``apply``; every fixer in :data:`FIXERS` on a fresh clone of
     ``develop``; one sync PR for whatever the fixers changed
     (:func:`open_sync_pr`); and the audit of the fixed clone.
@@ -183,6 +184,7 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
       inactivity, which must be re-enabled by hand. The sync PR for the fixable drift is
       still opened, and exit 1 applies only once it has merged;
     - **2:** something could not be audited or converged: an agent identity,
+      the login a human run opens its PR as not being readable,
       a setting not checked (a ``BypassUnreadable`` included), a GitHub write,
       the clone or the PR failing, or a sync PR that did not merge (a failed
       check, a conflict, a closed PR, the branch-update cap or the deadline;
@@ -196,6 +198,11 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
         emit_error(str(exc))
         return 2
     print(f"  {repo}: identity: {_describe_identity(mode)}")
+    try:
+        opener = _opener_login(mode)
+    except _IdentityRefusedError as exc:
+        emit_error(str(exc))
+        return 2
 
     github_code = _audit_and_apply(args, repo, local_compliant=True)
     if github_code == 2:
@@ -210,7 +217,7 @@ def _update_repo(args: argparse.Namespace, repo: str) -> int:
                 clone,
                 job=SYNC_JOB,
                 title=SYNC_PR_TITLE,
-                body=_sync_pr_body(repo, remaining),
+                body=_sync_pr_body(repo, remaining, opener),
             )
     except (DevelopCloneError, MechanizedPRError) as exc:
         emit_error(str(exc))
@@ -251,6 +258,26 @@ def _update_identity() -> identity_mode.IdentityMode:
     return mode
 
 
+def _opener_login(mode: identity_mode.IdentityMode) -> str | None:
+    """The login a run in *mode* opens its sync PR as; ``None`` under the App.
+
+    A human run reads the login the credentials post as, through the same
+    ``gh api user`` call as the human-post ruling, since the PR body names it.
+    A failed read refuses the run: it never falls back to the job's wording,
+    which would claim the job opened a PR a person opened.
+    """
+    if mode is not identity_mode.IdentityMode.HUMAN:
+        return None
+    try:
+        return github.read_output("api", "user", "--jq", ".login")
+    except github.GitHubAPIError as exc:
+        msg = (
+            "Refusing to update: cannot read the login this run opens the sync PR as "
+            f"(gh api user failed; run update logged in to gh): {exc}"
+        )
+        raise _IdentityRefusedError(msg) from exc
+
+
 def _describe_identity(mode: identity_mode.IdentityMode) -> str:
     """The resolved identity mode as ``update`` logs it (vergil-tooling#4433).
 
@@ -287,19 +314,31 @@ def _run_fixers(repo: str, clone: Path) -> list[CannotFix]:
     return cannot_fix
 
 
-def _sync_pr_body(repo: str, remaining: ConfigDiff) -> str:
-    """The sync PR's body: what it is, and what it leaves for a human.
+def _sync_pr_body(repo: str, remaining: ConfigDiff, opener: str | None) -> str:
+    """The sync PR's body: what it is, who opened it, and what it leaves for a human.
 
-    *remaining* is the audit of the fixed clone. Every :class:`CannotFix` is
-    in it too, since a fixer and its check share one ``<name>_drift``.
+    *opener* is the login a hand-run ``update`` opens the PR as, or ``None``
+    when the sync job (the App) opens it. *remaining* is the audit of the
+    fixed clone. Every :class:`CannotFix` is in it too, since a fixer and its
+    check share one ``<name>_drift``.
     """
+    watching = (
+        "watches it until it merges, updating the branch when `develop` moves and "
+        "merging it once its required checks pass. A later run replaces it while it "
+        "is still open."
+    )
+    if opener is None:
+        who = f"The repo-config sync job opened it and {watching}"
+    else:
+        who = (
+            "A person ran `vrg-github-repo-config update` by hand (login "
+            f"`{opener}`) and opened it; the run {watching}"
+        )
     lines = [
         f"`vrg-github-repo-config update` found managed files on `develop` of {repo} "
         f"that differ from the released master copies. This PR brings them in sync.",
         "",
-        "The repo-config sync job opened it and watches it until it merges, updating "
-        "the branch when `develop` moves and merging it once its required checks pass. "
-        "A later run replaces it while it is still open.",
+        who,
     ]
     if remaining.items:
         lines += ["", "Left for a human, since this run could not fix them:", ""]

@@ -51,6 +51,8 @@ _PROXY_LINK_DRIFT = epic_audit.proxy_link_drift
 _PROXY_CLOSURES = epic_audit.proxy_closures
 _CHAIN_DRIFT = epic_audit.chain_drift
 _CONTAINERS = epic_chain.containers
+# The real release-group pass, taken before the autouse fixture stubs it out.
+_GROUP_FINDINGS = group_audit.group_findings
 # The orgs the tests audit, each a Vergil org with a stanza of its own.
 _ORGS = ("org", "owner", "lab-org", "vergil-project", "logical-minds-foundry")
 
@@ -95,6 +97,8 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_MOD}.epic_audit.misplaced_adhoc", return_value=[]),
         # No epic has a release group, so --epic makes no record read.
         patch(f"{_MOD}.group_audit.group_status", return_value=[]),
+        # No home epic has a broken release group, so the audit makes no group read.
+        patch(f"{_MOD}.group_audit.group_findings", return_value=[]),
         # No chain is drifted, and every --epic names a one-container epic.
         patch(f"{_MOD}.epic_audit.chain_drift", return_value=[]),
         patch(f"{_MOD}.epic_chain.containers", side_effect=_one_container),
@@ -898,7 +902,9 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     def _writer(name: str, result: object) -> MagicMock:
         return MagicMock(side_effect=lambda *_a, **_k: order.append(name) or result)
 
+    groups = _writer("groups", [])
     writers = {
+        "close_drift": _writer("drift", []),
         "nativize_parents": _writer("nativize", epic_audit.LinkPass(linked=1)),
         "strip_retired_labels": _writer("strip", 2),
         "attach_orphans": _writer("attach", epic_audit.LinkPass(linked=3)),
@@ -908,13 +914,18 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
         patch(f"{_MOD}.github.detect_org", return_value="org"),
         patch(f"{_MOD}.github.target_org", scope),
         patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.group_audit.group_findings", groups),
         _patched(_close_patches(**writers)),
     ):
         rc = main(["--close"])
     assert rc == 0
-    # One block scopes the whole audit to the org (#3513); inside it the orphan
-    # pass applies in the order nativize -> strip -> attach.
-    assert order == ["enter", "nativize", "strip", "attach", "exit"]
+    # One block scopes the whole audit to the org (#3513); inside it the drift-close pass
+    # runs first, the orphan pass applies in the order nativize -> strip -> attach, and the
+    # release-group check runs last (epic vergil-project/.github#1672, spec §5.6).
+    assert order == ["enter", "drift", "nativize", "strip", "attach", "groups", "exit"]
+    groups.assert_called_once()
+    assert groups.call_args.args == ("org",)
+    assert groups.call_args.kwargs == {"home": "org/.github", "listing": [], "authors": AUTHORS}
     writers["nativize_parents"].assert_called_once_with([_BODY_ONLY])
     writers["strip_retired_labels"].assert_called_once_with([_RETIRED])
     writers["attach_orphans"].assert_called_once()
@@ -926,6 +937,111 @@ def test_vrg_epic_audit_close_applies_in_order(capsys: pytest.CaptureFixture[str
     assert "Orphans attached to intake: 3." in out
     # The report-only check still surfaces.
     assert "org/.github#180 — missing the `archive` label" in out
+
+
+_HOME_EPIC = IssueRef("org", ".github", 40)
+_SPLIT_MEMBERS = (IssueRef("org", "repo", 1), IssueRef("org", "repo", 2))
+
+
+def _no_orphan_writes() -> dict[str, MagicMock]:
+    """The orphan pass's writers, each with nothing to do, so the sweep makes no link."""
+    return {
+        "nativize_parents": MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+        "strip_retired_labels": MagicMock(return_value=0),
+        "attach_orphans": MagicMock(return_value=epic_audit.LinkPass(linked=0)),
+    }
+
+
+def _split_group_log() -> group_record.GroupLog:
+    """A home epic whose group G1 has two closed members, closed by two different merged PRs."""
+    group = group_record.Group(_HOME_EPIC, "G1", 1, _SPLIT_MEMBERS, False, "comment-1")
+    return group_record.GroupLog(_HOME_EPIC, {"G1": group}, {}, None, frozenset({"G1"}))
+
+
+def _open_home_listing(state: str = "OPEN") -> list[dict[str, object]]:
+    """The home's epic listing with the one epic, number 40, in *state*."""
+    return [{"number": 40, "title": "epic", "state": state}]
+
+
+def test_split_group_fails_sweep(capsys: pytest.CaptureFixture[str]) -> None:
+    # The sweep's --close exits 1 when a group's members merged through two PRs, and its
+    # report names both PRs.
+    closed_by = {
+        _SPLIT_MEMBERS[0]: (IssueRef("org", "repo", 10),),
+        _SPLIT_MEMBERS[1]: (IssueRef("org", "repo", 11),),
+    }
+    states = {_HOME_EPIC: "OPEN", _SPLIT_MEMBERS[0]: "CLOSED", _SPLIT_MEMBERS[1]: "CLOSED"}
+    with (
+        _patched(_close_patches(**_no_orphan_writes())),
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=_open_home_listing()),
+        patch(f"{_MOD}.epic_audit.chained_epics", return_value=[]),
+        patch(f"{_MOD}.epic_audit.heal_chains", return_value=epic_audit.ChainHeals((), (), ())),
+        patch(f"{_MOD}.group_audit.group_findings", _GROUP_FINDINGS),
+        patch(
+            "vergil_tooling.lib.release_groups.record.read_log",
+            return_value=_split_group_log(),
+        ),
+        patch(
+            "vergil_tooling.lib.release_groups.closers.merged_closers",
+            side_effect=lambda task, **_: closed_by[task],
+        ),
+        patch("vergil_tooling.lib.epics.epic_kind", side_effect=lambda ref: (ref, "development")),
+        patch("vergil_tooling.lib.epics.issue_state", side_effect=lambda ref: states[ref]),
+    ):
+        rc = main(["--close"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "## Release groups" in out
+    assert (
+        "- org/.github#40 G1 (split): members closed by different merged PRs: "
+        "org/repo#1 (closed) by org/repo#10; org/repo#2 (closed) by org/repo#11"
+    ) in out
+
+
+def test_closed_epic_not_checked_by_sweep(capsys: pytest.CaptureFixture[str]) -> None:
+    # A split group on a closed epic is never checked: the sweep exits 0 and reads no log.
+    with (
+        _patched(_close_patches(**_no_orphan_writes())),
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
+        patch(f"{_MOD}.epic_audit.list_home_epics", return_value=_open_home_listing("CLOSED")),
+        patch(f"{_MOD}.epic_audit.chained_epics", return_value=[]),
+        patch(f"{_MOD}.epic_audit.heal_chains", return_value=epic_audit.ChainHeals((), (), ())),
+        patch(f"{_MOD}.group_audit.group_findings", _GROUP_FINDINGS),
+        patch(
+            "vergil_tooling.lib.release_groups.record.read_log",
+            return_value=_split_group_log(),
+        ) as read_log,
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    read_log.assert_not_called()
+    assert "Release groups" not in capsys.readouterr().out
+
+
+def test_audit_reports_release_groups_and_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    # The plain audit prints each broken group in its own section and exits 1; it repairs
+    # nothing, so no write is made.
+    finding = group_audit.GroupFinding(
+        _HOME_EPIC, "G2", "rule", "same epic: org/repo#2 is under org/repo#41, not org/repo#40"
+    )
+    with (
+        _patched(_report_patches()),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.group_audit.group_findings", return_value=[finding]) as findings,
+    ):
+        rc = main([])
+    assert rc == 1
+    findings.assert_called_once_with("org", home="org/.github", listing=[], authors=AUTHORS)
+    out = capsys.readouterr().out
+    assert (
+        "\n## Release groups\n\n"
+        "- org/.github#40 G2 (rule): same epic: org/repo#2 is under org/repo#41, not org/repo#40\n"
+    ) in out
 
 
 def test_orphan_pass_past_95_links_and_nudges(capsys: pytest.CaptureFixture[str]) -> None:

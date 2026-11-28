@@ -6,9 +6,11 @@ read, the watch's snapshot, the provenance check and the auto-merge helper),
 ``read_json_paginated`` (the PR's reviews and timeline), ``graphql`` (the
 enable mutation) and ``merge`` (the direct merge). The trust layer's branch
 lookup and body read are faked too, as are the release lock and the PR's arming
-ref (:class:`FakeLock`, free by default). The provenance check, the involvement rule
-and the merge-method rule run for real; the gates' evaluator is a spy, and the
-clones the gates judge in are real git repositories.
+ref (:class:`FakeLock`, free by default). The whole-group rule's reads (a PR's
+closing references and the live group records) are :class:`GroupRule`, which
+answers no closing reference unless a test sets one. The provenance check, the
+involvement rule and the merge-method rule run for real; the gates' evaluator is
+a spy, and the clones the gates judge in are real git repositories.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.vergil_tooling.group_rule_stubs import GroupRule
 from vergil_tooling.lib import (
     agent_gates,
     finalize_watch,
@@ -29,6 +32,7 @@ from vergil_tooling.lib import (
     retry,
     trust,
 )
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_path import (
     ArmResult,
     PRPathError,
@@ -38,6 +42,7 @@ from vergil_tooling.lib.pr_path import (
     merge_method,
     push_to_open_pr,
 )
+from vergil_tooling.lib.release_groups.record import Group
 from vergil_tooling.lib.release_lock import arming
 from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock.model import (
@@ -45,6 +50,7 @@ from vergil_tooling.lib.release_lock.model import (
     ARMING_COLLISION_POLL_SECS,
     ARMING_COLLISION_WAIT_SECS,
     ARMING_EXPIRY_SECS,
+    BASE_MOVED_ATTEMPTS,
     LockRecord,
     RefReadError,
     RefWriteError,
@@ -67,6 +73,13 @@ AUTHORS = TrustedAuthors(human=(HUMAN,), agents=(AGENT,))
 CLEAN_STDERR = (
     "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)\n"
 )
+BASE_MOVED_STDERR = (
+    "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)\n"
+)
+BASE_MOVED_ENABLE_STDERR = BASE_MOVED_STDERR.replace(
+    "mergePullRequest", "enablePullRequestAutoMerge"
+)
+NOT_OPEN_STDERR = "GraphQL: Pull request is not open (enablePullRequestAutoMerge)\n"
 BATCH_BODY = "## Summary\n\nTwo fixes.\n\nCloses #1\nCloses #2\n"
 
 
@@ -106,6 +119,12 @@ class FakeGitHub:
     # Whether the other caller merged the PR directly instead.
     other_merges: bool = False
     state_reads: int = 0
+    # How many direct merges GitHub refuses with "Base branch was modified" first.
+    base_moved_merges: int = 0
+    # How many enable mutations GitHub refuses with "Base branch was modified" first.
+    base_moved_enables: int = 0
+    # Whether another caller merges the PR at the moment such an enable is refused.
+    merged_on_base_moved: bool = False
 
     def read_json(self, *args: str) -> object:
         assert args[:3] == ("pr", "view", PR), args
@@ -166,6 +185,17 @@ class FakeGitHub:
         assert "enablePullRequestAutoMerge" in query
         self.events.append("enable")
         self.mutations.append(variables)
+        if self.state == "MERGED":
+            raise github.GitHubAPIError(
+                1, ("gh", "api", "graphql"), output="", stderr=NOT_OPEN_STDERR
+            )
+        if self.base_moved_enables:
+            self.base_moved_enables -= 1
+            if self.merged_on_base_moved:
+                self.state = "MERGED"
+            raise github.GitHubAPIError(
+                1, ("gh", "api", "graphql"), output="", stderr=BASE_MOVED_ENABLE_STDERR
+            )
         if self.clean:
             raise github.GitHubAPIError(1, ("gh", "api", "graphql"), output="", stderr=CLEAN_STDERR)
         self.auto_merge = {"mergeMethod": variables["method"]}
@@ -174,6 +204,11 @@ class FakeGitHub:
     def merge(self, pr: str, *, strategy: str, match_head: str | None = None) -> None:
         self.events.append("merge")
         self.merges.append((pr, strategy, match_head))
+        if self.base_moved_merges:
+            self.base_moved_merges -= 1
+            raise github.GitHubAPIError(
+                1, ("gh", "pr", "merge"), output="", stderr=BASE_MOVED_STDERR
+            )
         self.state = "MERGED"
 
     def prs_for_branch(
@@ -352,6 +387,30 @@ def lock(monkeypatch: pytest.MonkeyPatch) -> FakeLock:
     for name in ("create", "current", "renew", "delete"):
         monkeypatch.setattr(arming, name, getattr(fake_lock, name))
     return fake_lock
+
+
+@pytest.fixture(autouse=True)
+def group_rule(monkeypatch: pytest.MonkeyPatch) -> GroupRule:
+    """The whole-group rule's reads: no closing reference and no group, unless a test sets one."""
+    return GroupRule().install(monkeypatch)
+
+
+ISSUE_900 = IssueRef("o", "r", 900)
+ISSUE_901 = IssueRef("o", "r", 901)
+PAIR = Group(
+    epic=IssueRef("o", "r", 1672),
+    group="g-pair",
+    rev=1,
+    members=(ISSUE_900, ISSUE_901),
+    dissolved=False,
+    comment_id="100",
+)
+
+
+def _half_of_a_pair(group_rule: GroupRule) -> None:
+    """PR 7 closes #900 and not #901, its group's other member: the group would ship in part."""
+    group_rule.closes = [("o/r", 900)]
+    group_rule.groups = {ISSUE_900: [PAIR], ISSUE_901: [PAIR]}
 
 
 @pytest.fixture
@@ -660,6 +719,88 @@ def test_arm_clean_status_merges_directly_at_head(
     assert fake.merges == [(PR, "rebase", HEAD)]
 
 
+def test_arm_direct_merge_refused_once_for_a_moved_base_merges_on_retry(
+    fake: FakeGitHub, gates: Gates, clone: Path, no_wait: list[float]
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 1
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "merged"
+    assert len(fake.merges) == 2
+    assert len(fake.mutations) == 2
+    assert no_wait[0] > 0
+
+
+def test_arm_enable_refused_for_a_moved_base_then_merged_meanwhile_is_a_success(
+    fake: FakeGitHub, gates: Gates, clone: Path, no_wait: list[float]
+) -> None:
+    fake.base_moved_enables = 1
+    fake.merged_on_base_moved = True
+
+    result = arm(PR, clone=clone)
+
+    assert (result.outcome, result.head) == ("merged", HEAD)
+    # The retry reads the PR as merged at its head: no second enable, no merge.
+    assert len(fake.mutations) == 1
+    assert fake.merges == []
+    assert no_wait[0] > 0
+
+
+def test_arm_direct_merge_refused_past_the_bound_fails_naming_it(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 100
+
+    with pytest.raises(PRPathError, match="Base branch was modified") as info:
+        arm(PR, clone=clone)
+
+    assert f"{BASE_MOVED_ATTEMPTS} times" in str(info.value)
+    assert len(fake.merges) == BASE_MOVED_ATTEMPTS
+    # The refusal landed nothing, so its arming ref is deleted.
+    assert lock.arming == {}
+
+
+def test_arm_retry_for_a_moved_base_stays_inside_the_arm_call_bound(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 100
+    monkeypatch.setattr(pr_path, "BASE_MOVED_RETRY_SECS", ARM_CALL_BOUND_SECS)
+
+    with pytest.raises(PRPathError, match=f"ran past its bound of {ARM_CALL_BOUND_SECS}s"):
+        arm(PR, clone=clone)
+
+    assert len(fake.merges) == 1
+
+
+def test_describe_state_reads_the_prs_actual_state(fake: FakeGitHub) -> None:
+    assert pr_path.describe_state(PR) == "open, auto-merge off"
+    fake.auto_merge = {"mergeMethod": "SQUASH"}
+    assert pr_path.describe_state(PR) == "open, auto-merge on (SQUASH)"
+    fake.state = "MERGED"
+    assert pr_path.describe_state(PR) == "merged"
+
+
+def test_describe_state_names_a_failed_read_never_assumes(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_args: str) -> object:
+        raise subprocess.CalledProcessError(1, ("gh",), output="", stderr="boom")
+
+    monkeypatch.setattr(github, "read_json", broken)
+
+    text = pr_path.describe_state(PR)
+    assert "state could not be read" in text
+    assert "boom" in text
+
+
 def test_arm_back_merge_pr_passes_without_task_issue(
     fake: FakeGitHub, gates: Gates, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -791,6 +932,95 @@ def test_arm_enable_failure_raises_naming_the_pr(
 
     assert lock.events[-1] == "delete"
     assert lock.arming == {}
+
+
+# --- the whole-group rule (epic vergil-project/.github#1672, spec §5.2) -------------
+
+
+def test_single_issue_of_group_refused_at_arm(
+    fake: FakeGitHub, group_rule: GroupRule, lock: FakeLock, gates: Gates, clone: Path
+) -> None:
+    _half_of_a_pair(group_rule)
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "refused"
+    assert result.detail.startswith("the whole-group rule refuses it: ")
+    assert "is missing o/r#901" in result.detail
+    # Nothing turns on: no auto-merge enable, no merge, no arming ref, no gate run.
+    assert fake.mutations == []
+    assert fake.merges == []
+    assert lock.events == []
+    assert gates.calls == []
+
+
+def test_arm_applies_rule_without_agent_involvement(
+    fake: FakeGitHub, group_rule: GroupRule, lock: FakeLock
+) -> None:
+    _human_pr(fake)
+    _half_of_a_pair(group_rule)
+
+    result = arm(PR)
+
+    assert result.outcome == "refused"
+    assert result.detail.startswith("the whole-group rule refuses it: ")
+    assert ISSUE_900 in group_rule.group_reads
+    assert fake.mutations == []
+    assert lock.events == []
+
+
+def test_arm_reads_github_closing_refs_not_body_only(
+    fake: FakeGitHub, group_rule: GroupRule, lock: FakeLock
+) -> None:
+    _human_pr(fake)
+    _half_of_a_pair(group_rule)
+    # GitHub lists #900 as closed by the PR, and the body has no Closes line.
+    group_rule.body = "## Summary\n\nA fix.\n\nRef #900\n"
+
+    result = arm(PR)
+
+    assert result.outcome == "refused"
+    assert "is missing o/r#901" in result.detail
+    # The body alone names #900 too: a body reference refuses as well.
+    group_rule.closes = []
+    group_rule.body = "Fixes o/r#900\n"
+
+    result = arm(PR)
+
+    assert result.outcome == "refused"
+    assert "is missing o/r#901" in result.detail
+    assert fake.mutations == []
+    assert lock.events == []
+
+
+def test_arm_closing_read_failure_raises_naming_the_pr(
+    fake: FakeGitHub, group_rule: GroupRule, lock: FakeLock
+) -> None:
+    _human_pr(fake)
+    group_rule.read_error = trust.TrustReadError(
+        "read_pr_closing o/r#7", "its closing references are truncated"
+    )
+
+    with pytest.raises(PRPathError, match=f"{PR}: .*reading its closing references or group"):
+        arm(PR)
+    assert fake.mutations == []
+    assert lock.events == []
+
+
+def test_back_merge_holder_pass_reads_no_group(
+    fake: FakeGitHub, group_rule: GroupRule, lock: FakeLock, gates: Gates
+) -> None:
+    """A back-merge PR closes no issue: under the holder's pass it reads no group record."""
+    _human_pr(fake)
+    fake.head_ref = "release/post-2.1.9"
+    lock.record = _record("tok-holder")
+
+    result = arm(PR, holder_pass="tok-holder")
+
+    assert result == ArmResult(outcome="armed", pr_url=PR, head=HEAD, method="MERGE")
+    assert group_rule.group_reads == []
+    assert "create" not in lock.events
+    assert fake.mutations == [{"id": "PR_kw7", "head": HEAD, "method": "MERGE"}]
 
 
 # --- the arming gate and the holder's pass (spec §5.4) ----------------------------
@@ -1611,6 +1841,49 @@ def test_push_mode_gates_that_cannot_run_raise(
     monkeypatch.setattr(finalize_watch, "gates_before_push", fail)
 
     with pytest.raises(PRPathError, match="the gates cannot be re-checked"):
+        push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+    assert push.calls == []
+
+
+def test_single_issue_of_group_refused_at_push(
+    fake: FakeGitHub, group_rule: GroupRule, gates: Gates, push: Pushes
+) -> None:
+    _half_of_a_pair(group_rule)
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert not result.pushed
+    assert result.pr_url == PR
+    assert result.detail.startswith("the whole-group rule refuses it: ")
+    assert "is missing o/r#901" in result.detail
+    assert result.detail.endswith("; it was not pushed")
+    assert push.calls == []
+    assert gates.calls == []
+
+
+def test_push_applies_rule_without_agent_involvement(
+    fake: FakeGitHub, group_rule: GroupRule, pusher: Pusher, push: Pushes
+) -> None:
+    _human_pr(fake)
+    pusher.agent = False
+    _half_of_a_pair(group_rule)
+
+    result = push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
+
+    assert not result.pushed
+    assert "is missing o/r#901" in result.detail
+    assert ISSUE_900 in group_rule.group_reads
+    assert push.calls == []
+
+
+def test_push_closing_read_failure_raises_naming_the_pr(
+    fake: FakeGitHub, group_rule: GroupRule, push: Pushes
+) -> None:
+    group_rule.read_error = subprocess.CalledProcessError(
+        1, ("gh", "api", "graphql"), output="", stderr="HTTP 502: Bad Gateway"
+    )
+
+    with pytest.raises(PRPathError, match=f"{PR}: .*reading its closing references or group"):
         push_to_open_pr(BRANCH, head=OTHER_HEAD, lease=None)
     assert push.calls == []
 

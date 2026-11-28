@@ -37,7 +37,9 @@ from who is calling, so every re-arm gets the right one:
 :func:`retry.retry_known_resource`, since every caller arms a PR GitHub has
 just created and a brief 404 then means "not readable yet". At that head it
 runs :func:`accepts`, the provenance check
-(:func:`pr_provenance.check_pr`) and, for an agent-involved PR only
+(:func:`pr_provenance.check_pr`), the whole-group rule
+(:func:`pr_check.check_pr_whole_groups`, spec §5.2: a PR that closes part of a
+release group is refused) and, for an agent-involved PR only
 (:func:`finalize_watch.agent_involvement`), the agent gates
 (:func:`agent_gates.evaluate`, through :func:`finalize_watch.gates_at_head`).
 The gates judge local git objects, so they run in a clone of the PR's own
@@ -45,15 +47,17 @@ repository: the caller's *clone*, checked as
 :func:`finalize_watch.require_clone_of` checks it, or else a fresh one the
 path makes itself, so an arm run from a clone of another repo still judges.
 A PR with no agent involvement (the back-merge, a dependency-update PR, a
-mechanized sync PR) is armed on :func:`accepts` and the provenance check
-alone.
+mechanized sync PR) is armed on :func:`accepts`, the provenance check and the
+whole-group rule alone. The whole-group rule is one of the judgments for every
+PR, agent involved or not; a PR that closes no issue reads no group record.
 
 The path then turns auto-merge on with that method, pinned to that head
 (``expectedHeadOid``). GitHub refuses that for a PR that can already merge
 (clean status): the path then merges it directly at that head with that
 method. A PR the path does not accept, or that fails a check, is
 ``refused`` and left unarmed. A step that cannot be completed (a read, the
-provenance check, the enable) raises :class:`PRPathError`, naming the PR.
+provenance check, the whole-group rule's read, the enable) raises
+:class:`PRPathError`, naming the PR.
 
 **The arming gate** (spec §5.4) closes the race between a release taking the
 release lock and the path arming a PR. Every judgment above completes first;
@@ -126,6 +130,7 @@ from vergil_tooling.lib import (
 from vergil_tooling.lib.develop_clone import clone_url
 from vergil_tooling.lib.pr_workflow import batch_rules
 from vergil_tooling.lib.process_errors import error_text
+from vergil_tooling.lib.release_groups import pr_check
 from vergil_tooling.lib.release_lock import arming
 from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock.model import (
@@ -133,6 +138,8 @@ from vergil_tooling.lib.release_lock.model import (
     ARMING_COLLISION_POLL_SECS,
     ARMING_COLLISION_WAIT_SECS,
     ARMING_EXPIRY_SECS,
+    BASE_MOVED_ATTEMPTS,
+    BASE_MOVED_RETRY_SECS,
 )
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -312,6 +319,28 @@ def _violations(url: str) -> str:
     return ", ".join(f"{v.login} ({v.role.value}): {v.action}" for v in result.violations)
 
 
+def _whole_group_refusal(pr: _PR) -> str | None:
+    """Why the whole-group rule (spec §5.2) refuses *pr*, ``None`` when it does not.
+
+    The rule judges every PR the path arms or pushes, agent involved or not: a PR that closes
+    part of a release group is refused, and a PR that closes no issue reads no group. A group
+    record that cannot be read refuses the PR (:mod:`pr_check` fails closed on it). A failure to
+    read the PR's closing data raises :class:`PRPathError`: the PR cannot be judged, so the path
+    never allows it.
+    """
+    try:
+        pr_check.check_pr_whole_groups(pr.repo, pr.number)
+    except batch_rules.BatchRuleError as exc:
+        return f"the whole-group rule refuses it: {exc.detail}"
+    except _STEP_ERRORS as exc:
+        msg = (
+            f"{pr.snap.url}: the whole-group rule cannot judge it: reading its closing "
+            f"references or group records failed: {error_text(exc)}"
+        )
+        raise PRPathError(msg) from exc
+    return None
+
+
 def _require_clone(clone: Path, pr: _PR) -> None:
     """Refuse *clone* unless it is a clone of *pr*'s repository."""
     try:
@@ -361,7 +390,9 @@ def arm(
     arm skips the arming gate's handshake.
 
     Every judgment completes before the handshake starts, so no fetch or
-    gate run happens while the PR's arming ref exists. Returns ``armed``,
+    gate run happens while the PR's arming ref exists. The whole-group rule
+    (spec §5.2) is one of the judgments, for every PR: one that closes part of
+    a release group is ``refused``, naming the missing members. Returns ``armed``,
     ``merged`` (GitHub refused auto-merge at clean status and the path
     merged it directly), ``held`` (a release holds the lock, or the lock
     cannot be read; nothing turned on, and *detail* says which) or
@@ -385,6 +416,9 @@ def arm(
     found = _violations(url)
     if found:
         return refused(f"provenance violations found ({found})")
+    group = _whole_group_refusal(pr)
+    if group is not None:
+        return refused(group)
     try:
         method = _method(pr)
     except PRPathError as exc:
@@ -450,13 +484,18 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     """Turn auto-merge on (or merge directly), bounded by :data:`ARM_CALL_BOUND_SECS`.
 
     The bound covers the call's retries, and a call past it is stopped and
-    not retried: :class:`PRPathError` names it.
+    not retried: :class:`PRPathError` names it. GitHub's refusal because the
+    base branch moved (another PR merged into ``develop`` at that moment) is
+    transient: the enable is tried again, up to :data:`BASE_MOVED_ATTEMPTS`
+    tries inside the same bound, each after a pause of
+    :data:`BASE_MOVED_RETRY_SECS`. Each retry first reads the PR, and a PR
+    another caller merged at *head* meanwhile is a success, reported as
+    ``merged`` with no further enable or merge (#5406).
     """
     url = pr.snap.url
     try:
         with retry.bounded(ARM_CALL_BOUND_SECS, what=f"{url}: the arm call"):
-            # The path is the one caller of the enable (spec §5.4).
-            result = auto_merge._enable(url, head=head, method=method)  # noqa: SLF001
+            result = _enable_retrying_a_moved_base(url, head, method)
     except retry.DeadlineExceededError as exc:
         msg = f"{exc}; it was stopped and is not retried"
         raise _ArmCallStoppedError(msg) from exc
@@ -464,6 +503,36 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
         raise PRPathError(str(exc)) from exc
     outcome: ArmOutcome = "merged" if result.merged_now else "armed"
     return ArmResult(outcome=outcome, pr_url=url, head=head, method=method)
+
+
+def _enable_retrying_a_moved_base(
+    url: str, head: str, method: MergeMethod
+) -> auto_merge.AutoMergeResult:
+    """The enable, tried again while GitHub refuses it because the base branch moved.
+
+    Each retry reads the PR first: merged at *head* by another caller in the
+    meantime, it returns ``merged_now`` and does not enable or merge again.
+    """
+    for attempt in range(1, BASE_MOVED_ATTEMPTS + 1):
+        if attempt > 1 and auto_merge.merged_at(url, head):
+            print(f"{url}: merged meanwhile by another caller at {head[:12]}")
+            return auto_merge.AutoMergeResult(merged_now=True)
+        try:
+            # The path is the one caller of the enable (spec §5.4).
+            return auto_merge._enable(url, head=head, method=method)  # noqa: SLF001
+        except auto_merge.BaseBranchModifiedError as exc:
+            if attempt == BASE_MOVED_ATTEMPTS:
+                msg = (
+                    f"{exc}; GitHub refused it {BASE_MOVED_ATTEMPTS} times because the base "
+                    "branch kept moving"
+                )
+                raise auto_merge.AutoMergeError(msg) from exc
+            print(
+                f"{url}: the base branch moved (attempt {attempt}/{BASE_MOVED_ATTEMPTS}); "
+                f"reading the PR again and trying again in {BASE_MOVED_RETRY_SECS:g}s"
+            )
+            retry.pause(BASE_MOVED_RETRY_SECS)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _delete_arming_ref(pr: _PR, sha: str) -> None:
@@ -555,6 +624,28 @@ def _auto_merge_state(url: str) -> dict[str, object]:
         msg = f"{url}: gh pr view returned {data!r} for its auto-merge state"
         raise PRPathError(msg)
     return data
+
+
+def describe_state(pr_url: str) -> str:
+    """What state *pr_url* is in, read now: ``merged``, ``closed``, or ``open, auto-merge on/off``.
+
+    For a message that reports where a failure left a PR, so it reads the PR
+    and never asserts its state. A read that fails is named in the text
+    (``its state could not be read: <why>``), never taken for any state.
+    """
+    text = "open, auto-merge off"
+    try:
+        data = _auto_merge_state(pr_url)
+    except PRPathError as exc:
+        text = "unknown (its state could not be read: " + str(exc) + ")"
+    else:
+        state = str(data.get("state") or "").lower()
+        request = data.get("autoMergeRequest")
+        if state != "open":
+            text = state or "in an unknown state"
+        elif isinstance(request, dict):
+            text = "open, auto-merge on (" + str(request.get("mergeMethod", "unknown")) + ")"
+    return text
 
 
 def _await_other_caller(pr: _PR, head: str, method: MergeMethod) -> ArmResult | str:
@@ -714,8 +805,9 @@ def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
     before it is pushed. Run from a clone of the PR's repository (the
     branch's worktree), which holds *head*. It finds the branch's open PR
     into ``develop``, reads it (the first read behind the known-resource
-    retry, as :func:`arm` does), and at *head* runs :func:`accepts`, the
-    provenance check and the agent gates
+    retry, as :func:`arm` does), and runs :func:`accepts`, the provenance
+    check and the whole-group rule (spec §5.2, for every PR, agent involved or
+    not). At *head* it runs the agent gates
     (:func:`finalize_watch.gates_before_push`). A push by an agent identity
     makes the PR agent-involved, so its head is gated even on a PR no agent
     has acted on yet. Only then does it push: with
@@ -725,9 +817,10 @@ def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
     never touched, so it stays on throughout.
 
     A branch with no open PR into ``develop``, a PR the path does not
-    accept, and a head that fails a check give ``pushed=False`` with the
-    reason. A step that cannot be completed (a read, the provenance check,
-    the push itself) raises :class:`PRPathError`.
+    accept, a PR that closes part of a release group, and a head that fails a
+    check give ``pushed=False`` with the reason. A step that cannot be
+    completed (a read, the provenance check, the whole-group rule's read, the
+    push itself) raises :class:`PRPathError`.
     """
     clone, repo = _here()
     found = _open_develop_pr(repo, branch)
@@ -752,6 +845,9 @@ def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
     found_violations = _violations(url)
     if found_violations:
         return refused(f"provenance violations found ({found_violations})")
+    group = _whole_group_refusal(pr)
+    if group is not None:
+        return refused(f"{group}; it was not pushed")
     try:
         gates = finalize_watch.gates_before_push(
             pr.snap, branch, clone, head=head, pusher_is_agent=identity_mode.any_agent_signal()

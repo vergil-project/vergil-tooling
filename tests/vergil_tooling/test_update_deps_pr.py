@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.vergil_tooling.group_rule_stubs import GroupRule
 from vergil_tooling.lib import (
     auto_merge,
     finalize_watch,
@@ -945,6 +946,12 @@ def _read_issue(repo: str, number: int) -> trust.IssueContent:
 def _trusted_reads(monkeypatch) -> None:
     _BODIES.clear()
     monkeypatch.setattr(_MOD + ".trust.read_issue", _read_issue)
+
+
+@pytest.fixture(autouse=True)
+def _no_group_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole-group rule's closing read answers no closing reference, so an arm passes it."""
+    GroupRule().install(monkeypatch)
 
 
 def _task(number: int, title: str, kind: str) -> dict[str, object]:

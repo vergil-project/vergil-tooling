@@ -41,7 +41,20 @@ _FIRST_LINE_RE = re.compile(
 
 
 class GroupRecordError(Exception):
-    """A refusal of a group read: it names the epic, the group when one is named, and why."""
+    """A refusal of a group read: it names the epic, the group when one is named, and why.
+
+    *edits* holds each problem that is an outsider's edit of a trusted comment, each naming
+    its comment; it is empty when the refusal holds none. *unreadable* is True when the
+    refusal holds a problem that is not an edit (a malformed or conflicting record, or a
+    comment the epic cannot be read for). An edit alone is not an unreadable log.
+    """
+
+    def __init__(
+        self, message: str, *, edits: tuple[str, ...] = (), unreadable: bool = True
+    ) -> None:
+        super().__init__(message)
+        self.edits = edits
+        self.unreadable = unreadable
 
 
 @dataclass(frozen=True)
@@ -235,7 +248,8 @@ def _read(epic: epics.IssueRef, authors: TrustedAuthors | None) -> _Read:
     trust.report_skipped(stream.skipped, stream=sys.stderr)
     entries = [e for e in (_entry(c) for c in stream.comments) if e is not None]
 
-    problems = [_edit_problem(s) for s in stream.skipped if s.kind == "edit"]
+    edit_problems = [_edit_problem(s) for s in stream.skipped if s.kind == "edit"]
+    problems: list[str] = []
     if entries:
         reason = _not_group_epic(head, kind)
         if reason is not None:
@@ -246,8 +260,12 @@ def _read(epic: epics.IssueRef, authors: TrustedAuthors | None) -> _Read:
         for e in entries
         if e.group is None
     )
-    if problems:
-        error = GroupRecordError(f"{head.slug} cannot be read: " + "; ".join(problems))
+    if edit_problems or problems:
+        error = GroupRecordError(
+            f"{head.slug} cannot be read: " + "; ".join(edit_problems + problems),
+            edits=tuple(edit_problems),
+            unreadable=bool(problems),
+        )
         return _Read(GroupLog(head, {}, {}, error, frozenset()), {})
 
     # Every entry is scoped here: an unscoped one is a problem of the epic, refused above.
@@ -261,10 +279,12 @@ def _read(epic: epics.IssueRef, authors: TrustedAuthors | None) -> _Read:
         holds[group_id] = tuple(e.parsed for e in group_entries if e.parsed is not None)
         group_problems = _group_problems(group_entries)
         if group_problems:
-            detail = "; ".join(group_problems)
+            detail = "; ".join(text for text, _ in group_problems)
             ids = ", ".join(f"comment {e.comment_id}" for e in group_entries)
             broken[group_id] = GroupRecordError(
-                f"{head.slug} group {group_id} cannot be read: {detail} (records: {ids})"
+                f"{head.slug} group {group_id} cannot be read: {detail} (records: {ids})",
+                edits=tuple(text for text, is_edit in group_problems if is_edit),
+                unreadable=any(not is_edit for _, is_edit in group_problems),
             )
             continue
         parsed = [(e.comment_id, e.parsed) for e in group_entries if e.parsed is not None]
@@ -302,25 +322,32 @@ def _readable_group(first_line: str) -> str | None:
     return None
 
 
-def _group_problems(entries: Sequence[_Entry]) -> list[str]:
-    """Why a group's records refuse its reads, each problem naming its comments."""
-    problems: list[str] = []
+def _group_problems(entries: Sequence[_Entry]) -> list[tuple[str, bool]]:
+    """Why a group's records refuse its reads: each problem's text, and whether it is an edit.
+
+    Each problem names its comments. An edited record is an edit; a malformed or conflicting
+    one is not.
+    """
+    problems: list[tuple[str, bool]] = []
     for entry in entries:
         if entry.parsed is None:
-            problems.append(f"comment {entry.comment_id} is malformed ({entry.problem})")
-        elif entry.edited:
-            problems.append(f"comment {entry.comment_id} was edited after it was posted")
+            problems.append((f"comment {entry.comment_id} is malformed ({entry.problem})", False))
+        if entry.edited:
+            problems.append((f"comment {entry.comment_id} was edited after it was posted", True))
     parsed = [(e.comment_id, e.parsed) for e in entries if e.parsed is not None]
     top_id, top_rev = "", 0
     for comment_id, record in parsed:
         if top_rev and record.rev == top_rev:
             problems.append(
-                f"comment {top_id} and comment {comment_id} both set revision {record.rev}"
+                (f"comment {top_id} and comment {comment_id} both set revision {record.rev}", False)
             )
         elif record.rev < top_rev:
             problems.append(
-                f"comment {comment_id} sets revision {record.rev} after comment {top_id}"
-                f" set revision {top_rev}"
+                (
+                    f"comment {comment_id} sets revision {record.rev} after comment {top_id}"
+                    f" set revision {top_rev}",
+                    False,
+                )
             )
         else:
             top_id, top_rev = comment_id, record.rev

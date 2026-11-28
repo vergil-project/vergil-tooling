@@ -15,8 +15,14 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from tests.vergil_tooling.group_rule_stubs import (
+    GroupRule,
+    judge_pr_up_to_the_rule,
+    two_member_group,
+)
 from tests.vergil_tooling.release_lock_stubs import REPO, Origin, make_origin
 from vergil_tooling.lib import github, pr_path
+from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.release_lock import (
     RefReadError,
     RefWriteError,
@@ -627,3 +633,38 @@ def test_rearm_listing_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "read_json", fail)
     with pytest.raises(sweeps.SweepError, match="HTTP 500"):
         sweeps.rearm_all(REPO)
+
+
+# --- the whole-group rule on a re-arm (epic vergil-project/.github#1672, spec §5.2) ----
+
+
+@pytest.fixture
+def group_rule(monkeypatch: pytest.MonkeyPatch) -> GroupRule:
+    return GroupRule().install(monkeypatch)
+
+
+def _no_arming_ref(*_args: object, **_kwargs: object) -> str:
+    msg = "a refused arm writes no arming ref"
+    raise AssertionError(msg)
+
+
+def test_rearm_sweep_partial_group_refused(
+    gh: FakeGitHub, group_rule: GroupRule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep re-arms through the real path: a PR closing part of a group is refused."""
+    url = gh.add(7, armed=False)
+    judge_pr_up_to_the_rule(monkeypatch, repo=REPO, number=7)
+    monkeypatch.setattr(arming, "create", _no_arming_ref)
+    first, second = IssueRef("org", "repo", 900), IssueRef("org", "repo", 901)
+    group = two_member_group(first, second)
+    group_rule.closes = [(REPO, 900)]
+    group_rule.groups = {first: [group], second: [group]}
+
+    result = sweeps.rearm_all(REPO)
+
+    assert result.armed == []
+    [(refused_url, detail)] = result.refused
+    assert refused_url == url
+    assert detail.startswith("the whole-group rule refuses it: ")
+    assert "is missing org/repo#901" in detail
+    assert not gh.armed(7)

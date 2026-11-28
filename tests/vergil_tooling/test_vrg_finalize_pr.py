@@ -4685,7 +4685,8 @@ def test_strategy_flag_fatal(capsys: pytest.CaptureFixture[str]) -> None:
     watch.assert_not_called()
     err = capsys.readouterr().err
     assert "vrg-finalize-pr: --strategy was removed" in err
-    assert "squash for a single-issue PR, rebase for a batch PR" in err
+    assert "the one PR path chooses the merge method from the PR" in err
+    assert "a merge commit for a back-merge or a dependency-update PR" in err
 
 
 def test_no_merge_call_anywhere() -> None:

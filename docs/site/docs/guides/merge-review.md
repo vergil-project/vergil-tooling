@@ -242,10 +242,14 @@ an absent level with that mode and refuses otherwise. The skill runs
 makes there.
 
 The directory is working storage and the record a stopped run resumes from.
-Do not edit or delete it while a run is open. `issue-implement` deletes it
-once `report-ready` has succeeded. Extracting an issue from a batch
-(`vrg-pr-workflow batch-extract`) removes the issue's whole
-`issue-implement/<N>/` directory, this one included.
+Do not edit or delete it while a run is open. Once `report-ready` has
+succeeded, its cleanup deletes only the `merge-review/` directory. The
+`writer-commits` ledger beside it (`build/.vergil-state/issue-implement/<N>/writer-commits`,
+one `<kind>`, `<sha>`, `<subject>` line per writer commit) stays until the PR
+merges; then the agent deletes the ledger and removes the empty `<N>/`
+directory. Extracting an issue from a batch (`vrg-pr-workflow batch-extract`)
+removes the issue's whole `issue-implement/<N>/` directory, `merge-review/`
+state and `writer-commits` ledger included.
 
 ## Security findings
 

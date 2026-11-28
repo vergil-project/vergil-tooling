@@ -66,7 +66,11 @@ from vergil_tooling.lib.release.supersede import (
     judge_superseded_lock,
     load_superseded,
 )
-from vergil_tooling.lib.release.tracking import read_state, render_contents
+from vergil_tooling.lib.release.tracking import (
+    describe_lock_held,
+    read_state,
+    render_contents,
+)
 from vergil_tooling.lib.release_lock import history, reclaim, sweeps
 from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock.holder import LockLost, LockOwner
@@ -733,10 +737,51 @@ def _resume_lock(ctx: ReleaseContext, first: str | None, stages: Sequence[str]) 
         fields = {"stage": "preflight", "health": "running", "broken_stage": ""}
         if ctx.worktree_path is not None:
             fields["worktree"] = str(ctx.worktree_path)
-        _holding(ctx, lambda: owner.update(**fields))
+        before = found.record
+        was: str = "unreadable" if before is None else before.health
+        if before is not None and before.broken_stage:
+            was += f" at {before.broken_stage}"
+
+        def adopted() -> None:
+            owner.update(**fields)
+            _record_resume_lock(
+                ctx, owner, f"adopted this release's own lock, which was {was}, with a new token"
+            )
+
+        _holding(ctx, adopted)
         return
-    ctx.lock = _retake(ctx, identity, host)
-    _holding(ctx, lambda: _after_retake(ctx, identity, host, first, stages))
+    owner = _retake(ctx, identity, host)
+    ctx.lock = owner
+
+    def retaken() -> None:
+        _record_resume_lock(ctx, owner, "re-took the lock: none was held")
+        _after_retake(ctx, identity, host, first, stages)
+
+    _holding(ctx, retaken)
+
+
+def _record_resume_lock(ctx: ReleaseContext, owner: LockOwner, how: str) -> None:
+    """State on the tracking issue how this resume came to hold the lock (ruling F12)."""
+    if ctx.issue_number is None:
+        raise ReleaseError(
+            phase="preflight",
+            command="record the release lock",
+            message="A resume holds the lock with no tracking issue number to record it on.",
+        )
+    comment_lock_takeover(
+        ctx.repo,
+        ctx.issue_number,
+        "\n".join(
+            [
+                "<!-- vrg-release:lock-resumed -->",
+                "",
+                f"This resume {how}.",
+                "",
+                describe_lock_held(owner),
+            ]
+        ),
+        phase="preflight",
+    )
 
 
 def _adopt(repo: str, found: lock_refs.LockState) -> LockOwner:

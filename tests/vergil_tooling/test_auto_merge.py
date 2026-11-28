@@ -17,9 +17,11 @@ import pytest
 
 from vergil_tooling.lib import auto_merge, github
 from vergil_tooling.lib.auto_merge import (
+    BASE_MODIFIED_REFUSAL,
     CLEAN_STATUS_REFUSAL,
     AutoMergeError,
     AutoMergeResult,
+    BaseBranchModifiedError,
     MergeMethod,
     auto_merge_enabled,
 )
@@ -33,6 +35,11 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 # gh's own rendering of GitHub's refusal for a PR that can already merge.
 CLEAN_STDERR = (
     "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)\n"
+)
+
+
+BASE_MOVED_STDERR = (
+    "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)\n"
 )
 
 
@@ -320,3 +327,47 @@ def test_direct_merge_error_with_failed_readback_names_both(
 
     with pytest.raises(AutoMergeError, match="(?s)direct merge failed.*Head branch.*boom"):
         enable_auto_merge(PR, head=HEAD, method="SQUASH")
+
+
+def test_base_modified_signal_is_githubs_message() -> None:
+    assert BASE_MODIFIED_REFUSAL in BASE_MOVED_STDERR
+
+
+def test_direct_merge_refused_for_a_moved_base_raises_the_retryable_error(
+    fake: FakeGitHub,
+) -> None:
+    fake.refusal = _gh_refusal(CLEAN_STDERR)
+    fake.merge_failure = _gh_refusal(BASE_MOVED_STDERR)
+
+    with pytest.raises(BaseBranchModifiedError, match="Base branch was modified"):
+        enable_auto_merge(PR, head=HEAD, method="SQUASH")
+    assert fake.state == "OPEN"
+
+
+def test_direct_merge_refused_for_a_moved_base_but_merged_meanwhile_is_success(
+    fake: FakeGitHub,
+) -> None:
+    """A PR another caller merged at this head is success, not a retry (#5406)."""
+    fake.refusal = _gh_refusal(CLEAN_STDERR)
+    fake.merge_failure = _gh_refusal(BASE_MOVED_STDERR)
+    fake.lands_then_fails = True
+
+    assert enable_auto_merge(PR, head=HEAD, method="SQUASH") == AutoMergeResult(merged_now=True)
+
+
+def test_arm_refused_for_a_moved_base_raises_the_retryable_error(fake: FakeGitHub) -> None:
+    fake.refusal = _gh_refusal(
+        BASE_MOVED_STDERR.replace("mergePullRequest", "enablePullRequestAutoMerge")
+    )
+
+    with pytest.raises(BaseBranchModifiedError, match="Base branch was modified"):
+        enable_auto_merge(PR, head=HEAD, method="SQUASH")
+
+
+def test_other_direct_merge_refusals_are_not_retryable(fake: FakeGitHub) -> None:
+    fake.refusal = _gh_refusal(CLEAN_STDERR)
+    fake.merge_failure = _gh_refusal("GraphQL: Head branch was modified (mergePullRequest)")
+
+    with pytest.raises(AutoMergeError) as info:
+        enable_auto_merge(PR, head=HEAD, method="SQUASH")
+    assert not isinstance(info.value, BaseBranchModifiedError)

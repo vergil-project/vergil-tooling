@@ -29,7 +29,7 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups import pr_check, record
 from vergil_tooling.lib.release_groups.record import Group, GroupRecordError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
 RULES = "vergil_tooling.bin.vrg_pr_workflow.batch_rules.check_hard_rules"
+_PRC = "vergil_tooling.lib.release_groups.pr_check"
+# Captured before any patching, so a test can run the real whole-group rule under the stub.
+_REAL_CHECK_WHOLE_GROUPS = pr_check.check_whole_groups
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -66,6 +69,35 @@ def clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def rules() -> Iterator[MagicMock]:
     with patch(RULES) as fake:
         yield fake
+
+
+@pytest.fixture(autouse=True)
+def _no_whole_group_check() -> Iterator[None]:
+    """Skip the whole-group rule, whose group records are read from GitHub.
+
+    The rule has its own tests in ``tests/vergil_tooling/test_release_group_pr_check.py``;
+    the tests of it here re-patch the module attribute with the real function.
+    """
+    with patch(f"{_PRC}.check_whole_groups", return_value=None):
+        yield
+
+
+@pytest.fixture()
+def real_whole_groups() -> Iterator[MagicMock]:
+    """The real whole-group rule, with the group records faked: a group of #10 and #11."""
+    group = Group(
+        epic=IssueRef("acme", "tools", 7),
+        group="g-batch",
+        rev=1,
+        members=(IssueRef("acme", "tools", 10), IssueRef("acme", "tools", 11)),
+        dissolved=False,
+        comment_id="100",
+    )
+    with (
+        patch(f"{_PRC}.check_whole_groups", _REAL_CHECK_WHOLE_GROUPS),
+        patch("vergil_tooling.lib.release_groups.record.groups_of", return_value=[group]) as groups,
+    ):
+        yield groups
 
 
 def _run(*args: str) -> int:
@@ -199,9 +231,12 @@ def test_batch_extract_rewrites_the_batch(
 ) -> None:
     sha = "c" * 40
     write_markers(clone, ["#10", "#11", "#12"], base_sha=sha)
+    ledger = _state_dir(clone, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
     assert _run("batch-extract", "--issue", "acme/tools#11") == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {"ok": True, "extracted": ["#11"], "remaining": ["#10", "#12"], "batch": True}
+    assert not ledger.exists()
     assert not _state_dir(clone, 11).exists()
     assert read_marker(clone, "#12") == Marker(["#10", "#12"], sha)
 
@@ -754,6 +789,45 @@ def test_open_pr_lookup_failure_refuses_push(
     _assert_nothing_recorded(ready_clone, relay)
 
 
+def test_single_issue_of_group_refused_at_report_ready(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec §5.2: a single-issue PR that closes one member of a group ships part of it.
+    _branch(ready_clone, "feat: one thing")
+    assert _report("10") == 1
+    assert real_whole_groups.call_args.args[0] == IssueRef("acme", "tools", 10)
+    err = capsys.readouterr().err
+    assert "batch refused (whole groups)" in err
+    assert "missing acme/tools#11" in err
+    assert "nothing was pushed or recorded" in err
+    rules.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
+def test_single_issue_report_ready_refuses_a_clone_whose_repo_cannot_be_told(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _branch(ready_clone, "feat: one thing")
+    with patch(
+        "vergil_tooling.bin.vrg_pr_workflow._clone_repo",
+        side_effect=vrg_pr_workflow.WrongCloneError("no origin"),
+    ):
+        assert _report("10") == 1
+    assert "report-ready: no origin; nothing was pushed or recorded" in capsys.readouterr().err
+    real_whole_groups.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
 def test_report_ready_batch_refuses_rule_break(
     ready_clone: Path,
     rules: MagicMock,
@@ -906,6 +980,23 @@ def test_report_ready_batch_removes_markers_on_success(
     # Only the marker goes: the merge-review state beside it is the skill's.
     assert review.is_dir()
     assert not _state_dir(ready_clone, 11).exists()
+
+
+def test_report_ready_batch_keeps_the_writer_commits_ledger(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+) -> None:
+    _branch(ready_clone, "feat: a (#10)", "feat: b (#11)")
+    write_markers(ready_clone, ["#10", "#11"], base_sha="c" * 40)
+    ledger = _state_dir(ready_clone, 11) / "writer-commits"
+    ledger.write_text(f"commit\t{'d' * 40}\tfeat: b (#11)\n")
+    assert _report("10", "11") == 0
+    assert read_marker(ready_clone, "#11") is None
+    # Only the marker goes: the ledger stays until the PR merges.
+    assert ledger.read_text() == f"commit\t{'d' * 40}\tfeat: b (#11)\n"
+    assert _state_dir(ready_clone, 11).is_dir()
 
 
 def test_report_ready_batch_removes_markers_from_a_worktree(
@@ -1128,6 +1219,35 @@ def test_batch_check_passes_non_batch_pr(
     assert "is not a batch PR" in capsys.readouterr().out
     github_pr["closing"].assert_not_called()
     github_pr["rules"].assert_not_called()
+
+
+def test_single_issue_of_group_refused_at_batch_check(
+    clone: Path,
+    github_pr: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec §5.2: the rule reaches a non-batch PR too, before the no-batch early return.
+    _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nCloses #10\n")
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert f"batch-check: PR {_PR}: batch refused (whole groups)" in err
+    assert "missing acme/tools#11" in err
+    github_pr["closing"].assert_not_called()
+    github_pr["rules"].assert_not_called()
+
+
+def test_batch_check_without_a_closes_line_has_nothing_to_check(
+    clone: Path,
+    github_pr: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nRef #10\n")
+    assert _run("batch-check", "--pr", _PR) == 0
+    assert "is not a batch PR" in capsys.readouterr().out
+    real_whole_groups.assert_not_called()
+    github_pr["closing"].assert_not_called()
 
 
 def test_batch_check_fixup_commit_fails(
