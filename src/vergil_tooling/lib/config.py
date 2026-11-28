@@ -1293,17 +1293,22 @@ def _publish_install(publish_raw: dict[str, Any], source: str) -> str | None:
     return value
 
 
-def _publish_reload_plugins(publish_raw: dict[str, Any], source: str) -> bool:
-    """``[publish].reload-plugins``, default false; a non-bool value is an error.
+def _publish_bool(publish_raw: dict[str, Any], key: str, default: bool, source: str) -> bool:
+    """``[publish].<key>`` as a bool, falling back to ``default`` when unset.
 
-    Strictly boolean, so a mistyped opt-in (e.g. ``reload-plugins = "true"``)
+    Strictly boolean, so a mistyped value (e.g. ``release = "false"``)
     surfaces loudly rather than being coerced.
     """
-    value = publish_raw.get("reload-plugins", False)
+    value = publish_raw.get(key, default)
     if not isinstance(value, bool):
-        msg = f"{source}: [publish].reload-plugins must be a boolean (got {value!r})"
+        msg = f"{source}: [publish].{key} must be a boolean (got {value!r})"
         raise ConfigError(msg)
     return value
+
+
+def _publish_reload_plugins(publish_raw: dict[str, Any], source: str) -> bool:
+    """``[publish].reload-plugins``, default false; a non-bool value is an error."""
+    return _publish_bool(publish_raw, "reload-plugins", False, source)
 
 
 def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilConfig:
@@ -1391,8 +1396,8 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
 
     publish_raw = raw.get("publish", {})
     publish = PublishConfig(
-        release=bool(publish_raw.get("release", False)),
-        docs=bool(publish_raw.get("docs", True)),
+        release=_publish_bool(publish_raw, "release", False, source),
+        docs=_publish_bool(publish_raw, "docs", True, source),
         install=_publish_install(publish_raw, source),
         reload_plugins=_publish_reload_plugins(publish_raw, source),
     )

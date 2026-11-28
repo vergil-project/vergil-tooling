@@ -632,6 +632,47 @@ def test_publish_reload_plugins_must_be_a_bool(tmp_path: Path, value: str) -> No
         read_config(tmp_path)
 
 
+def test_publish_release_defaults_false(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.release is False
+
+
+def test_publish_docs_defaults_true(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.docs is True
+
+
+@pytest.mark.parametrize(("value", "expected"), [("true", True), ("false", False)])
+def test_publish_release_and_docs_bool_parsed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str, expected: bool
+) -> None:
+    toml = _VALID_TOML + f"\n[publish]\nrelease = {value}\ndocs = {value}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.release is expected
+    assert cfg.publish.docs is expected
+    # Known keys: no unrecognized-key warning.
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("value", ['"true"', '"false"', "1", "0"])
+def test_publish_release_must_be_a_bool(tmp_path: Path, value: str) -> None:
+    toml = _VALID_TOML + f"\n[publish]\nrelease = {value}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[publish\]\.release must be a boolean"):
+        read_config(tmp_path)
+
+
+@pytest.mark.parametrize("value", ['"true"', '"false"', "1", "0"])
+def test_publish_docs_must_be_a_bool(tmp_path: Path, value: str) -> None:
+    toml = _VALID_TOML + f"\n[publish]\ndocs = {value}\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[publish\]\.docs must be a boolean"):
+        read_config(tmp_path)
+
+
 # -- unrecognized-key warnings ------------------------------------------------
 
 _EXTRA_PROJECT_KEY_TOML = (
