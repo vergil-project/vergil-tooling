@@ -36,9 +36,10 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   tracking issue is open, so it is the human's) is ``broken``, reported with
   why it is not reclaimed. A stale one is reclaimed
   (:func:`.reclaim.reclaim_if_stale`, as the identity running the watch):
-  a reclaim that wins is ``free``, naming it, since the lock is gone and its
-  re-arm sweep has run; one another reclaimer or the holder beat is
-  ``free`` too, and the next read sees what is there now.
+  a reclaim that wins ends the hold: it is ``free``, naming it, and the watch
+  makes no update or re-arm call of its own in that read. The update runs on
+  the next read, which finds the lock free (see above). One another reclaimer
+  or the holder beat is ``free`` too, and the next read sees what is there now.
 - **Held but unreadable:** ``unreadable``, reported as ``held by an
   unreadable release lock (<error>)``, and never reclaimed: only
   ``vrg-release-lock break`` clears it.
@@ -92,7 +93,6 @@ def _health(rec: LockRecord, verdict: stale.Staleness, *, now: datetime) -> str:
         age = heartbeat_age_secs(rec, now=now)
         return f"(stage {rec.stage}, running, heartbeat {age}s old)"
     return f"(stage {rec.stage}, {rec.health})"
-
 
 
 class LockWatch:
