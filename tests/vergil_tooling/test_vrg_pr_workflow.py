@@ -29,7 +29,7 @@ from vergil_tooling.lib.pr_workflow import engine, freeze
 from vergil_tooling.lib.pr_workflow.batch_marker import Marker, read_marker, write_markers
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups import pr_check, record
 from vergil_tooling.lib.release_groups.record import Group, GroupRecordError
 from vergil_tooling.lib.trusted_authors import TrustedAuthors, TrustedAuthorsNotConfiguredError
 
@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
 RULES = "vergil_tooling.bin.vrg_pr_workflow.batch_rules.check_hard_rules"
+_PRC = "vergil_tooling.lib.release_groups.pr_check"
+# Captured before any patching, so a test can run the real whole-group rule under the stub.
+_REAL_CHECK_WHOLE_GROUPS = pr_check.check_whole_groups
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -66,6 +69,35 @@ def clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def rules() -> Iterator[MagicMock]:
     with patch(RULES) as fake:
         yield fake
+
+
+@pytest.fixture(autouse=True)
+def _no_whole_group_check() -> Iterator[None]:
+    """Skip the whole-group rule, whose group records are read from GitHub.
+
+    The rule has its own tests in ``tests/vergil_tooling/test_release_group_pr_check.py``;
+    the tests of it here re-patch the module attribute with the real function.
+    """
+    with patch(f"{_PRC}.check_whole_groups", return_value=None):
+        yield
+
+
+@pytest.fixture()
+def real_whole_groups() -> Iterator[MagicMock]:
+    """The real whole-group rule, with the group records faked: a group of #10 and #11."""
+    group = Group(
+        epic=IssueRef("acme", "tools", 7),
+        group="g-batch",
+        rev=1,
+        members=(IssueRef("acme", "tools", 10), IssueRef("acme", "tools", 11)),
+        dissolved=False,
+        comment_id="100",
+    )
+    with (
+        patch(f"{_PRC}.check_whole_groups", _REAL_CHECK_WHOLE_GROUPS),
+        patch("vergil_tooling.lib.release_groups.record.groups_of", return_value=[group]) as groups,
+    ):
+        yield groups
 
 
 def _run(*args: str) -> int:
@@ -757,6 +789,26 @@ def test_open_pr_lookup_failure_refuses_push(
     _assert_nothing_recorded(ready_clone, relay)
 
 
+def test_single_issue_of_group_refused_at_report_ready(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec §5.2: a single-issue PR that closes one member of a group ships part of it.
+    _branch(ready_clone, "feat: one thing")
+    assert _report("10") == 1
+    assert real_whole_groups.call_args.args[0] == IssueRef("acme", "tools", 10)
+    err = capsys.readouterr().err
+    assert "batch refused (whole groups)" in err
+    assert "missing acme/tools#11" in err
+    assert "nothing was pushed or recorded" in err
+    rules.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
 def test_report_ready_batch_refuses_rule_break(
     ready_clone: Path,
     rules: MagicMock,
@@ -1146,6 +1198,22 @@ def test_batch_check_passes_non_batch_pr(
     _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nCloses #10\nRef #11\n")
     assert _run("batch-check", "--pr", _PR) == 0
     assert "is not a batch PR" in capsys.readouterr().out
+    github_pr["closing"].assert_not_called()
+    github_pr["rules"].assert_not_called()
+
+
+def test_single_issue_of_group_refused_at_batch_check(
+    clone: Path,
+    github_pr: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Spec §5.2: the rule reaches a non-batch PR too, before the no-batch early return.
+    _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nCloses #10\n")
+    assert _run("batch-check", "--pr", _PR) == 1
+    err = capsys.readouterr().err
+    assert f"batch-check: PR {_PR}: batch refused (whole groups)" in err
+    assert "missing acme/tools#11" in err
     github_pr["closing"].assert_not_called()
     github_pr["rules"].assert_not_called()
 

@@ -72,9 +72,11 @@ when ok and 1 otherwise; a group that cannot be read fails the judgment, and
 ``batch-check --pr <url> [--head <sha>]`` checks a submitted batch PR before
 a push to it (epic vergil-project/.github#1218, spec §6.8): its body's
 ``Closes`` refs against GitHub's closing references, and one commit per issue
-from the PR's base to ``--head`` (or the PR's head). It never runs the hard
-rules, writes nothing and makes no freeze check. The body is read only through
-the trust layer (epic vergil-project/.github#1467): one it does not trust fails
+from the PR's base to ``--head`` (or the PR's head). It runs the whole-group
+rule (spec §5.2) over the body's ``Closes`` refs for any PR, batch or not, but
+never the other hard rules; it writes nothing and makes no freeze check. The
+body is read only through the trust layer (epic vergil-project/.github#1467):
+one it does not trust fails
 the check, batch or not, since its ``Closes`` lines are what the check goes by.
 It exits 0 when the PR passes or is not a batch PR, and 1 otherwise.
 
@@ -116,6 +118,7 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.linkage import (
+    extract_tracking_refs,
     find_linkage_keyword,
     freetext_linkage_error,
     normalize_linkage,
@@ -127,7 +130,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
-from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups import pr_check, record
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
@@ -661,6 +664,24 @@ def _check_batch(issue_refs: list[str], *, base: str, head_sha: str) -> list[str
     return [f"#{epics.parse_issue_ref(ref, default_repo=repo).number}" for ref in issue_refs]
 
 
+def _check_single_group(issue_ref: str) -> None:
+    """Run the whole-group rule on a single-issue report-ready before anything is pushed.
+
+    A single-issue PR closes one issue, so it refuses an issue that is a member of
+    a release group (spec §5.2): the group ships whole, and this PR would ship part
+    of it. A batch takes the rule through :func:`_check_batch` instead. Refusing
+    leaves nothing pushed or recorded.
+    """
+    try:
+        repo = _clone_repo()
+    except WrongCloneError as exc:
+        raise WorkflowError(f"report-ready: {exc}; nothing was pushed or recorded") from exc
+    try:
+        pr_check.check_whole_groups([epics.parse_issue_ref(issue_ref, default_repo=repo)])
+    except batch_rules.BatchRuleError as exc:
+        raise WorkflowError(f"report-ready: {exc}; nothing was pushed or recorded") from exc
+
+
 def _remove_batch_markers(marker_refs: list[str]) -> None:
     """Remove the batch markers once the ready state is recorded.
 
@@ -745,7 +766,11 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         _refuse_drifted_rerun(state, head_sha)
         # Read before apply_report_ready overwrites the recorded head_sha.
         lease_sha = _lease_sha(state)
-    marker_refs = _check_batch(issue_refs, base=state.base, head_sha=head_sha) if batch else []
+    if batch:
+        marker_refs = _check_batch(issue_refs, base=state.base, head_sha=head_sha)
+    else:
+        _check_single_group(issue_refs[0])
+        marker_refs = []
     engine.apply_report_ready(
         state,
         title=args.title,
@@ -1137,21 +1162,45 @@ def _commit_sha(rev: str) -> str:
     return git.read_output("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
 
 
+def _check_pr_whole_groups(pr: str, body: str) -> None:
+    """Hold the body's ``Closes`` issues to the whole-group rule (spec §5.2).
+
+    Every ``Closes`` line counts, one or more, in the body's order, which is the
+    batch order a batch is held to. Nothing is read when the body has none.
+    """
+    closing_refs = [ref for keyword, ref in extract_tracking_refs(body) if keyword == "Closes"]
+    if not closing_refs:
+        return
+    try:
+        repo = _clone_repo()
+    except WrongCloneError as exc:
+        raise WorkflowError(f"batch-check: {exc}") from exc
+    closing = [epics.parse_issue_ref(ref, default_repo=repo) for ref in closing_refs]
+    try:
+        pr_check.check_whole_groups(closing, order=closing)
+    except batch_rules.BatchRuleError as exc:
+        raise WorkflowError(f"batch-check: PR {pr}: {exc}") from exc
+
+
 def cmd_batch_check(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
     """Check a submitted batch PR; exit 0 when it passes or is not a batch PR.
 
-    The checks are :func:`batch_rules.check_closing_refs` against GitHub's
-    closing references, then :func:`batch_rules.check_commit_per_issue` from
-    the PR's base, as fetched now, to ``--head`` (or the PR's head), the
-    issues in the body's ``Closes`` order. The hard rules are not run: they
-    read issue state a push cannot change, and submit checked them (epic
-    vergil-project/.github#1218, spec §6.8). It writes no state and makes no
-    freeze check, so it runs on a submitted, frozen branch.
+    The whole-group rule (spec §5.2) runs first, for any PR: every ``Closes``
+    issue is held to :func:`pr_check.check_whole_groups`, in the body's order.
+    The checks for a batch are then :func:`batch_rules.check_closing_refs`
+    against GitHub's closing references, then
+    :func:`batch_rules.check_commit_per_issue` from the PR's base, as fetched
+    now, to ``--head`` (or the PR's head), the issues in the body's ``Closes``
+    order. The other hard rules are not run: they read issue state a push
+    cannot change, and submit checked them (epic vergil-project/.github#1218,
+    spec §6.8). It writes no state and makes no freeze check, so it runs on a
+    submitted, frozen branch.
     """
     pr = str(args.pr)
     if args.head is not None and (not args.head or args.head.startswith("-")):
         raise WorkflowError(f"batch-check: --head is not a git revision: {args.head!r}")
     body, base, pr_head = _check_pr_fields(pr)
+    _check_pr_whole_groups(pr, body)
     closes = batch_rules.batch_closes(body)
     if not closes:
         print(

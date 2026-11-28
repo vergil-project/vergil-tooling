@@ -79,11 +79,13 @@ from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
+from vergil_tooling.lib.release_groups import pr_check
+from vergil_tooling.lib.release_groups.record import Group
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
@@ -5027,6 +5029,181 @@ class TestGateStep:
         with patch(_MOD + ".github.current_repo", return_value="no-slash"):
             _submit_all([_gate_sub()], _ARGS)
         assert real_gates["evaluate"].call_args.kwargs["issue_refs"] == ["#42"]
+
+
+# --- the whole-group rule at submit (epic vergil-project/.github#1672, spec §5.2) ---
+
+_PRC = "vergil_tooling.lib.release_groups.pr_check"
+# Captured before any patching, so a test can run the real whole-group rule under the stub.
+_REAL_CHECK_WHOLE_GROUPS = pr_check.check_whole_groups
+_GROUP_OF_1 = Group(
+    epic=epics.IssueRef("o", "r", 100),
+    group="g-batch",
+    rev=1,
+    members=(epics.IssueRef("o", "r", 1), epics.IssueRef("o", "r", 9)),
+    dissolved=False,
+    comment_id="100",
+)
+
+
+def _group_of_1_and_9(ref: epics.IssueRef, **_kwargs: object) -> list[Group]:
+    """The live groups of *ref*: #1 and #9 share one group, and no submit here closes both."""
+    return [_GROUP_OF_1] if ref.number in (1, 9) else []
+
+
+@pytest.fixture(autouse=True)
+def _no_whole_group_check() -> Iterator[None]:
+    """Skip the whole-group rule at submit, whose group records are read from GitHub.
+
+    The rule has its own tests in ``tests/vergil_tooling/test_release_group_pr_check.py``;
+    :func:`grouped_gate` re-patches the module attribute with the real function.
+    """
+    with patch(_PRC + ".check_whole_groups", return_value=None):
+        yield
+
+
+@pytest.fixture()
+def grouped_gate() -> Iterator[dict[str, MagicMock]]:
+    """The real gate step with the real whole-group rule over #1 and #9, one group.
+
+    Git, GitHub and the evaluator are stubbed; each mock is a way a PR could be pushed or
+    opened, so a refused submit must leave every one of them untouched.
+    """
+    with (
+        patch(_MOD + "._run_gates", _REAL_RUN_GATES),
+        patch(_MOD + ".load_trusted_authors", return_value=_GATE_AUTHORS),
+        patch(_PRC + ".check_whole_groups", _REAL_CHECK_WHOLE_GROUPS),
+        patch(
+            "vergil_tooling.lib.release_groups.record.groups_of", side_effect=_group_of_1_and_9
+        ) as groups,
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/o/r/pull/9") as create,
+        patch(_MOD + ".agent_gates.evaluate") as evaluate,
+    ):
+        yield {
+            "groups": groups,
+            "git_run": git_run,
+            "push": push,
+            "create": create,
+            "evaluate": evaluate,
+        }
+
+
+def _run_template(tmp_path: Path) -> int:
+    _write_workflow_state(tmp_path, issue="1", branch="feature/1-x")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+    ):
+        return main([])
+
+
+def _run_batch(tmp_path: Path, argv: list[str]) -> int:
+    with (
+        patch(_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(
+            _MOD + "._select_batch_worktrees",
+            return_value=[_batch_wt("issue-1-a"), _batch_wt("issue-9-b")],
+        ),
+        patch(_MOD + "._require_reported_head"),
+        patch(_MOD + ".submission.read_pr_fields", side_effect=_batch_fields),
+    ):
+        return main(argv)
+
+
+def _run_named_local(tmp_path: Path) -> int:
+    wt = Worktree(path=Path("/repo/.worktrees/issue-1-x"), branch="feature/1-x")
+    local = MagicMock()
+    local.read.return_value = _ready_state(issue="1", branch="feature/1-x", head_sha="abc123")
+    with (
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".LocalFileTransport", return_value=local),
+        # origin lacks the branch, so the local path would push it
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".submission.record_submission"),
+    ):
+        return main(["feature/1-x"])
+
+
+def _run_named_relay(tmp_path: Path) -> int:
+    state = _ready_state(issue="1", branch="feature/1-x", head_sha="abc123")
+
+    def transport(_branch: str) -> MagicMock:
+        relay = MagicMock()
+        relay.read.return_value = state
+        return relay
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".GitHubTransport", side_effect=transport),
+        patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/1-x"),
+    ):
+        return main(["feature/1-x"])
+
+
+def _run_cli(tmp_path: Path) -> int:
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+    ):
+        return main(["--issue", "1", "--summary", "S", "--title", "fix: t"])
+
+
+def _assert_refused_before_any_push(grouped: dict[str, MagicMock], text: str) -> None:
+    grouped["groups"].assert_called()
+    assert "whole groups" in text
+    assert "is missing o/r#" in text
+    assert "Nothing was pushed and no PR was opened" in text
+    grouped["git_run"].assert_not_called()
+    grouped["push"].assert_not_called()
+    grouped["create"].assert_not_called()
+    grouped["evaluate"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param(_run_template, id="template"),
+        pytest.param(lambda p: _run_batch(p, ["--all"]), id="all"),
+        pytest.param(lambda p: _run_batch(p, ["--select", "1,9"]), id="select"),
+        pytest.param(_run_named_local, id="named-branch-local"),
+        pytest.param(_run_named_relay, id="named-branch-relay"),
+        pytest.param(_run_cli, id="cli-emergency"),
+    ],
+)
+def test_submit_modes_all_reach_the_rule(
+    run: Callable[[Path], int],
+    tmp_path: Path,
+    grouped_gate: dict[str, MagicMock],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Every mode but --push opens its PRs through _open_one, which runs the gate first.
+    assert run(tmp_path) != 0
+    out = capsys.readouterr()
+    _assert_refused_before_any_push(grouped_gate, out.out + out.err)
+
+
+def test_grouped_single_issue_submit_opens_no_pr(
+    tmp_path: Path, grouped_gate: dict[str, MagicMock]
+) -> None:
+    # A single-issue submit of a grouped task is refused before any push; no PR exists after it.
+    _write_workflow_state(tmp_path, issue="1", branch="feature/1-x")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".pr_path.arm") as arm,
+    ):
+        assert main([]) != 0
+    grouped_gate["git_run"].assert_not_called()
+    grouped_gate["push"].assert_not_called()
+    grouped_gate["create"].assert_not_called()
+    arm.assert_not_called()
+    assert not _state_submitted(tmp_path)
 
 
 # --- push mode (epic vergil-project/.github#1664, spec §5.4) ----------------------------
