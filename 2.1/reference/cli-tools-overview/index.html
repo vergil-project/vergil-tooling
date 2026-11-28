@@ -1508,6 +1508,8 @@
       
         
       
+        
+      
     
     
     
@@ -1560,6 +1562,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.356/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.356
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21381,7 +21411,7 @@ previews what its PR does with the epic's planning issue, as <code>planning_clos
 the check again when it builds the body (see
 <a href="../dev/submit-pr/#the-planning-issue-of-a-docs-task">the planning issue of a docs task</a>).
 Any other issue, and a batch, prints no <code>planning_close</code>.</p>
-<p>The batch hard rules are: 2 to 8 issues, none listed twice, every one in
+<p>The batch hard rules are: 2 to 20 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly blocked by an open deployment task (through a <code>Blocked-by:</code> line or a
 native GitHub blocked-by relationship) and opened by a trusted author,
@@ -23914,8 +23944,9 @@ from that commit's parent (the marker's <code>base_sha</code> is not used); late
 commits are excluded, and a <code>fixup!</code> of it after another commit is refused,
 since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with <code>origin/develop</code>. Submit, the watch and the audit read
-the records back from the trust layer's comment stream, agent role only,
-skipping an edited comment. A re-run that finds the same comment already
+the records back from the trust layer's comment stream, human and agent
+comments alike as <code>vrg-issue-read</code> reads them; only an agent-posted comment,
+skipping an edited one, can be a record. A re-run that finds the same comment already
 posted by the agent prints its ID and posts nothing.</p>
 <table>
 <thead>
@@ -24276,7 +24307,8 @@ it).</p>
 command is run from.</p>
 <p><code>--epic REF</code> is a separate read-only mode: it prints one epic's children as
 JSON (<code>{"epic": &lt;slug&gt;, "containers": &lt;n&gt;, "children": [{repo, number,
-title, state, open_blockers, blocked}, …]}</code>) and skips the drift audit. A
+title, state, open_blockers, blocked}, …], "groups": [{group, rev, members,
+runnable, blocked_by}, …]}</code>) and skips the drift audit. A
 bare <code>#N</code> resolves against the current repo's epic home, and a
 continuation's ref resolves to its chain's head. <code>containers</code> counts the
 containers of the epic's chain, the epic included: 1 for an epic with no
@@ -24295,7 +24327,14 @@ unblocked. The children include the tasks of every
 <a href="../../standards/github-issues/#proxy-epics">proxy epic</a> the epic's trusted
 <code>Proxy:</code> comments name, each with its repo, beside the epic's own. On a proxy
 the JSON gains a <code>"primary": &lt;slug&gt;</code> key naming its primary; on any other epic
-the key is absent. <code>--epic</code> also checks the links: on a primary, every proxy
+the key is absent. <code>groups</code> lists the epic's live release groups in ID order
+(dissolved ones are left out; <code>[]</code> when there are none): each one's <code>group</code>
+ID, its record's <code>rev</code>, its <code>members</code> as <code>owner/repo#N</code> refs, and <code>runnable</code>,
+true iff every blocker of its members that lies outside the group is closed.
+<code>blocked_by</code> lists those open outside blockers as sorted <code>owner/repo#N</code> refs,
+empty exactly when <code>runnable</code> is true; a blocker between two members never
+counts. A group that cannot be read exits 1 with the reason on stderr and no
+JSON. <code>--epic</code> also checks the links: on a primary, every proxy
 it names must exist, be a proxy and carry a <code>Primary:</code> line naming it; on a
 proxy, its primary must carry the matching <code>Proxy:</code> comment. A link that
 disagrees, cannot be parsed or cannot be read exits 1, with the problems on
