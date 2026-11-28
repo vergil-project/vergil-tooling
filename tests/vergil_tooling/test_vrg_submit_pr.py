@@ -1670,6 +1670,9 @@ class TestFinalizeByDefault:
         assert rc == 1
         err = capsys.readouterr().err
         assert "vrg-finalize-pr exited 1" in err
+        # The state is read, never asserted: finalize may have left the PR unarmed (#5406).
+        assert f"{_URL2}: open, auto-merge off" in err
+        assert "auto-merge on and are unaffected" not in err
         assert f"Re-run the finalize alone with: vrg-finalize-pr {_URL2}" in err
 
     @pytest.mark.parametrize("code", [2, 130])
@@ -2701,6 +2704,7 @@ def _run_batch(
         patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
         patch(_MOD + "._chain_finalize", _real_chain_finalize),
         patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
     ):
         rc = _run_submit_batch(wts, parse_args(["--all", *argv]))
     return rc, calls

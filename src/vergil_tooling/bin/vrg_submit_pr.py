@@ -1165,9 +1165,12 @@ def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
     if args.release and summary.failed:
         print(f"Release skipped: {len(summary.failed)} PR(s) failed to submit.", file=sys.stderr)
     if rc not in _FINALIZE_OUTCOMES:
+        # Read each PR's state now: a finalize that failed may have left one
+        # unarmed or merged, so nothing is asserted about it (#5406).
+        states = "\n".join(f"  {url}: {pr_path.describe_state(url)}" for url in summary.opened)
         print(
-            f"vrg-submit-pr: vrg-finalize-pr exited {rc}; the PRs are open with "
-            "auto-merge on and are unaffected.\n"
+            f"vrg-submit-pr: vrg-finalize-pr exited {rc}; the PRs stand as follows "
+            f"(read just now):\n{states}\n"
             f"  Re-run the finalize alone with: {shlex.join(cmd)}",
             file=sys.stderr,
         )

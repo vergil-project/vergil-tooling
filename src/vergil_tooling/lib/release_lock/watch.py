@@ -132,7 +132,10 @@ class LockWatch:
         try:
             result = pr_path.arm(snap.url)
         except pr_path.PRPathError as exc:
-            msg = f"{snap.url}: re-arming it through the one PR path failed: {exc}"
+            msg = (
+                f"{snap.url}: re-arming it through the one PR path failed: {exc}; "
+                f"the PR, read just now, is {pr_path.describe_state(snap.url)}"
+            )
             raise LockWatchError(msg) from exc
         if result.outcome == "refused":
             return LockView("refused", result.detail)

@@ -54,6 +54,15 @@ _METHODS: tuple[str, ...] = get_args(MergeMethod)
 #: leads to a direct merge; every other one is an error.
 CLEAN_STATUS_REFUSAL = "Pull request is in clean status"
 
+#: The text of GitHub's refusal of a merge, or of turning auto-merge on, because
+#: the base branch moved meanwhile: ``gh`` shows it as ``GraphQL: Base branch
+#: was modified. Review and try the merge again. (mergePullRequest)``. GitHub
+#: gives the refusal no error code (it is a GraphQL error message only, and
+#: its text is not documented), so this message is the only signal there is. It
+#: is transient: the one PR path reads the PR again and tries again
+#: (:class:`BaseBranchModifiedError`, vergil-project/vergil-tooling#5406).
+BASE_MODIFIED_REFUSAL = "Base branch was modified"
+
 _ENABLE_AUTO_MERGE_MUTATION = """
 mutation($id: ID!, $head: GitObjectID!, $method: PullRequestMergeMethod!) {
   enablePullRequestAutoMerge(
@@ -67,6 +76,14 @@ mutation($id: ID!, $head: GitObjectID!, $method: PullRequestMergeMethod!) {
 
 class AutoMergeError(RuntimeError):
     """Auto-merge could not be turned on, or the PR merged directly; the message names the PR."""
+
+
+class BaseBranchModifiedError(AutoMergeError):
+    """GitHub refused the enable or the direct merge because the base branch moved.
+
+    The refusal is transient and landed nothing: the PR was read back and is
+    still open. :func:`vergil_tooling.lib.pr_path.arm` tries again, bounded.
+    """
 
 
 @dataclass(frozen=True)
@@ -107,6 +124,16 @@ def auto_merge_enabled(pr_url: str) -> bool:
     return _auto_merge_request(pr_url, "reading auto-merge") is not None
 
 
+def merged_at(pr_url: str, head: str) -> bool:
+    """True when *pr_url* is merged with its head at *head*; a failed read raises.
+
+    The one PR path reads this before it tries a refused enable again, so a PR
+    another caller merged in the meantime is a success (vergil-project/vergil-tooling#5406).
+    """
+    pr = _pr_view(pr_url, "state,headRefOid", "reading the PR's state before a retry")
+    return pr.get("state") == "MERGED" and pr.get("headRefOid") == head
+
+
 def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
     """Merge *pr_url* at *head* with *method*, then confirm it is merged."""
     try:
@@ -119,6 +146,7 @@ def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
             f"{pr_url}: GitHub refused auto-merge because the PR can already merge, "
             f"and the direct merge failed: {error_text(exc)}"
         )
+        moved = BASE_MODIFIED_REFUSAL in error_text(exc)
         try:
             landed = _pr_view(pr_url, "state,headRefOid", "reading the state after the error")
         except AutoMergeError as read_exc:
@@ -126,6 +154,8 @@ def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
         if landed.get("state") == "MERGED" and landed.get("headRefOid") == head:
             print(f"{pr_url}: the direct merge returned an error, but it merged: {error_text(exc)}")
             return
+        if moved:
+            raise BaseBranchModifiedError(msg) from exc
         raise AutoMergeError(msg) from exc
     state = _pr_view(pr_url, "state", "reading the state after the direct merge").get("state")
     if state != "MERGED":
@@ -167,6 +197,8 @@ def _enable(pr_url: str, *, head: str, method: MergeMethod) -> AutoMergeResult:
         if landed is not None and landed.get("mergeMethod") == method:
             print(f"{pr_url}: enabling auto-merge returned an error, but it is on: {detail}")
             return AutoMergeResult(merged_now=False)
+        if BASE_MODIFIED_REFUSAL in detail:
+            raise BaseBranchModifiedError(msg) from exc
         raise AutoMergeError(msg) from exc
     request = _auto_merge_request(pr_url, "reading back auto-merge")
     read_method = request.get("mergeMethod") if request is not None else None

@@ -133,6 +133,8 @@ from vergil_tooling.lib.release_lock.model import (
     ARMING_COLLISION_POLL_SECS,
     ARMING_COLLISION_WAIT_SECS,
     ARMING_EXPIRY_SECS,
+    BASE_MOVED_ATTEMPTS,
+    BASE_MOVED_RETRY_SECS,
 )
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.update_deps.context import DEPS_LABEL
@@ -450,13 +452,18 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     """Turn auto-merge on (or merge directly), bounded by :data:`ARM_CALL_BOUND_SECS`.
 
     The bound covers the call's retries, and a call past it is stopped and
-    not retried: :class:`PRPathError` names it.
+    not retried: :class:`PRPathError` names it. GitHub's refusal because the
+    base branch moved (another PR merged into ``develop`` at that moment) is
+    transient: the enable is tried again, up to :data:`BASE_MOVED_ATTEMPTS`
+    tries inside the same bound, each after a pause of
+    :data:`BASE_MOVED_RETRY_SECS`. Each retry first reads the PR, and a PR
+    another caller merged at *head* meanwhile is a success, reported as
+    ``merged`` with no further enable or merge (#5406).
     """
     url = pr.snap.url
     try:
         with retry.bounded(ARM_CALL_BOUND_SECS, what=f"{url}: the arm call"):
-            # The path is the one caller of the enable (spec §5.4).
-            result = auto_merge._enable(url, head=head, method=method)  # noqa: SLF001
+            result = _enable_retrying_a_moved_base(url, head, method)
     except retry.DeadlineExceededError as exc:
         msg = f"{exc}; it was stopped and is not retried"
         raise _ArmCallStoppedError(msg) from exc
@@ -464,6 +471,36 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
         raise PRPathError(str(exc)) from exc
     outcome: ArmOutcome = "merged" if result.merged_now else "armed"
     return ArmResult(outcome=outcome, pr_url=url, head=head, method=method)
+
+
+def _enable_retrying_a_moved_base(
+    url: str, head: str, method: MergeMethod
+) -> auto_merge.AutoMergeResult:
+    """The enable, tried again while GitHub refuses it because the base branch moved.
+
+    Each retry reads the PR first: merged at *head* by another caller in the
+    meantime, it returns ``merged_now`` and does not enable or merge again.
+    """
+    for attempt in range(1, BASE_MOVED_ATTEMPTS + 1):
+        if attempt > 1 and auto_merge.merged_at(url, head):
+            print(f"{url}: merged meanwhile by another caller at {head[:12]}")
+            return auto_merge.AutoMergeResult(merged_now=True)
+        try:
+            # The path is the one caller of the enable (spec §5.4).
+            return auto_merge._enable(url, head=head, method=method)  # noqa: SLF001
+        except auto_merge.BaseBranchModifiedError as exc:
+            if attempt == BASE_MOVED_ATTEMPTS:
+                msg = (
+                    f"{exc}; GitHub refused it {BASE_MOVED_ATTEMPTS} times because the base "
+                    "branch kept moving"
+                )
+                raise auto_merge.AutoMergeError(msg) from exc
+            print(
+                f"{url}: the base branch moved (attempt {attempt}/{BASE_MOVED_ATTEMPTS}); "
+                f"reading the PR again and trying again in {BASE_MOVED_RETRY_SECS:g}s"
+            )
+            retry.pause(BASE_MOVED_RETRY_SECS)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _delete_arming_ref(pr: _PR, sha: str) -> None:
@@ -555,6 +592,28 @@ def _auto_merge_state(url: str) -> dict[str, object]:
         msg = f"{url}: gh pr view returned {data!r} for its auto-merge state"
         raise PRPathError(msg)
     return data
+
+
+def describe_state(pr_url: str) -> str:
+    """What state *pr_url* is in, read now: ``merged``, ``closed``, or ``open, auto-merge on/off``.
+
+    For a message that reports where a failure left a PR, so it reads the PR
+    and never asserts its state. A read that fails is named in the text
+    (``its state could not be read: <why>``), never taken for any state.
+    """
+    text = "open, auto-merge off"
+    try:
+        data = _auto_merge_state(pr_url)
+    except PRPathError as exc:
+        text = "unknown (its state could not be read: " + str(exc) + ")"
+    else:
+        state = str(data.get("state") or "").lower()
+        request = data.get("autoMergeRequest")
+        if state != "open":
+            text = state or "in an unknown state"
+        elif isinstance(request, dict):
+            text = "open, auto-merge on (" + str(request.get("mergeMethod", "unknown")) + ")"
+    return text
 
 
 def _await_other_caller(pr: _PR, head: str, method: MergeMethod) -> ArmResult | str:
