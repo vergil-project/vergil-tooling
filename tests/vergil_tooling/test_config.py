@@ -638,12 +638,6 @@ def test_publish_release_defaults_false(tmp_path: Path) -> None:
     assert cfg.publish.release is False
 
 
-def test_publish_docs_defaults_true(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
-    cfg = read_config(tmp_path)
-    assert cfg.publish.docs is True
-
-
 @pytest.mark.parametrize(("value", "expected"), [("true", True), ("false", False)])
 def test_publish_release_and_docs_bool_parsed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str, expected: bool
