@@ -274,6 +274,18 @@ def main_worktree_root() -> Path:
     return common_dir.parent
 
 
+def main_clone_root() -> Path:
+    """Return the main clone's root, from a linked worktree or from the clone itself.
+
+    ``--path-format=absolute`` makes git print the common directory as an
+    absolute path whatever the CWD, so its parent is the main clone's root.
+    Raises ``CalledProcessError`` when git cannot resolve it; there is no
+    fallback.
+    """
+    common_dir = Path(read_output("rev-parse", "--path-format=absolute", "--git-common-dir"))
+    return common_dir.parent
+
+
 def current_branch() -> str:
     """Return the current branch name."""
     return read_output("rev-parse", "--abbrev-ref", "HEAD")

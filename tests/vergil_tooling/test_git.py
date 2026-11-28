@@ -178,6 +178,15 @@ def test_main_worktree_root_from_secondary() -> None:
         assert git.main_worktree_root() == Path("/repo")
 
 
+def test_main_clone_root_asks_git_for_an_absolute_common_dir() -> None:
+    with patch(
+        "vergil_tooling.lib.git.read_output",
+        return_value="/repo/.git",
+    ) as read:
+        assert git.main_clone_root() == Path("/repo")
+    read.assert_called_once_with("rev-parse", "--path-format=absolute", "--git-common-dir")
+
+
 def test_has_staged_changes_true() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(returncode=1)
