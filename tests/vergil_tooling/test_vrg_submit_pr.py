@@ -5784,8 +5784,12 @@ def rebase_clone(push_worktree: Path, tmp_path: Path, monkeypatch: pytest.Monkey
     return push_worktree
 
 
-def _move_develop(repo: Path, files: dict[str, str]) -> str:
-    """Put a commit on origin's develop, on top of the base commit, holding *files*."""
+def _advance_origin(repo: Path, branch: str, files: dict[str, str]) -> str:
+    """Push a commit on top of the base commit to origin's *branch*, holding *files*.
+
+    The push goes to origin's URL, as another clone's would, so this clone's
+    remote-tracking refs stay as they were: they are what the lease reads.
+    """
     base = _git(repo, "rev-parse", "HEAD~1")
     entries = ""
     for name, text in files.items():
@@ -5805,7 +5809,8 @@ def _move_develop(repo: Path, files: dict[str, str]) -> str:
         check=True,
     ).stdout.strip()
     commit = _git(repo, "commit-tree", tree, "-p", base, "-m", "develop moved")
-    _git(repo, "push", "-q", "origin", f"{commit}:refs/heads/{_ORIGIN_DEVELOP}")
+    url = _git(repo, "remote", "get-url", "origin")
+    _git(repo, "push", "-q", url, f"{commit}:refs/heads/{branch}")
     return commit
 
 
@@ -5818,13 +5823,15 @@ class TestRebaseOntoDevelop:
         assert _git(rebase_clone, "rev-parse", "HEAD") == head
 
     def test_moved_develop_is_rebased_under_it(self, rebase_clone: Path) -> None:
-        develop = _move_develop(rebase_clone, {"base.txt": "base\n", "develop.txt": "moved\n"})
+        develop = _advance_origin(
+            rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "moved\n"}
+        )
         assert _rebase_onto_develop() is True
         assert _git(rebase_clone, "rev-parse", "HEAD^") == develop
         assert (rebase_clone / "fix.txt").read_text() == "fix\n"
 
     def test_a_conflict_is_aborted_and_named(self, rebase_clone: Path) -> None:
-        _move_develop(rebase_clone, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
         head = _git(rebase_clone, "rev-parse", "HEAD")
         with pytest.raises(_RebaseError, match="the rebase was aborted"):
             _rebase_onto_develop()
@@ -5835,7 +5842,7 @@ class TestRebaseOntoDevelop:
     def test_a_conflict_whose_abort_also_fails_says_the_worktree_may_be_mid_rebase(
         self, rebase_clone: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _move_develop(rebase_clone, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
         real_run = git.run
 
         def run(*args: str) -> None:
@@ -5853,7 +5860,9 @@ class TestRebaseOntoDevelop:
         monkeypatch: pytest.MonkeyPatch,
         clock: _Clock,
     ) -> None:
-        develop = _move_develop(rebase_clone, {"base.txt": "base\n", "develop.txt": "moved\n"})
+        develop = _advance_origin(
+            rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "moved\n"}
+        )
         base = _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
         FakeLock(states=[record(), None]).install(monkeypatch)
         with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
@@ -5869,7 +5878,7 @@ class TestRebaseOntoDevelop:
         clock: _Clock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        _move_develop(rebase_clone, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
         FakeLock(states=[record(), None]).install(monkeypatch)
         with patch(_MOD + ".pr_path.push_to_open_pr") as push:
             assert main(["--push", "--wait-for-release"]) == 1
@@ -5894,3 +5903,62 @@ class TestRebaseOntoDevelop:
         err = capsys.readouterr().err
         assert "fetching origin" in err
         assert "nothing was pushed" in err
+
+    def test_the_lease_is_the_head_seen_before_the_wait_fetched_develop(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+    ) -> None:
+        """The PR branch moved on origin after this clone's last fetch: the lease is the
+        head this clone last saw, not the remote's tip, and the wait's fetch leaves it."""
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "m\n"})
+        _advance_origin(rebase_clone, _PUSH_BRANCH, {"base.txt": "base\n", "elsewhere.txt": "p\n"})
+        seen = _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--wait-for-release"]) == 0
+        push.assert_called_once_with(_PUSH_BRANCH, head=ANY, lease=seen)
+        assert _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}") == seen
+
+    def test_a_head_pushed_elsewhere_while_waiting_is_not_overwritten(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Real git: a commit pushed to the PR branch from elsewhere while the submit
+        waited is refused by the lease, and nothing is pushed over it."""
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "m\n"})
+        elsewhere = _advance_origin(
+            rebase_clone, _PUSH_BRANCH, {"base.txt": "base\n", "elsewhere.txt": "p\n"}
+        )
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(
+            _MOD + ".pr_path.push_to_open_pr", side_effect=_push_as_pr_path_does(rebase_clone)
+        ):
+            assert main(["--push", "--wait-for-release"]) == 1
+        origin = _git(rebase_clone, "remote", "get-url", "origin")
+        assert _git(Path(origin), "rev-parse", f"refs/heads/{_PUSH_BRANCH}") == elsewhere
+        err = capsys.readouterr().err
+        assert "pushing" in err
+        assert "nothing was pushed" in err
+
+
+def _push_as_pr_path_does(repo: Path) -> Callable[..., pr_path.PushResult]:
+    """Stand in for :func:`pr_path.push_to_open_pr`'s last step: the same ``git push``, real git."""
+
+    def push(branch: str, *, head: str, lease: str | None) -> pr_path.PushResult:
+        args = ["push"]
+        if lease is not None:
+            args.append(f"--force-with-lease={branch}:{lease}")
+        args += ["origin", f"{head}:refs/heads/{branch}"]
+        try:
+            _git(repo, *args)
+        except subprocess.CalledProcessError as exc:
+            msg = f"pushing {head[:12]} to {branch} failed: {exc.stderr.strip()}"
+            raise pr_path.PRPathError(msg) from exc
+        return _pushed()
+
+    return push

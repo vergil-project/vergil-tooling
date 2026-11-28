@@ -574,20 +574,25 @@ class _RebaseError(Exception):
 
 
 def _rebase_onto_develop() -> bool:
-    """Fetch origin and rebase ``HEAD`` onto ``origin/develop`` if develop moved.
+    """Fetch ``develop`` from origin and rebase ``HEAD`` onto it if develop moved.
 
     Returns ``True`` when it rebased.
 
-    A conflicting rebase is aborted, so the worktree is left as it was, and
-    raises :class:`_RebaseError` naming it. A failed fetch or ancestry check
-    raises it too.
+    Only ``develop`` is fetched. Fetching the PR's branch would move its
+    remote-tracking ref, which is the lease a rebased push is made under: the
+    head this clone last saw on origin, not the remote's tip now. A conflicting
+    rebase is aborted, so the worktree is left as it was, and raises
+    :class:`_RebaseError` naming it. A failed fetch or ancestry check raises it too.
     """
     try:
-        git.run("fetch", "origin")
+        git.run("fetch", "origin", _DEVELOP)
         if git.is_ancestor(_ORIGIN_DEVELOP, "HEAD"):
             return False
     except subprocess.CalledProcessError as exc:
-        msg = f"fetching origin and checking it against origin/develop failed: {error_text(exc)}"
+        msg = (
+            "fetching origin develop and checking it against origin/develop failed: "
+            f"{error_text(exc)}"
+        )
         raise _RebaseError(msg) from exc
     try:
         git.run("rebase", _ORIGIN_DEVELOP)
@@ -654,6 +659,8 @@ def _run_push_mode(args: argparse.Namespace, *, waited: bool = False) -> int:
             head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
     lease = None
     if args.force_with_lease or rebased:
+        # The wait's fetch covers develop only, so this is still the head this
+        # clone last saw on origin, not origin's tip now.
         tracking = f"refs/remotes/origin/{branch}"
         try:
             lease = git.read_output("rev-parse", "--verify", f"{tracking}^{{commit}}")
