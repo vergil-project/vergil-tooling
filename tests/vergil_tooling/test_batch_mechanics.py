@@ -366,6 +366,8 @@ def _batch_check(repo: BatchRepo, monkeypatch: pytest.MonkeyPatch, head: str) ->
         patch(f"{MODULE}.trust.read_issue", return_value=content),
         patch(f"{MODULE}.github.pr_closing_references", return_value=_closing()),
         patch(f"{MODULE}._clone_repo", return_value="o/r"),
+        # batch-check runs the whole-group rule too; no issue here is in a group.
+        patch("vergil_tooling.lib.release_groups.record.groups_of", return_value=[]),
     ):
         return vrg_pr_workflow.main(["--base", "develop", "batch-check", "--pr", PR_URL])
 

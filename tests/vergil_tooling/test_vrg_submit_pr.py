@@ -5100,7 +5100,7 @@ def _run_template(tmp_path: Path) -> int:
         return main([])
 
 
-def _run_batch(tmp_path: Path, argv: list[str]) -> int:
+def _run_all_selection(tmp_path: Path, argv: list[str]) -> int:
     with (
         patch(_MOD + ".git.is_main_worktree", return_value=True),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -5169,8 +5169,8 @@ def _assert_refused_before_any_push(grouped: dict[str, MagicMock], text: str) ->
     "run",
     [
         pytest.param(_run_template, id="template"),
-        pytest.param(lambda p: _run_batch(p, ["--all"]), id="all"),
-        pytest.param(lambda p: _run_batch(p, ["--select", "1,9"]), id="select"),
+        pytest.param(lambda p: _run_all_selection(p, ["--all"]), id="all"),
+        pytest.param(lambda p: _run_all_selection(p, ["--select", "1,9"]), id="select"),
         pytest.param(_run_named_local, id="named-branch-local"),
         pytest.param(_run_named_relay, id="named-branch-relay"),
         pytest.param(_run_cli, id="cli-emergency"),
