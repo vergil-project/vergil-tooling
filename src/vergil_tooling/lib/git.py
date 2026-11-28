@@ -188,7 +188,9 @@ def run(*args: str) -> None:
     env_for = _git_env_factory(args)
 
     def _once() -> int:
-        return progress.run(("git", *args), env=env_for())
+        # check=True: a nonzero exit must raise CalledProcessError, never be
+        # returned as a value the caller might ignore (#5430).
+        return progress.run(("git", *args), env=env_for(), check=True)
 
     subcommand = _subcommand(args)
     if subcommand in _RETRYABLE_SUBCOMMANDS:
