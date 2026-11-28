@@ -31,6 +31,8 @@ from vergil_tooling.lib.pr_workflow.batch_rules import (
     is_batch,
 )
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.release_groups import record
+from vergil_tooling.lib.release_groups.record import Group
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
     TrustedAuthors,
@@ -126,6 +128,12 @@ def world(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
         lambda: TrustedAuthors(human=(HUMAN,), agents=(AGENT,)),
     )
     return fake
+
+
+@pytest.fixture(autouse=True)
+def no_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No group records: the whole-group rule passes these batches unless a test stubs a group."""
+    monkeypatch.setattr(record, "groups_of", lambda task, **_: [])
 
 
 def _refused(issues: list[str], rule: str) -> str:
@@ -471,6 +479,58 @@ def test_hard_rules_refuse_an_incomplete_native_list(
 
 
 # -- the commit-per-issue invariant ----------------------------------------------
+
+
+def _stub_group(monkeypatch: pytest.MonkeyPatch, *groups: Group) -> None:
+    """Make *groups* the live groups of their members; every other task is in none."""
+    monkeypatch.setattr(
+        record,
+        "groups_of",
+        lambda task, **_: [g for g in groups if task in g.members],
+    )
+
+
+def _group_of(group_id: str, *members: IssueRef) -> Group:
+    return Group(
+        epic=EPIC,
+        group=group_id,
+        rev=1,
+        members=members,
+        dissolved=False,
+        comment_id="100",
+    )
+
+
+def test_batch_start_whole_group_accepted(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_group(monkeypatch, _group_of("G1", _ref(10), _ref(11)))
+    check_hard_rules(["#10", "#11"], repo=REPO)
+
+
+def test_batch_start_partial_group_refused(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_group(monkeypatch, _group_of("G1", _ref(10), _ref(11), _ref(12)))
+    message = _refused(["#10", "#11"], "whole groups")
+    assert "G1 of acme/.github#7 is missing acme/tools#12" in message
+
+
+def test_batch_start_group_order_refused(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_group(monkeypatch, _group_of("G1", _ref(10), _ref(11)))
+    message = _refused(["#11", "#10"], "group order")
+    assert "out of order: acme/tools#11" in message
+
+
+def test_one_member_group_alone_batch_start_refused(
+    world: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A batch takes at least two issues, so a lone one-member group takes the single-issue path.
+    _stub_group(monkeypatch, _group_of("G1", _ref(10)))
+    message = _refused(["#10"], "batch size")
+    assert "2 to 20 issues, got 1" in message
 
 
 def _git(repo: Path, *args: str) -> str:

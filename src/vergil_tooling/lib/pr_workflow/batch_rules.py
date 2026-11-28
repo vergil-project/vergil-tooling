@@ -298,9 +298,10 @@ def check_hard_rules(issues: list[str], *, repo: str) -> None:
     under a buildable parent (not a queue item or an ops issue), each opened
     by a trusted author, none operational, none directly blocked by an open
     deployment task (a ``Blocked-by:`` line or a native link), and one
-    shared parent that is a finite epic or the repo's ad-hoc epic. Raises
-    :class:`BatchRuleError` at
-    the first rule broken, and on any read that fails.
+    shared parent that is a finite epic or the repo's ad-hoc epic. Last, the whole-group
+    rule (spec §5.2): every release group the batch touches is whole, and each group's
+    members are in its build order within *issues* (interleaved groups keep their own order).
+    Raises :class:`BatchRuleError` at the first rule broken, and on any read that fails.
     """
     parsed = _parse_refs(issues, repo)
     _check_count_and_duplicates(issues, parsed)
@@ -310,6 +311,10 @@ def check_hard_rules(issues: list[str], *, repo: str) -> None:
     for ref, issue in zip(issues, parsed, strict=True):
         _check_task(ref, issue, repo, authors)
     _check_shared_parent(issues, parsed)
+    # Imported here: pr_check imports this module's BatchRuleError, so a top-level import cycles.
+    from vergil_tooling.lib.release_groups import pr_check
+
+    pr_check.check_whole_groups(parsed, order=parsed)
 
 
 def _issue_number(ref: str) -> int:
