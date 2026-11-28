@@ -335,7 +335,7 @@ takes `--issue` as `N`, `#N` or `owner/repo#N` for this clone's repo:
   its batch in one rewrite: every other member's marker is rewritten without
   the set (the last one's is removed when fewer than two remain), and each
   issue's whole `issue-implement/<N>/` directory is removed, its
-  `merge-review/` state included. It refuses while a `security-*.md` details
+  `merge-review/` state and `writer-commits` ledger included. It refuses while a `security-*.md` details
   file is under any of those directories. It also refuses, naming the group,
   when the set would split a release group (a member leaving the batch while
   another member of the group stays in it); a group member outside the batch
