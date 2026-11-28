@@ -24996,7 +24996,7 @@ See the <a href="../config-audit/">GitHub Config Audit reference</a>.</p>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 compliant (for <code>diff</code>: whether or not it finds drift; for <code>update</code>: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete, including a setting not checked (for <code>update</code>, also an agent identity, a human login unreadable, or a sync PR that did not merge)</td>
+<td>0 compliant (for <code>diff</code>: whether or not it finds drift; for <code>update</code>: converged and in sync, or the sync PR opened this run merged or is held for a running release), 1 non-compliant (drift; for <code>update</code>, drift it could not fix), 2 could not complete, including a setting not checked (for <code>update</code>, also an agent identity, a human login unreadable, or a sync PR that did not merge)</td>
 </tr>
 <tr>
 <td>Status</td>

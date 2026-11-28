@@ -19263,6 +19263,78 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-release-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The release lock
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The release lock">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#taking-the-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taking the lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#holding-it-and-the-stages-that-end-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Holding it, and the stages that end it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stray-merges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stray merges
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resuming-and-superseding-under-the-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming and superseding under the lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stale-locks-and-breaking-a-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale locks and breaking a lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#agents-during-a-release" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19815,6 +19887,78 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-release-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The release lock
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The release lock">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#taking-the-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taking the lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#holding-it-and-the-stages-that-end-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Holding it, and the stages that end it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stray-merges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stray merges
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resuming-and-superseding-under-the-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming and superseding under the lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stale-locks-and-breaking-a-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stale locks and breaking a lock
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#agents-during-a-release" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20176,17 +20320,17 @@ stages not recorded done.</p>
 <tr>
 <td><code>preflight</code></td>
 <td>fail-fast</td>
-<td>Checks the host prerequisites, <code>gh</code> auth and <code>vergil.toml</code>. A <a href="#resuming-a-release">resume</a> runs only these checks. A fresh start then checks that the root checkout is a clean <code>develop</code>, <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>, runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the <a href="#the-issue-list">issue list</a></td>
+<td>Checks the host prerequisites, <code>gh</code> auth and <code>vergil.toml</code>. A <a href="#resuming-a-release">resume</a> runs only these checks. A fresh start then checks that the root checkout is a clean <code>develop</code>, <a href="#the-develop-sync">brings it up to <code>origin/develop</code></a>, runs the <a href="#the-maindevelop-divergence-check">main/develop divergence check</a>, checks the version is not tagged, checks that <a href="#one-release-at-a-time">no other release is open</a>, runs the <a href="#the-package-re-publish-check">package re-publish check</a>, runs the <a href="#the-dependency-update-gate">dependency-update gate</a>, and last runs the <a href="#the-develop-cd-gate">develop-CD gate</a>. It then takes the <a href="#the-release-lock">release lock</a>, quiesces <code>develop</code> and judges the dependency-update gate again before the cut. Creates the <code>release/&lt;version&gt;</code> managed worktree, or adopts one an <a href="#an-interrupted-release">interrupted run</a> left with nothing on it. On a fresh start it then reads the release's <a href="#release-tracking-artifacts">contents</a>, pinned to the commit the branch is cut from, and prints them: the pending-release table and, under it, the <a href="#the-issue-list">issue list</a>. A resume before <code>unlock</code> adopts or re-takes its own lock (see <a href="#resuming-and-superseding-under-the-lock">Resuming and superseding under the lock</a>)</td>
 </tr>
 <tr>
 <td><code>prepare</code></td>
 <td>fail-fast</td>
-<td>Creates the <code>release: &lt;version&gt;</code> tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to <code>main</code></td>
+<td>Creates the <code>release: &lt;version&gt;</code> tracking issue, with its Contents section, stage checklist and state block, generates the changelog and release notes, and opens the release PR to <code>main</code>. It writes the tracking issue into the release lock first, and states the lock in its comment</td>
 </tr>
 <tr>
 <td><code>merge-release</code></td>
 <td>fail-fast</td>
-<td>Waits for the release PR's checks and merges it. If the PR conflicts with <code>main</code>, it merges <code>main</code> into the release branch and pushes it. A conflict in <code>CHANGELOG.md</code> alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand</td>
+<td>Waits for the release PR's checks and merges it. If the PR conflicts with <code>main</code>, it merges <code>main</code> into the release branch and pushes it. A conflict in <code>CHANGELOG.md</code> alone is resolved by keeping the release branch's generated changelog; any other conflict aborts the merge and stops with the commands to resolve it by hand. Before the merge it checks for a <a href="#stray-merges">stray merge</a>, which abandons the release</td>
 </tr>
 <tr>
 <td><code>confirm-main</code></td>
@@ -20244,6 +20388,16 @@ stages not recorded done.</p>
 <td>Posts a <a href="#released-records"><code>Released:</code> record</a> on every issue in the <a href="#the-issue-list">issue list</a> that has none yet, once no stage before it has failed. It fails naming each issue whose record it could not post; a resume posts only the missing ones</td>
 </tr>
 <tr>
+<td><code>unlock</code></td>
+<td>deferred</td>
+<td>Checks again for a <a href="#stray-merges">stray merge</a>, which it reports and records without failing, then deletes the <a href="#the-release-lock">release lock</a> by compare-and-swap. A resume at <code>unlock</code> deletes what is left of its own release's lock; none held means the stage is done</td>
+</tr>
+<tr>
+<td><code>rearm</code></td>
+<td>deferred</td>
+<td>Offers every open, non-draft PR into <code>develop</code> with auto-merge off back to the one PR path, listing on the tracking issue any PR the path refused or held. Idempotent: a re-run offers only the PRs still unarmed</td>
+</tr>
+<tr>
 <td><code>close-tracking</code></td>
 <td>deferred</td>
 <td>Closes the tracking issue with a summary, once no stage before it has failed and the state block records a record posted on every issue</td>
@@ -20263,7 +20417,7 @@ optional:</p>
   <code>confirm-develop</code>. <code>cd-publish</code> delivers the jobs the confirm stages
   record, so it waits for <code>confirm-develop</code> to succeed and record its own.</li>
 <li><code>install</code> needs those and <code>promote</code>.</li>
-<li><code>release-records</code> and <code>close-tracking</code> need every stage before them.</li>
+<li><code>release-records</code>, <code>unlock</code>, <code>rearm</code> and <code>close-tracking</code> need every stage before them.</li>
 <li>Nothing holds back <code>package-index</code> or <code>update-deps</code>, and the failure of
   <code>cd-publish</code>, <code>package-index</code> or <code>update-deps</code> holds back none of
   <code>promote</code>, <code>finalize</code> and <code>install</code>.</li>
@@ -20375,6 +20529,7 @@ and <code>publish-status</code> run on every run and are never recorded done.</p
 <li><strong>Checks.</strong> <code>preflight</code> runs only its host, <code>gh</code> auth and config
   checks. The fresh-start checks, the develop sync among them, do not
   run: the release passed them when it started.</li>
+<li><strong>The lock.</strong> A resume whose first undone stage is before <code>unlock</code> holds the <a href="#the-release-lock">release lock</a> again: it adopts its own broken or stale lock, re-takes an absent one and quiesces again, and refuses a live one or another release's. At <code>unlock</code> it deletes its own release's lock. See <a href="#resuming-and-superseding-under-the-lock">Resuming and superseding under the lock</a>.</li>
 <li><strong>Facts are checked, not trusted.</strong> Before any stage runs, the resume
   confirms what the state block records against GitHub and git: the
   release PR is merged once <code>merge-release</code> is done, and the back-merge
@@ -20484,6 +20639,7 @@ Then:</p>
 <ul>
 <li>The <a href="#one-release-at-a-time">open-release check</a> passes over the
   superseded release's tracking issue, and only it.</li>
+<li>The new release takes over the superseded release's <a href="#resuming-and-superseding-under-the-lock">release lock</a> without unfreezing <code>develop</code>, and records the takeover in the lock history and on both tracking issues. It refuses a superseded release whose lock is running with a fresh heartbeat. With no lock to take over, it takes a fresh lock and quiesces.</li>
 <li>The new release <strong>absorbs</strong> the superseded release's issue list,
   read from its state block, into its own. An issue on both lists
   appears once, with the PRs from both. The tracking issue's Contents
@@ -21082,6 +21238,161 @@ passes over release <code>X.Y.Z</code>'s own tracking issue, and only it (see
 left with several releases open. If preflight cannot list the open
 issues, or the listing may be truncated, it refuses rather than
 reading that as no release in flight.</p>
+<p>The <a href="#the-release-lock">release lock</a> is the atomic guard against two releases at once. This check stays as the second guard, for a release past its <code>unlock</code> whose tracking issue is still open.</p>
+<h3 id="the-release-lock">The release lock<a class="headerlink" href="#the-release-lock" title="Permanent link">&para;</a></h3>
+<p>A release holds a per-repository <strong>release lock</strong> from just before the cut
+until its <code>unlock</code> stage, so <code>develop</code> cannot move under it. Only the
+release's own PRs merge into <code>develop</code> while it is held: the back-merge and
+the dependency update, which the release arms with the holder's pass. Every
+other PR is left unarmed (see <a href="#agents-during-a-release">Agents during a release</a>).
+The lock is enforced by the tooling, not by convention. It is not the GitHub
+lock on the tracking issue (see
+<a href="#the-lock-and-the-identity-rule">The lock and the identity rule</a>), and not
+the checkout lock of <a href="#the-develop-sync">the develop sync</a>.</p>
+<p>The lock is the ref <code>refs/vergil/release-lock</code> on <code>origin</code>, a one-file commit
+whose JSON record names the holder (identity and host), the release version,
+the release worktree, the tracking issue, the current stage, the health
+(<code>running</code>, or <code>broken</code> with the stage it broke at), the start time and a
+heartbeat. A release <strong>takes</strong> it with a create-only push, so only one release
+can; it <strong>updates</strong> it by compare-and-swap, so a holder whose lock was broken or
+reclaimed finds out at its next write and stops. A background writer refreshes
+the heartbeat every 60 seconds, through every wait, so a live release always
+has a fresh one. Every break, reclaim and takeover of a lock is recorded in a
+second ref, <code>refs/vergil/release-lock-history</code>. The lock is coordination
+among trusted writers, not a security boundary, and is read as written; a lock
+that cannot be read or parsed counts as held, never as absent.</p>
+<h4 id="taking-the-lock">Taking the lock<a class="headerlink" href="#taking-the-lock" title="Permanent link">&para;</a></h4>
+<p>A fresh <code>vrg-release</code> runs this in <code>preflight</code>, before the cut:</p>
+<ol>
+<li><strong>Pre-checks, with nothing locked.</strong> The open-release check, the
+   main/develop divergence check, the dependency-update gate and the
+   develop-CD gate run first. A refusal there exits with nothing locked and
+   nothing disarmed.</li>
+<li><strong>The lock.</strong> A lock found stale is reclaimed (see
+   <a href="#stale-locks-and-breaking-a-lock">Stale locks</a>). Any other held lock
+   refuses the run, naming its holder, version, stage and health. Otherwise the
+   release takes the lock.</li>
+<li><strong>The quiesce.</strong> The release waits for every arming ref to clear (the
+   short-lived per-PR marker the one PR path writes while it arms a PR; one
+   whose value is unchanged for 300 seconds is expired and deleted; the whole
+   wait is bounded at 900 seconds, past which the release fails naming the
+   refs). It then turns auto-merge off on every open PR into <code>develop</code>, again
+   if it deleted an expired ref, and checks every PR's auto-merge state once
+   more. From here <code>develop</code> cannot move.</li>
+<li><strong>The cut.</strong> The release syncs <code>develop</code> again and runs the dependency-update
+   gate again, since the set of open dependency-update PRs can change before the
+   disarm. If <code>develop</code>'s head moved between the pre-checks and the disarm, it
+   runs the head-judging gates again on the new head. It then cuts from that
+   head, so the gates have judged exactly what is cut. Everything merged before
+   the disarm is in the release; a PR still in flight stays at its CI gates.</li>
+</ol>
+<p><code>prepare</code> writes the new tracking issue into the lock before it does anything
+else, and its stage comment states the lock the release holds: the holder and
+host, the version, the lock's commit sha and when it was taken. Every exit
+after the lock is taken and before the tracking issue exists, a refusal or a
+failure, runs the full unlock path: the lock is deleted, then, if the disarm
+had started, every disarmed PR is offered back to the one PR path. A PR is
+never left disarmed with no lock held.</p>
+<h4 id="holding-it-and-the-stages-that-end-it">Holding it, and the stages that end it<a class="headerlink" href="#holding-it-and-the-stages-that-end-it" title="Permanent link">&para;</a></h4>
+<p>The lock's <code>stage</code> follows the release, and its <code>health</code> turns <code>broken</code> at the
+first recorded failure, a deferred failure included. A broken release keeps
+the lock: <code>develop</code> stays frozen until the release is finished with
+<code>vrg-release --resume</code>, or the human breaks the lock. That is deliberate. A
+broken release is a stop-the-line event, and unlocking early would let
+<code>develop</code> move under stages that still work against it.</p>
+<p>Two tracked stages end the lock, after <code>release-records</code> and before
+<code>close-tracking</code>, so the tracking issue stays open until both succeed:</p>
+<ul>
+<li><code>unlock</code> deletes the lock, by compare-and-swap against the holder's last
+  write.</li>
+<li><code>rearm</code> offers every open, non-draft PR into <code>develop</code> with auto-merge off
+  back to the one PR path, which turns it on again. A PR the path refuses or
+  holds is listed on the tracking issue and is not a failure. The sweep is
+  idempotent: a re-run offers only the PRs still unarmed.</li>
+</ul>
+<p>Both stages need every stage before them, as <code>release-records</code> and
+<code>close-tracking</code> do (see <a href="#the-hold-rule">the hold rule</a>). The stages from
+<code>unlock</code> on do not depend on the lock: a release that breaks at <code>rearm</code>, or
+later, stays visible through its open tracking issue, and <code>--resume</code> finishes it
+without looking for a lock.</p>
+<h4 id="stray-merges">Stray merges<a class="headerlink" href="#stray-merges" title="Permanent link">&para;</a></h4>
+<p>A PR merged into <code>develop</code> after the cut, other than the release's own
+back-merge and dependency update, is a <strong>stray merge</strong>: a human merge, say, or
+an arm that slipped past the quiesce. The release looks for one twice:</p>
+<ul>
+<li><strong>Before <code>merge-release</code></strong>, while nothing is tagged or published, a stray merge
+  is a hard error that <strong>abandons</strong> the release. The abandon step closes the
+  release PR into <code>main</code>, removes the <code>release/&lt;version&gt;</code> branch (locally and on
+  <code>origin</code>) and the release worktree, closes the tracking issue as not planned
+  with an <code>abandoned</code> comment naming the PR, and only then runs the full unlock
+  path. The run exits 1, naming the PR; run a fresh <code>vrg-release</code>, whose cut
+  includes it. An interrupted abandon is repeated by <code>--resume</code>, which skips the
+  steps already done.</li>
+<li><strong>Before <code>unlock</code></strong>, a stray merge is reported and recorded in the <code>unlock</code>
+  stage's comment on the tracking issue, and the release goes on. The release
+  is right for what it cut, and the PR goes into the next release.</li>
+</ul>
+<h4 id="resuming-and-superseding-under-the-lock">Resuming and superseding under the lock<a class="headerlink" href="#resuming-and-superseding-under-the-lock" title="Permanent link">&para;</a></h4>
+<p><code>vrg-release --resume</code> at a stage before <code>unlock</code> holds the lock again. It
+reads the lock and judges it:</p>
+<ul>
+<li><strong>Its own lock</strong>, when it names this release's identity and tracking issue
+  (the host is recorded for information only, so a resume on another machine
+  adopts it too), that is <code>broken</code> or has a heartbeat older than 900 seconds is
+  adopted, with a new token. The resume marks it <code>running</code> again at
+  <code>preflight</code>, and posts a <code>lock-resumed</code> comment on the tracking issue saying
+  it adopted the lock and its prior health.</li>
+<li><strong>Its own lock that is <code>running</code> with a fresh heartbeat</strong> is refused, naming
+  its host and the heartbeat's age: the first run may still be alive, and two
+  live runs of one release never both go on. Wait for the heartbeat to go
+  stale, or break the lock.</li>
+<li><strong>No lock</strong>, because it was broken or reclaimed, is re-taken by a create-only
+  push, and the re-take is recorded in the lock history and in the <code>lock-resumed</code>
+  comment. The break or reclaim ended with a re-arm sweep, so the re-take then
+  quiesces again, exactly as a fresh take does. If the first undone stage is
+  before <code>merge-release</code>, it then runs the stray-merge check, and a PR merged
+  after the cut abandons the release as above.</li>
+<li><strong>Another release's lock, or one that cannot be read</strong>, is refused, naming it.</li>
+</ul>
+<p>A resume that stops after taking the lock marks it <code>broken</code> at <code>preflight</code>, so
+the next resume adopts it at once. A resume at <code>unlock</code> takes and adopts no lock:
+it deletes what is left of its own release's lock, finds none held and goes on,
+and refuses any other. A resume past <code>unlock</code> reads no lock.</p>
+<p><code>vrg-release --supersede X.Y.Z</code> takes over the superseded release's lock rather
+than taking a new one, by compare-and-swap, so <code>develop</code> stays locked
+throughout and no re-arm sweep runs in between. It does so only when that lock
+names the superseded release and is <code>broken</code> or has a stale heartbeat; a lock
+<code>running</code> with a fresh heartbeat is refused, naming it. The takeover is
+recorded in the lock history and in a <code>lock-takeover</code> comment on both tracking
+issues, and clears the lock's tracking issue until the new release's <code>prepare</code>
+writes its own, before the superseded release's issue is closed, so the lock
+never names a closed issue while the new release runs. The new release's
+<code>prepare</code> comment carries the same lock line as a fresh one. When the
+superseded release holds no lock (it was broken or reclaimed), the new release
+takes a fresh one and quiesces, as a fresh start does.</p>
+<h4 id="stale-locks-and-breaking-a-lock">Stale locks and breaking a lock<a class="headerlink" href="#stale-locks-and-breaking-a-lock" title="Permanent link">&para;</a></h4>
+<p>A lock that is <code>running</code> with a heartbeat younger than 900 seconds is live and
+never stale. Otherwise a lock that names a tracking issue is stale exactly when
+that issue is closed: a broken release with an open tracking issue is the
+human's to finish, however old its heartbeat. A lock that names no issue is
+stale once its heartbeat is 900 seconds old, unless an open release tracking
+issue of its version exists. A lock that cannot be read is never stale. A stale
+lock is reclaimed by any trusted identity: the next release's <code>preflight</code>
+does it, and so does a merge watch that finds one (see
+<a href="../../reference/dev/finalize-pr/#under-the-release-lock">Under the release lock</a>).</p>
+<p><a href="../../reference/cli-tools-overview/#vrg-release-lock"><code>vrg-release-lock status</code></a>
+prints the lock (<code>--json</code> for a machine): the holder, version, stage, health,
+start, heartbeat, whether it is stale and why, and the PRs it holds unarmed.
+<code>vrg-repo-status</code> shows the same text in its Release lock section.
+<code>vrg-release-lock break --reason "&lt;why&gt;"</code> is the human's recorded escape hatch,
+refused to every agent: it removes any held lock, a live or unreadable one
+included, records the reason and the old lock in the lock history and on the
+tracking issue, and re-arms the PRs the lock held. A release whose lock was
+broken finds out at its next write and stops; finish it with
+<code>vrg-release --resume</code>, which re-takes the lock. The daily agent audit reports a
+<code>stale-lock</code>, an <code>unreadable-lock</code>, and any PR left unarmed while no lock is
+held (an <code>invariant-breach</code>); see
+<a href="../../reference/cli-tools-overview/#vrg-agent-audit"><code>vrg-agent-audit</code></a>.</p>
 <h3 id="agents-during-a-release">Agents during a release<a class="headerlink" href="#agents-during-a-release" title="Permanent link">&para;</a></h3>
 <p>While a release holds the repository's lock, the release's open PRs into
 <code>develop</code> stay unarmed and the merge watch shows them held (see
@@ -21210,6 +21521,9 @@ a comment when it completes or fails:</p>
   the tracking issue. It also lists any dependency-update PRs the gate
   closed because their fix task completed, and any it let through with
   <code>--allow-pending-deps</code>.</li>
+<li>The <code>prepare</code> comment also states the <a href="#the-release-lock">release lock</a> the release holds: the holder and host, the version, the lock's commit sha and when it was taken. A superseding release's <code>prepare</code> comment carries the same line, and a <code>lock-takeover</code> comment records the takeover on both tracking issues.</li>
+<li>A resume that holds the lock again posts a <code>lock-resumed</code> comment saying whether it adopted its own lock, with the lock's prior health, or re-took it.</li>
+<li>The <code>unlock</code> comment says the lock is released and names any <a href="#stray-merges">stray merge</a>, and the <code>rearm</code> comment lists the PRs it re-armed, merged, left held or saw refused. A release abandoned on a stray merge closes its tracking issue as not planned, with an <code>abandoned</code> comment naming the reason.</li>
 <li>Later comments record the merge, the tag and GitHub Release, the CD
   runs, the back-merge PR and next version, and the promotion.</li>
 <li>The <code>update-deps</code> comment carries the held-back table and either the

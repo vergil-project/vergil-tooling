@@ -19118,6 +19118,7 @@ lets <code>promote</code>, <code>finalize</code> and <code>install</code> run, a
 issue open. The run then ends naming what is left and the one command
 that finishes it, <code>vrg-release --resume</code>, or, for a release that cannot
 finish, <code>vrg-release --supersede X.Y.Z</code>.</p>
+<p>A release holds the repository's <a href="../../../guides/releasing/#the-release-lock">release lock</a> from <code>preflight</code>'s quiesce until its <code>unlock</code> stage, so <code>develop</code> cannot move under it, and a PR into <code>develop</code> that is not the release's own is left unarmed meanwhile. <a href="../../cli-tools-overview/#vrg-release-lock"><code>vrg-release-lock</code></a> reads the lock and, for the human, breaks it.</p>
 <p>On a fresh start, <code>preflight</code> prints the release's contents: the
 pending-release table of <code>main..&lt;cut&gt;</code> and the issues the release
 contains, each with its closing PRs, from the trusted closing
@@ -19212,12 +19213,12 @@ run <code>/reload-plugins</code>, or restart, in every running Claude Code sessi
 <tr>
 <td><code>--resume [X.Y.Z]</code></td>
 <td>No</td>
-<td>Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with <code>minor</code>/<code>major</code></td>
+<td>Resume an interrupted release from its open tracking issue. Name the version when more than one release is in flight. Cannot be combined with <code>minor</code>/<code>major</code>. Before <code>unlock</code> it adopts its own broken or stale <a href="../../../guides/releasing/#resuming-and-superseding-under-the-lock">release lock</a> or re-takes an absent one, and refuses a live one or another release's.</td>
 </tr>
 <tr>
 <td><code>--supersede X.Y.Z</code></td>
 <td>No</td>
-<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a></td>
+<td>Start a fresh release that supersedes open release <code>X.Y.Z</code>, which <code>--resume</code> cannot finish: one tagged with only <code>cd-publish</code>, <code>package-index</code>, <code>update-deps</code> or <code>install</code> left, or one halted at <code>confirm-main</code> with no tag after its CD release job failed. One whose tracking issue fails the identity rule is rebuilt from GitHub and git facts instead of its state block. It absorbs <code>X.Y.Z</code>'s issues and closes its tracking issue. Combines with <code>minor</code>/<code>major</code>; passing it with <code>--resume</code> is a usage error (exit 2). See <a href="../../../guides/releasing/#superseding-a-release">Superseding a release</a>. It takes over the superseded release's lock when that is broken or stale, and refuses a running one.</td>
 </tr>
 <tr>
 <td><code>--skip-audit</code></td>
@@ -19438,7 +19439,7 @@ failed checks as its likely cause (issue #4294).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; or the command was refused</td>
+<td>A stage failed, including a deferred failure such as a missed publish job, a failed install or a failed dependency update; the command was refused; or the release was abandoned on a <a href="../../../guides/releasing/#stray-merges">stray merge</a></td>
 </tr>
 <tr>
 <td>2</td>
