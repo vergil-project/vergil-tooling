@@ -1271,7 +1271,7 @@ def write_open_request(directory: Path, text: bytes) -> Path:
     return path
 
 
-def open_request_bytes(data: dict[str, object]) -> bytes:
+def open_request_bytes(data: dict[str, Any]) -> bytes:
     return json.dumps(data).encode("utf-8")
 
 

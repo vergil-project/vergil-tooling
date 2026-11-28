@@ -57,9 +57,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, identity_mode, trust
-from vergil_tooling.lib.merge_review import state
 from vergil_tooling.lib.change_fingerprint import FingerprintError, change_fingerprint
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.merge_review import state
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
 from vergil_tooling.lib.rulings.approvals import (
     DECISION_LINES,
@@ -437,7 +437,7 @@ def _write_private(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        os.replace(tmp, path)
+        tmp.replace(path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
