@@ -19609,7 +19609,7 @@ names what replaced it:</p>
 <tbody>
 <tr>
 <td><code>--strategy</code></td>
-<td>Finalize no longer merges. <code>vrg-submit-pr</code> chooses the merge method when it turns auto-merge on: squash for a single-issue PR, rebase for a batch PR.</td>
+<td>Finalize no longer merges. The one PR path (<code>lib/pr_path.py</code>) chooses the merge method from the PR itself when <code>vrg-submit-pr</code> turns auto-merge on: squash for a single-issue PR, rebase for a batch PR, a merge commit for a back-merge (<code>release/post-*</code>) or a dependency-update PR.</td>
 </tr>
 <tr>
 <td><code>--no-wait-cd</code></td>
