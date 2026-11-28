@@ -894,8 +894,9 @@ def _chain_finalize(cmd: list[str]) -> int:
     """Run *cmd*, the one ``vrg-finalize-pr`` over the opened PRs, and return its exit code.
 
     Runs as a subprocess from the main worktree root, because vrg-finalize-pr
-    refuses to run from a secondary worktree (it removes worktrees during
-    cleanup) and template mode chdir'd into one. The child inherits the TTY,
+    removes worktrees during cleanup and template mode chdir'd into one
+    (finalize would otherwise switch to the main clone itself and then remove
+    the launching worktree). The child inherits the TTY,
     so its live progress display behaves exactly as a manual run.
     """
     print()

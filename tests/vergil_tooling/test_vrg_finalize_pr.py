@@ -51,6 +51,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
 from vergil_tooling.lib import (
     closing_refs,
     finalize_watch,
+    git,
     github,
     progress,
     security_records,
@@ -85,7 +86,12 @@ from vergil_tooling.lib.worktrees import lock_protection as _real_lock_protectio
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 _PROJECTS = Path("/vergil/projects")
 
+# The real worktree check, captured before the autouse fixture patches it, so a
+# test can run the real detection against a real repository.
+_REAL_IS_MAIN_WORKTREE = git.is_main_worktree
+
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Callable, Generator, Iterator
 
     from tests.vergil_tooling.conftest import FakeApp
@@ -328,23 +334,171 @@ def test_parse_args_custom() -> None:
     assert args.dry_run is True
 
 
-def test_main_rejects_secondary_worktree(
+def _git(cwd: Path, *args: str) -> None:
+    """Run a real git command in *cwd* for a test repository."""
+    subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.fixture
+def linked_worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Path, Path]]:
+    """A real clone with one linked worktree; the test's CWD is that worktree.
+
+    Yields ``(main clone, linked worktree)``, both resolved. The real
+    worktree check is in force, so the switch is decided by git itself.
+    """
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    _git(clone, "init", "-q", "-b", "develop")
+    _git(
+        clone,
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    worktree = clone / ".worktrees" / "issue-1-feature"
+    _git(clone, "worktree", "add", "-q", "-b", "feature/1-feature", str(worktree))
+    monkeypatch.chdir(worktree)
+    with patch(_MOD + ".git.is_main_worktree", side_effect=_REAL_IS_MAIN_WORKTREE):
+        yield clone.resolve(), worktree.resolve()
+
+
+def test_main_from_linked_worktree_switches_to_main_clone(
+    linked_worktree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clone, _worktree = linked_worktree
+    seen_roots: list[Path] = []
+
+    def work(_args: argparse.Namespace) -> int:
+        seen_roots.append(Path(git.repo_root()).resolve())
+        return 0
+
+    with patch(_MOD + "._run_from_main_clone", side_effect=work):
+        result = main([])
+
+    assert result == 0
+    assert seen_roots == [clone]
+    assert Path.cwd().resolve() == clone
+    err = capsys.readouterr().err
+    assert f"switching to the main clone at {clone}" in err
+    assert "cd out of it" not in err
+
+
+def test_main_notes_removal_of_the_launching_worktree(
+    linked_worktree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clone, worktree = linked_worktree
+
+    def work(_args: argparse.Namespace) -> int:
+        # The run's cleanup removes the worktree the caller launched from.
+        _git(clone, "worktree", "remove", str(worktree))
+        return 0
+
+    with patch(_MOD + "._run_from_main_clone", side_effect=work):
+        result = main([])
+
+    assert result == 0
+    assert not worktree.exists()
+    err = capsys.readouterr().err
+    assert f"removed {worktree}, the directory you launched from" in err
+    assert "cd out of it in your shell" in err
+    assert f"switching to the main clone at {clone}" in err
+
+
+def test_main_notes_removal_even_when_the_run_raises(
+    linked_worktree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    clone, worktree = linked_worktree
+
+    def work(_args: argparse.Namespace) -> int:
+        _git(clone, "worktree", "remove", str(worktree))
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    with (
+        patch(_MOD + "._run_from_main_clone", side_effect=work),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        main([])
+
+    err = capsys.readouterr().err
+    assert "cd out of it in your shell" in err
+
+
+def test_main_keeps_quiet_when_the_launching_worktree_stays(
+    linked_worktree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _clone, worktree = linked_worktree
+
+    with patch(_MOD + "._run_from_main_clone", return_value=0):
+        result = main([])
+
+    assert result == 0
+    assert worktree.exists()
+    err = capsys.readouterr().err
+    assert "switching to the main clone" in err
+    assert "cd out of it" not in err
+
+
+def test_main_from_main_clone_does_not_switch(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    main_root = tmp_path / "main-wt"
-    main_root.mkdir()
+    # The autouse fixture makes this the main clone: no switch, no chdir.
+    chdir = MagicMock()
+    main_clone_root = MagicMock()
+    with (
+        patch(_MOD + ".os.chdir", chdir),
+        patch(_MOD + ".git.main_clone_root", main_clone_root),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + "._run_from_main_clone", return_value=0) as run,
+    ):
+        result = main([])
 
+    assert result == 0
+    run.assert_called_once()
+    chdir.assert_not_called()
+    main_clone_root.assert_not_called()
+    err = capsys.readouterr().err
+    assert "switching to the main clone" not in err
+
+
+def test_main_refuses_when_the_main_clone_cannot_be_resolved(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    chdir = MagicMock()
+    run = MagicMock()
+    failure = subprocess.CalledProcessError(128, ("git", "rev-parse"), stderr="fatal: no")
     with (
         patch(_MOD + ".git.is_main_worktree", return_value=False),
-        patch(_MOD + ".git.main_worktree_root", return_value=main_root),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.main_clone_root", side_effect=failure),
+        patch(_MOD + ".os.chdir", chdir),
+        patch(_MOD + "._run_from_main_clone", run),
     ):
         result = main([])
 
     assert result == 1
+    chdir.assert_not_called()
+    run.assert_not_called()
     err = capsys.readouterr().err
-    assert "must be run from the main worktree" in err
-    assert str(main_root) in err
+    assert "could not resolve the main clone" in err
 
 
 def _make_profile(tmp_path: Path, model: str) -> None:

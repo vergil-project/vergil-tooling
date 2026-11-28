@@ -31,8 +31,15 @@ finalize is run by hand only to watch PRs again after a fix to a PR that
 did not merge, or to settle `develop` after something merged on GitHub
 (`--cleanup-only`).
 
-Must be run from the **main worktree**: the cleanup removes worktrees,
-which is unsafe when the calling shell's CWD is inside one.
+It may be launched from a linked worktree of the repo. Finalize then
+resolves the repo's **main clone** (the parent of
+`git rev-parse --path-format=absolute --git-common-dir`), prints a line on
+stderr saying it is switching to that clone, changes into it, and does all
+its work there. Its cleanup may remove the worktree it was launched from:
+the run keeps the cleanup and, when that worktree is gone at the end,
+prints a stderr line saying it removed the directory the caller launched
+from, so the caller's shell must `cd` out of it. A launch from outside any
+repo is still an error.
 
 ## Choosing the PRs
 
@@ -625,7 +632,7 @@ needs that update; a conflict is resolved by rebasing the branch.
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Full success: every PR merged with no provenance violation, the validate passed and, with `--wait-cd`, CD did not fail. Also a prompt declined, or `--all` with no open PR. |
-| 1 | A tool or usage error: a removed or contradictory flag, not run from the main worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree) |
+| 1 | A tool or usage error: a removed or contradictory flag, a main clone that cannot be resolved from a linked worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree) |
 | 3 | Develop is healthy, but not every PR merged, or one merged with a provenance violation |
 | 4 | Develop did not validate: the validate failed or could not run, or, with `--wait-cd`, CD did not succeed. 4 takes precedence over 1, 3 and 6 |
 | 5 | Full success, but the chained release failed |
