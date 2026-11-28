@@ -40,15 +40,21 @@ _LAYER: dict[int, dict[str, Any]] = {}
 
 
 @pytest.fixture(autouse=True)
-def layer() -> Iterator[MagicMock]:
-    """The trust layer's GraphQL reads, answered from :data:`_LAYER`."""
+def layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
+    """The trust layer's GraphQL reads, answered from :data:`_LAYER`.
+
+    It uses ``monkeypatch``, not a ``with patch`` block: a context-manager patch
+    exits before the monkeypatch fixture undoes, so a test's own monkeypatch of
+    the same name would leak past this fixture (#5299).
+    """
     _LAYER.clear()
 
     def graphql(query: str, **variables: Any) -> dict[str, Any]:
         return trust_stubs.item(**_LAYER.get(int(variables["number"]), {}))
 
-    with patch("vergil_tooling.lib.github.graphql", side_effect=graphql) as fake:
-        yield fake
+    fake = MagicMock(side_effect=graphql)
+    monkeypatch.setattr("vergil_tooling.lib.github.graphql", fake)
+    yield fake
 
 
 def _layer_actor(login: str) -> dict[str, str]:
