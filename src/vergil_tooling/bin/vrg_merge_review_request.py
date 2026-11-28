@@ -95,7 +95,7 @@ from vergil_tooling.lib.config import ConfigError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import record as record_module
 from vergil_tooling.lib.merge_review import request as req
-from vergil_tooling.lib.merge_review.change_class import classify_branch, classify_between
+from vergil_tooling.lib.merge_review.change_class import classify_between, classify_branch
 from vergil_tooling.lib.merge_review.schema import STEP_RE, is_check
 from vergil_tooling.lib.merge_review.state import StateDirError, ensure_private_dir
 from vergil_tooling.lib.pr_workflow import batch_marker

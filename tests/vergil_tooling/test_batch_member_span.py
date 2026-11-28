@@ -22,7 +22,7 @@ PATHS = {1: "c.txt", 2: "d.txt", 3: "e.txt"}
 
 
 def _marker(batch_repo: BatchRepo, base_sha: str | None = None) -> Marker:
-    """The batch marker of issues 1 to 3, its base the develop sha given (default: the current one)."""
+    """The batch marker of issues 1 to 3, with *base_sha* (default: the current develop tip)."""
     base = base_sha or batch_repo.git("rev-parse", "origin/develop")
     return Marker(issues=["#1", "#2", "#3"], base_sha=base)
 

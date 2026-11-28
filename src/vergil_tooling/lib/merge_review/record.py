@@ -320,9 +320,7 @@ class BatchSpan:
     last: str
 
 
-def batch_member_span(
-    repo: Path, marker: batch_marker.Marker, issue: str, head: str
-) -> BatchSpan:
+def batch_member_span(repo: Path, marker: batch_marker.Marker, issue: str, head: str) -> BatchSpan:
     """The span of batch issue *issue* (``#N``) at *head*: its own commit and its fixups.
 
     The own commit is the one non-fixup commit of ``origin/develop..head``
@@ -376,9 +374,7 @@ def batch_member_change(repo: Path, marker: batch_marker.Marker, issue: str, hea
     span = batch_member_span(repo, marker, issue, head)
     if span.last == span.own:
         return Covered(head=span.own, fingerprint=commit_fingerprint(repo, span.own))
-    return Covered(
-        head=span.last, fingerprint=change_fingerprint(repo, span.parent, span.last)
-    )
+    return Covered(head=span.last, fingerprint=change_fingerprint(repo, span.parent, span.last))
 
 
 def covered_change(repo: Path, issue_number: int, *, main_root: Path) -> Covered:
