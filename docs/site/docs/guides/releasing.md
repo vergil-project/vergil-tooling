@@ -313,6 +313,21 @@ demoted with `vrg-promote` is followed by the dev-container cache,
 appear in the index, `vrg-release --resume` records them listed and
 closes the issue.
 
+### The reload reminder
+
+A running Claude Code session keeps the plugin agent definitions it
+loaded until it runs `/reload-plugins` or restarts, while skills are read
+fresh when invoked. After a plugin release, a session that is not reloaded
+pairs the new skills with the old agents (issue #5434).
+
+A repo opts in with `reload-plugins = true` in its `[publish]` table of
+`vergil.toml` (default `false`; a non-boolean value is refused). The key is
+keyed on the repo's setting, not its name, so only a plugin repo sets it.
+When it is set, a release that finishes ends with a final line telling the
+human to run `/reload-plugins`, or restart, in every running Claude Code
+session, on the host and in every VM. The tracking issue's summary carries
+the same reminder as its last section. A failed release prints no reminder.
+
 ### An interrupted release
 
 An interrupt (Ctrl-C) or a crash can stop `vrg-release` at any point.

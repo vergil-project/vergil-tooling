@@ -240,7 +240,10 @@ refuses a repo whose `release` is not `true`; `install`, the shell lines the
 release's `install` stage runs, with `<VERSION>` and `<MINOR>` expanded to
 the release's `X.Y.Z` and `X.Y`, none by default; its deprecated name
 `consumer-refresh` is still read, with a warning, and setting both is an
-error) and
+error; `reload-plugins`, a boolean, default `false`, which only a Claude
+Code plugin repo sets to `true` so that its finished release ends with the
+reminder to run `/reload-plugins` in every running session, see
+[the reload reminder](releasing.md#the-reload-reminder)) and
 `[ci].integration-tests` (default `false`) are optional, as is
 `[ci].images` (a boolean, default `false`), which only a repo whose `ci.yml`
 calls a repo-local `ci-images.yml` as job `images` sets; it makes
