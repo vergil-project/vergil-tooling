@@ -1,26 +1,29 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
 from tests.vergil_tooling.tooling_install_stubs import Run, run_lines, stub_bin, write_stub
+from vergil_tooling.lib.git import LOCK_RACE_RETRIES
 from vergil_tooling.lib.tooling_install import (
     GIT_URL,
     ResolvedRef,
     ToolingInstallError,
     check_lines,
     git_ls_remote,
+    git_reachable,
     install_lines,
+    install_ref,
     resolve,
     unresolved,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 SHA = "c" * 40
 TAG_OBJECT = "d" * 40
@@ -495,3 +498,104 @@ def test_check_lines_fail_when_vrg_whoami_does_not_run(tmp_path: Path) -> None:
     )
     assert run.returncode == 1
     assert f"{bin_dir}/vrg-whoami --mode failed" in run.stderr
+
+
+# -- the fetch's ref-lock race at the two Python fetch sites (#5457) ----------
+
+_NEW = "008583f35026556afdb9f1468b7eda56d187e6f9"
+_OLD = "3111ea2754d0e73fba8aaee3ddd771f07a9f7b89"
+_LOCK_RACE = f"error: cannot lock ref 'refs/tags/v2.1.10': is at {_NEW} but expected {_OLD}\n"
+_NOT_A_RACE = "fatal: couldn't find remote ref v9.9.9\n"
+_CLEAN_ENV = {"PATH": "/usr/bin"}
+_SITES = ("reachable", "install")
+
+
+def _fetch_done(returncode: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess((), returncode, stdout="", stderr=stderr)
+
+
+class _Git:
+    """Stand-in for ``subprocess.run`` that answers each install step by its argv.
+
+    Every ``git fetch`` pops the next result from *fetches* and records its env.
+    The other steps succeed: ``rev-parse`` and ``rev-list`` give *sha*, and the
+    uv export writes a registry-only constraints file.
+    """
+
+    def __init__(self, fetches: list[subprocess.CompletedProcess[str]], sha: str = SHA) -> None:
+        self.fetches = list(fetches)
+        self.sha = sha
+        self.fetch_envs: list[dict[str, str]] = []
+
+    def __call__(self, argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        args = tuple(argv)
+        if "fetch" in args:
+            self.fetch_envs.append(dict(kwargs["env"]))
+            return self.fetches.pop(0)
+        if "rev-parse" in args or "rev-list" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{self.sha}\n", stderr="")
+        if "-o" in args:
+            Path(args[args.index("-o") + 1]).write_text("rich==15.0.0\n")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+
+def _run_fetch_site(site: str) -> object:
+    """Run one of the two Python fetch sites, both of which fetch from GIT_URL."""
+    if site == "reachable":
+        return git_reachable(GIT_URL, SHA)
+    return install_ref("v2.1.10", environ=_CLEAN_ENV)
+
+
+@pytest.mark.parametrize("site", _SITES)
+def test_fetch_lock_race_that_clears_on_retry_succeeds(
+    site: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = _Git([_fetch_done(1, _LOCK_RACE), _fetch_done(0)])
+    with (
+        patch("vergil_tooling.lib.tooling_install.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.tooling_install.time.sleep") as m_sleep,
+    ):
+        _run_fetch_site(site)
+    assert len(fake.fetch_envs) == 2
+    assert m_sleep.call_count == 1
+    err = capsys.readouterr().err
+    assert "ref-lock race" in err
+    assert f"attempt 1/{LOCK_RACE_RETRIES + 1}" in err
+
+
+@pytest.mark.parametrize("site", _SITES)
+def test_fetch_lock_race_that_persists_raises_the_original_error(site: str) -> None:
+    fake = _Git([_fetch_done(1, _LOCK_RACE)] * (LOCK_RACE_RETRIES + 1))
+    with (
+        patch("vergil_tooling.lib.tooling_install.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.tooling_install.time.sleep") as m_sleep,
+        pytest.raises(
+            ToolingInstallError, match=r"fetching .*failed \(exit 1\): error: cannot lock"
+        ),
+    ):
+        _run_fetch_site(site)
+    assert len(fake.fetch_envs) == LOCK_RACE_RETRIES + 1
+    assert m_sleep.call_count == LOCK_RACE_RETRIES
+
+
+@pytest.mark.parametrize("site", _SITES)
+def test_fetch_non_race_failure_is_not_retried(site: str) -> None:
+    fake = _Git([_fetch_done(1, _NOT_A_RACE)])
+    with (
+        patch("vergil_tooling.lib.tooling_install.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.tooling_install.time.sleep") as m_sleep,
+        pytest.raises(ToolingInstallError, match=r"fetching .*failed \(exit 1\): fatal: couldn't"),
+    ):
+        _run_fetch_site(site)
+    assert len(fake.fetch_envs) == 1
+    m_sleep.assert_not_called()
+
+
+@pytest.mark.parametrize("site", _SITES)
+def test_fetch_runs_with_lc_all_c_and_no_token_env(site: str) -> None:
+    fake = _Git([_fetch_done(0)])
+    with patch("vergil_tooling.lib.tooling_install.subprocess.run", side_effect=fake):
+        _run_fetch_site(site)
+    (env,) = fake.fetch_envs
+    assert env["LC_ALL"] == "C"
+    assert "GIT_CONFIG_VALUE_0" not in env
