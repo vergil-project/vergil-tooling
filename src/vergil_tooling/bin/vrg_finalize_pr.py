@@ -55,6 +55,14 @@ epic vergil-project/.github#1664, spec §5). It:
    lock is let go, so the release's own preflight can take it, and it
    fast-forwards develop itself (spec §6.6).
 
+**Where it runs.** The settle phase works on the main clone, so finalize may
+be launched from a linked worktree of the repo: it resolves the main clone
+(``git rev-parse --path-format=absolute --git-common-dir``, its parent),
+says on stderr that it is switching, and does its work there. When the run
+removes the worktree it was launched from, it says on stderr that the
+caller's shell must ``cd`` out of that directory. A launch from outside any
+repo is still an error.
+
 **Full success** means every PR merged, the validate passed and, with
 ``--wait-cd``, CD is green. A PR that merged with a provenance violation is
 reported loudly and blocks full success, so no chained release runs: a human
@@ -115,6 +123,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import shlex
 import subprocess
 import sys
@@ -282,16 +291,41 @@ def main(argv: list[str] | None = None) -> int:
         print(refusal, file=sys.stderr)
         return EXIT_ERROR
 
-    if not git.is_main_worktree():
-        main_root = git.main_worktree_root()
+    if git.is_main_worktree():
+        return _run_from_main_clone(args)
+
+    # A linked worktree: finalize does its work in the main clone instead.
+    # Its cleanup may remove the worktree the caller launched from, so the
+    # run records that path and says, after the run, when it is gone.
+    try:
+        launched_from = git.repo_root()
+        main_clone = git.main_clone_root()
+    except subprocess.CalledProcessError as exc:
         print(
-            f"ERROR: vrg-finalize-pr must be run from the main worktree at {main_root},\n"
-            "  not from a secondary worktree. The script removes worktrees during cleanup\n"
-            "  and cannot safely do so when the calling shell's CWD is inside one.",
+            f"ERROR: vrg-finalize-pr could not resolve the main clone of this worktree: "
+            f"{error_text(exc)}",
             file=sys.stderr,
         )
         return EXIT_ERROR
+    print(
+        f"vrg-finalize-pr: run from the linked worktree {launched_from}; "
+        f"switching to the main clone at {main_clone}",
+        file=sys.stderr,
+    )
+    os.chdir(main_clone)
+    try:
+        return _run_from_main_clone(args)
+    finally:
+        if not launched_from.exists():
+            print(
+                f"vrg-finalize-pr: removed {launched_from}, the directory you launched "
+                "from; cd out of it in your shell",
+                file=sys.stderr,
+            )
 
+
+def _run_from_main_clone(args: argparse.Namespace) -> int:
+    """Settle, watch and report from the main clone, the CWD of this process."""
     root = git.repo_root()
 
     # A release cascade is refused before any watch or cleanup, so nothing
