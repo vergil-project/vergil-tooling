@@ -203,7 +203,7 @@ Every mode takes one path (epic vergil-project/.github#1218): one
 table of the selection (no confirmation prompt and no PR-body preview),
 then for each PR the push, `gh pr create`,
 the provenance check (a violation always fails that PR's submit), and GitHub
-auto-merge turned on, pinned to the pushed head (squash for a single-issue PR, rebase for a batch PR; a PR that can
+auto-merge turned on, pinned to the pushed head (the one PR path works the method out from the PR: squash for a single-issue PR, rebase for a batch PR, a merge commit for a back-merge or a dependency-update PR; a PR that can
 already merge is merged directly). PRs open against `develop` only, and
 submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like

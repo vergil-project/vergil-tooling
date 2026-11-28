@@ -203,7 +203,9 @@ refused to agents.
 - Creates the PR via `gh pr create` under the hood, against `develop`
   only.
 - Runs the provenance check, then turns GitHub auto-merge on, pinned to
-  the pushed head: squash for a single-issue PR, rebase for a batch PR.
+  the pushed head. The one PR path works the method out from the PR:
+  squash for a single-issue PR, rebase for a batch PR, a merge commit for
+  a back-merge or a dependency-update PR.
 - Always runs `vrg-finalize-pr` on the PR (see step 5), so it returns
   only once the PR has merged or cannot merge.
 
