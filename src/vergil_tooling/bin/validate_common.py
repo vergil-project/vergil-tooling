@@ -2,13 +2,15 @@
 
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
-  2. markdownlint on docs/site/, docs/security/, README.md and epics/, in
-     one pass against the bundled config, which disables MD013 line-length (issue #4103);
+  2. markdownlint on docs/site/, docs/security/, README.md and epics/, plus
+     the extra ``[markdownlint].paths`` the repo lists (issue #5448), in one
+     pass against the bundled config, which disables MD013 line-length (issue #4103);
      :func:`lint_markdown` lints given files the same way, for
      ``vrg-validate --markdown`` (issue #4589)
   3. docs-links: links to a mike-versioned Vergil docs site carry a version
-     segment (``latest``, ``dev`` or a version number), over the same
-     markdown scope less ``epics/archive/`` (issue #3831)
+     segment (``latest``, ``dev`` or a version number), over the default
+     markdown scope less ``epics/archive/`` (issue #3831); the extra
+     ``[markdownlint].paths`` are not in that scope (issue #5448)
   4. shellcheck on all shell scripts under ``scripts/`` and every ``*.sh``
      file elsewhere in the repository (issue #3830)
   5. yamllint on YAML files under ``.github/`` and ``docs/`` using
@@ -55,17 +57,25 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if rc != 0:
         return rc
 
-    cfg = read_config(repo_root)
-    markdown_files = _drop_gitignored(
-        repo_root, _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
-    )
+    try:
+        cfg = read_config(repo_root)
+        markdown_files = _drop_gitignored(
+            repo_root,
+            _find_markdown_files(
+                repo_root, ignore=cfg.markdownlint.ignore, paths=cfg.markdownlint.paths
+            ),
+        )
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     # The "(N files ...)" counts below name their fixed discovery scope on
     # purpose: each check lints a scoped slice of the working tree (published
     # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
     # "(N files)" as "N markdown files I changed" and reporting a phantom
     # off-by-one when a changed file fell outside the scope (issue #2601).
     if markdown_files:
-        print(f"Running: markdownlint ({len(markdown_files)} files in {_MARKDOWN_SCOPE})")
+        scope = _markdown_scope(cfg.markdownlint.paths)
+        print(f"Running: markdownlint ({len(markdown_files)} files in {scope})")
         rc = _run_markdownlint(markdown_files)
         if rc != 0:
             return rc
@@ -449,6 +459,14 @@ def _find_repo_sh_files(repo_root: Path) -> list[str]:
 _MARKDOWN_SCOPE = "docs/site/, docs/security/, README.md, epics/"
 
 
+def _markdown_scope(extra_paths: Sequence[str]) -> str:
+    """Return the markdownlint scope as text: the fixed scope, plus the repo's
+    ``[markdownlint].paths`` when it lists any (issue #5448)."""
+    if not extra_paths:
+        return _MARKDOWN_SCOPE
+    return f"{_MARKDOWN_SCOPE}, {', '.join(extra_paths)}"
+
+
 def _run_markdownlint(markdown_files: Sequence[str], *, fix: bool = False) -> int:
     """Run markdownlint over *markdown_files* against the bundled config, the
     one config every file in the gate's scope is linted with (issue #4103)."""
@@ -481,15 +499,14 @@ def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
     repo_root = git.repo_root()
     try:
         cfg = read_config(repo_root)
+        default_files = _find_markdown_files(
+            repo_root, ignore=cfg.markdownlint.ignore, paths=cfg.markdownlint.paths
+        )
     except (FileNotFoundError, ConfigError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    scope = {
-        Path(path).resolve()
-        for path in _drop_gitignored(
-            repo_root, _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
-        )
-    }
+    scope_text = _markdown_scope(cfg.markdownlint.paths)
+    scope = {Path(path).resolve() for path in _drop_gitignored(repo_root, default_files)}
     linted: list[str] = []
     for path in paths:
         if Path(path).resolve() in scope:
@@ -497,7 +514,7 @@ def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
         else:
             print(
                 f"markdownlint: {path} is not linted by vrg-validate "
-                f"(outside {_MARKDOWN_SCOPE}, ignored or gitignored); skipped"
+                f"(outside {scope_text}, ignored or gitignored); skipped"
             )
     if not linted:
         return 0
@@ -505,18 +522,31 @@ def lint_markdown(paths: Sequence[str], *, fix: bool = False) -> int:
     return _run_markdownlint(linted, fix=fix)
 
 
-def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
+def _find_markdown_files(
+    repo_root: Path, ignore: list[str] | None = None, paths: list[str] | None = None
+) -> list[str]:
     """Discover the markdown markdownlint checks: ``docs/site/**/*.md``,
-    ``docs/security/**/*.md``, ``README.md`` and ``epics/**/*.md``.
+    ``docs/security/**/*.md``, ``README.md`` and ``epics/**/*.md``, plus the
+    repo's extra ``[markdownlint].paths`` (issue #5448).
 
     All of it is linted in one pass against the bundled config (issue #4103).
     ``docs/security/`` holds published security records such as the
     Scorecard snapshots (issue #5012); the rest of ``docs/`` stays out. The
     ``[markdownlint].ignore`` paths drop files under ``docs/site/``,
-    ``docs/security/`` and ``epics/``; ``README.md`` is always linted.
+    ``docs/security/``, ``epics/`` and the extra paths; ``README.md`` is
+    always linted.
+
+    Each extra path is repo-relative: a directory is searched recursively for
+    ``*.md``, a file is taken as it is. A listed path that does not exist, or
+    a listed file that is not ``.md``, raises :class:`ConfigError` rather than
+    being skipped. The result is deduplicated and sorted. Paths are not
+    gitignore-filtered here; the callers do that.
     """
-    found: list[str] = []
+    found: set[str] = set()
     ignore_paths = [repo_root / p for p in (ignore or [])]
+
+    def _keep(path: Path) -> bool:
+        return not any(path.is_relative_to(ip) for ip in ignore_paths)
 
     for tree in (
         repo_root / "docs" / "site",
@@ -524,14 +554,26 @@ def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> li
         repo_root / "epics",
     ):
         if tree.is_dir():
-            for path in tree.rglob("*.md"):
-                if any(path.is_relative_to(ip) for ip in ignore_paths):
-                    continue
-                found.append(str(path))
+            found.update(str(path) for path in tree.rglob("*.md") if _keep(path))
 
     readme = repo_root / "README.md"
     if readme.is_file():
-        found.append(str(readme))
+        found.add(str(readme))
+
+    for entry in paths or []:
+        target = repo_root / entry
+        if not target.exists():
+            msg = f"[markdownlint].paths entry '{entry}' does not exist"
+            raise ConfigError(msg)
+        if target.is_dir():
+            found.update(
+                str(path) for path in target.rglob("*.md") if path.is_file() and _keep(path)
+            )
+        elif target.suffix != ".md":
+            msg = f"[markdownlint].paths entry '{entry}' is not a .md file"
+            raise ConfigError(msg)
+        elif _keep(target):
+            found.add(str(target))
 
     return sorted(found)
 
