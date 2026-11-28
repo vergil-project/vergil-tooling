@@ -543,16 +543,33 @@ and the [Releasing guide](../guides/releasing.md).
 
 ### vrg-release-group
 
-List an epic's release groups: a batch of tasks of one development epic (or
-a proxy of one) that ship together (epic vergil-project/.github#1672). A
-group's membership is the latest `release-group <id> rev <n>` record in the
+Read and change an epic's release groups: a batch of tasks of one development
+epic (or a proxy of one) that ship together (epic vergil-project/.github#1672).
+A group's membership is the latest `release-group <id> rev <n>` record in the
 epic's comments, read only from the `human` and `agents` roles; a conflict,
 an out-of-order revision, an edited record or a malformed one refuses that
 group, and an outsider's edit of an epic comment refuses the whole epic.
-`list --epic <owner>/<repo>#<N>` prints one line per group,
-`G1 rev 3: <ref> <ref>` or `G2 rev 2: dissolved`; `--group <id>` narrows it
-and `--json` prints `{"epic", "groups"}`. Read-only: there are no write
-commands yet.
+
+- `list --epic <owner>/<repo>#<N>` prints one line per group,
+  `G1 rev 3: <ref> <ref>` or `G2 rev 2: dissolved`; `--group <id>` narrows it
+  and `--json` prints `{"epic", "groups"}`. Read-only.
+- `set --epic <ref> --group <id> --member <ref> [--member <ref> ...] --reason <text> [--at-batch-stop]`
+  posts the group's membership as its next revision (a new group is rev 1).
+  A request the latest record already holds posts nothing and prints
+  `G1 rev 3: already recorded`, so a retry is safe and needs no reason.
+- `dissolve --epic <ref> --group <id> --reason <text> [--at-batch-stop]`
+  posts the group dissolved. A dissolved ID is never reused.
+
+Every posted record carries its `Reason:` line. Each incoming task must be
+open and hold nothing (no open PR, no handed-off batch, no batch marker),
+bar, with `--at-batch-stop`, the marker of the group's own batch. A group is
+frozen while an open member has an open PR or a handed-off batch, and it
+stops for the human once its batch has started, unless `--at-batch-stop` is
+given. A group on a closed epic is never changed. Run the change from the
+main clone of the members' repo, since batch markers are local. A refusal
+exits 1 and names each problem; a conflict, an edited record or a skipped
+edit names its comments, and the recovery is to read them in the web UI and
+delete the bad one.
 
 | Attribute | Value |
 |---|---|
