@@ -24211,21 +24211,37 @@ makes there, and writes only to the path it prints.</p>
 </tbody>
 </table>
 <h3 id="vrg-state-dir">vrg-state-dir<a class="headerlink" href="#vrg-state-dir" title="Permanent link">&para;</a></h3>
-<p>Create and check a task's private state directory,
-<code>build/.vergil-state/&lt;kind&gt;/&lt;N&gt;/</code> in the main clone, as
+<p>Create and check a skill's private state directory under <code>build/.vergil-state/</code>
+in the main clone, as
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/paad-review-doctrine.md#15-state-directories">doctrine §1.5</a>
-requires, and print its absolute path. <code>--kind</code> is <code>operational</code> (the
-security items of <code>issue-validate</code> and <code>issue-deploy</code>), <code>issue-implement</code> or
-<code>upstream-report</code>. <code>build</code> must be a real directory (it is created when
-absent), and each level from <code>.vergil-state</code> down to <code>&lt;N&gt;</code> must be a real
-directory, not a symlink, with mode exactly 700; an absent level is created
-mode 700. A level that fails stops the command before anything is created
-below it. These are the checks
+requires, and print its absolute path. <code>--kind</code> is one of:</p>
+<ul>
+<li><code>operational</code> (the security items of <code>issue-validate</code> and <code>issue-deploy</code>),
+  <code>issue-implement</code> or <code>upstream-report</code>, each with <code>--issue OWNER/NAME#N</code>,
+  checking <code>build/.vergil-state/&lt;kind&gt;/&lt;N&gt;/</code>.</li>
+<li><code>design-review</code>, with <code>--issue OWNER/NAME#M</code> (the planning issue) and
+  <code>--round ID</code>, a <code>S</code>, <code>P</code> or <code>A</code> then digits (<code>S1</code>, <code>P12</code>, <code>A3</code>), checking
+  <code>build/.vergil-state/design-review/&lt;M&gt;/&lt;ID&gt;/</code>. The tool is idempotent: an
+  existing private round directory is accepted. Whether a round may pre-exist
+  is the caller's decision under doctrine §1.5, not the tool's.</li>
+<li><code>hoshin</code>, with <code>--repo OWNER/NAME</code>, <code>--date YYYY-MM-DD</code> (a real calendar
+  date) and <code>--mode start</code> or <code>--mode end</code>, checking
+  <code>build/.vergil-state/hoshin/&lt;date&gt;-&lt;mode&gt;/</code>. There is no issue, so <code>--issue</code>
+  does not apply to it.</li>
+</ul>
+<p>An option the kind does not take, a required one left out, or a malformed
+<code>--round</code>, <code>--date</code>, <code>--repo</code> or <code>--mode</code> is a usage error (exit 2, nothing on
+stdout, nothing created).</p>
+<p><code>build</code> must be a real directory (it is created when absent), and each level
+from <code>.vergil-state</code> down to the kind's last level must be a real directory,
+not a symlink, with mode exactly 700; an absent level is created mode 700. A
+level that fails stops the command before anything is created below it. These
+are the checks
 <a href="#vrg-merge-review-request"><code>vrg-merge-review-request --ensure-dir</code></a> makes,
 through the same code. Before it creates or checks anything, it refuses
-unless the current clone's <code>origin</code> is the <code>--issue</code> repository, naming both
-repositories. The caller runs it before every write it makes there, and
-writes only to the path it prints.</p>
+unless the current clone's <code>origin</code> is the <code>--issue</code> repository, or the
+<code>--repo</code> repository for <code>hoshin</code>, naming both repositories. The caller runs it
+before every write it makes there, and writes only to the path it prints.</p>
 <table>
 <thead>
 <tr>
@@ -24240,11 +24256,11 @@ writes only to the path it prints.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--kind {operational,issue-implement,upstream-report} --issue OWNER/NAME#N --ensure</code></td>
+<td><code>--kind {operational,issue-implement,upstream-report,design-review,hoshin} --ensure</code>, with <code>--issue OWNER/NAME#N</code> (every kind but <code>hoshin</code>), <code>--round ID</code> (<code>design-review</code>), or <code>--repo OWNER/NAME --date YYYY-MM-DD --mode {start,end}</code> (<code>hoshin</code>)</td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Run in a clone (or worktree) of the <code>--issue</code> repository</td>
+<td>Run in a clone (or worktree) of the <code>--issue</code> repository, or of the <code>--repo</code> repository for <code>hoshin</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
