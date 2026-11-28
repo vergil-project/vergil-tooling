@@ -1111,6 +1111,25 @@ left with several releases open. If preflight cannot list the open
 issues, or the listing may be truncated, it refuses rather than
 reading that as no release in flight.
 
+### Agents during a release
+
+While a release holds the repository's lock, the release's open PRs into
+`develop` stay unarmed and the merge watch shows them held (see
+[Under the release lock](../reference/dev/finalize-pr.md#under-the-release-lock)).
+Agents may keep working, but a submit does not go out during the lock:
+`vrg-submit-pr`, in any mode and in push mode too, pushes nothing and opens
+no PR, and exits 7 with the lock's holder, version, stage and health named.
+An agent that must wait re-runs it with `--wait-for-release`, which polls the
+lock until it clears, within `$VRG_FINALIZE_DEADLINE` (7200 seconds by
+default), and then pushes once. A push-mode wait rebases onto a `develop` the
+back-merge moved. The deadline exits 6 with nothing pushed. This reverses the
+earlier stance that CI keeps running on PRs throughout a release, for submit:
+a head pushed during the lock cannot merge until the release is done, and a
+push that lands after the release tags its version but before the back-merge
+bumps `develop` fails `version / version-bump` and needs a rebase and a second
+CI run. The full rules are in
+[The release lock](../reference/dev/submit-pr.md#the-release-lock).
+
 ### The develop sync
 
 Preflight does not refuse a root checkout that is merely behind
