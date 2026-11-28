@@ -92,7 +92,9 @@ chose the selection, and each body is on its opened PR:
    submit and leaves its auto-merge off; there is no override. A check
    that cannot run is a failed submit too.
 5. Turn **auto-merge** on, pinned to that head (`expectedHeadOid`): the
-   **squash** method for a single-issue PR, **rebase** for a batch PR.
+   method the one PR path works out from the PR: **squash** for a
+   single-issue PR, **rebase** for a batch PR, **merge** for a back-merge
+   or a dependency-update PR.
    When GitHub refuses because the PR can already merge, submit merges
    it directly with the same method and head, and says so. When either
    write returns an error, submit reads the PR back first: auto-merge on
