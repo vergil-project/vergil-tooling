@@ -45,21 +45,16 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
-from vergil_tooling.lib.merge_review.request import diff_file, fix_file
 from vergil_tooling.lib.merge_review.result import (
     Result,
     ResultError,
     check_request,
     parse_result,
 )
-from vergil_tooling.lib.merge_review.schema import KINDS
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from vergil_tooling.lib.merge_review.schema import KINDS, patch_checker
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -82,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         result = parse_result(
             _decode(result_bytes, result_path, "result"),
             request,
-            patch_ends_with_newline=_patch_checker(result_path.parent, checked.step),
+            patch_ends_with_newline=patch_checker(result_path.parent, checked.step, ResultError),
         )
     except ResultError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -121,22 +116,6 @@ def summarize(result: Result) -> dict[str, object]:
     elif result.normalised:
         summary["count_normalised"] = result.normalised[0]
     return summary
-
-
-def _patch_checker(directory: Path, step: str) -> Callable[[str], bool]:
-    """The check rule 11 makes when a count reads N+1: whether that patch ends in a newline.
-
-    The patch is the whole diff (``diff-<step>.patch``) or the fix diff
-    (``fix-<step>.patch``), beside the result. It is read only when a line
-    reports N+1. A file that cannot be read is refused; an empty one does not
-    end in a newline.
-    """
-    names = {"diff": diff_file(step), "fix": fix_file(step)}
-
-    def ends_with_newline(which: str) -> bool:
-        return _read_bytes(directory / names[which], f"{which} patch").endswith(b"\n")
-
-    return ends_with_newline
 
 
 def _read_text(path: Path, what: str) -> str:

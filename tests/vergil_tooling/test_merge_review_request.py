@@ -20,7 +20,12 @@ from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
-from vergil_tooling.lib.merge_review.schema import diff_part_file, fix_part_file
+from vergil_tooling.lib.merge_review.schema import (
+    diff_file,
+    diff_part_file,
+    fix_file,
+    fix_part_file,
+)
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.progress import StageResult
 from vergil_tooling.lib.proxies import ProxyLinkError
@@ -1901,8 +1906,8 @@ def test_check_fix_base_refuses_unreadable_stored_request(
 
 def test_file_names() -> None:
     assert req.request_file("check-2") == "request-check-2.json"
-    assert req.diff_file("review") == "diff-review.patch"
-    assert req.fix_file("check") == "fix-check.patch"
+    assert diff_file("review") == "diff-review.patch"
+    assert fix_file("check") == "fix-check.patch"
     assert req.commits_file("check") == "commits-check.patch"
     assert diff_part_file("review", 1) == "diff-review.part-01.patch"
     assert diff_part_file("check-2", 12) == "diff-check-2.part-12.patch"

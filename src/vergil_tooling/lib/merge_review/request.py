@@ -21,7 +21,12 @@ from vergil_tooling.lib import epic_audit, epic_chain, epics, github, proxies, t
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
 from vergil_tooling.lib.merge_review.result import ResultError, check_request, parse_result
-from vergil_tooling.lib.merge_review.schema import MAX_READ_LINES, REQUEST_SCHEMA, earlier_steps
+from vergil_tooling.lib.merge_review.schema import (
+    MAX_READ_LINES,
+    REQUEST_SCHEMA,
+    earlier_steps,
+    patch_checker,
+)
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import read_stream
 from vergil_tooling.lib.rulings.draft_ref import require_remote_is
@@ -67,16 +72,6 @@ def _unreadable(detail: str) -> NoReturn:
 def request_file(step: str) -> str:
     """The request's file name for *step*."""
     return f"request-{step}.json"
-
-
-def diff_file(step: str) -> str:
-    """The whole branch's diff file name for *step*."""
-    return f"diff-{step}.patch"
-
-
-def fix_file(step: str) -> str:
-    """A check's fix diff file name for *step*."""
-    return f"fix-{step}.patch"
 
 
 def commits_file(step: str) -> str:
@@ -427,27 +422,6 @@ def design_source_paths(paths: Sequence[str]) -> list[str]:
     return resolved
 
 
-def _patch_checker(directory: Path, step: str) -> Callable[[str], bool]:
-    """Whether an earlier step's patch ends in a newline, for rule 11's ``N+1`` reads.
-
-    The patch is ``diff-<step>.patch`` or ``fix-<step>.patch`` in *directory*,
-    beside the step's result. A file that cannot be read raises
-    :class:`ResultError`.
-    """
-    names = {"diff": diff_file(step), "fix": fix_file(step)}
-
-    def ends_with_newline(which: str) -> bool:
-        path = directory / names[which]
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            msg = f"cannot read the {which} patch file {path}: {exc.strerror}"
-            raise ResultError(msg) from exc
-        return data.endswith(b"\n")
-
-    return ends_with_newline
-
-
 def read_earlier_results(
     private_dir: Path, step: str, result_paths: Sequence[str]
 ) -> list[tuple[str, Result]]:
@@ -493,7 +467,7 @@ def read_earlier_results(
                     parse_result(
                         text,
                         request,
-                        patch_ends_with_newline=_patch_checker(path.parent, earlier),
+                        patch_ends_with_newline=patch_checker(path.parent, earlier, ResultError),
                     ),
                 )
             )
