@@ -355,9 +355,10 @@ def extract(root: Path, issues: Sequence[str]) -> list[str]:
     directory. Otherwise it rewrites every remaining member's marker once,
     without the set (removing the last one's when fewer than :data:`MIN_BATCH`
     remain), then removes each leaving issue's whole ``issue-implement/<N>/``
-    directory, ``writer-commits`` ledger included. Every remaining member's marker is checked against the batch
-    first, so nothing changes when they disagree; a member already rewritten
-    by an interrupted extraction is accepted.
+    directory, ``writer-commits`` ledger included. Every remaining member's
+    marker is checked against the batch first, so nothing changes when they
+    disagree; a member already rewritten by an interrupted extraction is
+    accepted.
     """
     leaving = _canonical_set(issues)
     found = _found_markers(root, leaving)
