@@ -1999,8 +1999,9 @@ from that commit's parent (the marker's `base_sha` is not used); later
 commits are excluded, and a `fixup!` of it after another commit is refused,
 since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with `origin/develop`. Submit, the watch and the audit read
-the records back from the trust layer's comment stream, agent role only,
-skipping an edited comment. A re-run that finds the same comment already
+the records back from the trust layer's comment stream, human and agent
+comments alike as `vrg-issue-read` reads them; only an agent-posted comment,
+skipping an edited one, can be a record. A re-run that finds the same comment already
 posted by the agent prints its ID and posts nothing.
 
 | Attribute | Value |

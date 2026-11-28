@@ -43,6 +43,9 @@ class IssueComment:
     ``author`` is the bare login of an author the trust layer trusts.
     ``created_at`` is GitHub's ``createdAt``, an ISO 8601 timestamp; it is
     always set on a read comment, and empty only on one built by hand.
+    ``role`` is the role the trust layer judged the comment's author to hold
+    (the human or the agents, for a stream read with the default roles); it
+    is ``None`` only on one built by hand.
     """
 
     id: int
@@ -50,6 +53,7 @@ class IssueComment:
     body: str
     edited: bool
     created_at: str = ""
+    role: trust.Role | None = None
 
 
 @dataclass(frozen=True)
@@ -86,8 +90,8 @@ def read_stream(
     """Every comment on ``repo#issue`` the layer trusts, oldest first, and every comment ID.
 
     *authors* defaults to the loaded configuration. *roles* narrows the
-    stream to the roles a reader accepts (the merge-review records take the
-    agents' only); it defaults to :data:`STREAM_ROLES`. Each untrusted comment
+    stream to the roles a reader accepts; it defaults to :data:`STREAM_ROLES`.
+    Each comment carries its judged role. Each untrusted comment
     is reported on stderr, metadata only, and its ID is still in
     ``all_ids``, so a request that exists but is untrusted is told apart
     from one that is gone. Raises
@@ -106,6 +110,7 @@ def read_stream(
                 body=comment.body,
                 edited=comment.edited,
                 created_at=comment.at,
+                role=comment.role,
             )
             for comment in read.comments
         ],

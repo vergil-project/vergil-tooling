@@ -10,7 +10,8 @@ line names the head the run judged, the change fingerprint
     Merge review record: head=<sha> fingerprint=<hex> outcome=<eligible|not-eligible (<reason>)>
 
 Submit, the watch and the audit read the records with :func:`records`, built
-on the trust layer's comment stream narrowed to the agent role.
+on the trust layer's comment stream: the human's and the agents' comments
+are read, and only an agent-posted comment can be a record.
 
 The closing comment's lines, in order, are the eligibility line, the
 ``Branch as reviewed:`` line (a fix to an open PR only), the record line, and
@@ -180,19 +181,20 @@ def parse_record(body: str) -> Record | None:
 def records(issue_ref: str, *, authors: TrustedAuthors) -> list[Record]:
     """Every merge-review record on *issue_ref*, oldest first.
 
-    Read from the trust layer's comment stream narrowed to the agent role,
-    so only a comment the agent login posted, with no edit by anyone, can be
-    a record. A comment of another trusted role, such as the human's scope
-    change, is left out by design and reported as ignored, not as untrusted
-    (#5199). A read failure raises
+    Read from the trust layer's comment stream with the human and agent
+    roles, so the human's ``vrg-scope-change`` comment is read as
+    ``vrg-issue-read`` reads it, never reported as not-accepted (#5387). Only
+    a comment the agent login posted, with no edit by anyone, can be a record:
+    a comment of any other role, the human's included, is read and is never a
+    record. A read failure raises
     (:class:`~vergil_tooling.lib.trust.TrustReadError`); it never returns
     ``[]``.
     """
     repo, issue = comments.parse_issue_ref(issue_ref)
-    stream = comments.read_stream(repo, issue, authors, roles=frozenset({trust.Role.AGENTS}))
+    stream = comments.read_stream(repo, issue, authors)
     found: list[Record] = []
     for comment in stream.comments:
-        if comment.edited:
+        if comment.role is not trust.Role.AGENTS or comment.edited:
             continue
         record = parse_record(comment.body)
         if record is not None:
