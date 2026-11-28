@@ -308,7 +308,10 @@ prepare worked in. In order, it:
    run, naming it. When
    GitHub refuses auto-merge because the PR can already merge, the
    path merges the PR directly, with the same method and pinned to the
-   pushed commit, and the run does not wait.
+   pushed commit, and the run does not wait. A PR that the path leaves
+   open and unarmed because a running release holds the release lock
+   (held) is success, with no wait: the run names the PR, and the
+   release's unlock sweep arms it.
 
 The PR's commit is parented on the recorded commit, so the patch lands
 on exactly the tree the hook ran against. `develop` does not require a
@@ -316,7 +319,9 @@ branch to be up to date, so the PR merges from that base once its own
 checks pass, even if `develop` has moved since. The wait never merges
 the PR itself: GitHub's auto-merge merges it once its checks are green;
 a failed check, a conflict, a closed PR, the branch-update cap
-(see the permissions below) or the deadline ends it unmerged. Under a token source the deadline is
+(see the permissions below) or the deadline ends it unmerged. If a
+release takes the lock and disarms the PR during the wait, the wait
+ends as held, which is still success. Under a token source the deadline is
 7200 seconds, counted from publish's own start: the clone and the patch
 come out of it, and the wait gets what is left. Closing an earlier
 run's PR, the push and opening the PR come after that is worked out,
@@ -335,6 +340,7 @@ Every run ends in one of these outcomes:
 |---|---|---|
 | In sync | No change. An earlier run's open refresh PR is still closed and its branch deleted | 0 |
 | Merged | A change: the PR was opened and merged within the run | 0 |
+| Held | A change: the PR was opened and a running release holds the release lock, so the one PR path left it open and unarmed; the PR is named and the release's unlock sweep arms it. It is not closed or replaced, and the run does not wait | 0 |
 | Not merged | The PR was opened but did not merge; the PR and the reason are named | 2 |
 | Refused or failed | The hook, the clone, the path fence, the base check, a refused identity, a failed mint or revocation, or a usage error; nothing is pushed unless the failure came after the push | 1 |
 
@@ -369,7 +375,7 @@ vrg-upstream-refresh [--repo OWNER/NAME] [--dry-run [--rules-from PATH]]
 
 Exit codes, also given by `--help`:
 
-- **0:** merged, or nothing to change (a dry run: no fence violation);
+- **0:** merged, held for a running release (the PR is named and left open and unarmed), or nothing to change (a dry run: no fence violation);
 - **1:** any other failure or refusal, with the reason, including a
   usage error such as the removed `--base` (argparse's own exit 2 is
   mapped to 1);

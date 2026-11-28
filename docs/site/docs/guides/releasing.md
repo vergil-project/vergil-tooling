@@ -885,7 +885,10 @@ one that is behind when the release runs it. The pipeline:
 5. If validation passed, arm the PR through the one PR path (auto-merge
    with a merge commit, pinned to the pushed head) and wait until it
    merges. A PR the path refuses is a merge failure, with the path's
-   reason. Once
+   reason. If a release lock holds the PR unarmed (held), the PR has not
+   merged, so the release's own `update-deps` stage fails, saying the PR
+   is held and unarmed under the release lock, rather than going on as if
+   it had merged. Once
    the PR is confirmed merged, remove the worktree and delete the
    `deps/update-<version>` branch on origin and locally. If the PR did
    not merge, the branch stays on origin, as the open PR's head, for a

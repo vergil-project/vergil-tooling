@@ -101,8 +101,12 @@ order:
    against `develop`, then armed through the one PR path, which turns
    squash auto-merge on, pinned to the pushed commit, and reads it back.
    When GitHub refuses auto-merge because the PR can already merge, the
-   path merges it directly and `update` does not wait. A PR the path
-   refuses to arm fails the run, naming the PR and the path's reason.
+   path merges it directly and `update` does not wait. When a running
+   release holds the release lock, the path leaves the PR open and
+   unarmed (held), which counts as success: `update` reports the PR,
+   does not wait, and does not close or replace it, and the release's
+   unlock sweep arms it. A PR the path refuses to arm fails the run,
+   naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
    whether or not there is new drift. With no change, no PR is opened.
 5. **Wait until merged.** `update` then watches the PR until it has
@@ -113,7 +117,9 @@ order:
    checks pass. Only where `develop` still requires an up-to-date
    branch is a PR that falls behind updated, up to 5 times. A failed
    check, a conflict, a PR closed by someone else, the update cap or
-   the deadline ends the watch, naming the PR and the reason. The
+   the deadline ends the watch, naming the PR and the reason. If a
+   release takes the lock and disarms the PR during the watch, the
+   watch ends as held, which is still success (see step 4). The
    deadline is `$VRG_MECHANIZED_PR_DEADLINE` seconds, 2400 (40
    minutes) by default, so the watch ends inside the one hour the ops
    job's App installation token lasts.
@@ -164,7 +170,11 @@ minutes, the life of the App's installation token (see the vergil-actions
 reference).
 
 Drift that a fixer can correct arrives as one sync PR, which merges
-within the run. Anything `update` cannot converge, fix or audit gives a
+within the run. When a running release holds the release lock, the PR
+is left open and unarmed (held), which counts as success: `update`
+reports the PR, does not wait, and does not close or replace it, and the
+release's unlock sweep arms it; the same if a release takes the lock
+during the wait. Anything `update` cannot converge, fix or audit gives a
 non-zero [exit code](#update-exit-codes) and **turns the scheduled run
 red**, so a non-conforming repo cannot silently persist.
 

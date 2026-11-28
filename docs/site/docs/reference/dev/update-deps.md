@@ -169,7 +169,7 @@ tries the deletion again.
 | `update` | Runs each applicable updater in order (`python`, `cargo`, `npm`, `vergil`, `images`, then `hook`), committing each one's changes separately |
 | `validate` | Runs `vrg-container-run -- vrg-validate` once, if anything changed |
 | `prepare-pr` | Pushes the branch and opens a PR to `develop` labelled `dependency-update`, creating the label if the repo lacks it |
-| `merge` | If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see [Waiting for green](release.md#waiting-for-green)). A PR the path refuses is recorded as a merge failure with the path's reason, without a wait |
+| `merge` | If validation passed, arms the PR through the one PR path: auto-merge with a merge commit, pinned to the pushed head (a PR that can already merge is merged at once). It then waits until GitHub merges it (see [Waiting for green](release.md#waiting-for-green)). When a release holds the release lock, the path leaves the PR unarmed (held): the stage reports "`Dependency update <PR> is held for release <v>; the unlock sweep arms it`", records no failure, and returns without waiting. A PR the path refuses is recorded as a merge failure with the path's reason, without a wait |
 | `fix-task` | After any failure, files the fix task; after a validation or merge failure, also links it from the PR body |
 | `finalize` | Prints the held-back report and removes the worktree and local branch; once the PR is confirmed merged, also deletes its branch on origin, and fails if a deletion fails |
 | `status` | Exits non-zero if a failure was recorded |
@@ -208,6 +208,6 @@ The fix flow is in
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Updated and merged, nothing to update, or the update for this `develop` version had already merged |
+| 0 | Updated and merged, nothing to update, the update for this `develop` version had already merged, or the update's PR was held for a running release (reported, not merged) |
 | 1 | A failure was recorded, a precondition failed, or the command was refused |
 | 130 | Interrupted (Ctrl-C) |
