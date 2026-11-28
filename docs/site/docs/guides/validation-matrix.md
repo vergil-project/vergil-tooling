@@ -26,7 +26,7 @@ where it runs. No git hooks are installed: every check runs inside a
 | Semgrep scan | `vrg-validate` (semgrep stage) | Yes | `security / semgrep` |
 | Trivy scan | `vrg-validate` (trivy stage) | Yes | `security / trivy` |
 | CodeQL scan | `ci-security.yml` | -- (CI-only) | `security / codeql` |
-| GitHub code scanning results | GitHub, from the uploaded SARIF | -- (CI-only) | `Trivy`, `Semgrep OSS`, `CodeQL` |
+| GitHub code scanning results | GitHub, from the uploaded SARIF | -- (CI-only) | `Trivy`, `CodeQL` |
 | Strict docs build | `vrg-validate` (docs stage) | Yes | `docs / docs` |
 | Version bump | `ci-version-bump.yml` | -- (CI-only) | `version / version-bump` |
 | Package build and install tests | `ci-package.yml` | -- (CI-only) | `package / evidence` |
@@ -84,7 +84,7 @@ shell suites (vergil-actions#1108).
 | PR CI check | Decision | Reason |
 | ----------- | -------- | ------ |
 | `security / codeql` | CI-only | It needs GitHub code scanning, its CLI is not in the dev images, and building its database is heavy. |
-| `Trivy`, `Semgrep OSS`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep and trivy stages cover the findings behind them. |
+| `Trivy`, `CodeQL` | CI-only | GitHub computes them from the uploaded SARIF for the changed lines, so they cannot run locally. The local semgrep and trivy stages cover the findings behind them. Semgrep's own result is gated by `security / semgrep`; its GHAS `Semgrep OSS` check is not required (vergil-project/vergil-tooling#5227). |
 | `version / version-bump` | CI-only | It compares the branch's version with `main`'s, so its result depends on where the release cycle stands, not on the change. |
 | `package / evidence` | CI-only | It builds the `.deb` and `.rpm` packages and install-tests them across the distro matrix, which needs nested containers and a long run. |
 | `images / evidence` | CI-only | It builds and scans the changed images on each architecture's own runner. |

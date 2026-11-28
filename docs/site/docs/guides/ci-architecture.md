@@ -513,13 +513,16 @@ require these checks. The list is computed from
 | `package / evidence` | `vergil.toml` has `[package]` |
 | `images / evidence` | `[ci].images` is on |
 | `security / codeql`, `CodeQL` | CodeQL supports the language (`python`, `go`, `rust`, `cpp` or `typescript`) |
-| `Trivy`, `Semgrep OSS` | Always |
+| `Trivy` | Always |
 | `test / integration / <version>` | `[ci].integration-tests` is on (one per resolved version). No CI job produces it yet, so the setting is refused (#2721) |
 
-The bare `CodeQL`, `Trivy` and `Semgrep OSS` checks come from GitHub
+The bare `CodeQL` and `Trivy` checks come from GitHub
 code scanning (GitHub Advanced Security), not from a workflow job. Every
 repository is public, so code scanning is always available and those
-checks are always required.
+checks are always required. The bare `Semgrep OSS` check is not required:
+Semgrep's result is gated by `security / semgrep`, and its SARIF is still
+uploaded to code scanning (vergil-project/vergil-tooling#5227), because the
+GHAS check can stay pending long after the scan passes.
 
 ### Every check that runs is a gate
 

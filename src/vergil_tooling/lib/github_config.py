@@ -673,8 +673,13 @@ def _ci_gate_checks(
     # gate on whether the PR introduces new alerts in changed lines. Every
     # repo is public, so GHAS code scanning is always available (epic
     # vergil-project/.github#1476).
+    #
+    # Semgrep's result is gated by ``security / semgrep``, and its SARIF is
+    # still uploaded to code scanning, but its GHAS ``Semgrep OSS`` check is
+    # deliberately NOT required: that check stayed pending for over 20 minutes
+    # after a passing ``security / semgrep`` job, because it depends on GitHub's
+    # asynchronous processing of the uploaded report (vergil-project/vergil-tooling#5227).
     checks.append(_make_ghas_check("Trivy"))
-    checks.append(_make_ghas_check("Semgrep OSS"))
 
     # CodeQL for supported languages, backed by GHAS code scanning
     if lang in CODEQL_LANGUAGES:
