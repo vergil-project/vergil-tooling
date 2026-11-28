@@ -77,7 +77,11 @@ def scope_command(repo: str, issue: int) -> str:
 
 
 def require_remote_is(
-    repo: str, *, remote: str = "origin", command: str = "vrg-ruling draft"
+    repo: str,
+    *,
+    remote: str = "origin",
+    command: str = "vrg-ruling draft",
+    what: str = "the issue's repo",
 ) -> None:
     """Refuse unless every push URL of ``remote`` names ``repo`` on github.com.
 
@@ -89,6 +93,7 @@ def require_remote_is(
     would publish it to the wrong repo. Every push URL is checked (``git remote
     get-url --push --all``, with ``insteadOf`` rewrites applied), because a push
     goes to all of them. A refusal never echoes a URL: it could carry a token.
+    The mismatch refusal names *what* ``repo`` is, by default the issue's repo.
     """
     try:
         output = git.read_output("remote", "get-url", "--push", "--all", remote)
@@ -112,7 +117,7 @@ def require_remote_is(
             raise RulingError(msg)
         if found.casefold() != repo.casefold():
             msg = (
-                f"the '{remote}' remote pushes to {found}, not the issue's repo {repo};"
+                f"the '{remote}' remote pushes to {found}, not {what} {repo};"
                 f" run {command} in a clone of {repo}"
             )
             raise RulingError(msg)
