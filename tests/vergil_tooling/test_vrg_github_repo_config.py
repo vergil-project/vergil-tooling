@@ -1928,6 +1928,8 @@ def test_apply_reports_a_cwd_check_failure(capsys: pytest.CaptureFixture[str]) -
 
 
 _PR_URL = "https://github.com/o/r/pull/9"
+_HUMAN_LOGIN = "hand-runner"
+_JOB_WORDING = "The repo-config sync job opened it and watches it until it merges"
 
 
 def _merged(*_args: object, **_kwargs: object) -> SyncResult:
@@ -1957,6 +1959,9 @@ def _update_env(
     stack.enter_context(patch(f"{_MODULE}._resolve_config"))
     stack.enter_context(patch(f"{_MODULE}.FIXERS", [] if fixers is None else fixers))
     mocks = {
+        "login": stack.enter_context(
+            patch(f"{_MODULE}.github.read_output", return_value=_HUMAN_LOGIN)
+        ),
         "audit": stack.enter_context(
             patch(
                 f"{_MODULE}._audit_repo",
@@ -2193,6 +2198,7 @@ def _update_reading(
         patch(f"{_MODULE}.assert_ci_gates_producible"),
         patch(f"{_MODULE}.apply_desired_state", return_value=[]),
         patch(f"{_MODULE}.FIXERS", []),
+        patch(f"{_MODULE}.github.read_output", return_value=_HUMAN_LOGIN),
         patch(f"{_MODULE}.open_sync_pr", side_effect=_in_sync),
     ):
         code = main(["update", "--repo", "o/r"])
@@ -2416,6 +2422,51 @@ def test_update_missing_installation_exits_two(capsys: pytest.CaptureFixture[str
     with stack, patch(f"{_MODULE}._update_identity", side_effect=failure):
         assert main(["update", "--repo", "o/r"]) == 2
     assert "Could not audit o/r" in capsys.readouterr().err
+
+
+def test_update_app_pr_body_says_the_job_opened_it() -> None:
+    # Under the App identity the job itself opens the PR, and no login is read.
+    stack, mocks = _update_env(
+        mode=IdentityMode.AUTOMATION, github_diff=_mock_github_noncompliant()
+    )
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    mocks["login"].assert_not_called()
+    body = mocks["sync"].call_args.kwargs["body"]
+    assert _JOB_WORDING in body
+    assert "hand-run" not in body
+    assert _HUMAN_LOGIN not in body
+
+
+def test_update_human_pr_body_names_the_hand_run_and_login() -> None:
+    # A person running update by hand opens the PR, so the body must not claim the job did.
+    stack, mocks = _update_env(mode=IdentityMode.HUMAN, github_diff=_mock_github_noncompliant())
+    with stack:
+        assert main(["update", "--repo", "o/r"]) == 0
+    mocks["login"].assert_called_once_with("api", "user", "--jq", ".login")
+    body = mocks["sync"].call_args.kwargs["body"]
+    assert _JOB_WORDING not in body
+    assert "A person ran `vrg-github-repo-config update` by hand" in body
+    assert f"(login `{_HUMAN_LOGIN}`)" in body
+    assert f"@{_HUMAN_LOGIN}" not in body
+
+
+def test_update_human_unreadable_login_exits_2_audits_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stack, mocks = _update_env()
+    with (
+        stack,
+        patch(f"{_MODULE}.clone_develop") as mock_clone,
+        patch(f"{_MODULE}.github.read_output", side_effect=_not_found_error()),
+    ):
+        assert main(["update", "--repo", "o/r"]) == 2
+    mock_clone.assert_not_called()
+    mocks["audit"].assert_not_called()
+    mocks["apply"].assert_not_called()
+    mocks["sync"].assert_not_called()
+    err = capsys.readouterr().err
+    assert "cannot read the login this run opens the sync PR as" in err
 
 
 def test_update_collects_cannot_fix_and_runs_every_fixer(
