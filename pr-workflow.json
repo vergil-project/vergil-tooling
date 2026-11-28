@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "issue": "5445",
+  "branch": "feature/5445-rule11-through-line",
+  "base": "origin/develop",
+  "status": "ready",
+  "recorded_by": "user",
+  "created_at": "2026-11-28T21:21:13Z",
+  "updated_at": "2026-11-28T21:21:16Z",
+  "git": {
+    "base_sha": "25a53a760f2188165076511947dc10529960e04e",
+    "head_sha": "5832f32ef02d58e1ac222e4e02ae3bc3523fa5d7"
+  },
+  "pr_metadata": {
+    "title": "fix(merge-review): make rule 11 implement the through-line protocol",
+    "summary": "vrg-merge-review-check rule 11 now accepts 'Diff read: through line <n>' (N, or N+1 on a newline-ended patch) and the old '<read> of <total>' form judged against the driver's own count, so it no longer refuses reviews that use the new protocol.",
+    "notes": "Merge review: done: eligible; accepted-risk 0. The patch-ending read is one shared helper in lib/merge_review/schema.py, used by the check CLI and by read_earlier_results; diff_file and fix_file moved there too. Docs updated for the through-line form and for --earlier-result reading the earlier patch.",
+    "linkage": "Ref"
+  },
+  "submitted": null
+}
