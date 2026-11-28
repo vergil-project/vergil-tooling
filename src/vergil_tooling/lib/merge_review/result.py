@@ -223,32 +223,31 @@ def _check_coverage(text: str, req: Request) -> None:
     whitespace and a CR are stripped before the match.
     """
     lines = [stripped for stripped in (line.rstrip() for line in text.split("\n")) if stripped]
-    if not lines or DIFF_READ_RE.fullmatch(lines[-1]) is None:
+    diff_match = DIFF_READ_RE.fullmatch(lines[-1]) if lines else None
+    if diff_match is None:
         msg = (
             f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: <read> of"
             " <total> lines'"
         )
         raise ResultError(msg)
-    _check_read(lines[-1], DIFF_READ_RE, "Diff read", req.diff_lines)
+    _check_read(diff_match, "Diff read", req.diff_lines)
     if is_check(req.step):
-        if req.fix_diff_lines is None:  # check_request always sets it for a check
-            msg = f"{_RULE_COVERAGE}: the request carries no fix_diff_lines"
-            raise ResultError(msg)
-        if len(lines) < 2 or FIX_READ_RE.fullmatch(lines[-2]) is None:
+        fix_match = FIX_READ_RE.fullmatch(lines[-2]) if len(lines) >= 2 else None
+        if fix_match is None:
             msg = (
                 f"{_RULE_COVERAGE}: the non-empty line before the last must read"
                 " 'Fix diff read: <read> of <total> lines'"
             )
             raise ResultError(msg)
-        _check_read(lines[-2], FIX_READ_RE, "Fix diff read", req.fix_diff_lines)
+        _check_read(fix_match, "Fix diff read", req.fix_diff_lines)
 
 
-def _check_read(line: str, pattern: re.Pattern[str], label: str, total: int) -> None:
-    """Refuse a coverage *line* whose total is not *total*, or that reads less than all of it."""
-    match = pattern.fullmatch(line)
-    if match is None:
-        msg = f"{_RULE_COVERAGE}: the {label} line is malformed"
-        raise ResultError(msg)
+def _check_read(match: re.Match[str], label: str, total: int | None) -> None:
+    """Refuse a coverage line whose total is not *total*, or that reads less than all of it.
+
+    A *total* of ``None`` (a check's count missing from the request, which
+    :func:`check_request` already refuses) matches no line and so fails closed.
+    """
     read, stated = int(match.group(1)), int(match.group(2))
     if stated != total:
         msg = (
