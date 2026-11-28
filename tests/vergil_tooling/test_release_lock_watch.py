@@ -274,6 +274,25 @@ HOLD_READS: list[tuple[object, str]] = [
 HOLD_READ_IDS = [*(f"held-{i}" for i in range(len(HELD_STATES))), "reclaimed-stale-hold"]
 
 
+def test_a_not_updated_detail_is_reported_once_per_run_even_at_a_new_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detail = "behind develop and not updated from this clone: its tree has changes"
+    lock = FakeLock(
+        states=[None],
+        update=[
+            pr_path.HeldUpdate("not_updated", PR, detail=detail),
+            pr_path.HeldUpdate("not_updated", PR, detail=detail),
+        ],
+    ).install(monkeypatch)
+    lock_watch = watch()
+
+    assert lock_watch(snap(OLD, auto_merge_on=True)) == LockView("free", detail)
+    # The head moved and is judged again, still behind, but this run has reported the detail.
+    assert lock_watch(snap(NEW, auto_merge_on=True)) == LockView("free", "")
+    assert lock.updates == [PR, PR]
+
+
 @pytest.mark.parametrize(("held", "issue_state"), HOLD_READS, ids=HOLD_READ_IDS)
 def test_a_held_read_clears_the_judgments_so_the_next_free_read_judges_again(
     monkeypatch: pytest.MonkeyPatch, held: object, issue_state: str
