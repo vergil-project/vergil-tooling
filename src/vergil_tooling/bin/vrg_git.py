@@ -25,7 +25,9 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import branch_names, epics, github, pr_path, retry, trust
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.git import (
+    LOCK_RACE_RETRIES,
     _git_auth_env,
+    is_fetch_ref_lock_race,
     is_workflow_push_refusal,
     main_worktree_root,
     workflow_push_refusal_text,
@@ -1831,8 +1833,19 @@ def _run_network_with_retry(
     announced on stderr so a genuinely non-transient failure (a real auth error,
     a missing repo) still surfaces before the final result — no silent masking
     (#2835).
+
+    A ``fetch`` that loses a ref-lock race is retried under its own budget,
+    :data:`LOCK_RACE_RETRIES`, as :func:`vergil_tooling.lib.git._retry_network`
+    does; the final failing result is returned unchanged (#5431).
     """
-    for attempt in range(retry.MAX_RETRIES + 1):
+    subcommand = argv[0]
+    if subcommand == "fetch":
+        # Pin the locale so the ref-lock race message is the English text
+        # is_fetch_ref_lock_race matches (#5431).
+        env = {**(os.environ if env is None else env), "LC_ALL": "C"}
+    network_retries = 0
+    lock_race_retries = 0
+    while True:
         result = subprocess.run(  # noqa: S603
             ["git", *argv],  # noqa: S607
             check=False,
@@ -1840,20 +1853,33 @@ def _run_network_with_retry(
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0 or attempt == retry.MAX_RETRIES:
+        if result.returncode == 0:
+            return result
+        if is_fetch_ref_lock_race(subcommand, result.returncode, result.stderr):
+            if lock_race_retries == LOCK_RACE_RETRIES:
+                return result
+            delay = retry.compute_delay(lock_race_retries)
+            lock_race_retries += 1
+            sys.stderr.write(
+                f"vrg-git {subcommand}: ref-lock race (another fetch moved a ref), retrying in "
+                f"{delay:.1f}s (attempt {lock_race_retries}/{LOCK_RACE_RETRIES + 1})\n"
+            )
+            time.sleep(delay)
+            continue
+        if network_retries == retry.MAX_RETRIES:
             return result
         exc = subprocess.CalledProcessError(
             result.returncode, ("git", *argv), output=result.stdout, stderr=result.stderr
         )
         if not retry.is_retryable(exc):
             return result
-        delay = retry.compute_delay(attempt)
+        delay = retry.compute_delay(network_retries)
         sys.stderr.write(
-            f"vrg-git {argv[0]}: transient GitHub failure, retrying in "
-            f"{delay:.1f}s (attempt {attempt + 1}/{retry.MAX_RETRIES + 1})\n"
+            f"vrg-git {subcommand}: transient GitHub failure, retrying in "
+            f"{delay:.1f}s (attempt {network_retries + 1}/{retry.MAX_RETRIES + 1})\n"
         )
+        network_retries += 1
         time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _print_help() -> None:

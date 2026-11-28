@@ -593,6 +593,129 @@ class TestNetworkRetry:
         assert "Could not read from remote" in capsys.readouterr().err
 
 
+class TestFetchRefLockRace:
+    """Bounded retry of a fetch's ref-lock race, its own budget (#5431)."""
+
+    _NEW = "008583f35026556afdb9f1468b7eda56d187e6f9"
+    _OLD = "3111ea2754d0e73fba8aaee3ddd771f07a9f7b89"
+    _LOCK = (
+        f"error: cannot lock ref 'refs/remotes/origin/gh-pages': is at {_NEW} but expected {_OLD}\n"
+        " ! 3111ea27..008583f3  gh-pages   -> origin/gh-pages  (unable to update local ref)\n"
+    )
+    _TRANSPORT = "fatal: Could not read from remote repository.\n"
+
+    # -- the predicate --------------------------------------------------------
+
+    def test_predicate_matches_the_real_message(self) -> None:
+        assert git.is_fetch_ref_lock_race("fetch", 1, self._LOCK)
+
+    def test_predicate_rejects_exit_status_other_than_one(self) -> None:
+        assert not git.is_fetch_ref_lock_race("fetch", 2, self._LOCK)
+
+    def test_predicate_rejects_other_subcommand(self) -> None:
+        assert not git.is_fetch_ref_lock_race("push", 1, self._LOCK)
+
+    def test_predicate_rejects_lock_race_plus_another_error_line(self) -> None:
+        stderr = self._LOCK + "error: unable to write new index file\n"
+        assert not git.is_fetch_ref_lock_race("fetch", 1, stderr)
+
+    def test_predicate_rejects_lock_race_plus_a_fatal_line(self) -> None:
+        stderr = self._LOCK + "fatal: the remote end hung up unexpectedly\n"
+        assert not git.is_fetch_ref_lock_race("fetch", 1, stderr)
+
+    def test_predicate_rejects_stderr_without_an_error_line(self) -> None:
+        status = (
+            " ! 3111ea27..008583f3  gh-pages   -> origin/gh-pages  (unable to update local ref)\n"
+        )
+        assert not git.is_fetch_ref_lock_race("fetch", 1, status)
+
+    def test_predicate_rejects_none_stderr(self) -> None:
+        assert not git.is_fetch_ref_lock_race("fetch", 1, None)
+
+    def test_predicate_rejects_embedded_occurrence(self) -> None:
+        lock = f"cannot lock ref 'refs/x': is at {self._NEW} but expected {self._OLD}"
+        assert not git.is_fetch_ref_lock_race("fetch", 1, f"hint: error: {lock}\n")
+        assert not git.is_fetch_ref_lock_race("fetch", 1, f"warning: x error: {lock}\n")
+
+    # -- the run path ---------------------------------------------------------
+
+    def test_lock_race_that_clears_on_retry_succeeds(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, ("git", "fetch"), stderr=self._LOCK)
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        ):
+            m_progress.run.side_effect = [err, 0]
+            git.run("fetch", "--tags", "--force", "origin")
+        assert m_progress.run.call_count == 2
+        assert m_sleep.call_count == 1
+        err_text = capsys.readouterr().err
+        assert "ref-lock race" in err_text
+        assert "attempt 1/" in err_text
+
+    def test_lock_race_that_persists_raises_the_original_error(self) -> None:
+        err = subprocess.CalledProcessError(1, ("git", "fetch"), stderr=self._LOCK)
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+            pytest.raises(subprocess.CalledProcessError) as caught,
+        ):
+            m_progress.run.side_effect = err
+            git.run("fetch", "--tags", "--force", "origin")
+        assert caught.value is err
+        assert m_progress.run.call_count == git.LOCK_RACE_RETRIES + 1
+        assert m_sleep.call_count == git.LOCK_RACE_RETRIES
+
+    def test_non_matching_fetch_failure_fails_after_one_attempt(self) -> None:
+        err = subprocess.CalledProcessError(
+            1, ("git", "fetch"), stderr="fatal: couldn't find remote ref nope\n"
+        )
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            m_progress.run.side_effect = err
+            git.run("fetch", "origin", "nope")
+        assert m_progress.run.call_count == 1
+        m_sleep.assert_not_called()
+
+    def test_lock_race_budget_is_independent_of_network_budget(self) -> None:
+        lock = subprocess.CalledProcessError(1, ("git", "fetch"), stderr=self._LOCK)
+        transient = subprocess.CalledProcessError(128, ("git", "fetch"), stderr=self._TRANSPORT)
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        ):
+            m_progress.run.side_effect = [lock, transient, 0]
+            git.run("fetch", "origin", "develop")
+        assert m_progress.run.call_count == 3
+        assert m_sleep.call_count == 2
+
+    def test_lock_race_env_pins_locale_for_fetch_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LC_ALL", raising=False)
+        with patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None):
+            assert git._git_env(("fetch", "origin"))["LC_ALL"] == "C"
+            assert "LC_ALL" not in git._git_env(("status",))
+
+    def test_lock_race_env_pins_locale_for_fetch_with_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LC_ALL", raising=False)
+        with patch("vergil_tooling.lib.git.github.get_installation_token", return_value="tok"):
+            env = git._git_env(("fetch", "origin"))
+        assert env["LC_ALL"] == "C"
+        assert "GIT_CONFIG_VALUE_0" in env
+
+
 def test_branch_upstreams_maps_remote_tracking_branches() -> None:
     output = (
         "develop\torigin\trefs/heads/develop\n"
