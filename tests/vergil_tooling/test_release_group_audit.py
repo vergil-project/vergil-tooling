@@ -281,6 +281,20 @@ def test_split_group_names_both_prs(world: _World) -> None:
     )
 
 
+def test_split_detail_leaves_out_a_member_with_no_merged_pr(world: _World) -> None:
+    # Member 3 is open with no merged PR: the split still stands, and its detail names only the
+    # members that have a merged PR.
+    world.add_group("G1", 1, 1, 2, 3)
+    world.states.update({ref(1): "CLOSED", ref(2): "CLOSED"})
+    world.closers.update({ref(1): (_pr(10),), ref(2): (_pr(11),)})
+    [finding] = _scan()
+    assert finding.kind == "split"
+    assert finding.detail == (
+        "members closed by different merged PRs: org/repo#1 (closed) by org/repo#10;"
+        " org/repo#2 (closed) by org/repo#11"
+    )
+
+
 def test_member_closed_unmerged_flagged(world: _World) -> None:
     # Member 1 is closed, and no merged PR closes it; member 2's PR is the only closer.
     world.add_group("G1", 1, 1, 2)
