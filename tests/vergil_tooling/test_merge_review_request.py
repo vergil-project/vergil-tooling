@@ -1946,6 +1946,22 @@ def test_single_issue_pr_lists_its_fix_commits_oldest_first(
     assert first != second
 
 
+def test_single_issue_pr_refuses_a_merge_commit_in_its_fix_range(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    pr_head = _head(repo)
+    _git(repo, "checkout", "-q", "-b", "side", "develop")
+    _write(repo, "src/z.py", "z = 1\n")
+    _commit(repo, "side")
+    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+    _record(repo)
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=pr_head)
+    code, _out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert "is a merge commit" in err
+
+
 def test_pr_head_not_an_ancestor_gives_null_fix_commits(
     repo: Path, capsys: Cap, pr_pages: dict[str, Any]
 ) -> None:
@@ -2314,6 +2330,16 @@ def test_fix_commits_is_null_when_the_head_is_not_an_ancestor(
 ) -> None:
     monkeypatch.setattr("vergil_tooling.lib.git.is_ancestor", lambda *_args: False)
     assert open_pr.fix_commits("a" * 40, "b" * 40) is None
+
+
+def test_fix_commits_refuses_a_merge_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    merge = "\x1f".join(["c" * 40, "a" * 40 + " " + "d" * 40, "merge side"])
+    monkeypatch.setattr("vergil_tooling.lib.git.is_ancestor", lambda *_args: True)
+    monkeypatch.setattr("vergil_tooling.lib.git.read_output", lambda *_args: merge)
+    with pytest.raises(req.RequestError) as exc:
+        open_pr.fix_commits("a" * 40, "b" * 40)
+    assert "is a merge commit" in str(exc.value)
+    assert exc.value.exit_code == 1
 
 
 def _batch_reviewed(repo: Path, capsys: Cap, pr_pages: dict[str, Any]) -> tuple[str, str]:

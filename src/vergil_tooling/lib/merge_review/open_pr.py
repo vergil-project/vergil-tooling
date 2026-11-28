@@ -58,8 +58,8 @@ _SUBJECT_REF_RE = re.compile(r" \(#([0-9]+)\)$")
 #: One rev-list record: SHA, parent SHAs, subject, split by a unit separator.
 _FIELD_SEP = "\x1f"
 _RECORD_FIELDS = 3
-#: A fix commit's record: SHA and subject.
-_FIX_FIELDS = 2
+#: A fix commit's record: SHA, parent SHAs and subject.
+_FIX_FIELDS = 3
 
 
 def parse_pr(raw: str, issue: IssueRef) -> int:
@@ -224,8 +224,9 @@ def fix_commits(pr_head_sha: str, head_sha: str) -> list[dict[str, str]] | None:
     is *pr_head_sha*. ``None`` when *pr_head_sha* is not an ancestor of
     *head_sha*: the branch was rebased since the PR's head, so no commit can
     be told apart as the fix, and the caller carries that as the field's
-    ``null``. A git failure, such as a *pr_head_sha* this clone does not
-    hold, or a line of a shape other than the one asked for, is a refusal.
+    ``null``. A merge commit in the range refuses: a fix to the PR adds
+    linear commits. A git failure, such as a *pr_head_sha* this clone does
+    not hold, or a line of a shape other than the one asked for, is a refusal.
     """
     try:
         ancestor = git.is_ancestor(pr_head_sha, head_sha)
@@ -238,7 +239,7 @@ def fix_commits(pr_head_sha: str, head_sha: str) -> list[dict[str, str]] | None:
             "rev-list",
             "--reverse",
             "--no-commit-header",
-            f"--format=%H{_FIELD_SEP}%s",
+            f"--format=%H{_FIELD_SEP}%P{_FIELD_SEP}%s",
             f"{pr_head_sha}..{head_sha}",
             "--",
         )
@@ -246,10 +247,12 @@ def fix_commits(pr_head_sha: str, head_sha: str) -> list[dict[str, str]] | None:
         refuse(f"cannot read the fix commits {pr_head_sha[:12]}..{head_sha[:12]}: {exc}")
     commits: list[dict[str, str]] = []
     for line in raw.splitlines():
-        fields = line.split(_FIELD_SEP, 1)
+        fields = line.split(_FIELD_SEP, _FIX_FIELDS - 1)
         if len(fields) != _FIX_FIELDS:
             refuse(f"cannot parse the git rev-list line {line!r}")
-        sha, subject = fields
+        sha, parents, subject = fields
+        if len(parents.split()) > 1:
+            refuse(f"commit {sha[:12]} is a merge commit: a fix to the PR adds linear commits")
         commits.append({"sha": sha, "subject": subject})
     return commits
 
