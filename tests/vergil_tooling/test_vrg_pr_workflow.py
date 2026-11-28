@@ -809,6 +809,25 @@ def test_single_issue_of_group_refused_at_report_ready(
     _assert_nothing_recorded(ready_clone, relay)
 
 
+def test_single_issue_report_ready_refuses_a_clone_whose_repo_cannot_be_told(
+    ready_clone: Path,
+    rules: MagicMock,
+    relay: MagicMock,
+    per_issue: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _branch(ready_clone, "feat: one thing")
+    with patch(
+        "vergil_tooling.bin.vrg_pr_workflow._clone_repo",
+        side_effect=vrg_pr_workflow.WrongCloneError("no origin"),
+    ):
+        assert _report("10") == 1
+    assert "report-ready: no origin; nothing was pushed or recorded" in capsys.readouterr().err
+    real_whole_groups.assert_not_called()
+    _assert_nothing_recorded(ready_clone, relay)
+
+
 def test_report_ready_batch_refuses_rule_break(
     ready_clone: Path,
     rules: MagicMock,
@@ -1216,6 +1235,19 @@ def test_single_issue_of_group_refused_at_batch_check(
     assert "missing acme/tools#11" in err
     github_pr["closing"].assert_not_called()
     github_pr["rules"].assert_not_called()
+
+
+def test_batch_check_without_a_closes_line_has_nothing_to_check(
+    clone: Path,
+    github_pr: dict[str, MagicMock],
+    real_whole_groups: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _pr_is(github_pr, "a" * 40, body="## Issue Linkage\n\nRef #10\n")
+    assert _run("batch-check", "--pr", _PR) == 0
+    assert "is not a batch PR" in capsys.readouterr().out
+    real_whole_groups.assert_not_called()
+    github_pr["closing"].assert_not_called()
 
 
 def test_batch_check_fixup_commit_fails(

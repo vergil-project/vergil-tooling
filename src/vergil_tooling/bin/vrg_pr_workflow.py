@@ -1162,24 +1162,24 @@ def _commit_sha(rev: str) -> str:
     return git.read_output("rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
 
 
-def _check_pr_whole_groups(pr: str, body: str) -> None:
+def _check_pr_whole_groups(pr: str, closing_refs: list[str], clone: str) -> None:
     """Hold the body's ``Closes`` issues to the whole-group rule (spec §5.2).
 
-    Every ``Closes`` line counts, one or more, in the body's order, which is the
-    batch order a batch is held to. Nothing is read when the body has none.
+    *closing_refs* are every ``Closes`` ref of the body, one or more, in the body's
+    order, which is the batch order a batch is held to. *clone* is this clone's
+    ``owner/repo``, the repo a bare ``#N`` in the body is in.
     """
-    closing_refs = [ref for keyword, ref in extract_tracking_refs(body) if keyword == "Closes"]
-    if not closing_refs:
-        return
-    try:
-        repo = _clone_repo()
-    except WrongCloneError as exc:
-        raise WorkflowError(f"batch-check: {exc}") from exc
-    closing = [epics.parse_issue_ref(ref, default_repo=repo) for ref in closing_refs]
+    closing = [epics.parse_issue_ref(ref, default_repo=clone) for ref in closing_refs]
     try:
         pr_check.check_whole_groups(closing, order=closing)
     except batch_rules.BatchRuleError as exc:
         raise WorkflowError(f"batch-check: PR {pr}: {exc}") from exc
+
+
+def _not_a_batch(pr: str) -> int:
+    """Report a PR that is not a batch, with nothing to check; exit 0."""
+    print(f"PR {pr} is not a batch PR (its body has one Closes line or none); nothing to check.")
+    return 0
 
 
 def cmd_batch_check(args: argparse.Namespace, _transport: LocalFileTransport) -> int:
@@ -1200,18 +1200,18 @@ def cmd_batch_check(args: argparse.Namespace, _transport: LocalFileTransport) ->
     if args.head is not None and (not args.head or args.head.startswith("-")):
         raise WorkflowError(f"batch-check: --head is not a git revision: {args.head!r}")
     body, base, pr_head = _check_pr_fields(pr)
-    _check_pr_whole_groups(pr, body)
-    closes = batch_rules.batch_closes(body)
-    if not closes:
-        print(
-            f"PR {pr} is not a batch PR (its body has one Closes line or none); nothing to check."
-        )
-        return 0
-    repo = _check_closing_refs(pr, body)
+    closing_refs = [ref for keyword, ref in extract_tracking_refs(body) if keyword == "Closes"]
+    if not closing_refs:
+        return _not_a_batch(pr)
     try:
         clone = _clone_repo()
     except WrongCloneError as exc:
         raise WorkflowError(f"batch-check: {exc}") from exc
+    _check_pr_whole_groups(pr, closing_refs, clone)
+    closes = batch_rules.batch_closes(body)
+    if not closes:
+        return _not_a_batch(pr)
+    repo = _check_closing_refs(pr, body)
     if clone.lower() != repo.lower():
         raise WorkflowError(
             f"batch-check: PR {pr} is in {repo}, but this is a clone of {clone}; "
