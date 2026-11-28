@@ -15659,6 +15659,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extra-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -18981,6 +18998,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#extra-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -19086,22 +19120,47 @@ config bundled in vergil-tooling.</p>
 <td>Epic specs, plans and retrospectives</td>
 <td><code>epics/**/*.md</code></td>
 </tr>
+<tr>
+<td>Extra paths the repo lists in <code>[markdownlint].paths</code></td>
+<td>a listed directory's <code>**/*.md</code>, or a listed <code>.md</code> file</td>
+</tr>
 </tbody>
 </table>
 <p>Other markdown files (changelogs, release notes, internal docs, and the
 rest of <code>docs/</code>, such as plans and specs) are not validated by this
-check. The <code>[markdownlint].ignore</code> paths in <code>vergil.toml</code> drop files
-under <code>docs/site/</code>, <code>docs/security/</code> and <code>epics/</code>.</p>
+check unless the repo lists them in <code>[markdownlint].paths</code>. The
+<code>[markdownlint].ignore</code> paths in <code>vergil.toml</code> drop files under
+<code>docs/site/</code>, <code>docs/security/</code>, <code>epics/</code> and the extra paths.</p>
+<h3 id="extra-paths">Extra paths<a class="headerlink" href="#extra-paths" title="Permanent link">&para;</a></h3>
+<p>A repo that keeps markdown outside the fixed scope, such as a plugin's
+<code>skills/</code> tree, names it in <code>vergil.toml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[markdownlint]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"skills"</span><span class="p">,</span><span class="w"> </span><span class="s2">"docs/guides/extra.md"</span><span class="p">]</span>
+</code></pre></div>
+<p>Each entry is a repo-relative path. A directory is searched recursively
+for <code>*.md</code>; a file is linted as it is. The listed files join the fixed
+scope in the same single markdownlint pass, against the same bundled
+config, so <code>vrg-validate</code> and <code>vrg-validate --markdown FILE</code> agree on
+them. An entry that does not exist, or a file that is not <code>.md</code>, fails
+the check; it is never skipped silently. An absolute path, a path with a
+<code>..</code> component, an empty entry and a <code>.</code> entry (the repo root) are
+rejected when <code>vergil.toml</code> is read. <code>[markdownlint].ignore</code> applies to
+the listed paths too. A markdown file outside the fixed scope and not
+listed is not linted.</p>
+<p>The <code>paths</code> key takes effect once the release that carries it is
+published. An older release warns on stderr that the key is
+unrecognized and lints the fixed scope only, so a repo should not list
+paths until its pinned vergil-tooling carries the key.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The canonical config is bundled at
 <code>src/vergil_tooling/configs/markdownlint.yaml</code> and resolved at
 runtime via <code>importlib.resources</code>. Consuming repos do not need a
 local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">no-duplicate-heading</span><span class="p">:</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">siblings_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">MD013</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">MD060</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">no-duplicate-heading</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">siblings_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nt">MD013</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nt">MD060</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
 </code></pre></div>
 <p>Key rules:</p>
 <table>
@@ -19160,7 +19219,9 @@ to markdownlint's defaults, MD013 included.</p>
 <h2 id="links-to-other-vergil-docs-sites">Links to other Vergil docs sites<a class="headerlink" href="#links-to-other-vergil-docs-sites" title="Permanent link">&para;</a></h2>
 <p>Right after markdownlint, the common checks run docs-links over the same
 markdown, less <code>epics/archive/</code>. The <code>[markdownlint].ignore</code> paths do
-not apply to it: a file left out of the lint still publishes its links.</p>
+not apply to it: a file left out of the lint still publishes its links.
+Its scope is the fixed default scope only: the <code>[markdownlint].paths</code>
+extra paths are not checked by it.</p>
 <p>The Vergil docs sites that mike versions serve every page under a
 version segment, so a deep link written as
 <code>https://vergil-project.github.io/&lt;site&gt;/&lt;page&gt;/</code> returns 404. Write it

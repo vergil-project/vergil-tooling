@@ -25870,9 +25870,11 @@ release from before <code>skip</code> existed refuses a record that carries one.
 <p><code>--markdown FILE...</code> is the ad-hoc markdown lint: it runs no stage and
 writes no run record, and markdownlints only the given files exactly as
 the common stage would, against the bundled config. A file the common
-stage does not lint (outside its scope, under a <code>[markdownlint].ignore</code>
-path, or gitignored) is named and skipped, so the result never disagrees
-with the gate. <code>--fix</code> lets markdownlint fix what it can. A bare
+stage does not lint (outside its scope, including the repo's
+<code>[markdownlint].paths</code> extras, under a <code>[markdownlint].ignore</code> path, or
+gitignored) is named and skipped, so the result never disagrees with the
+gate. Once the release carrying <code>[markdownlint].paths</code> is published, a
+file under a listed path is linted here too. <code>--fix</code> lets markdownlint fix what it can. A bare
 <code>markdownlint &lt;file&gt;</code> uses markdownlint's defaults instead, line length
 included, so it flags lines the gate passes.</p>
 <table>
@@ -25914,8 +25916,10 @@ included, so it flags lines the gate passes.</p>
 stage. Shared validation checks for all repos: the
 <a href="../lint/repo-profile/">repo-profile</a> check (<code>vergil.toml</code> and the
 <code>README.md</code> structure), markdownlint on published markdown
-(<code>docs/site/**/*.md</code>, <code>docs/security/**/*.md</code>, <code>README.md</code> and <code>epics/**/*.md</code>) using the bundled canonical config,
-the docs-links guard (over the same markdown less <code>epics/archive/</code>, a link
+(<code>docs/site/**/*.md</code>, <code>docs/security/**/*.md</code>, <code>README.md</code> and <code>epics/**/*.md</code>, plus
+the repo's <code>[markdownlint].paths</code> extras) using the bundled canonical config,
+the docs-links guard (over the default markdown less <code>epics/archive/</code>; the
+<code>[markdownlint].paths</code> extras are not in its scope, a link
 to a mike-versioned Vergil docs site must carry a <code>latest</code>, <code>dev</code> or
 version-number segment after the site name, and a link to a site the org
 does not publish fails), shellcheck on
