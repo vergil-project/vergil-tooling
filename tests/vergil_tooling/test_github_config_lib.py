@@ -661,7 +661,17 @@ def test_ci_gates_always_includes_quality_evidence_and_security() -> None:
     assert "security / semgrep" in check_names
     assert "security / standards" not in check_names
     assert "Trivy" in check_names
-    assert "Semgrep OSS" in check_names
+
+
+def test_ci_gates_does_not_require_semgrep_oss_check() -> None:
+    """Semgrep's result is gated by `security / semgrep`; its GHAS `Semgrep OSS`
+    check waits on GitHub's asynchronous SARIF processing and stayed pending
+    >20 minutes after a passing scan, so it must not be required
+    (vergil-project/vergil-tooling#5227). Trivy and `security / semgrep` stay."""
+    check_names = _check_names(_ci_gates_develop(_project(), _ci()))
+    assert "Semgrep OSS" not in check_names
+    assert "Trivy" in check_names
+    assert "security / semgrep" in check_names
 
 
 def test_ci_gates_requires_docs_check_when_publishing_docs() -> None:
@@ -742,9 +752,9 @@ def test_universal_reusable_ci_checks_are_all_required() -> None:
 def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
     r = _ci_gates_develop(_project(), _ci())
     checks = _checks(r)
-    ghas_names = ("Trivy", "Semgrep OSS", "CodeQL")
+    ghas_names = ("Trivy", "CodeQL")
     ghas_checks = {c["context"]: c["integration_id"] for c in checks if c["context"] in ghas_names}
-    assert ghas_checks == {"Trivy": 57789, "Semgrep OSS": 57789, "CodeQL": 57789}
+    assert ghas_checks == {"Trivy": 57789, "CodeQL": 57789}
 
 
 def test_ci_gates_codeql_for_supported_language() -> None:
@@ -945,12 +955,13 @@ def test_docs_context_flagged_when_ci_lacks_docs_job() -> None:
 
 
 def test_ghas_literal_contexts_are_producible() -> None:
-    """The GHAS-app checks (`Trivy`, `Semgrep OSS`, `CodeQL`) the ruleset requires
-    report on a PR, since every repo is public and uploads SARIF."""
+    """The GHAS-app checks (`Trivy`, `CodeQL`) the ruleset requires report on a
+    PR, since every repo is public and uploads SARIF."""
     ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
     ruleset = _ci_gates_develop(_project(), _ci(), docs=True)
     required = required_status_contexts(ruleset)
-    assert {"Trivy", "Semgrep OSS", "CodeQL"} <= set(required)
+    assert {"Trivy", "CodeQL"} <= set(required)
+    assert "Semgrep OSS" not in required
     assert unproducible_ci_yaml_contexts(ci_yaml, required) == []
 
 
@@ -1250,7 +1261,6 @@ def test_vergil_actions_real_ci_yaml_passes_the_guard() -> None:
     ruleset requires — the exact set `apply` falsely refused (issue #3454)."""
     ruleset = _ci_gates_develop(_project(language="shell"), _ci(), docs=True)
     assert sorted(required_status_contexts(ruleset)) == [
-        "Semgrep OSS",
         "Trivy",
         "docs / docs",
         "quality / evidence",
@@ -1411,7 +1421,6 @@ _EXPECTED_GATES_TWO_VERSIONS = [
     "security / semgrep",
     "docs / docs",
     "Trivy",
-    "Semgrep OSS",
     "security / codeql",
     "CodeQL",
     "audit / evidence",
@@ -1712,7 +1721,7 @@ def test_compute_desired_state_keeps_full_ghas_posture() -> None:
     gates = next(r for r in state.rulesets if r.name == CI_GATES_DEVELOP)
     names = _check_names(gates)
     assert "Trivy" in names
-    assert "Semgrep OSS" in names
+    assert "Semgrep OSS" not in names
     assert "security / codeql" in names
 
 
