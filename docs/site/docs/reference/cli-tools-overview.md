@@ -2161,6 +2161,7 @@ after its own step's check is refused), `--fix-id` for each earlier ID asked to 
 the human excused (not sent to the reviewer). It refuses an ID no earlier
 result raised, an ID given to both, a check with no `--fix-id`, and an
 earlier defect named by neither unless a later result marks it `fixed`.
+Each `--earlier-result` also reads that result's patch file to judge a coverage count that reads N+1.
 
 For a fix to an open PR, `--pr` names the PR by number or URL. The PR must
 be in the `--issue` repository, open, and a same-repo PR with a trusted
