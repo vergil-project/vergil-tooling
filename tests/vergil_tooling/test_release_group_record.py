@@ -398,3 +398,60 @@ def test_proxy_without_records_skips_the_link_check(fake: FakeEpic) -> None:
     fake.kind = "proxy"
     fake.proxy_problems = ["would refuse if checked"]
     assert groups_of(ref(1)) == []
+
+
+# --- a refusal says whether it is an edit, an unreadable log, or both ----------
+
+
+def test_edited_record_is_an_edit_and_not_unreadable(fake: FakeEpic) -> None:
+    fake.comments = [
+        _comment(1, _record("G1", 3, 1, 2)),
+        _comment(2, _record("G1", 4, 1, 3), edited=True),
+    ]
+    refusal = read_log(EPIC).broken["G1"]
+    assert refusal.edits == ("comment 2 was edited after it was posted",)
+    assert refusal.unreadable is False
+
+
+def test_conflict_is_unreadable_and_not_an_edit(fake: FakeEpic) -> None:
+    fake.comments = [_comment(1, _record("G1", 3, 1, 2)), _comment(2, _record("G1", 3, 1, 3))]
+    refusal = read_log(EPIC).broken["G1"]
+    assert refusal.edits == ()
+    assert refusal.unreadable is True
+
+
+def test_edited_and_conflicting_group_is_both(fake: FakeEpic) -> None:
+    fake.comments = [
+        _comment(1, _record("G1", 3, 1, 2)),
+        _comment(2, _record("G1", 3, 1, 3), edited=True),
+    ]
+    refusal = read_log(EPIC).broken["G1"]
+    assert refusal.edits == ("comment 2 was edited after it was posted",)
+    assert refusal.unreadable is True
+
+
+def test_outsider_edit_on_the_epic_is_an_edit_and_not_unreadable(fake: FakeEpic) -> None:
+    fake.comments = [_comment(1, _record("G1", 3, 1, 2))]
+    fake.skipped = [_outsider(1, edit=True)]
+    error = read_log(EPIC).epic_error
+    assert error is not None
+    assert len(error.edits) == 1
+    assert error.edits[0].startswith("comment 1 was edited by an identity outside")
+    assert error.unreadable is False
+
+
+def test_outsider_edit_with_a_non_group_epic_is_both(fake: FakeEpic) -> None:
+    fake.kind = "ad-hoc"
+    fake.comments = [_comment(1, _record("G1", 1, 1, 2))]
+    fake.skipped = [_outsider(1, edit=True)]
+    error = read_log(EPIC).epic_error
+    assert error is not None
+    assert len(error.edits) == 1
+    assert error.unreadable is True
+
+
+def test_plain_refusal_is_unreadable_and_not_an_edit() -> None:
+    # A refusal built without edits (every raise site but the read's edit path) is unreadable.
+    error = GroupRecordError("org/repo#40 cannot be read: it holds a conflict")
+    assert error.edits == ()
+    assert error.unreadable is True
