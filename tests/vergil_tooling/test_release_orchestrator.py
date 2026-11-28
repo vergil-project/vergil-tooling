@@ -4,7 +4,7 @@ import argparse
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -503,6 +503,21 @@ def test_phase_details_prepare() -> None:
     assert "pull/100" in details
     assert "issues/42" in details
     assert "--allow-pending-deps" not in details
+
+
+def test_phase_details_prepare_states_the_lock_the_release_holds() -> None:
+    ctx = _ctx()
+    ctx.lock = cast("Any", FakeLockOwner())
+    details = _phase_details(ctx, "prepare")
+    assert "Release lock held" in details
+    assert "maintainer on laptop" in details
+    assert "release 2.1.0" in details
+    assert f"`{'5' * 40}`" in details
+    assert "2026-11-27T10:00:00Z" in details
+
+
+def test_phase_details_prepare_states_no_lock_when_none_is_held() -> None:
+    assert "Release lock" not in _phase_details(_ctx(), "prepare")
 
 
 def test_phase_details_prepare_names_bypassed_deps_prs() -> None:

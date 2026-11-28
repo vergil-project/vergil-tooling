@@ -650,6 +650,13 @@ class _ResumeLock:
         enter(patch(_PREFLIGHT + ".sweeps.quiesce", side_effect=quiesce))
         enter(patch(_PREFLIGHT + ".stray_merges", side_effect=strays))
         enter(patch(_PREFLIGHT + ".abandon_release", side_effect=abandon))
+        self.comments: list[tuple[str, int, str]] = []
+
+        def comment(repo: str, number: int, body: str, *, phase: str = "") -> None:
+            log(("comment", number))
+            self.comments.append((repo, number, body))
+
+        enter(patch(_PREFLIGHT + ".comment_lock_takeover", side_effect=comment))
 
     def names(self) -> list[object]:
         return [event[0] for event in self.events]
@@ -685,11 +692,40 @@ def test_resume_adopts_own_lock_on_other_host(resume_lock: _ResumeLock) -> None:
     assert not {"take", "quiesce", "history", "strays"} & set(resume_lock.names())
 
 
+def test_resume_adopt_states_on_the_tracking_issue_that_it_adopted_the_lock(
+    resume_lock: _ResumeLock,
+) -> None:
+    resume_lock.found = _held(health="broken", broken_stage="confirm-main")
+    resume_lock.run("confirm-main")
+    assert resume_lock.names() == ["adopt", "update", "comment"]
+    repo, number, body = resume_lock.comments[0]
+    assert (repo, number) == (_LOCK_REPO, 42)
+    assert "<!-- vrg-release:lock-resumed -->" in body
+    assert "adopted" in body
+    assert "maintainer on laptop" in body
+    assert "release 2.1.0" in body
+    assert f"`{resume_lock.owner.sha}`" in body
+    assert "broken at confirm-main" in body
+
+
+def test_resume_retake_states_on_the_tracking_issue_that_it_re_took_the_lock(
+    resume_lock: _ResumeLock,
+) -> None:
+    resume_lock.found = _FREE
+    resume_lock.run("confirm-main")
+    assert resume_lock.names() == ["take", "comment", "history", "quiesce"]
+    _, number, body = resume_lock.comments[0]
+    assert number == 42
+    assert "re-took" in body
+    assert "none was held" in body
+    assert f"`{resume_lock.owner.sha}`" in body
+
+
 def test_resume_adopts_own_stale_running_lock(resume_lock: _ResumeLock) -> None:
     # A laptop that slept mid-release: still running, but its heartbeat is stale.
     ctx = resume_lock.run("merge-release")
     assert ctx.lock is resume_lock.owner
-    assert resume_lock.names()[:2] == ["adopt", "update"]
+    assert resume_lock.names() == ["adopt", "update", "comment"]
 
 
 def test_resume_adopt_in_the_root_checkout_keeps_the_worktree_recorded(
@@ -761,7 +797,7 @@ def test_resume_retakes_absent_lock_quiesces_and_records(resume_lock: _ResumeLoc
     ctx = resume_lock.run("confirm-main")
     assert ctx.lock is resume_lock.owner
     # Take, record the re-take, then quiesce; at confirm-main no stray check.
-    assert resume_lock.names() == ["take", "history", "quiesce"]
+    assert resume_lock.names() == ["take", "comment", "history", "quiesce"]
     rec = resume_lock.taken[0]
     assert (rec.holder_identity, rec.holder_host, rec.version) == ("maintainer", "laptop", "2.3.0")
     assert (rec.tracking_issue, rec.stage, rec.health, rec.worktree) == (
@@ -799,14 +835,14 @@ def test_resume_before_merge_release_stray_check_after_disarm_abandons(
     with pytest.raises(ReleaseAbandoned, match="fresh `vrg-release`"):
         resume_lock.run("prepare")
     # The stray check runs only once develop is disarmed, and abandons on a hit.
-    assert resume_lock.names() == ["take", "history", "quiesce", "strays", "abandon"]
+    assert resume_lock.names() == ["take", "comment", "history", "quiesce", "strays", "abandon"]
     assert stray in str(resume_lock.events[-1][1])
 
 
 def test_resume_before_merge_release_without_strays_goes_on(resume_lock: _ResumeLock) -> None:
     resume_lock.found = _FREE
     ctx = resume_lock.run("prepare")
-    assert resume_lock.names() == ["take", "history", "quiesce", "strays"]
+    assert resume_lock.names() == ["take", "comment", "history", "quiesce", "strays"]
     assert ctx.lock is resume_lock.owner
 
 
@@ -930,6 +966,7 @@ def _real_resume(first: str) -> ReleaseContext:
         patch(_PREFLIGHT + ".socket.gethostname", return_value="laptop"),
         patch(_PREFLIGHT + ".sweeps.quiesce", return_value=quiet),
         patch(_PREFLIGHT + ".stray_merges", return_value=[]),
+        patch(_PREFLIGHT + ".comment_lock_takeover"),
     ):
         preflight_module._resume_lock(ctx, first, _PIPELINE)
     return ctx
@@ -1062,4 +1099,11 @@ def test_resume_abandon_failure_after_the_lock_went_marks_nothing(
         pytest.raises(ReleaseError, match="re-arm failed"),
     ):
         resume_lock.run("prepare")
-    assert resume_lock.names() == ["take", "history", "quiesce", "strays"]
+    assert resume_lock.names() == ["take", "comment", "history", "quiesce", "strays"]
+
+
+def test_resume_lock_record_without_a_tracking_issue_number_refuses() -> None:
+    ctx = _resume_ctx()
+    ctx.issue_number = None
+    with pytest.raises(ReleaseError, match="no tracking issue number"):
+        preflight_module._record_resume_lock(ctx, cast("Any", FakeLockOwner()), "adopted it")
