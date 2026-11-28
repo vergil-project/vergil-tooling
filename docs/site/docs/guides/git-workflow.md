@@ -243,8 +243,17 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
 !!! note "Batch PRs: several issues, one PR"
-    An agent may implement 2 to 20 issues of one epic on one branch
-    and hand them off as one PR (epic vergil-project/.github#1019).
+    A batch is the unit of release. An agent may implement 2 to 20 issues
+    of one epic on one branch and hand them off as one PR (epic
+    vergil-project/.github#1019). Work that must ship together is batched
+    for correctness: tasks that must ship together but are submitted apart
+    let a release carry partial work. Over-batching is only a throughput
+    cost, since a batch is built serially on one branch and gets one CI run.
+    So batching is not an optional saving, and the batch's size is not a
+    correctness concern: there are no PR size guidelines. The one size limit
+    is the hard ceiling of 20 issues, which refuses a runaway list.
+
+!!! note "Batch PRs: building and handing off a batch"
     `vrg-pr-workflow batch-start` checks the batch's hard rules and records
     the ordered list and a fixed base. Each issue gets one commit, its
     subject ending in `(#N)`; later changes to it are made with
@@ -258,6 +267,70 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     names the batch's worktree and branch, and the
     [`vrg-pr-workflow` entry](../reference/cli-tools-overview.md#vrg-pr-workflow)
     lists the rules.
+
+!!! note "Release groups: the minimum that must ship together"
+    A **release group** is a set of tasks of one development epic (or of
+    one proxy epic) that must ship in one PR. Planning in `epic-create`
+    names each group (an ID such as `G1`), its members in build order, and
+    a dependency chain listed bottom up. A task in no group is standalone.
+    Every member is a code task in one repo, is open, and has no
+    dependency path to another member through a task outside the group,
+    and a group sits wholly between deployments. Groups are refused in
+    ad-hoc, management and queue epics (intake, planning and deferred). A
+    group has at least 1 and at most 20 members; a one-member group takes
+    the single-issue PR path. The tooling enforces only this minimum. Anything above it, such as
+    other tasks or groups in the same batch, is a throughput judgment left
+    to `epic-implement`. The whole-group rule: a PR that holds any member
+    of a group holds every member. It is enforced at `batch-start`,
+    `report-ready`, `batch-check`, and on every path of the one PR path
+    into `develop` (every mode of `vrg-submit-pr`, every re-arm, and every
+    push to an open PR). A single-issue PR of a grouped task is refused,
+    naming the group and the missing members. Members appear in the batch
+    in the group's build order, and a batch may also hold other whole
+    groups and standalone tasks. `vrg-gh pr edit` refuses any body change
+    that adds, removes or changes a `Closes` or `Ref` line of a PR into
+    `develop`, so the PR's closing lines stay as checked.
+
+!!! note "Release groups: changing membership"
+    Membership is changed with
+    [`vrg-release-group`](../reference/cli-tools-overview.md#vrg-release-group)
+    and is open from planning until `batch-start`. After the batch has
+    started, a change stops for the human: use `--at-batch-stop` at a batch
+    stop. From `report-ready` of the batch that holds the group until its
+    PR merges or is closed, the group is frozen. To change it then, take the
+    PR back first with `vrg-pr-workflow unfreeze`, and close the PR after.
+    Closing a member without a merge is a break, repaired by a recorded
+    change that removes it. Membership is recorded on the epic, as
+    described in [Epics](../standards/github-issues.md#release-groups).
+
+!!! note "Release groups: batch stops"
+    A batch stop extracts a set with
+    `vrg-pr-workflow batch-extract --issue N [--issue M ...]`. It refuses,
+    naming the group, when the set would split a release group. `--check`
+    makes the same judgment and writes nothing: it prints
+    `{"ok","split","remaining"}` and exits 0 when the set is ok, 1 otherwise.
+    Moving whole groups (by extract, handoff, or unbatch of whole groups and
+    standalone tasks) is allowed and is not a group change.
+
+!!! note "Release groups: one driver per epic"
+    "Started" means a batch marker, kept locally in the driver's main clone,
+    exists for a member. So `vrg-release-group` must run from the main clone
+    of the members' repo. The "Started" check relies on **one `epic-implement`
+    driver per epic**, run in one place (a local host or a cloud session) and
+    kept so by the human. No tooling locks this. If two drivers ran one epic,
+    the whole-group rule would still refuse a batch that is not its whole
+    group.
+
+!!! note "Review after a rewrite"
+    Any change to a batch commit makes that commit, and every later commit,
+    due for a fresh [merge review](merge-review.md) before handoff, and
+    before `pr-watch` pushes a fix after submit. That covers a fold into the
+    commit and a rebase that changes its patch. A batch commit's
+    merge-review record covers its own change together with every commit
+    before it. A clean rebase changes no commit's own diff and voids
+    nothing. Before `report-ready`, run `vrg-pr-workflow batch-gates
+    [--json]` in the batch worktree. It reports each commit as covered or
+    UNCOVERED, writes nothing, and exits 0 only when every commit is covered.
 
 !!! note "Cloud (off-platform) agents: same handoff, over GitHub"
     A cloud x86 VM shares no disk with the Mac, so `report-ready`

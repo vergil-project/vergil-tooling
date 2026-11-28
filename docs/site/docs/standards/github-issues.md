@@ -67,7 +67,9 @@ rejected**: the daily sweep attaches every orphan to its home's intake epic
   document why in the PR description. A batch PR (2 to 20 issues of
   one epic, one commit per issue; see
   [Git Workflow](../guides/git-workflow.md)) is the tooled form of this: it
-  closes each of its issues with its own `Closes` line.
+  closes each of its issues with its own `Closes` line. Batches are the
+  unit of release, and a [release group](#release-groups) (tasks that must
+  ship in one PR) is always held whole within its batch.
 
 ## Acceptance criteria
 
@@ -289,6 +291,44 @@ filing-time guard enforces this; `vrg-epic-audit` reports an open ad-hoc task
 that looks misplaced (a `Logbook:` title, or a body naming an epic in another
 org) for a human to rule on. A task ruled standalone gets a trusted comment
 with the line `Standalone-confirmed`, and the audit stops reporting it.
+
+### Release groups
+
+A **release group** is a set of tasks of one development epic (or of one
+[proxy epic](#proxy-epics)) that must ship in one PR. The rules for batching
+them are in [Git Workflow](../guides/git-workflow.md). A task in no group is
+standalone. A group is recorded on the epic, and nothing about it is ever
+written into a task body, so the record is the only source of membership:
+
+- The record is a trusted comment on the epic, posted only by
+  [`vrg-release-group`](../reference/cli-tools-overview.md#vrg-release-group).
+  Its first line is `release-group G1 rev 3: <ref> <ref> <ref>`: a full
+  snapshot of the members in build order, where the latest, highest
+  revision wins. A mandatory `Reason:` line follows it.
+- A group on a proxy epic is recorded on the proxy.
+- Group IDs are per epic and are never reused, a dissolved group's included.
+- A record edited after posting, two records at one revision, or an
+  out-of-order revision is refused (the tools fail closed). The human deletes
+  the bad comment in the web UI.
+
+Every change goes through `vrg-release-group` (`list`, `set` and `dissolve`),
+and every change needs a reason but no approval. Membership is open until the
+group's batch starts. After that, a change stops for the human, and at a batch
+stop it is made with `--at-batch-stop`. The group is frozen from `report-ready`
+until its PR merges or is closed. A group ends only by a recorded dissolve.
+
+Moving a grouped task is restricted. `vrg-epic-move` and `vrg-intake-route`
+refuse to move a member of a group, and `vrg-gh issue transfer` refuses to
+transfer one, naming the group, until a recorded change has removed it from
+the group. A split of a grouped task (say, 13 into 13a and 13b) is one
+recorded change: the sub-tasks are added and the original is removed, with its
+reason. The sub-tasks of a grouped task ship in the one batch.
+
+Detection is reported, never repaired. `vrg-epic-audit` reports a
+`Release groups` section (split, closed unmerged, rule, edited, unreadable)
+and exits 1 on any finding. The daily sweep (`vrg-epic-audit --close`) checks
+the groups of every open development and proxy epic. `vrg-release` runs no
+group check of its own.
 
 ### Epic categories
 
