@@ -684,3 +684,24 @@ def test_unbounded_call_has_no_timeout() -> None:
     with patch("vergil_tooling.lib.retry.subprocess.run", return_value=ok) as mock_run:
         retry.run_with_retry(["gh"], check=True)
     mock_run.assert_called_once_with(["gh"], check=True)
+
+
+class TestPause:
+    def test_sleeps_without_a_bound(self) -> None:
+        with patch.object(retry.time, "sleep") as sleep:
+            retry.pause(3.0)
+        sleep.assert_called_once_with(3.0)
+
+    def test_sleeps_inside_a_bound_with_room(self) -> None:
+        with patch.object(retry.time, "sleep") as sleep, retry.bounded(60, what="the call"):
+            retry.pause(3.0)
+        sleep.assert_called_once_with(3.0)
+
+    def test_a_pause_that_would_pass_the_bound_raises_without_sleeping(self) -> None:
+        with (
+            patch.object(retry.time, "sleep") as sleep,
+            retry.bounded(2, what="the arm call"),
+            pytest.raises(retry.DeadlineExceededError, match="the arm call ran past its bound"),
+        ):
+            retry.pause(3.0)
+        sleep.assert_not_called()

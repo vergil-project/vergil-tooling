@@ -221,6 +221,19 @@ def _run_bounded(args: tuple[Any, ...], kwargs: dict[str, Any]) -> subprocess.Co
         raise _past_bound(bound, f"the call was stopped after {left:.1f}s") from exc
 
 
+def pause(secs: float) -> None:
+    """Sleep *secs*, unless the :func:`bounded` block's bound would pass first.
+
+    A pause that would end at or past the bound raises
+    :class:`DeadlineExceededError` without sleeping, so a caller's own retry
+    loop stays inside the bound as :func:`call_with_retry`'s does.
+    """
+    bound = _bound.get()
+    if bound is not None and time.monotonic() + secs >= bound.deadline:
+        raise _past_bound(bound, "a pause before trying again would end past it")
+    time.sleep(secs)
+
+
 def compute_delay(attempt: int) -> float:
     """Return a jittered exponential backoff delay for the given attempt."""
     delay: float = min(BASE_DELAY_SECS * (2**attempt), MAX_DELAY_SECS)

@@ -1040,6 +1040,16 @@ def test_lock_failures_stop_the_watch(
         run([url(1)])
 
 
+def test_failed_rearm_names_the_prs_actual_state(fake: FakeGitHub) -> None:
+    """The stop after a failed re-arm reads the PR's state; it never assumes one (#5406)."""
+    fake.lock.arm_outcome = pr_path.PRPathError(f"{url(1)}: the arm call failed")
+    fake.lock.pr_state = "open, auto-merge off"
+    fake.script(1, unarmed(1))
+
+    with pytest.raises(FinalizeWatchError, match=r"the PR, read just now, is open, auto-merge off"):
+        run([url(1)])
+
+
 def test_base_changed_midwatch_not_a_develop_pr(fake: FakeGitHub) -> None:
     fake.script(1, pr_state(1), pr_state(1, baseRefName="main"))
 

@@ -45,6 +45,7 @@ from vergil_tooling.lib.release_lock.model import (
     ARMING_COLLISION_POLL_SECS,
     ARMING_COLLISION_WAIT_SECS,
     ARMING_EXPIRY_SECS,
+    BASE_MOVED_ATTEMPTS,
     LockRecord,
     RefReadError,
     RefWriteError,
@@ -66,6 +67,9 @@ AGENT = "human-vergil-user"
 AUTHORS = TrustedAuthors(human=(HUMAN,), agents=(AGENT,))
 CLEAN_STDERR = (
     "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)\n"
+)
+BASE_MOVED_STDERR = (
+    "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)\n"
 )
 BATCH_BODY = "## Summary\n\nTwo fixes.\n\nCloses #1\nCloses #2\n"
 
@@ -106,6 +110,8 @@ class FakeGitHub:
     # Whether the other caller merged the PR directly instead.
     other_merges: bool = False
     state_reads: int = 0
+    # How many direct merges GitHub refuses with "Base branch was modified" first.
+    base_moved_merges: int = 0
 
     def read_json(self, *args: str) -> object:
         assert args[:3] == ("pr", "view", PR), args
@@ -174,6 +180,11 @@ class FakeGitHub:
     def merge(self, pr: str, *, strategy: str, match_head: str | None = None) -> None:
         self.events.append("merge")
         self.merges.append((pr, strategy, match_head))
+        if self.base_moved_merges:
+            self.base_moved_merges -= 1
+            raise github.GitHubAPIError(
+                1, ("gh", "pr", "merge"), output="", stderr=BASE_MOVED_STDERR
+            )
         self.state = "MERGED"
 
     def prs_for_branch(
@@ -658,6 +669,73 @@ def test_arm_clean_status_merges_directly_at_head(
 
     assert result == ArmResult(outcome="merged", pr_url=PR, head=HEAD, method="REBASE")
     assert fake.merges == [(PR, "rebase", HEAD)]
+
+
+def test_arm_direct_merge_refused_once_for_a_moved_base_merges_on_retry(
+    fake: FakeGitHub, gates: Gates, clone: Path, no_wait: list[float]
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 1
+
+    result = arm(PR, clone=clone)
+
+    assert result.outcome == "merged"
+    assert len(fake.merges) == 2
+    assert len(fake.mutations) == 2
+    assert no_wait[0] > 0
+
+
+def test_arm_direct_merge_refused_past_the_bound_fails_naming_it(
+    fake: FakeGitHub, gates: Gates, clone: Path, lock: FakeLock, no_wait: list[float]
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 100
+
+    with pytest.raises(PRPathError, match="Base branch was modified") as info:
+        arm(PR, clone=clone)
+
+    assert f"{BASE_MOVED_ATTEMPTS} times" in str(info.value)
+    assert len(fake.merges) == BASE_MOVED_ATTEMPTS
+    # The refusal landed nothing, so its arming ref is deleted.
+    assert lock.arming == {}
+
+
+def test_arm_retry_for_a_moved_base_stays_inside_the_arm_call_bound(
+    fake: FakeGitHub,
+    gates: Gates,
+    clone: Path,
+    no_wait: list[float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake.clean = True
+    fake.base_moved_merges = 100
+    monkeypatch.setattr(pr_path, "BASE_MOVED_RETRY_SECS", ARM_CALL_BOUND_SECS)
+
+    with pytest.raises(PRPathError, match=f"ran past its bound of {ARM_CALL_BOUND_SECS}s"):
+        arm(PR, clone=clone)
+
+    assert len(fake.merges) == 1
+
+
+def test_describe_state_reads_the_prs_actual_state(fake: FakeGitHub) -> None:
+    assert pr_path.describe_state(PR) == "open, auto-merge off"
+    fake.auto_merge = {"mergeMethod": "SQUASH"}
+    assert pr_path.describe_state(PR) == "open, auto-merge on (SQUASH)"
+    fake.state = "MERGED"
+    assert pr_path.describe_state(PR) == "merged"
+
+
+def test_describe_state_names_a_failed_read_never_assumes(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_args: str) -> object:
+        raise subprocess.CalledProcessError(1, ("gh",), output="", stderr="boom")
+
+    monkeypatch.setattr(github, "read_json", broken)
+
+    text = pr_path.describe_state(PR)
+    assert "state could not be read" in text
+    assert "boom" in text
 
 
 def test_arm_back_merge_pr_passes_without_task_issue(
