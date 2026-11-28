@@ -21,10 +21,12 @@ marker that cannot be read or does not parse is an error, never "no marker".
 
 :func:`extract` takes a set of members out of their batch in one rewrite of
 the markers that remain. It removes each leaving member's whole
-``issue-implement/<N>/`` directory, its ``merge-review/`` state included, but
-refuses while any ``security-*.md`` details file is under one of them: those
-hold a security finding's details until the merge review records them, and
-deleting one would lose them. :func:`batch_of` reads the batch a set is in.
+``issue-implement/<N>/`` directory, its ``merge-review/`` state and its
+``writer-commits`` ledger included, but refuses while any ``security-*.md``
+details file is under one of them: those hold a security finding's details
+until the merge review records them, and deleting one would lose them.
+:func:`remove_markers` (report-ready's step) leaves the ledger in place, since
+it stays until the PR merges. :func:`batch_of` reads the batch a set is in.
 """
 
 from __future__ import annotations
@@ -353,7 +355,7 @@ def extract(root: Path, issues: Sequence[str]) -> list[str]:
     directory. Otherwise it rewrites every remaining member's marker once,
     without the set (removing the last one's when fewer than :data:`MIN_BATCH`
     remain), then removes each leaving issue's whole ``issue-implement/<N>/``
-    directory. Every remaining member's marker is checked against the batch
+    directory, ``writer-commits`` ledger included. Every remaining member's marker is checked against the batch
     first, so nothing changes when they disagree; a member already rewritten
     by an interrupted extraction is accepted.
     """
