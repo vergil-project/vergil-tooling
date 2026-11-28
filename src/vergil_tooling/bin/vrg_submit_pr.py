@@ -185,6 +185,8 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.release_groups import pr_check
+from vergil_tooling.lib.release_lock import status as lock_status
+from vergil_tooling.lib.release_lock import submit_guard
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
@@ -236,8 +238,18 @@ def main(argv: list[str] | None = None) -> int:
         print(refusal, file=sys.stderr)
         return 1
 
+    # The release lock guard (vergil-tooling#5427, design F17): while a release holds the
+    # repository's lock, nothing is pushed or opened. It refuses with exit 7, or with
+    # --wait-for-release waits for the lock to clear, within the deadline (exit 6). A
+    # dry run pushes nothing, so it is not guarded.
+    waited = False
+    if not args.dry_run:
+        exit_status, waited = _lock_gate(args)
+        if exit_status is not None:
+            return exit_status
+
     if args.push or args.force_with_lease:
-        return _run_push_mode(args)
+        return _run_push_mode(args, waited=waited)
 
     # The finalize run's batch deadline is checked before any PR opens, so a
     # malformed $VRG_FINALIZE_DEADLINE refuses the run with nothing done.
@@ -412,6 +424,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "remote-tracking ref, so a head pushed elsewhere since the last fetch is "
         "never overwritten.",
     )
+    parser.add_argument(
+        "--wait-for-release",
+        dest="wait_for_release",
+        action="store_true",
+        help="When a release holds the repository's lock, wait for the lock to clear instead "
+        "of failing fast. The wait reports the release's version, stage and health, and "
+        "ends at the deadline ($VRG_FINALIZE_DEADLINE, 7200 seconds by default), exiting 6 "
+        "with nothing pushed. Without this flag a held lock exits 7 with nothing pushed. "
+        "With --push, a head whose develop moved while the lock was held is rebased onto "
+        "origin/develop, then pushed once.",
+    )
     parser.add_argument("--yes", "-y", action="store_true", help=argparse.SUPPRESS)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -491,8 +514,94 @@ def _push_mode_refusal(args: argparse.Namespace) -> str | None:
     return None
 
 
-def _run_push_mode(args: argparse.Namespace) -> int:
+def _lock_gate(args: argparse.Namespace) -> tuple[int | None, bool]:
+    """Clear the repository's release lock for this submit (see :mod:`.submit_guard`).
+
+    Returns ``(exit status, waited)``: the status to exit with now, or ``None`` to
+    go on; and whether the submit waited for a held lock to clear. Every failure
+    names what failed and exits 1 with nothing pushed.
+    """
+    try:
+        repo = lock_status.origin_repo()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        msg = (
+            "vrg-submit-pr: cannot read origin's URL, so the repository's release lock "
+            f"cannot be checked: {error_text(exc)}; nothing was pushed and no PR was opened."
+        )
+        print(msg, file=sys.stderr)
+        return 1, False
+    if repo is None:
+        print(
+            "vrg-submit-pr: origin does not name a GitHub repository, so the repository's "
+            "release lock cannot be checked; nothing was pushed and no PR was opened.",
+            file=sys.stderr,
+        )
+        return 1, False
+    try:
+        waited = submit_guard.clear(repo, wait=args.wait_for_release)
+    except submit_guard.LockedByReleaseError as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_LOCKED_BY_RELEASE, False
+    except submit_guard.LockWaitTimedOutError as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_HELD_BY_RELEASE, False
+    except submit_guard.LockGuardError as exc:
+        print(exc, file=sys.stderr)
+        return 1, False
+    return None, waited
+
+
+_ORIGIN_DEVELOP = "origin/develop"
+
+
+class _RebaseError(Exception):
+    """A rebase of a waited-for head onto ``origin/develop`` could not be completed."""
+
+
+def _rebase_onto_develop() -> bool:
+    """Fetch origin and rebase ``HEAD`` onto ``origin/develop`` if develop moved.
+
+    Returns ``True`` when it rebased.
+
+    A conflicting rebase is aborted, so the worktree is left as it was, and
+    raises :class:`_RebaseError` naming it. A failed fetch or ancestry check
+    raises it too.
+    """
+    try:
+        git.run("fetch", "origin")
+        if git.is_ancestor(_ORIGIN_DEVELOP, "HEAD"):
+            return False
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            "fetching origin and checking it against origin/develop failed: "
+            f"{error_text(exc)}"
+        )
+        raise _RebaseError(msg) from exc
+    try:
+        git.run("rebase", _ORIGIN_DEVELOP)
+    except subprocess.CalledProcessError as exc:
+        try:
+            git.run("rebase", "--abort")
+        except subprocess.CalledProcessError as abort:
+            msg = (
+                f"rebasing onto {_ORIGIN_DEVELOP} failed ({error_text(exc)}), and aborting "
+                f"the rebase failed too ({error_text(abort)}): the worktree may be mid-rebase"
+            )
+            raise _RebaseError(msg) from abort
+        msg = (
+            f"rebasing onto {_ORIGIN_DEVELOP} failed, most likely a conflict "
+            f"({error_text(exc)}); the rebase was aborted"
+        )
+        raise _RebaseError(msg) from exc
+    return True
+
+
+def _run_push_mode(args: argparse.Namespace, *, waited: bool = False) -> int:
     """Push the worktree's ``HEAD`` to its open PR's branch through the one PR path.
+
+    *waited* is set when the submit waited for a held release lock to clear. Then
+    a develop that moved meanwhile is rebased under the head before the push, and
+    the push uses the lease, as a rebased head must.
 
     Exit 0 once the head is pushed, 1 when the push is refused or a step
     cannot be completed, naming why. Nothing is pushed on a refusal.
@@ -518,14 +627,27 @@ def _run_push_mode(args: argparse.Namespace) -> int:
     if check.frozen:
         print(check.message, file=sys.stderr)
         return 1
+    rebased = False
+    if waited:
+        try:
+            rebased = _rebase_onto_develop()
+        except _RebaseError as exc:
+            print(f"{_PUSH_PREFIX}: {exc}; nothing was pushed", file=sys.stderr)
+            return 1
+        if rebased:
+            print(
+                f"{_PUSH_PREFIX}: rebased onto {_ORIGIN_DEVELOP}, which moved while the "
+                "release held the lock"
+            )
+            head = git.read_output("rev-parse", "--verify", "HEAD^{commit}")
     lease = None
-    if args.force_with_lease:
+    if args.force_with_lease or rebased:
         tracking = f"refs/remotes/origin/{branch}"
         try:
             lease = git.read_output("rev-parse", "--verify", f"{tracking}^{{commit}}")
         except subprocess.CalledProcessError as exc:
             print(
-                f"{_PUSH_PREFIX}: --force-with-lease needs {tracking}, the head this clone "
+                f"{_PUSH_PREFIX}: the lease needs {tracking}, the head this clone "
                 f"last saw on origin, and it cannot be read ({error_text(exc)}); run "
                 "`vrg-git fetch origin` first",
                 file=sys.stderr,
@@ -721,6 +843,9 @@ def _create_or_adopt(sub: _Submission) -> str:
 EXIT_OK = 0
 EXIT_NOT_ALL_MERGED = 3
 EXIT_HELD_BY_RELEASE = finalize_watch.EXIT_HELD_BY_RELEASE
+#: A submit refused because a release holds the repository's lock (vergil-tooling#5427):
+#: nothing pushed, no PR opened. Distinct from :data:`EXIT_HELD_BY_RELEASE`, the wait's deadline.
+EXIT_LOCKED_BY_RELEASE = 7
 _FINALIZE_OUTCOMES = frozenset({EXIT_OK, EXIT_NOT_ALL_MERGED, 4, 5, EXIT_HELD_BY_RELEASE})
 
 # What progress.run_pipeline returns when the rollup is interrupted.
