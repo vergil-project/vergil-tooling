@@ -2791,9 +2791,9 @@ See the [GitHub Config Audit reference](config-audit.md).
 |---|---|
 | Source | `vergil_tooling.bin.vrg_github_repo_config` |
 | Args | `audit` \| `diff` \| `update` \| `apply` (deprecated); `--repo OWNER/REPO`, `--config PATH`; `--in-tree-templates` (`audit` only, vergil-tooling only) |
-| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials; `update` needs the `human` or `automation` identity mode |
+| Preconditions | Local checks clone the repo's `develop` over HTTPS (git's credential helper must reach it); GitHub checks require `gh` credentials; `update` needs the `human` or `automation` identity mode, and a human `update` needs `gh` logged in so its login can be read |
 | Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
-| Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity or a sync PR that did not merge) |
+| Exit codes | 0 compliant (for `diff`: whether or not it finds drift; for `update`: converged and in sync, or the sync PR opened this run merged), 1 non-compliant (drift; for `update`, drift it could not fix), 2 could not complete, including a setting not checked (for `update`, also an agent identity, a human login unreadable, or a sync PR that did not merge) |
 | Status | Active |
 
 ### vrg-agent-audit
