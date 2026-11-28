@@ -200,8 +200,10 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.process_errors import error_text
 from vergil_tooling.lib.release import gate
 from vergil_tooling.lib.release_groups import pr_check
+from vergil_tooling.lib.release_lock import refs as lock_refs
 from vergil_tooling.lib.release_lock import status as lock_status
 from vergil_tooling.lib.release_lock import submit_guard
+from vergil_tooling.lib.release_lock.model import ReleaseLockError
 from vergil_tooling.lib.trusted_authors import (
     TrustedAuthorsNotConfiguredError,
     load_trusted_authors,
@@ -613,6 +615,40 @@ def _rebase_onto_develop() -> bool:
     return True
 
 
+def _hold_note() -> str:
+    """What the release lock says about a PR open with auto-merge off (vergil-tooling#5446).
+
+    Names the release holding the lock. When the lock cannot be read, or no
+    release holds it, says so: the failure is named, never dropped.
+    """
+    try:
+        repo = lock_status.origin_repo()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return f" (the release lock could not be read: {error_text(exc)})"
+    if repo is None:
+        return " (the release lock could not be read: origin names no GitHub repository)"
+    try:
+        state = lock_refs.read_lock(repo)
+    except ReleaseLockError as exc:
+        return f" (the release lock could not be read: {error_text(exc)})"
+    if not state.held:
+        return " (no release holds the lock)"
+    if state.record is None:
+        return f" (the release lock is held but its record is unreadable: {state.error})"
+    return f" (held for release {state.record.version})"
+
+
+def _push_state(pr_url: str) -> str:
+    """The PR's state as read now; with auto-merge off, the release holding its lock.
+
+    Every state is read through :func:`pr_path.describe_state`, never assumed.
+    """
+    text = pr_path.describe_state(pr_url)
+    if text.endswith("auto-merge off"):
+        return text + _hold_note()
+    return text
+
+
 def _run_push_mode(args: argparse.Namespace, *, waited: bool = False) -> int:
     """Push the worktree's ``HEAD`` to its open PR's branch through the one PR path.
 
@@ -681,7 +717,10 @@ def _run_push_mode(args: argparse.Namespace, *, waited: bool = False) -> int:
         where = f" ({result.pr_url})" if result.pr_url else ""
         print(f"{_PUSH_PREFIX}: refused{where}: {result.detail}", file=sys.stderr)
         return 1
-    print(f"{_PUSH_PREFIX}: {result.detail} ({result.pr_url}); auto-merge stays on.")
+    print(
+        f"{_PUSH_PREFIX}: {result.detail} ({result.pr_url}); "
+        f"the PR is now {_push_state(result.pr_url)}."
+    )
     return 0
 
 
@@ -1199,9 +1238,16 @@ class _SubmitRun:
             self.left_open.append(pr_url)
             raise progress.StageFailedError(f"{_pr_label(pr_url)} {reason}") from exc
         except Exception as exc:
+            # The state read runs while the original error is in flight: a read
+            # failure must not replace it, so it is named in the note instead.
+            try:
+                state = pr_path.describe_state(pr_url)
+            except Exception as read_exc:
+                failure = f"{type(read_exc).__name__}: {read_exc}"
+                state = f"unknown (its state could not be read: {failure})"
             exc.add_note(
-                f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed, "
-                "so its auto-merge is not on."
+                f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed; "
+                f"the PR is now {state}."
             )
             raise
         self.opened.append(pr_url)
@@ -1318,9 +1364,13 @@ def _finish(summary: SubmitSummary, args: argparse.Namespace) -> int:
     if not summary.opened:
         _print_failed(summary)
         if summary.left_open:
+            # Read each PR's state now: nothing is assumed about how the failed step left it.
+            states = "\n".join(
+                f"  {url}: {pr_path.describe_state(url)}" for url in summary.left_open
+            )
             print(
                 f"\nNothing was finalized: {len(summary.left_open)} PR(s) opened but a later "
-                "step failed (named above), so they are open without auto-merge.",
+                f"step failed (named above); the PRs stand as follows (read just now):\n{states}",
                 file=sys.stderr,
             )
         else:

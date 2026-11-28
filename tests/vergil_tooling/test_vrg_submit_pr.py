@@ -35,6 +35,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _prepare,
     _print_selection,
     _push_branch,
+    _push_state,
     _rebase_onto_develop,
     _RebaseError,
     _recheck_batch,
@@ -129,6 +130,17 @@ def _lock_free() -> Iterator[None]:
         patch("vergil_tooling.lib.release_lock.status.origin_repo", return_value="o/r"),
         patch("vergil_tooling.lib.release_lock.refs.read_lock", return_value=free),
     ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _pr_state_read() -> Iterator[None]:
+    """Default every read of a PR's state (``pr_path.describe_state``) to an armed PR.
+
+    The messages that report where a push or a failed step left a PR read it
+    after the step (vergil-tooling#5446). Tests that name another state re-patch it.
+    """
+    with patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge on (SQUASH)"):
         yield
 
 
@@ -1667,6 +1679,7 @@ class TestFinalizeByDefault:
         err = capsys.readouterr().err
         assert f"{_URL1} — opened at h1; turning auto-merge on failed: refused" in err
         assert "Nothing was finalized: 1 PR(s) opened but a later step failed" in err
+        assert f"  {_URL1}: open, auto-merge off" in err
         assert "No PR opened" not in err
 
     def test_release_skipped_after_failed_submit(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2464,13 +2477,33 @@ def test_unexpected_error_after_the_pr_opens_names_the_pr() -> None:
         patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
         patch(_MOD + ".pr_provenance.check_pr", side_effect=KeyError("boom")),
         patch(_MOD + ".pr_path.arm") as enable,
+        patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
         pytest.raises(KeyError) as raised,
     ):
         _submit_all([_submission(record_in=None)], _ARGS)
     enable.assert_not_called()
     assert raised.value.__notes__ == [
-        "https://x/pull/9 was opened at h0; the provenance check failed, "
-        "so its auto-merge is not on."
+        "https://x/pull/9 was opened at h0; the provenance check failed; "
+        "the PR is now open, auto-merge off."
+    ]
+
+
+def test_failed_state_read_does_not_mask_the_original_error() -> None:
+    """A state read that raises does not replace the original error (#5446)."""
+    with (
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://x/pull/9"),
+        patch(_MOD + ".pr_provenance.check_pr", side_effect=KeyError("boom")),
+        patch(_MOD + ".pr_path.arm") as enable,
+        patch(_MOD + ".pr_path.describe_state", side_effect=RuntimeError("read boom")),
+        pytest.raises(KeyError) as raised,
+    ):
+        _submit_all([_submission(record_in=None)], _ARGS)
+    enable.assert_not_called()
+    assert raised.value.__notes__ == [
+        "https://x/pull/9 was opened at h0; the provenance check failed; "
+        "the PR is now unknown (its state could not be read: "
+        "RuntimeError: read boom)."
     ]
 
 
@@ -5288,7 +5321,7 @@ class TestPushMode:
         head = _git(push_worktree, "rev-parse", "HEAD")
         push.assert_called_once_with(_PUSH_BRANCH, head=head, lease=None)
         template.assert_not_called()
-        assert "auto-merge stays on" in capsys.readouterr().out
+        assert "the PR is now open, auto-merge on (SQUASH)." in capsys.readouterr().out
 
     def test_push_mode_rebased_head_uses_lease(self, push_worktree: Path) -> None:
         with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
@@ -5381,6 +5414,57 @@ class TestPushMode:
             assert main(["--push"]) == 0
         arm.assert_not_called()
         finalize.assert_not_called()
+
+    def test_push_mode_names_a_pr_the_release_holds_with_auto_merge_off(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A push to a PR the release holds unarmed says auto-merge is off, naming the release."""
+        held = LockState(sha="abc", record=record(version="2.1.357"), error="")
+        with (
+            patch(_MOD + "._lock_gate", return_value=(None, False)),
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+            patch("vergil_tooling.lib.release_lock.refs.read_lock", return_value=held),
+        ):
+            assert main(["--push"]) == 0
+        out = capsys.readouterr().out
+        assert (
+            f"({_PUSH_PR}); the PR is now open, auto-merge off (held for release 2.1.357)." in out
+        )
+
+    def test_push_mode_names_a_failed_read_of_the_pr_state(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A PR whose state cannot be read is named as unknown, with why, never as on or off."""
+        unknown = "unknown (its state could not be read: gh pr view failed)"
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+            patch(_MOD + ".pr_path.describe_state", return_value=unknown),
+        ):
+            assert main(["--push"]) == 0
+        out = capsys.readouterr().out
+        assert f"the PR is now {unknown}." in out
+        assert "auto-merge on" not in out
+
+    def test_push_mode_names_a_failed_read_of_the_release_lock(
+        self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When the PR is off and the lock cannot be read, the output names that read's failure."""
+        with (
+            patch(_MOD + "._lock_gate", return_value=(None, False)),
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+            patch(
+                "vergil_tooling.lib.release_lock.refs.read_lock",
+                side_effect=RefReadError("fetch refused"),
+            ),
+        ):
+            assert main(["--push"]) == 0
+        out = capsys.readouterr().out
+        assert (
+            "the PR is now open, auto-merge off (the release lock could not be read: "
+            "fetch refused)." in out
+        )
 
     def test_push_mode_refuses_a_frozen_branch(
         self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
@@ -5644,6 +5728,77 @@ class TestLockGuard:
         assert EXIT_HELD_BY_RELEASE == 6
 
 
+class TestPushState:
+    """The PR state a push reports, read after the push (vergil-tooling#5446)."""
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            "merged",
+            "closed",
+            "open, auto-merge on (SQUASH)",
+            "unknown (its state could not be read: x)",
+        ],
+    )
+    def test_a_state_other_than_auto_merge_off_is_reported_as_read(self, state: str) -> None:
+        with patch(_MOD + ".pr_path.describe_state", return_value=state):
+            assert _push_state(_PUSH_PR) == state
+
+    def test_auto_merge_off_names_the_release_holding_the_lock(self) -> None:
+        held = LockState(sha="abc", record=record(version="2.1.357"), error="")
+        with (
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch("vergil_tooling.lib.release_lock.refs.read_lock", return_value=held),
+        ):
+            assert _push_state(_PUSH_PR) == "open, auto-merge off (held for release 2.1.357)"
+
+    def test_held_lock_with_an_unreadable_record_says_so(self) -> None:
+        held = LockState(sha="abc", record=None, error="refs is unreadable: bad json")
+        with (
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch("vergil_tooling.lib.release_lock.refs.read_lock", return_value=held),
+        ):
+            assert _push_state(_PUSH_PR) == (
+                "open, auto-merge off (the release lock is held but its record is "
+                "unreadable: refs is unreadable: bad json)"
+            )
+
+    def test_auto_merge_off_with_no_lock_says_no_release_holds_it(self) -> None:
+        with patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"):
+            assert _push_state(_PUSH_PR) == "open, auto-merge off (no release holds the lock)"
+
+    def test_origin_that_cannot_be_read_is_named(self) -> None:
+        with (
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch(_MOD + ".lock_status.origin_repo", side_effect=OSError("git not found")),
+        ):
+            assert _push_state(_PUSH_PR) == (
+                "open, auto-merge off (the release lock could not be read: git not found)"
+            )
+
+    def test_origin_naming_no_repository_is_named(self) -> None:
+        with (
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch(_MOD + ".lock_status.origin_repo", return_value=None),
+        ):
+            assert _push_state(_PUSH_PR) == (
+                "open, auto-merge off (the release lock could not be read: "
+                "origin names no GitHub repository)"
+            )
+
+    def test_a_failed_lock_read_is_named(self) -> None:
+        with (
+            patch(_MOD + ".pr_path.describe_state", return_value="open, auto-merge off"),
+            patch(
+                "vergil_tooling.lib.release_lock.refs.read_lock",
+                side_effect=RefReadError("fetch refused"),
+            ),
+        ):
+            assert _push_state(_PUSH_PR) == (
+                "open, auto-merge off (the release lock could not be read: fetch refused)"
+            )
+
+
 class TestWaitForRelease:
     """``--wait-for-release``: wait for the lock to clear, rebase if develop moved, push once."""
 
@@ -5654,7 +5809,10 @@ class TestWaitForRelease:
         clock: _Clock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        FakeLock(states=[record(), record(stage="publish"), None]).install(monkeypatch)
+        FakeLock(
+            states=[record(), record(stage="publish"), None],
+            pr_state="open, auto-merge on (SQUASH)",
+        ).install(monkeypatch)
         head = _git(push_worktree, "rev-parse", "HEAD")
         with (
             patch(_MOD + "._rebase_onto_develop", return_value=False) as rebase,
@@ -5669,7 +5827,7 @@ class TestWaitForRelease:
         assert "held by release 2.1.400 (stage publish, running)" in out
         assert "has cleared" in out
         assert out.count("waiting for the release lock") == 2
-        assert "auto-merge stays on" in out
+        assert "the PR is now open, auto-merge on (SQUASH)." in out
 
     def test_a_rebased_head_is_pushed_with_the_lease(
         self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch, clock: _Clock
