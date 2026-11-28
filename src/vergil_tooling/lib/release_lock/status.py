@@ -188,6 +188,30 @@ def _tracking_line(rec: LockRecord, judged: str) -> str:
     return "tracking issue: none"
 
 
+def record_lines(
+    rec: LockRecord, *, judged_issue: str, heartbeat_age_secs: int | None
+) -> list[str]:
+    """One line per field of a readable lock *rec*: its holder, version, tracking issue, stage,
+    health, start, heartbeat and worktree.
+
+    The one formatting of a held lock's record, shared by ``vrg-release-lock status`` and the
+    submit guard's refusal. *judged_issue* is the tracking issue the staleness verdict found
+    for a lock that names none; *heartbeat_age_secs* is ``None`` when there is no record.
+    """
+    health = f"broken (at {rec.broken_stage})" if rec.health == "broken" else rec.health
+    age = f" ({heartbeat_age_secs}s ago)" if heartbeat_age_secs is not None else ""
+    return [
+        f"holder: {rec.holder_identity} on {rec.holder_host}",
+        f"version: {rec.version}",
+        _tracking_line(rec, judged_issue),
+        f"stage: {rec.stage}",
+        f"health: {health}",
+        f"started: {rec.started_at}",
+        f"heartbeat: {rec.heartbeat_at}{age}",
+        f"worktree: {rec.worktree or 'none'}",
+    ]
+
+
 def text_lines(status: LockStatus) -> list[str]:
     """The text form: ``no release lock held``, or one line per field."""
     state, judged = status.state, status.staleness
@@ -198,20 +222,13 @@ def text_lines(status: LockStatus) -> list[str]:
     if rec is None:
         lines.append(f"release lock: held, unreadable: {state.error}")
     else:
-        health = f"broken (at {rec.broken_stage})" if rec.health == "broken" else rec.health
-        age = (
-            f" ({status.heartbeat_age_secs}s ago)" if status.heartbeat_age_secs is not None else ""
-        )
         lines += [
             "release lock: held",
-            f"holder: {rec.holder_identity} on {rec.holder_host}",
-            f"version: {rec.version}",
-            _tracking_line(rec, judged.tracking_issue),
-            f"stage: {rec.stage}",
-            f"health: {health}",
-            f"started: {rec.started_at}",
-            f"heartbeat: {rec.heartbeat_at}{age}",
-            f"worktree: {rec.worktree or 'none'}",
+            *record_lines(
+                rec,
+                judged_issue=judged.tracking_issue,
+                heartbeat_age_secs=status.heartbeat_age_secs,
+            ),
         ]
     lines.append(f"stale: {'yes' if judged.stale else 'no'} ({judged.reason})")
     held = ", ".join(f"#{p.number}" for p in status.held_prs)

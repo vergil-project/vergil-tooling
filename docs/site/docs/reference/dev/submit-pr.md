@@ -345,7 +345,57 @@ Push mode takes no other mode's arguments. It exits 0 once the head is
 pushed, and 1 when it is refused (no open PR into `develop` on the
 branch, a PR the path does not accept, a provenance violation, a head the
 gates refuse, a frozen branch) or a step cannot be completed, naming why.
-Nothing is pushed on a refusal.
+Nothing is pushed on a refusal. A held release lock refuses it before any
+of these checks, with exit 7 or, with `--wait-for-release`, exit 6 at the
+deadline (see [The release lock](#the-release-lock)).
+
+## The release lock
+
+While a release holds the repository's lock (`refs/vergil/release-lock`),
+`vrg-submit-pr` pushes nothing and opens no PR, in every mode, push mode
+included. This reverses the epic's stance that CI keeps running on PRs
+throughout a release, for submit only: a head pushed while the lock is held
+cannot merge until the release is done, so CI runs on it for nothing. A
+push that lands after the release tags its version and before the back-merge
+bumps `develop` also fails `version / version-bump`, and then needs a rebase
+and a second CI run. The release's own PRs (its back-merge and the rest) are
+opened and pushed by the release under its lock token, never through
+`vrg-submit-pr`, so this guard does not stand in their way.
+
+The guard runs once, before any mode pushes or opens anything, and not for
+`--dry-run`, which pushes nothing. It reads the lock once, so a release that
+takes the lock after that read is not seen until the next submit.
+
+- **Fail fast (the default).** A lock held by a release exits 7, a status
+  of its own and distinct from 6 (the wait's deadline). Nothing is pushed
+  and no PR is opened. The message says plainly that the repository is
+  locked by another process, most likely a release, and may stay locked
+  for a long time. It names what the lock records: the holder and its host,
+  the version, the tracking issue, the stage and health, and when the lock
+  was taken. It says to re-run with `--wait-for-release` to wait.
+- **Wait on request (`--wait-for-release`).** The submit polls the lock
+  every 15 seconds (every 300 seconds while the release is broken or the lock
+  is unreadable, as the merge watch polls). It prints the release's version,
+  stage and health when the wait starts and each time they change. Once the
+  lock clears, a push mode run rebases its head onto `origin/develop` if the
+  back-merge moved `develop` meanwhile, then pushes once through the one PR
+  path, with the lease a rebased head needs, and CI runs once. A rebase that
+  conflicts is aborted: nothing is pushed and the message names the conflict.
+  Template, batch and CLI submits go on as usual once the lock clears. They
+  do not rebase, since their head is pinned to the one the merge review
+  record reported. A conflict with `develop` then falls to the merge watch
+  after the submit.
+- **The deadline.** The wait ends at the merge watch's deadline,
+  `$VRG_FINALIZE_DEADLINE` seconds (7200 by default). At the deadline it
+  exits 6 with nothing pushed, and the message names the release it waited
+  on. Re-run the command to wait again.
+- **A stale lock** is reclaimed by the same rule the merge watch uses (see
+  [`vrg-release-lock`](../../reference/cli-tools-overview.md#vrg-release-lock)),
+  and then the submit goes on, with or without the flag. A wait that finds
+  the lock reclaimed ends, as the lock is free.
+- **A lock that cannot be read** is held, and the message names the read
+  error. A lock read that itself fails exits 1 with nothing pushed: it is
+  never taken as free.
 
 ## Arguments
 
@@ -364,6 +414,7 @@ Nothing is pushed on a refusal.
 | `--dry-run` | No | Print what would be done without executing |
 | `--push` | No | [Push mode](#push-mode-a-new-head-for-an-open-pr): push `HEAD` to the open PR's branch, judged first. Takes no other mode's arguments |
 | `--force-with-lease` | No | With `--push`, for a rebased head: push with a lease on the branch's remote-tracking ref |
+| `--wait-for-release` | No | When a release holds the repository's lock, wait for it to clear (within `$VRG_FINALIZE_DEADLINE`) instead of exiting 7. With `--push`, rebase onto a moved `origin/develop` and push once after the wait. See [The release lock](#the-release-lock) |
 | `--output-window N` | No | Rolling output window for the terminal renderer of the submit rollup (`0` streams everything); passed on to the chained `vrg-finalize-pr` |
 | `--output-format` | No | Force the submit rollup's renderer: `rich`, `gha` or `plain`; passed on to the chained `vrg-finalize-pr` |
 
@@ -490,8 +541,9 @@ failed submit is not held by a release), and a tool error from finalize
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Every PR opened and finalize reached full success. Also a worktree whose PR is already submitted, and a head push mode pushed |
-| 1 | A usage error or a refusal before anything opened (a removed flag, a push mode refusal, the audit agent, the user agent in the CLI or relay branch mode or with `--release`, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), or a tool error from finalize |
+| 1 | A usage error or a refusal before anything opened (a removed flag, a push mode refusal, the audit agent, the user agent in the CLI or relay branch mode or with `--release`, no submittable worktree, a malformed `$VRG_FINALIZE_DEADLINE`, `--release` on a repo that is not released), a release lock that cannot be read or whose origin is not a GitHub repository, a rebase onto `origin/develop` that conflicts while waiting, or a tool error from finalize |
 | 3 | Not every PR merged: a submit failed, or finalize reported a PR not merged. When no PR opened, a failed submit exits 3 |
 | 4 | Develop did not validate after the merges (finalize's 4) |
 | 5 | Every PR merged and develop validated, but the chained release failed |
-| 6 | Every PR finalize watched that did not merge is held by release (finalize's 6): the release lock still held it at the deadline. Not a failure: run `vrg-finalize-pr` on the PRs again |
+| 6 | Every PR finalize watched that did not merge is held by release (finalize's 6): the release lock still held it at the deadline. Not a failure: run `vrg-finalize-pr` on the PRs again. Also `--wait-for-release`'s deadline: the lock still held when the wait ran out, nothing pushed, so re-run the submit |
+| 7 | A release holds the repository's lock and the submit did not wait (no `--wait-for-release`): nothing pushed, no PR opened. Distinct from 6. Re-run with `--wait-for-release` to wait for the lock to clear |

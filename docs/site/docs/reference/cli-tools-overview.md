@@ -214,13 +214,21 @@ always watches every opened PR merge and settles `develop` once.
 `--finalize`, `--no-finalize`, `--install`, `--no-install` and `--yes` are
 removed and refused by name. See [vrg-submit-pr](dev/submit-pr.md).
 
+**While a release holds the repository's lock**, no mode pushes or opens a PR:
+`vrg-submit-pr` exits 7, naming the lock's holder, version, stage and health,
+and says to re-run with `--wait-for-release`, which waits for the lock to clear
+(within `$VRG_FINALIZE_DEADLINE`) and exits 6 at the deadline with nothing pushed.
+A push-mode wait rebases onto a moved `origin/develop` and pushes once. This
+reverses the epic's stance that CI keeps running on PRs throughout a release,
+for submit. See [The release lock](dev/submit-pr.md#the-release-lock).
+
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
 | Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`; `--all`/`--select` (from the repo root), `--base` (`develop` only), `--release`, `--dry-run`, `--output-window`, `--output-format`. `--finalize`, `--no-finalize`, `--install`, `--no-install`, `--allow-provenance-violation` and `--yes` are removed and are an error |
 | Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
 | Failure mode | A PR whose push, `gh pr create`, provenance check or auto-merge fails is named in the summary and the rest go on; loud refusal, with nothing opened, on a missing ready-state, a state that is not ready, any head other than the recorded `head_sha`, a base other than `develop`, or a removed flag |
-| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed, and 3 in place of a 6), 4 develop did not validate, 5 the release failed, 6 every PR that did not merge held by release; 1 a usage error, a refusal, or a tool error from finalize |
+| Exit codes | finalize's: 0 full success, 3 not every PR merged (at least 3 when a submit failed, and 3 in place of a 6), 4 develop did not validate, 5 the release failed, 6 every PR that did not merge held by release, or with `--wait-for-release` the lock still held at the deadline (nothing pushed); 7 a release holds the repository's lock and the submit did not wait (nothing pushed); 1 a usage error, a refusal, or a tool error from finalize |
 | Status | Active |
 
 ### vrg-pr-workflow

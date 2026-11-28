@@ -6,7 +6,9 @@ import dataclasses
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, MagicMock, patch
 
@@ -14,7 +16,10 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from tests.vergil_tooling.group_rule_stubs import GroupRule, judge_pr_up_to_the_rule
+from tests.vergil_tooling.watch_lock_stubs import FakeLock, broken, record
 from vergil_tooling.bin.vrg_submit_pr import (
+    EXIT_HELD_BY_RELEASE,
+    EXIT_LOCKED_BY_RELEASE,
     HUMAN_ONLY_REMOVED,
     NO_FINALIZE_REMOVED,
     NO_INSTALL_REMOVED,
@@ -30,6 +35,8 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _prepare,
     _print_selection,
     _push_branch,
+    _rebase_onto_develop,
+    _RebaseError,
     _recheck_batch,
     _reject_if_cross_repo,
     _reject_if_non_task,
@@ -62,6 +69,7 @@ from vergil_tooling.lib import (
     agent_gates,
     epics,
     finalize_watch,
+    git,
     github,
     identity_mode,
     pr_path,
@@ -82,6 +90,12 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.release.gate import unreleased_refusal as _real_unreleased_refusal
 from vergil_tooling.lib.release_groups import pr_check
 from vergil_tooling.lib.release_groups.record import Group
+from vergil_tooling.lib.release_lock.model import (
+    BROKEN_WATCH_POLL_SECS,
+    SUBMIT_WAIT_POLL_SECS,
+    RefReadError,
+)
+from vergil_tooling.lib.release_lock.refs import LockState
 from vergil_tooling.lib.trusted_authors import TrustedAuthorsNotConfiguredError
 from vergil_tooling.lib.worktrees import Worktree
 
@@ -100,6 +114,21 @@ def _released_repo() -> Iterator[None]:
     The refusal tests override it — the innermost patch wins.
     """
     with patch(_MOD + ".gate.unreleased_refusal", return_value=None):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _lock_free() -> Iterator[None]:
+    """Default every submit to a repository whose release lock is free.
+
+    The submit guard reads the lock before any mode runs; the lock tests at the
+    end of this file override these reads with a :class:`FakeLock`.
+    """
+    free = LockState(sha=None, record=None, error="")
+    with (
+        patch("vergil_tooling.lib.release_lock.status.origin_repo", return_value="o/r"),
+        patch("vergil_tooling.lib.release_lock.refs.read_lock", return_value=free),
+    ):
         yield
 
 
@@ -5450,3 +5479,486 @@ class TestPushMode:
         with patch(_MOD + ".pr_path.push_to_open_pr") as push:
             assert main(["--push"]) == 1
         push.assert_not_called()
+
+
+# --- the release lock guard (vergil-tooling#5427, design F17) ---------------------------
+
+_GUARD = "vergil_tooling.lib.release_lock.submit_guard"
+_HELD_RECORD = "held by release 2.1.400 (stage cut, running)"
+
+
+@dataclass
+class _Clock:
+    """Monotonic time that advances only when the guard sleeps."""
+
+    now: float = 0.0
+    sleeps: list[float] = field(default_factory=list)
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+        self.now += secs
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Clock]:
+    """The guard's wait runs on a fake clock, so no test sleeps."""
+    monkeypatch.delenv("VRG_FINALIZE_DEADLINE", raising=False)
+    fake = _Clock()
+    with patch(_GUARD + ".time", SimpleNamespace(sleep=fake.sleep, monotonic=fake.monotonic)):
+        yield fake
+
+
+_DISPATCHED = (
+    "_run_template_mode",
+    "_run_cli_mode",
+    "_run_push_mode",
+    "_run_relay",
+    "_submit_all",
+)
+_CLI_ARGS = ["--issue", "1", "--summary", "S", "--title", "fix: t"]
+
+
+class TestLockGuard:
+    """A release holds the repository's lock: submit refuses, pushing and opening nothing."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="template"),
+            pytest.param(["--push"], id="push"),
+            pytest.param(["--push", "--force-with-lease"], id="push-lease"),
+            pytest.param(_CLI_ARGS, id="cli"),
+        ],
+    )
+    def test_held_lock_exits_seven_before_any_mode_runs(
+        self, argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lock = FakeLock(states=[record()]).install(monkeypatch)
+        modes = {name: MagicMock() for name in _DISPATCHED}
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+            patch.multiple(_MOD, **modes),
+        ):
+            assert main(argv) == EXIT_LOCKED_BY_RELEASE
+        push.assert_not_called()
+        for mock in modes.values():
+            mock.assert_not_called()
+        assert len(lock.reads) == 1
+        err = capsys.readouterr().err
+        assert "the repository o/r is locked by another process, most likely a release" in err
+        assert "may stay locked for a long time" in err
+        assert "holder: human on mac.local" in err
+        assert "version: 2.1.400" in err
+        assert f"tracking issue: {record().tracking_issue}" in err
+        assert "stage: cut" in err
+        assert "Nothing was pushed and no PR was opened" in err
+        assert "re-run with --wait-for-release" in err
+
+    def test_unreadable_lock_is_held_and_its_error_named(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        error = "refs/vergil/release-lock is unreadable: the lock is not valid JSON"
+        FakeLock(states=[error]).install(monkeypatch)
+        with patch(_MOD + "._run_push_mode") as push_mode:
+            assert main(["--push"]) == EXIT_LOCKED_BY_RELEASE
+        push_mode.assert_not_called()
+        assert f"release lock: held, unreadable: {error}" in capsys.readouterr().err
+
+    def test_failed_lock_read_exits_one_and_is_never_read_as_free(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        failure = RefReadError("reading refs/vergil/release-lock from origin failed")
+        FakeLock(states=[failure]).install(monkeypatch)
+        with (
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main(["--push"]) == 1
+            assert main([]) == 1
+        push.assert_not_called()
+        template.assert_not_called()
+        err = capsys.readouterr().err
+        assert "reading refs/vergil/release-lock from origin failed" in err
+        assert "nothing was pushed" in err
+
+    def test_origin_url_that_cannot_be_read_exits_one(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        failure = subprocess.CalledProcessError(2, ["git"], stderr="no such remote 'origin'")
+        with (
+            patch("vergil_tooling.lib.release_lock.status.origin_repo", side_effect=failure),
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main([]) == 1
+        template.assert_not_called()
+        assert "origin" in capsys.readouterr().err
+
+    def test_origin_that_is_not_a_github_repository_exits_one(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.lib.release_lock.status.origin_repo", return_value=None),
+            patch(_MOD + "._run_template_mode") as template,
+        ):
+            assert main([]) == 1
+        template.assert_not_called()
+        assert "does not name a GitHub repository" in capsys.readouterr().err
+
+    def test_free_lock_leaves_the_mode_unchanged(self) -> None:
+        with patch(_MOD + "._run_template_mode", return_value=0) as template:
+            assert main([]) == 0
+        template.assert_called_once()
+
+    def test_dry_run_is_not_guarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        lock = FakeLock(states=[record()]).install(monkeypatch)
+        with patch(_MOD + "._run_template_mode", return_value=0) as template:
+            assert main(["--dry-run"]) == 0
+        template.assert_called_once()
+        assert lock.reads == []
+
+    def test_wait_flag_on_a_free_lock_neither_waits_nor_rebases(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        FakeLock(states=[None]).install(monkeypatch)
+        with (
+            patch(_MOD + "._rebase_onto_develop") as rebase,
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push,
+        ):
+            assert main(["--push", "--wait-for-release"]) == 0
+        assert clock.sleeps == []
+        rebase.assert_not_called()
+        push.assert_called_once()
+        assert push.call_args.kwargs["lease"] is None
+
+    def test_wait_flag_is_documented_in_the_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--help"])
+        assert "--wait-for-release" in capsys.readouterr().out
+        assert parse_args(["--wait-for-release"]).wait_for_release is True
+
+    def test_exit_seven_is_distinct_from_the_deadline_exit_six(self) -> None:
+        assert EXIT_LOCKED_BY_RELEASE == 7
+        assert EXIT_HELD_BY_RELEASE == 6
+
+
+class TestWaitForRelease:
+    """``--wait-for-release``: wait for the lock to clear, rebase if develop moved, push once."""
+
+    def test_waits_reporting_progress_then_pushes_once(
+        self,
+        push_worktree: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        FakeLock(states=[record(), record(stage="publish"), None]).install(monkeypatch)
+        head = _git(push_worktree, "rev-parse", "HEAD")
+        with (
+            patch(_MOD + "._rebase_onto_develop", return_value=False) as rebase,
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push,
+        ):
+            assert main(["--push", "--wait-for-release"]) == 0
+        assert clock.sleeps == [SUBMIT_WAIT_POLL_SECS] * 2
+        rebase.assert_called_once_with()
+        push.assert_called_once_with(_PUSH_BRANCH, head=head, lease=None)
+        out = capsys.readouterr().out
+        assert f"waiting for the release lock on o/r: {_HELD_RECORD}" in out
+        assert "held by release 2.1.400 (stage publish, running)" in out
+        assert "has cleared" in out
+        assert out.count("waiting for the release lock") == 2
+        assert "auto-merge stays on" in out
+
+    def test_a_rebased_head_is_pushed_with_the_lease(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with (
+            patch(_MOD + "._rebase_onto_develop", return_value=True),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push,
+        ):
+            assert main(["--push", "--wait-for-release"]) == 0
+        lease = _git(push_worktree, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        push.assert_called_once_with(_PUSH_BRANCH, head=ANY, lease=lease)
+
+    def test_deadline_exits_six_pushing_nothing_and_names_the_release(
+        self,
+        push_worktree: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_FINALIZE_DEADLINE", "30")
+        FakeLock(states=[record()]).install(monkeypatch)
+        with (
+            patch(_MOD + "._rebase_onto_develop") as rebase,
+            patch(_MOD + ".pr_path.push_to_open_pr") as push,
+        ):
+            assert main(["--push", "--wait-for-release"]) == EXIT_HELD_BY_RELEASE
+        rebase.assert_not_called()
+        push.assert_not_called()
+        assert clock.sleeps == [SUBMIT_WAIT_POLL_SECS] * 2
+        err = capsys.readouterr().err
+        assert "still held after waiting 30s" in err
+        assert _HELD_RECORD in err
+        assert "Nothing was pushed and no PR was opened" in err
+        assert "--wait-for-release" in err
+
+    def test_a_broken_lock_is_polled_at_the_merge_watch_pace(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        FakeLock(states=[broken(), None], issue_state="OPEN").install(monkeypatch)
+        with (
+            patch(_MOD + "._rebase_onto_develop", return_value=False),
+            patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()),
+        ):
+            assert main(["--push", "--wait-for-release"]) == 0
+        assert clock.sleeps == [BROKEN_WATCH_POLL_SECS]
+
+    def test_push_mode_refusals_still_apply_with_the_flag(
+        self, push_worktree: Path, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        # The lock is free, so the guard passes and push mode refuses --release itself.
+        FakeLock(states=[None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", "--wait-for-release", "--release"]) == 1
+        push.assert_not_called()
+        assert clock.sleeps == []
+
+    def test_cli_mode_waits_then_submits(
+        self, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + "._run_cli_mode", return_value=0) as cli:
+            assert main([*_CLI_ARGS, "--wait-for-release"]) == 0
+        cli.assert_called_once()
+        assert clock.sleeps == [SUBMIT_WAIT_POLL_SECS]
+
+    def test_template_mode_waits_then_submits_without_rebasing(
+        self, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+    ) -> None:
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with (
+            patch(_MOD + "._run_template_mode", return_value=0) as template,
+            patch(_MOD + "._rebase_onto_develop") as rebase,
+        ):
+            assert main(["--wait-for-release"]) == 0
+        template.assert_called_once()
+        rebase.assert_not_called()
+        assert clock.sleeps == [SUBMIT_WAIT_POLL_SECS]
+
+
+_ORIGIN_DEVELOP = "develop"
+
+
+@pytest.fixture
+def rebase_clone(push_worktree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A clone of the PR's branch, one commit ahead of origin, with a local origin.
+
+    origin holds ``develop`` and the branch at the base commit (``base.txt``); the
+    clone's ``HEAD`` adds ``fix.txt`` on top. No GitHub token is read.
+    """
+    monkeypatch.setattr("vergil_tooling.lib.github.registered_token", lambda: None)
+    monkeypatch.setattr("vergil_tooling.lib.github.get_installation_token", lambda: None)
+    (push_worktree / "base.txt").write_text("base\n")
+    _git(push_worktree, "add", "base.txt")
+    _git(push_worktree, "commit", "-q", "-m", "base")
+    base = _git(push_worktree, "rev-parse", "HEAD")
+    (push_worktree / "fix.txt").write_text("fix\n")
+    _git(push_worktree, "add", "fix.txt")
+    _git(push_worktree, "commit", "-q", "-m", "fix")
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)  # noqa: S603, S607
+    _git(push_worktree, "remote", "add", "origin", str(bare))
+    _git(
+        push_worktree,
+        "push",
+        "-q",
+        "origin",
+        f"{base}:refs/heads/{_ORIGIN_DEVELOP}",
+        f"{base}:refs/heads/{_PUSH_BRANCH}",
+    )
+    _git(push_worktree, "update-ref", f"refs/remotes/origin/{_PUSH_BRANCH}", base)
+    return push_worktree
+
+
+def _advance_origin(repo: Path, branch: str, files: dict[str, str]) -> str:
+    """Push a commit on top of the base commit to origin's *branch*, holding *files*.
+
+    The push goes to origin's URL, as another clone's would, so this clone's
+    remote-tracking refs stay as they were: they are what the lease reads.
+    """
+    base = _git(repo, "rev-parse", "HEAD~1")
+    entries = ""
+    for name, text in files.items():
+        blob = subprocess.run(  # noqa: S603
+            ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],  # noqa: S607
+            input=text,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        entries += f"100644 blob {blob}\t{name}\n"
+    tree = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), "mktree"],  # noqa: S607
+        input=entries,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    commit = _git(repo, "commit-tree", tree, "-p", base, "-m", "develop moved")
+    url = _git(repo, "remote", "get-url", "origin")
+    _git(repo, "push", "-q", url, f"{commit}:refs/heads/{branch}")
+    return commit
+
+
+class TestRebaseOntoDevelop:
+    """The rebase of a waited-for push onto a develop that moved (real git, local origin)."""
+
+    def test_unmoved_develop_is_not_rebased(self, rebase_clone: Path) -> None:
+        head = _git(rebase_clone, "rev-parse", "HEAD")
+        assert _rebase_onto_develop() is False
+        assert _git(rebase_clone, "rev-parse", "HEAD") == head
+
+    def test_moved_develop_is_rebased_under_it(self, rebase_clone: Path) -> None:
+        develop = _advance_origin(
+            rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "moved\n"}
+        )
+        assert _rebase_onto_develop() is True
+        assert _git(rebase_clone, "rev-parse", "HEAD^") == develop
+        assert (rebase_clone / "fix.txt").read_text() == "fix\n"
+
+    def test_a_conflict_is_aborted_and_named(self, rebase_clone: Path) -> None:
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        head = _git(rebase_clone, "rev-parse", "HEAD")
+        with pytest.raises(_RebaseError, match="the rebase was aborted"):
+            _rebase_onto_develop()
+        assert _git(rebase_clone, "rev-parse", "HEAD") == head
+        rebase_state = _git(rebase_clone, "rev-parse", "--git-path", "rebase-merge")
+        assert not (rebase_clone / rebase_state).exists()
+
+    def test_a_conflict_whose_abort_also_fails_says_the_worktree_may_be_mid_rebase(
+        self, rebase_clone: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        real_run = git.run
+
+        def run(*args: str) -> None:
+            if args == ("rebase", "--abort"):
+                raise subprocess.CalledProcessError(128, ["git", *args], stderr="no rebase")
+            real_run(*args)
+
+        monkeypatch.setattr(git, "run", run)
+        with pytest.raises(_RebaseError, match="may be mid-rebase"):
+            _rebase_onto_develop()
+
+    def test_wait_rebases_onto_the_moved_develop_and_pushes_once(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+    ) -> None:
+        develop = _advance_origin(
+            rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "moved\n"}
+        )
+        base = _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--wait-for-release"]) == 0
+        head = _git(rebase_clone, "rev-parse", "HEAD")
+        assert _git(rebase_clone, "rev-parse", "HEAD^") == develop
+        push.assert_called_once_with(_PUSH_BRANCH, head=head, lease=base)
+
+    def test_a_conflict_while_waiting_pushes_nothing(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", "--wait-for-release"]) == 1
+        push.assert_not_called()
+        err = capsys.readouterr().err
+        assert "rebasing onto origin/develop failed" in err
+        assert "nothing was pushed" in err
+
+    def test_a_wait_without_an_origin_exits_one_pushing_nothing(
+        self,
+        push_worktree: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.github.registered_token", lambda: None)
+        monkeypatch.setattr("vergil_tooling.lib.github.get_installation_token", lambda: None)
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr") as push:
+            assert main(["--push", "--wait-for-release"]) == 1
+        push.assert_not_called()
+        err = capsys.readouterr().err
+        assert "fetching origin" in err
+        assert "nothing was pushed" in err
+
+    def test_the_lease_is_the_head_seen_before_the_wait_fetched_develop(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+    ) -> None:
+        """The PR branch moved on origin after this clone's last fetch: the lease is the
+        head this clone last saw, not the remote's tip, and the wait's fetch leaves it."""
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "m\n"})
+        _advance_origin(rebase_clone, _PUSH_BRANCH, {"base.txt": "base\n", "elsewhere.txt": "p\n"})
+        seen = _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}")
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(_MOD + ".pr_path.push_to_open_pr", return_value=_pushed()) as push:
+            assert main(["--push", "--wait-for-release"]) == 0
+        push.assert_called_once_with(_PUSH_BRANCH, head=ANY, lease=seen)
+        assert _git(rebase_clone, "rev-parse", f"refs/remotes/origin/{_PUSH_BRANCH}") == seen
+
+    def test_a_head_pushed_elsewhere_while_waiting_is_not_overwritten(
+        self,
+        rebase_clone: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        clock: _Clock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Real git: a commit pushed to the PR branch from elsewhere while the submit
+        waited is refused by the lease, and nothing is pushed over it."""
+        _advance_origin(rebase_clone, _ORIGIN_DEVELOP, {"base.txt": "base\n", "develop.txt": "m\n"})
+        elsewhere = _advance_origin(
+            rebase_clone, _PUSH_BRANCH, {"base.txt": "base\n", "elsewhere.txt": "p\n"}
+        )
+        FakeLock(states=[record(), None]).install(monkeypatch)
+        with patch(
+            _MOD + ".pr_path.push_to_open_pr", side_effect=_push_as_pr_path_does(rebase_clone)
+        ):
+            assert main(["--push", "--wait-for-release"]) == 1
+        origin = _git(rebase_clone, "remote", "get-url", "origin")
+        assert _git(Path(origin), "rev-parse", f"refs/heads/{_PUSH_BRANCH}") == elsewhere
+        err = capsys.readouterr().err
+        assert "pushing" in err
+        assert "nothing was pushed" in err
+
+
+def _push_as_pr_path_does(repo: Path) -> Callable[..., pr_path.PushResult]:
+    """Stand in for :func:`pr_path.push_to_open_pr`'s last step: the same ``git push``, real git."""
+
+    def push(branch: str, *, head: str, lease: str | None) -> pr_path.PushResult:
+        args = ["push"]
+        if lease is not None:
+            args.append(f"--force-with-lease={branch}:{lease}")
+        args += ["origin", f"{head}:refs/heads/{branch}"]
+        try:
+            _git(repo, *args)
+        except subprocess.CalledProcessError as exc:
+            msg = f"pushing {head[:12]} to {branch} failed: {exc.stderr.strip()}"
+            raise pr_path.PRPathError(msg) from exc
+        return _pushed()
+
+    return push

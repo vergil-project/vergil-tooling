@@ -40,6 +40,7 @@ as a free lock.
 from __future__ import annotations
 
 import socket
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -51,12 +52,26 @@ from vergil_tooling.lib.release_lock.model import ReleaseLockError, heartbeat_ag
 if TYPE_CHECKING:
     from vergil_tooling.lib.finalize_watch import Snapshot
     from vergil_tooling.lib.release_lock.model import LockRecord
+    from vergil_tooling.lib.release_lock.refs import LockState
+    from vergil_tooling.lib.release_lock.stale import Staleness
 
-__all__ = ["LockWatch", "LockWatchError"]
+__all__ = ["HeldLock", "LockWatch", "LockWatchError"]
 
 
 class LockWatchError(finalize_watch.FinalizeWatchError):
     """A lock read, re-arm or reclaim step of the merge watch failed; the message names the PR."""
+
+
+@dataclass(frozen=True)
+class HeldLock:
+    """A held lock as judged: its view, and the state and staleness verdict it rests on.
+
+    *staleness* is ``None`` for an unreadable lock, which is not judged.
+    """
+
+    view: LockView
+    state: LockState
+    staleness: Staleness | None
 
 
 def _health(rec: LockRecord, verdict: stale.Staleness, *, now: datetime) -> str:
@@ -92,27 +107,39 @@ class LockWatch:
             raise LockWatchError(msg) from exc
         if not state.held:
             return FREE if snap.auto_merge_on else self._rearm(snap)
+        return self.judge_held(repo, state, where=snap.url, now=datetime.now(UTC)).view
+
+    def judge_held(self, repo: str, state: LockState, *, where: str, now: datetime) -> HeldLock:
+        """Judge a lock *state* that is held: its view, and the verdict it rests on.
+
+        Shared by the merge watch and the submit guard. *where* names the
+        caller's subject (a PR's URL, or the repository) in any error. A held
+        lock that is stale is reclaimed here, as the watch's rule says; any
+        failed step raises :class:`LockWatchError`.
+        """
         rec = state.record
         if rec is None:
-            return LockView("unreadable", f"held by an unreadable release lock ({state.error})")
-        now = datetime.now(UTC)
+            view = LockView("unreadable", f"held by an unreadable release lock ({state.error})")
+            return HeldLock(view=view, state=state, staleness=None)
         try:
             verdict = stale.judge(repo, state, now=now)
         except ReleaseLockError as exc:
-            msg = f"{snap.url}: judging the release lock failed: {exc}"
+            msg = f"{where}: judging the release lock failed: {exc}"
             raise LockWatchError(msg) from exc
         held = f"held by release {rec.version} {_health(rec, verdict, now=now)}"
         if verdict.live:
-            return LockView("held", held)
-        if not verdict.stale:
-            return LockView("broken", f"{held}; not reclaimed: {verdict.reason}")
-        return self._reclaim(snap, repo, rec.version, verdict.reason)
+            view = LockView("held", held)
+        elif not verdict.stale:
+            view = LockView("broken", f"{held}; not reclaimed: {verdict.reason}")
+        else:
+            view = self._reclaim(where, repo, rec.version, verdict.reason)
+        return HeldLock(view=view, state=state, staleness=verdict)
 
-    def _reclaim(self, snap: Snapshot, repo: str, version: str, reason: str) -> LockView:
+    def _reclaim(self, where: str, repo: str, version: str, reason: str) -> LockView:
         try:
             result = reclaim.reclaim_if_stale(repo, actor=self._actor_name())
         except ReleaseLockError as exc:
-            msg = f"{snap.url}: reclaiming the stale release lock failed: {exc}"
+            msg = f"{where}: reclaiming the stale release lock failed: {exc}"
             raise LockWatchError(msg) from exc
         if result is None:
             return LockView(
