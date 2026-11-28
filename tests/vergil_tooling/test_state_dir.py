@@ -183,18 +183,281 @@ def test_ensure_refuses_a_bad_issue_ref(repo: Path, capsys: Cap, issue: str) -> 
     assert not (repo / "build").exists()
 
 
+DESIGN_ARGS = ["--kind", "design-review", "--issue", ISSUE, "--round", "S1", "--ensure"]
+HOSHIN_REPO = "acme/widget"
+HOSHIN_ARGS = [
+    "--kind",
+    "hoshin",
+    "--repo",
+    HOSHIN_REPO,
+    "--date",
+    "2026-11-28",
+    "--mode",
+    "start",
+    "--ensure",
+]
+
+
+def test_design_review_creates_levels_700_and_prints_the_round_path(
+    repo: Path, capsys: Cap
+) -> None:
+    argv = ["--kind", "design-review", "--issue", ISSUE, "--round", "P12", "--ensure"]
+    code, out, err = _run(argv, capsys)
+    assert (code, err) == (0, "")
+    state = repo / "build" / ".vergil-state"
+    issue_dir = state / "design-review" / "42"
+    directory = issue_dir / "P12"
+    assert out == f"{directory}\n"
+    levels = [state, state / "design-review", issue_dir, directory]
+    assert [_mode(level) for level in levels] == [0o700] * 4
+    assert list(directory.iterdir()) == []
+
+
+def test_design_review_accepts_an_existing_round_directory(repo: Path, capsys: Cap) -> None:
+    _run(DESIGN_ARGS, capsys)
+    directory = repo / "build" / ".vergil-state" / "design-review" / "42" / "S1"
+    (directory / "review.md").write_text("kept")
+    code, out, _err = _run(DESIGN_ARGS, capsys)
+    assert code == 0
+    assert out == f"{directory}\n"
+    assert (directory / "review.md").read_text() == "kept"
+
+
+def test_design_review_refuses_a_clone_of_another_repo(repo: Path, capsys: Cap) -> None:
+    _git(repo, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+    code, out, err = _run(DESIGN_ARGS, capsys)
+    assert code == 1
+    assert out == ""
+    assert "pushes to acme/other, not the issue's repo acme/widget" in err
+    assert not (repo / "build").exists()
+
+
+def test_design_review_refuses_a_symlinked_round_level(
+    repo: Path, tmp_path: Path, capsys: Cap
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    state = repo / "build" / ".vergil-state"
+    state.mkdir(parents=True)
+    state.chmod(0o700)
+    design = state / "design-review"
+    design.mkdir(mode=0o700)
+    issue_dir = design / "42"
+    issue_dir.mkdir(mode=0o700)
+    (issue_dir / "S1").symlink_to(elsewhere)
+    code, out, err = _run(DESIGN_ARGS, capsys)
+    assert code == 1
+    assert out == ""
+    assert "S1 is a symlink, not a directory" in err
+    assert list(elsewhere.iterdir()) == []
+
+
+@pytest.mark.parametrize(("date", "mode"), [("2028-02-29", "end"), ("2026-11-28", "start")])
+def test_hoshin_creates_levels_700_and_prints_the_path(
+    repo: Path, capsys: Cap, date: str, mode: str
+) -> None:
+    argv = ["--kind", "hoshin", "--repo", HOSHIN_REPO, "--date", date, "--mode", mode, "--ensure"]
+    code, out, err = _run(argv, capsys)
+    assert (code, err) == (0, "")
+    state = repo / "build" / ".vergil-state"
+    directory = state / "hoshin" / f"{date}-{mode}"
+    assert out == f"{directory}\n"
+    assert [_mode(level) for level in (state, state / "hoshin", directory)] == [0o700] * 3
+    assert list(directory.iterdir()) == []
+
+
+def test_hoshin_accepts_an_existing_directory(repo: Path, capsys: Cap) -> None:
+    _run(HOSHIN_ARGS, capsys)
+    directory = repo / "build" / ".vergil-state" / "hoshin" / "2026-11-28-start"
+    (directory / "screen-terms.md").write_text("kept")
+    code, out, _err = _run(HOSHIN_ARGS, capsys)
+    assert code == 0
+    assert out == f"{directory}\n"
+    assert (directory / "screen-terms.md").read_text() == "kept"
+
+
+def test_hoshin_refuses_a_clone_of_another_repo(repo: Path, capsys: Cap) -> None:
+    _git(repo, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+    code, out, err = _run(HOSHIN_ARGS, capsys)
+    assert code == 1
+    assert out == ""
+    assert "pushes to acme/other, not the repo named by --repo acme/widget" in err
+    assert "run vrg-state-dir in a clone of acme/widget" in err
+    assert not (repo / "build").exists()
+
+
+def test_hoshin_checks_the_repo_named_by_repo_not_the_issue_default(
+    repo: Path, capsys: Cap
+) -> None:
+    argv = [*HOSHIN_ARGS[:3], "acme/other", *HOSHIN_ARGS[4:]]
+    code, out, err = _run(argv, capsys)
+    assert code == 1
+    assert out == ""
+    assert "pushes to acme/widget, not the repo named by --repo acme/other" in err
+    assert not (repo / "build").exists()
+
+
+def test_hoshin_refuses_a_symlinked_date_mode_level(
+    repo: Path, tmp_path: Path, capsys: Cap
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    state = repo / "build" / ".vergil-state"
+    state.mkdir(parents=True)
+    state.chmod(0o700)
+    hoshin = state / "hoshin"
+    hoshin.mkdir(mode=0o700)
+    (hoshin / "2026-11-28-start").symlink_to(elsewhere)
+    code, out, err = _run(HOSHIN_ARGS, capsys)
+    assert code == 1
+    assert out == ""
+    assert "2026-11-28-start is a symlink, not a directory" in err
+    assert list(elsewhere.iterdir()) == []
+
+
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "fragment"),
     [
-        ["--kind", "operational", "--issue", ISSUE],
-        ["--kind", "design-review", "--issue", ISSUE, "--ensure"],
-        ["--issue", ISSUE, "--ensure"],
-        ["--kind", "operational", "--ensure"],
+        # The original usage errors.
+        (["--kind", "operational", "--issue", ISSUE], "--ensure"),
+        (["--issue", ISSUE, "--ensure"], "--kind"),
+        (["--kind", "operational", "--ensure"], "--kind operational requires --issue"),
+        # design-review: --round is required, --issue too, and no hoshin option.
+        (["--kind", "design-review", "--issue", ISSUE, "--ensure"], "requires --round"),
+        (["--kind", "design-review", "--round", "S1", "--ensure"], "requires --issue"),
+        (["--kind", "design-review", "--round", "X1", "--issue", ISSUE, "--ensure"], "--round"),
+        (["--kind", "design-review", "--round", "S", "--issue", ISSUE, "--ensure"], "--round"),
+        (["--kind", "design-review", "--round", "S1x", "--issue", ISSUE, "--ensure"], "--round"),
+        (["--kind", "design-review", "--round", "", "--issue", ISSUE, "--ensure"], "--round"),
+        ([*DESIGN_ARGS, "--date", "2026-11-28"], "--date does not apply"),
+        ([*DESIGN_ARGS, "--mode", "start"], "--mode does not apply"),
+        ([*DESIGN_ARGS, "--repo", HOSHIN_REPO], "--repo does not apply"),
+        # hoshin: --repo, --date and --mode are required, and --issue and --round do not apply.
+        (
+            ["--kind", "hoshin", "--date", "2026-11-28", "--mode", "start", "--ensure"],
+            "requires --repo",
+        ),
+        (
+            ["--kind", "hoshin", "--repo", HOSHIN_REPO, "--mode", "start", "--ensure"],
+            "requires --date",
+        ),
+        (
+            ["--kind", "hoshin", "--repo", HOSHIN_REPO, "--date", "2026-11-28", "--ensure"],
+            "requires --mode",
+        ),
+        ([*HOSHIN_ARGS, "--issue", ISSUE], "--issue does not apply"),
+        ([*HOSHIN_ARGS, "--round", "S1"], "--round does not apply"),
+        # Options of the other kinds, on the issue-numbered kinds.
+        (
+            ["--kind", "operational", "--issue", ISSUE, "--round", "S1", "--ensure"],
+            "--round does not apply",
+        ),
+        (
+            ["--kind", "issue-implement", "--issue", ISSUE, "--date", "2026-11-28", "--ensure"],
+            "--date does not apply",
+        ),
+        (
+            ["--kind", "upstream-report", "--issue", ISSUE, "--mode", "end", "--ensure"],
+            "--mode does not apply",
+        ),
+        (
+            ["--kind", "operational", "--issue", ISSUE, "--repo", HOSHIN_REPO, "--ensure"],
+            "--repo does not apply",
+        ),
+        # Malformed hoshin values.
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                HOSHIN_REPO,
+                "--date",
+                "2026-13-40",
+                "--mode",
+                "start",
+                "--ensure",
+            ],
+            "--date",
+        ),
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                HOSHIN_REPO,
+                "--date",
+                "20261128",
+                "--mode",
+                "start",
+                "--ensure",
+            ],
+            "--date",
+        ),
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                HOSHIN_REPO,
+                "--date",
+                "2026-02-29",
+                "--mode",
+                "start",
+                "--ensure",
+            ],
+            "--date",
+        ),
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                HOSHIN_REPO,
+                "--date",
+                "2026-11-28",
+                "--mode",
+                "middle",
+                "--ensure",
+            ],
+            "--mode",
+        ),
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                "acme",
+                "--date",
+                "2026-11-28",
+                "--mode",
+                "start",
+                "--ensure",
+            ],
+            "--repo",
+        ),
+        (
+            [
+                "--kind",
+                "hoshin",
+                "--repo",
+                "acme/",
+                "--date",
+                "2026-11-28",
+                "--mode",
+                "start",
+                "--ensure",
+            ],
+            "--repo",
+        ),
+        # A kind name outside the five.
+        (["--kind", "merge-review", "--issue", ISSUE, "--ensure"], "--kind"),
     ],
 )
-def test_usage_errors_exit_2(repo: Path, capsys: Cap, argv: list[str]) -> None:
+def test_usage_errors_exit_2(repo: Path, capsys: Cap, argv: list[str], fragment: str) -> None:
     with pytest.raises(SystemExit) as exc:
         vrg_state_dir.main(argv)
     assert exc.value.code == 2
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert fragment in captured.err
     assert not (repo / "build").exists()
