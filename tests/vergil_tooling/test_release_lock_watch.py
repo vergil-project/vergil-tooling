@@ -406,6 +406,25 @@ def test_a_pr_seen_armed_starts_the_base_moved_count_again(
     assert lock.arms == [PR] * 3
 
 
+def test_a_held_read_starts_the_base_moved_count_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = FakeLock(
+        states=[None, None, record(stage="back-merge-bump"), None],
+        arm_outcome=BASE_MOVED,
+    ).install(monkeypatch)
+    lock_watch = watch()
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 1/5)")
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 2/5)")
+
+    # A read of a held lock forgets the count.
+    assert lock_watch(snap(OLD)).state == "held"
+
+    # The next refusal, once the lock is free again, is attempt 1.
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 1/5)")
+    assert lock.arms == [PR] * 3
+
+
 def test_consecutive_base_moved_refusals_raise_loudly_naming_the_pr_count_and_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -196,7 +196,8 @@ is waiting on:
   tried, through its own retries) does not end it: the PR shows as
   `re-arm refused because the base branch moved; ... (attempt k/5)`, stays
   pending, and the next poll re-reads it and re-arms it. Five such
-  refusals in a row for one PR stop the run with exit 1, naming the PR.
+  refusals in a row for one PR stop the run with exit 1, naming the PR. A
+  read that finds a release lock held starts the count again.
 - **A PR behind `develop` with no lock held:** a release's bump PR moves
   `develop` on, and a PR the release held still carries the old version,
   so its version check fails until it is rebased. So the first read with no

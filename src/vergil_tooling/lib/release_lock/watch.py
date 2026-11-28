@@ -22,8 +22,8 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   :data:`~vergil_tooling.lib.release_lock.model.BASE_MOVED_WATCH_ATTEMPTS`
   such refusals in a row for one PR, the watch raises :class:`LockWatchError`
   naming the PR, the count and the error, as for any other failed re-arm. A
-  re-arm that succeeds, is refused or is held, or a poll that finds the PR
-  armed, starts the count again.
+  re-arm that succeeds, is refused or is held, a poll that finds the PR
+  armed, or a read that finds a lock held, starts the count again.
 - **Every open PR, once no lock is held** (including after a hold that a
   reclaim ended, and in a fresh run that never saw the hold): before it is
   re-armed, it is brought up to date
@@ -128,7 +128,8 @@ class LockWatch:
         # The head each PR was judged at, when its update was judged current or not_updated:
         # not judged again while the head stays, and forgotten on every read of a held lock.
         self._judged: dict[str, str] = {}
-        # The re-arms of each PR refused in a row only because the base branch moved.
+        # The re-arms of each PR refused in a row only because the base branch moved; a read
+        # of a held lock forgets them, as it forgets the judgments.
         self._base_moved: dict[str, int] = {}
 
     def _actor_name(self) -> str:
@@ -145,9 +146,11 @@ class LockWatch:
             raise LockWatchError(msg) from exc
         if not state.held:
             return self._free(snap)
-        # A hold ends the judgments: the next free read judges every PR again, since the
-        # release that held it may have moved develop on.
+        # A hold ends the judgments and the base-moved count: the next free read judges every
+        # PR again, since the release that held it may have moved develop on, and a re-arm
+        # refused after the hold is the first of its run.
         self._judged.clear()
+        self._base_moved.clear()
         return self.judge_held(repo, state, where=snap.url, now=datetime.now(UTC)).view
 
     def judge_held(self, repo: str, state: LockState, *, where: str, now: datetime) -> HeldLock:
