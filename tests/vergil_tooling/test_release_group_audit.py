@@ -354,6 +354,17 @@ def test_dissolved_group_not_checked(world: _World) -> None:
 # --- group_findings: the dependency path and the member moved out -------------
 
 
+def test_member_moved_to_another_repo_breaks_one_repo(world: _World) -> None:
+    # A member transferred by hand to another repo: the group breaks the one-repo rule, which
+    # is a group-wide break, so it is reported while a member is open.
+    moved = IssueRef("org", "other", 2)
+    world.groups["G1"] = record.Group(EPIC, "G1", 1, (ref(1), moved), False, "comment-G1")
+    [finding] = _scan()
+    assert finding == audit.GroupFinding(
+        EPIC, "G1", "rule", "one repo: the members are in org/other, org/repo"
+    )
+
+
 def test_dependency_path_from_blocked_by_edit_fails_audit(world: _World) -> None:
     # No group write: member 1's trusted body now says it waits on task 9, which waits on
     # member 2. The group's own record is unchanged, and the audit still reports the path.
