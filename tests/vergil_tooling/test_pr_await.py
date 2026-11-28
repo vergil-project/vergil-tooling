@@ -377,6 +377,40 @@ def test_pr_await_refused_rearm_exits_1_reason_refused(fake: FakeGitHub) -> None
     assert fake.sleeps == []
 
 
+def test_pr_await_base_moved_rearm_keeps_waiting_then_merges(
+    fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A re-arm refused only because the base moved is retrying: the wait goes on, not ended."""
+    fake.lock.arm_outcome = [pr_path.BaseMovedError("base moved"), "armed"]
+    fake.script(pr_state(autoMergeRequest=None), pr_state(autoMergeRequest=None), merged())
+
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
+
+    assert result.merged
+    assert fake.lock.arms == [PR, PR]
+    assert fake.sleeps == [15, 15]
+    assert "re-arm refused because the base branch moved" in capsys.readouterr().err
+
+
+def test_pr_await_base_moved_rearm_at_the_deadline_times_out_with_its_detail(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(DEADLINE_ENV, "40")
+    fake.lock.arm_outcome = pr_path.BaseMovedError("base moved")
+    fake.script(pr_state(autoMergeRequest=None))
+
+    result = wait_for_merge(PR, lock=LockWatch(), poll_interval=15)
+
+    assert result.reason == "timed_out"
+    assert result.detail == (
+        "still re-arm refused because the base branch moved; the PR is still watched and will be "
+        "re-armed on the next poll (attempt 4/5) at the 40s deadline "
+        f"({DEADLINE_ENV}); run the wait again"
+    )
+    assert fake.sleeps == [15, 15, 10]
+    assert len(fake.lock.arms) == 4
+
+
 def test_required_check_failed_is_named(fake: FakeGitHub) -> None:
     failing = [check_run("test / unit", "FAILURE"), check_run("CodeQL", n=2)]
     fake.script(pr_state(), pr_state(statusCheckRollup=failing))

@@ -15,7 +15,15 @@ an open PR, before they would judge auto-merge off: ``vrg-finalize-pr``'s
   way to turn auto-merge on: ``armed`` or ``merged`` is ``free``, naming the
   re-arm; ``held`` (a release took the lock meanwhile) is ``held``, naming
   the path's detail; ``refused`` is ``refused``, naming the path's reason,
-  and the watch ends the PR there.
+  and the watch ends the PR there. A re-arm refused only because the base
+  branch moved (:class:`vergil_tooling.lib.pr_path.BaseMovedError`, the
+  path's own retries spent) is ``retrying``: the PR stays pending and the next
+  poll re-reads it and re-arms it (vergil-tooling#5390). After
+  :data:`~vergil_tooling.lib.release_lock.model.BASE_MOVED_WATCH_ATTEMPTS`
+  such refusals in a row for one PR, the watch raises :class:`LockWatchError`
+  naming the PR, the count and the error, as for any other failed re-arm. A
+  re-arm that succeeds, is refused or is held, or a poll that finds the PR
+  armed, starts the count again.
 - **Every open PR, once no lock is held** (including after a hold that a
   reclaim ended, and in a fresh run that never saw the hold): before it is
   re-armed, it is brought up to date
@@ -64,7 +72,11 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import finalize_watch, identity_mode, pr_path
 from vergil_tooling.lib.finalize_watch import FREE, LockView
 from vergil_tooling.lib.release_lock import reclaim, refs, stale
-from vergil_tooling.lib.release_lock.model import ReleaseLockError, heartbeat_age_secs
+from vergil_tooling.lib.release_lock.model import (
+    BASE_MOVED_WATCH_ATTEMPTS,
+    ReleaseLockError,
+    heartbeat_age_secs,
+)
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.finalize_watch import Snapshot
@@ -116,6 +128,8 @@ class LockWatch:
         # The head each PR was judged at, when its update was judged current or not_updated:
         # not judged again while the head stays, and forgotten on every read of a held lock.
         self._judged: dict[str, str] = {}
+        # The re-arms of each PR refused in a row only because the base branch moved.
+        self._base_moved: dict[str, int] = {}
 
     def _actor_name(self) -> str:
         if self._actor is None:
@@ -208,6 +222,7 @@ class LockWatch:
             if update.outcome == "conflicted":
                 return LockView("conflicted", detail)
         if snap.auto_merge_on:
+            self._base_moved.pop(url, None)
             return LockView("free", detail) if detail else FREE
         if detail:
             print(f"{url}: {detail}")
@@ -247,14 +262,18 @@ class LockWatch:
             msg = f"{snap.url}: bringing the held PR up to date failed: {exc}"
             raise LockWatchError(msg) from exc
 
-    @staticmethod
-    def _rearm(snap: Snapshot) -> LockView:
+    def _rearm(self, snap: Snapshot) -> LockView:
+        url = snap.url
+        # Any outcome other than a base-moved refusal starts the count again.
+        refusals = self._base_moved.pop(url, 0)
         try:
-            result = pr_path.arm(snap.url)
+            result = pr_path.arm(url)
+        except pr_path.BaseMovedError as exc:
+            return self._base_moved_refusal(snap, refusals + 1, exc)
         except pr_path.PRPathError as exc:
             msg = (
-                f"{snap.url}: re-arming it through the one PR path failed: {exc}; "
-                f"the PR, read just now, is {pr_path.describe_state(snap.url)}"
+                f"{url}: re-arming it through the one PR path failed: {exc}; "
+                f"the PR, read just now, is {pr_path.describe_state(url)}"
             )
             raise LockWatchError(msg) from exc
         if result.outcome == "refused":
@@ -265,4 +284,28 @@ class LockWatch:
             "free",
             "auto-merge was off with no release lock held: re-armed through the one PR path"
             f" ({result.outcome})",
+        )
+
+    def _base_moved_refusal(
+        self, snap: Snapshot, refusals: int, exc: pr_path.BaseMovedError
+    ) -> LockView:
+        """The view of a re-arm the base branch's moves refused: ``retrying``, or raised.
+
+        *refusals* counts this refusal and those before it in a row for *snap*'s PR. The
+        :data:`BASE_MOVED_WATCH_ATTEMPTS`-th raises: the base kept moving through every
+        re-arm the watch made, so it is no longer transient.
+        """
+        url = snap.url
+        if refusals >= BASE_MOVED_WATCH_ATTEMPTS:
+            msg = (
+                f"{url}: re-arming it through the one PR path was refused {refusals} times in a "
+                "row because the base branch kept moving, and the watch gives up: "
+                f"{exc}; the PR, read just now, is {pr_path.describe_state(url)}"
+            )
+            raise LockWatchError(msg) from exc
+        self._base_moved[url] = refusals
+        return LockView(
+            "retrying",
+            "re-arm refused because the base branch moved; the PR is still watched and will be "
+            f"re-armed on the next poll (attempt {refusals}/{BASE_MOVED_WATCH_ATTEMPTS})",
         )

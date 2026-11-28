@@ -13,7 +13,8 @@ import pytest
 
 from tests.vergil_tooling.watch_lock_stubs import FakeLock, broken, record
 from vergil_tooling.lib import pr_path
-from vergil_tooling.lib.finalize_watch import LockView, Snapshot
+from vergil_tooling.lib.finalize_watch import FREE, LockView, Snapshot
+from vergil_tooling.lib.release_lock.model import BASE_MOVED_WATCH_ATTEMPTS
 from vergil_tooling.lib.release_lock.watch import LockWatch, LockWatchError
 
 PR = "https://github.com/o/r/pull/1"
@@ -351,3 +352,81 @@ def test_an_update_that_cannot_be_completed_raises_naming_the_pr(
     with pytest.raises(LockWatchError, match=f"{PR}: bringing the held PR up to date failed"):
         lock_watch(snap(OLD))
     assert lock.arms == []
+
+
+BASE_MOVED = pr_path.BaseMovedError(
+    f"{PR}: enabling auto-merge failed: GraphQL: Base branch was modified; GitHub refused it "
+    "5 times because the base branch kept moving"
+)
+
+
+def test_a_base_move_between_the_lock_release_and_the_rearm_retries_on_the_next_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = FakeLock(
+        states=[record(stage="back-merge-bump"), None],
+        arm_outcome=[BASE_MOVED, "armed", BASE_MOVED],
+    ).install(monkeypatch)
+    lock_watch = watch()
+    assert lock_watch(snap(OLD)).state == "held"
+
+    retrying = lock_watch(snap(OLD))
+
+    assert retrying.state == "retrying"
+    assert not retrying.held
+    assert not retrying.slow
+    assert retrying.detail.endswith(f"(attempt 1/{BASE_MOVED_WATCH_ATTEMPTS})")
+    assert "the PR is still watched" in retrying.detail
+    assert lock.arms == [PR]
+    # The next poll re-reads the PR and re-arms it: armed, so free.
+    assert lock_watch(snap(OLD)).state == "free"
+    assert lock.arms == [PR, PR]
+    # The success started the count again: the PR refused once more is attempt 1 again.
+    again = lock_watch(snap(OLD))
+    assert again.state == "retrying"
+    assert again.detail.endswith("(attempt 1/5)")
+    assert lock.arms == [PR, PR, PR]
+
+
+def test_a_pr_seen_armed_starts_the_base_moved_count_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = FakeLock(
+        states=[record(stage="back-merge-bump"), None],
+        arm_outcome=BASE_MOVED,
+    ).install(monkeypatch)
+    lock_watch = watch()
+    assert lock_watch(snap(OLD)).state == "held"
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 1/5)")
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 2/5)")
+
+    # Seen armed (by another caller, say): the count is forgotten.
+    assert lock_watch(snap(OLD, auto_merge_on=True)) == FREE
+    assert lock_watch(snap(OLD)).detail.endswith("(attempt 1/5)")
+    assert lock.arms == [PR] * 3
+
+
+def test_consecutive_base_moved_refusals_raise_loudly_naming_the_pr_count_and_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = FakeLock(
+        states=[record(stage="back-merge-bump"), None],
+        arm_outcome=BASE_MOVED,
+        pr_state="open, auto-merge off",
+    ).install(monkeypatch)
+    lock_watch = watch()
+    assert lock_watch(snap(OLD)).state == "held"
+    for attempt in range(1, BASE_MOVED_WATCH_ATTEMPTS):
+        view = lock_watch(snap(OLD))
+        assert view.state == "retrying"
+        assert view.detail.endswith(f"(attempt {attempt}/{BASE_MOVED_WATCH_ATTEMPTS})")
+
+    with pytest.raises(LockWatchError) as info:
+        lock_watch(snap(OLD))
+
+    message = str(info.value)
+    assert message.startswith(f"{PR}: re-arming it through the one PR path was refused")
+    assert f"refused {BASE_MOVED_WATCH_ATTEMPTS} times in a row" in message
+    assert str(BASE_MOVED) in message
+    assert message.endswith("the PR, read just now, is open, auto-merge off")
+    assert len(lock.arms) == BASE_MOVED_WATCH_ATTEMPTS

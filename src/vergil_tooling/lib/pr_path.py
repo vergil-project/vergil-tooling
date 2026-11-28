@@ -68,9 +68,11 @@ and then read the lock:
 - Lock free: renew the arming ref by compare-and-swap, turn auto-merge on (or
   merge) under :func:`retry.bounded`'s :data:`ARM_CALL_BOUND_SECS`, retries
   included, then delete the ref. A renewal that finds the ref gone is
-  ``refused`` with ``arming ref expired``. An arm call stopped at the bound
-  raises and leaves the ref, since the stopped call may still land: a
-  release expires it, and so does the next arm of the PR (below).
+  ``refused`` with ``arming ref expired``. A refusal because the base branch
+  moved that every retry gets raises :class:`BaseMovedError` (its ref deleted:
+  it landed nothing, so the caller may offer the PR again). An arm call stopped
+  at the bound raises and leaves the ref, since the stopped call may still
+  land: a release expires it, and so does the next arm of the PR (below).
 - Lock held, or unreadable: delete the ref and report ``held`` (*detail*
   ``held for release <version>``, or the read error), with the PR unarmed.
 - The create finds a ref already there (another caller is arming the PR):
@@ -188,6 +190,17 @@ class PRPathError(RuntimeError):
 
 class ArmingCollisionError(PRPathError):
     """Another caller held the PR's arming ref, and the PR was still unarmed after the wait."""
+
+
+class BaseMovedError(PRPathError):
+    """The arm was refused because the base branch kept moving, through every retry.
+
+    GitHub refused the enable (or the direct merge) with "Base branch was
+    modified" on each of :data:`BASE_MOVED_ATTEMPTS` tries inside the arm call's
+    bound. The refusal landed nothing, the PR was read back and is still open,
+    and its arming ref is deleted, so a caller may offer the PR to the path
+    again (the merge watch does, on its next poll, vergil-tooling#5390).
+    """
 
 
 class _ArmCallStoppedError(PRPathError):
@@ -503,6 +516,9 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     :data:`BASE_MOVED_RETRY_SECS`. Each retry first reads the PR, and a PR
     another caller merged at *head* meanwhile is a success, reported as
     ``merged`` with no further enable or merge (#5406).
+
+    When every such try is refused, :class:`BaseMovedError` is raised, the
+    refusal kept as its cause; any other refusal is :class:`PRPathError`.
     """
     url = pr.snap.url
     try:
@@ -511,6 +527,8 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     except retry.DeadlineExceededError as exc:
         msg = f"{exc}; it was stopped and is not retried"
         raise _ArmCallStoppedError(msg) from exc
+    except auto_merge.BaseBranchModifiedError as exc:
+        raise BaseMovedError(str(exc)) from exc
     except auto_merge.AutoMergeError as exc:
         raise PRPathError(str(exc)) from exc
     outcome: ArmOutcome = "merged" if result.merged_now else "armed"
@@ -538,7 +556,8 @@ def _enable_retrying_a_moved_base(
                     f"{exc}; GitHub refused it {BASE_MOVED_ATTEMPTS} times because the base "
                     "branch kept moving"
                 )
-                raise auto_merge.AutoMergeError(msg) from exc
+                # Typed as it was refused, so _enable_bounded can raise BaseMovedError.
+                raise auto_merge.BaseBranchModifiedError(msg) from exc
             print(
                 f"{url}: the base branch moved (attempt {attempt}/{BASE_MOVED_ATTEMPTS}); "
                 f"reading the PR again and trying again in {BASE_MOVED_RETRY_SECS:g}s"

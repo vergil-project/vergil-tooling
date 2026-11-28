@@ -25,7 +25,10 @@ order:
    while the release is broken or its lock unreadable, reclaiming a stale
    lock. With no lock held an unarmed PR is re-armed through the one PR
    path; a re-arm the path refuses ends the wait with reason ``refused``,
-   naming the path's reason. A hold that ends on a PR behind ``develop``
+   naming the path's reason. A re-arm refused only because the base branch
+   kept moving keeps the wait going: the PR is re-armed again on the next
+   poll, and only a run of such refusals that the lock rule gives up on
+   raises (vergil-tooling#5390). A hold that ends on a PR behind ``develop``
    brings it up to date first (vergil-tooling#5414): a pushed rebase keeps
    the wait going, its checks not judged until the next read shows the new
    head; a rebase that conflicts ends the wait with reason ``conflict``.
@@ -388,6 +391,10 @@ def wait_for_merge(
             if view.held:
                 detail = f"still {view.detail} {at}; run the wait again"
                 return _cannot_merge(snap, _HELD_BY_RELEASE, detail)
+            if view.state == "retrying":
+                # Its auto-merge is off (the re-arm was refused), so it does not stay on.
+                detail = f"still {view.detail} {at}; run the wait again"
+                return _cannot_merge(snap, "timed_out", detail)
             return _cannot_merge(snap, "timed_out", f"still pending {at}; its auto-merge stays on")
         time.sleep(min(broken_poll if view.slow else poll_interval, remaining))
         snap = finalize_watch.snapshot(snap.url)

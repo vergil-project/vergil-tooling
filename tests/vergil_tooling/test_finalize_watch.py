@@ -960,6 +960,44 @@ def test_rearm_finding_the_lock_taken_is_held(
     assert "held for release 2.1.401" in capsys.readouterr().out
 
 
+def test_base_moved_rearm_keeps_the_pr_pending_and_the_next_poll_rearms_and_merges_it(
+    fake: FakeGitHub, blocks: list[_Block], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A re-arm refused only because the base moved is retrying, not failed."""
+    fake.lock.arm_outcome = [pr_path.BaseMovedError("base moved"), "armed"]
+    fake.script(1, unarmed(1), unarmed(1), pr_state(1), merged(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "merged"
+    assert fake.lock.arms == [url(1), url(1)]
+    assert fake.sleeps == [15.0, 15.0, 15.0]
+    out = capsys.readouterr().out
+    assert f"{url(1)}: re-arm refused because the base branch moved" in out
+    assert f"{url(1)}: auto-merge was off with no release lock held: re-armed" in out
+    # The start-up table shows the retry in the PR's row, the state being its detail.
+    assert "(attempt 1/5)" in blocks[0].text
+
+
+def test_deadline_while_a_rearm_is_still_refused_times_out_with_its_detail(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the deadline a retrying PR is timed out with its detail, not 'auto-merge stays on'."""
+    monkeypatch.setenv(DEADLINE_ENV, "30")
+    fake.lock.arm_outcome = pr_path.BaseMovedError("base moved")
+    fake.script(1, unarmed(1))
+
+    [result] = run([url(1)])
+
+    assert result.outcome == "timed out"
+    assert result.detail == (
+        "still re-arm refused because the base branch moved; the PR is still watched and will be "
+        "re-armed on the next poll (attempt 3/5) at the 30s batch deadline "
+        f"({DEADLINE_ENV}); run the watch again"
+    )
+    assert fake.lock.arms == [url(1)] * 3
+
+
 def test_held_pr_updated_under_a_hold_stays_pending_on_its_stale_checks(
     fake: FakeGitHub, capsys: pytest.CaptureFixture[str]
 ) -> None:
