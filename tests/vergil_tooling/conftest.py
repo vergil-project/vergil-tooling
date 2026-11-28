@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,6 +87,49 @@ def _hermetic_identity(
     monkeypatch.setattr(identity_mode, "_APP_KEY_FILE", str(absent / "app.pem"))
     monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+
+_REPO_VERGIL = Path(__file__).resolve().parents[2] / ".vergil"
+
+# The validation run that drives the suite writes its own log and record here
+# while the tests run, so they are not a test's doing.
+_RUNNER_FILE_PREFIX = "vrg-validate"
+
+
+def _vergil_snapshot() -> dict[str, tuple[int, int]]:
+    """Map each entry of the repository's ``.vergil/`` (bar the runner's own) to its stat."""
+    try:
+        entries = list(os.scandir(_REPO_VERGIL))
+    except FileNotFoundError:
+        return {}
+    snapshot: dict[str, tuple[int, int]] = {}
+    for entry in entries:
+        if entry.name.startswith(_RUNNER_FILE_PREFIX):
+            continue
+        try:
+            stat = entry.stat()
+        except FileNotFoundError:  # removed between the listing and the stat
+            continue
+        snapshot[entry.name] = (stat.st_mtime_ns, stat.st_size)
+    return snapshot
+
+
+@pytest.fixture(autouse=True)
+def _repo_vergil_untouched() -> Iterator[None]:
+    """Fail a test that creates, changes or removes anything under the repo's ``.vergil/``.
+
+    The directory holds the genuine run logs (release, finalize, submit) that
+    release checks read as evidence, so a test must write its run logs under
+    ``tmp_path``, never under the clone it runs in.
+    """
+    before = _vergil_snapshot()
+    yield
+    after = _vergil_snapshot()
+    changed = sorted(n for n in before.keys() | after.keys() if before.get(n) != after.get(n))
+    assert not changed, (
+        f"the test touched the repository's .vergil/ ({_REPO_VERGIL}): {changed}; "
+        "point its run log at tmp_path"
+    )
 
 
 # Cleared for every test: the CI job's GitHub Actions environment, and the

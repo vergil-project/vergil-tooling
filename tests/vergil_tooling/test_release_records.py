@@ -442,10 +442,10 @@ def test_close_tracking_only_after_all_records(fake: _FakeGitHub) -> None:
 
 
 def _run_tail(
-    state: StateBlock, *, deps_fail: bool = False
+    state: StateBlock, tmp_path: Path, *, deps_fail: bool = False
 ) -> tuple[int, ReleaseContext, list[str], list[object]]:
     """Run update-deps, release-records and close-tracking through the pipeline."""
-    rs = ReleaseState(version_override=None, repo_root=Path("/tmp/r"))  # noqa: S108
+    rs = ReleaseState(version_override=None, repo_root=tmp_path)
     rs.ctx = _ctx(state)
     names = ("update-deps", "release-records", "close-tracking")
     failure = ReleaseError(phase="update-deps", command="vrg-update-deps", message="failed")
@@ -462,13 +462,13 @@ def _run_tail(
         stages = [s for s in build_stages() if s.name in names]
         assert [s.name for s in stages] == list(names)
         rc = progress.run_pipeline(
-            rs, stages, command="vrg-release", label="vrg-release", args=args, repo_root=Path()
+            rs, stages, command="vrg-release", label="vrg-release", args=args, repo_root=tmp_path
         )
     return rc, rs.ctx, list(rs.ctx.deferred_failures), list(m_close.call_args_list)
 
 
-def test_update_deps_failure_holds_records(fake: _FakeGitHub) -> None:
-    rc, ctx, failed, closes = _run_tail(_state(_issues(1)), deps_fail=True)
+def test_update_deps_failure_holds_records(fake: _FakeGitHub, tmp_path: Path) -> None:
+    rc, ctx, failed, closes = _run_tail(_state(_issues(1)), tmp_path, deps_fail=True)
     assert rc == 1
     assert failed == ["update-deps"]
     assert fake.posts == []
@@ -477,8 +477,8 @@ def test_update_deps_failure_holds_records(fake: _FakeGitHub) -> None:
     assert "release-records" not in ctx.state.done
 
 
-def test_clean_tail_posts_records_then_closes(fake: _FakeGitHub) -> None:
-    rc, ctx, failed, closes = _run_tail(_state(_issues(1, 2)))
+def test_clean_tail_posts_records_then_closes(fake: _FakeGitHub, tmp_path: Path) -> None:
+    rc, ctx, failed, closes = _run_tail(_state(_issues(1, 2)), tmp_path)
     assert rc == 0
     assert failed == []
     assert fake.posts == ["o/r#1", "o/r#2"]
@@ -487,9 +487,11 @@ def test_clean_tail_posts_records_then_closes(fake: _FakeGitHub) -> None:
     assert ctx.state.done[-2:] == ("release-records", "close-tracking")
 
 
-def test_records_failure_holds_close_tracking_in_the_pipeline(fake: _FakeGitHub) -> None:
+def test_records_failure_holds_close_tracking_in_the_pipeline(
+    fake: _FakeGitHub, tmp_path: Path
+) -> None:
     fake.fail_post = {"o/r#2"}
-    rc, ctx, failed, closes = _run_tail(_state(_issues(1, 2)))
+    rc, ctx, failed, closes = _run_tail(_state(_issues(1, 2)), tmp_path)
     assert rc == 1
     assert failed == ["release-records"]
     assert closes == []
