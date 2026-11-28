@@ -5143,6 +5143,29 @@ def test_delete_branch_and_worktree_skips_relay_ref_on_dry_run(tmp_path: Path) -
     mock_transport.assert_not_called()
 
 
+def test_delete_branch_and_worktree_propagates_a_failed_worktree_removal(tmp_path: Path) -> None:
+    """A removal git refuses (#5430) raises out of cleanup: the branch is not deleted,
+    the removal is not logged, and no relay ref is dropped."""
+    wt = tmp_path / ".worktrees" / "issue-9-x"
+    failure = subprocess.CalledProcessError(128, ("git", "worktree", "remove", str(wt)))
+    guard = ReleaseGuard(lock=_NO_LOCK, protection=_NO_RELEASE)
+    with (
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt),
+        patch(_MOD + "._worktree_is_dirty", return_value=False),
+        patch(_MOD + ".git.run", side_effect=failure) as run,
+        patch(_MOD + ".worktrees.log_removal") as log,
+        patch(_MOD + ".clean_branch_images", return_value=(0, [])),
+        patch(_MOD + ".github_transport.GitHubTransport") as transport,
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        _delete_branch_and_worktree(
+            "feature/9-x", tmp_path, dry_run=False, reason="PR merged", guard=guard
+        )
+    run.assert_called_once_with("worktree", "remove", str(wt))
+    log.assert_not_called()
+    transport.assert_not_called()
+
+
 def test_main_merged_branch_prunes_relay_ref(tmp_path: Path) -> None:
     """Merged-PR path: the explicit-target cleanup drops the relay ref."""
     _make_profile(tmp_path, "library-release")

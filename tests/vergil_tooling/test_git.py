@@ -1030,3 +1030,60 @@ def test_branch_commit_reads_the_full_ref() -> None:
     mock.assert_called_once_with(
         "rev-parse", "--verify", "--end-of-options", "refs/heads/develop^{commit}"
     )
+
+
+# -- a failed git.run always raises (#5430) --------------------------------
+
+
+def test_run_passes_check_true_to_progress_run() -> None:
+    """A nonzero exit must raise, so ``run`` pins ``check=True`` explicitly."""
+    with patch("vergil_tooling.lib.git.progress") as m_progress:
+        git.run("worktree", "remove", "/somewhere")
+    _args, kwargs = m_progress.run.call_args
+    assert kwargs["check"] is True
+
+
+@pytest.fixture
+def worktree_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A main clone on ``develop`` with one commit, and a linked worktree at ``tmp_path/wt``."""
+    (tmp_path / "gitconfig").write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _real_git(repo, "init", "-q", "-b", "develop")
+    _real_git(
+        repo,
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "base",
+    )
+    _real_git(repo, "worktree", "add", "-q", str(tmp_path / "wt"), "-b", "feature/1-x")
+    monkeypatch.chdir(repo)
+    return repo
+
+
+def test_run_worktree_remove_of_a_clean_worktree_removes_it(
+    worktree_repo: Path, tmp_path: Path
+) -> None:
+    wt = tmp_path / "wt"
+    assert wt.is_dir()
+    git.run("worktree", "remove", str(wt))
+    assert not wt.exists()
+
+
+def test_run_worktree_remove_of_a_dirty_worktree_raises_and_keeps_it(
+    worktree_repo: Path, tmp_path: Path
+) -> None:
+    wt = tmp_path / "wt"
+    (wt / "scratch.txt").write_text("untracked\n")
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        git.run("worktree", "remove", str(wt))
+    assert excinfo.value.returncode == 128
+    assert wt.is_dir()
