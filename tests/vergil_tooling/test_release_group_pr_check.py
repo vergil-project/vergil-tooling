@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from vergil_tooling.lib import epics, github, trust
+from vergil_tooling.lib import github, trust
 from vergil_tooling.lib.epics import IssueRef
 from vergil_tooling.lib.pr_workflow.batch_rules import BatchRuleError
 from vergil_tooling.lib.release_groups import pr_check, record
@@ -251,9 +251,7 @@ def test_body_refs_dedupe_preserving_order() -> None:
     assert pr_check.closing_body_refs(body, REPO) == [C, A]
 
 
-def test_uncounted_fixes_reference_counts_for_rule(
-    pr: dict[str, Any], groups: FakeGroups
-) -> None:
+def test_uncounted_fixes_reference_counts_for_rule(pr: dict[str, Any], groups: FakeGroups) -> None:
     # The body's Fixes line is not a closing reference GitHub counts, yet it closes #900.
     pr["node"] = _pr_node("Fixes #900")
     assert pr_check.closing_of_pr(REPO, 5) == [A]
@@ -274,9 +272,7 @@ def test_cross_repo_closing_reference_counts_for_rule(
     assert _rule(pr_check.closing_of_pr(REPO, 5)) == "whole groups"
 
 
-def test_untrusted_body_reference_counts_for_rule(
-    pr: dict[str, Any], groups: FakeGroups
-) -> None:
+def test_untrusted_body_reference_counts_for_rule(pr: dict[str, Any], groups: FakeGroups) -> None:
     # The body is parsed whatever its author: an untrusted reference refuses, never allows.
     pr["node"] = _pr_node("Fixes #900 by an outsider")
     groups.groups = [_group("G1", [A, B])]
@@ -295,13 +291,56 @@ def test_truncated_closing_references_refuse(pr: dict[str, Any]) -> None:
         pr_check.closing_of_pr(REPO, 5)
 
 
-def test_malformed_closing_node_refuses(pr: dict[str, Any]) -> None:
-    pr["node"] = {
-        "body": "Summary.",
-        "closingIssuesReferences": {"totalCount": 1, "nodes": [{"number": 900}]},
-    }
-    with pytest.raises(trust.TrustReadError):
+@pytest.mark.parametrize(
+    ("node", "detail"),
+    [
+        (
+            {"body": "Summary.", "closingIssuesReferences": "none"},
+            "the closing references are not a connection",
+        ),
+        (
+            {"body": "Summary.", "closingIssuesReferences": {"totalCount": 0, "nodes": {}}},
+            "the closing references are malformed",
+        ),
+        (
+            {"body": "Summary.", "closingIssuesReferences": {"totalCount": 1, "nodes": [5]}},
+            "a closing reference is malformed",
+        ),
+        (
+            {
+                "body": "Summary.",
+                "closingIssuesReferences": {
+                    "totalCount": 1,
+                    "nodes": [{"number": 900, "repository": "vergil-tooling"}],
+                },
+            },
+            "a closing reference is malformed",
+        ),
+        (
+            {
+                "body": "Summary.",
+                "closingIssuesReferences": {
+                    "totalCount": 1,
+                    "nodes": [{"number": 900, "repository": {"nameWithOwner": "no-slash"}}],
+                },
+            },
+            "not an owner/name repo",
+        ),
+        (
+            {"body": None, "closingIssuesReferences": {"totalCount": 0, "nodes": []}},
+            "the body is not text",
+        ),
+    ],
+)
+def test_malformed_pr_read_refuses(pr: dict[str, Any], node: dict[str, Any], detail: str) -> None:
+    pr["node"] = node
+    with pytest.raises((trust.TrustReadError, ValueError), match=detail):
         pr_check.closing_of_pr(REPO, 5)
+
+
+def test_malformed_repo_name_refuses() -> None:
+    with pytest.raises(ValueError, match="not an owner/name repo"):
+        pr_check.closing_body_refs("Fixes #1", "no-slash")
 
 
 def test_pr_read_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

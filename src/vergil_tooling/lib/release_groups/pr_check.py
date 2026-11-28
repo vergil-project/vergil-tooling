@@ -98,9 +98,7 @@ def _check_whole(groups: Sequence[record.Group], closing: Sequence[epics.IssueRe
     for group in groups:
         missing = [member.slug for member in group.members if _key(member) not in closed]
         if missing:
-            lines.append(
-                f"{group.group} of {group.epic.slug} is missing {', '.join(missing)}"
-            )
+            lines.append(f"{group.group} of {group.epic.slug} is missing {', '.join(missing)}")
     if lines:
         raise BatchRuleError(
             _WHOLE_RULE,
@@ -205,13 +203,16 @@ def _closing_field(node: Mapping[str, Any], call: str) -> list[epics.IssueRef]:
             call,
             f"its closing references are truncated: {total} listed, {len(nodes)} read",
         )
+    malformed = trust.TrustReadError(call, "a closing reference is malformed")
     refs: list[epics.IssueRef] = []
     for item in nodes:
-        repository = item.get("repository") if isinstance(item, dict) else None
+        if not isinstance(item, dict):
+            raise malformed
+        repository = item.get("repository")
         name = repository.get("nameWithOwner") if isinstance(repository, dict) else None
-        number = item.get("number") if isinstance(item, dict) else None
+        number = item.get("number")
         if not isinstance(name, str) or not isinstance(number, int):
-            raise trust.TrustReadError(call, "a closing reference is malformed")
+            raise malformed
         owner, repo = _split_repo(name)
         refs.append(epics.IssueRef(owner=owner, repo=repo, number=number))
     return refs
