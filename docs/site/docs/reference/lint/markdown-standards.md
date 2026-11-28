@@ -39,9 +39,10 @@ scope in the same single markdownlint pass, against the same bundled
 config, so `vrg-validate` and `vrg-validate --markdown FILE` agree on
 them. An entry that does not exist, or a file that is not `.md`, fails
 the check; it is never skipped silently. An absolute path, a path with a
-`..` component and an empty entry are rejected when `vergil.toml` is
-read. `[markdownlint].ignore` applies to the listed paths too. A markdown
-file outside the fixed scope and not listed is not linted.
+`..` component, an empty entry and a `.` entry (the repo root) are
+rejected when `vergil.toml` is read. `[markdownlint].ignore` applies to
+the listed paths too. A markdown file outside the fixed scope and not
+listed is not linted.
 
 The `paths` key takes effect once the release that carries it is
 published. An older release warns on stderr that the key is

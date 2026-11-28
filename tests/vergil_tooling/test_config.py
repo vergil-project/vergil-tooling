@@ -446,6 +446,15 @@ def test_read_config_markdownlint_paths_empty_entry_rejected(tmp_path: Path) -> 
         read_config(tmp_path)
 
 
+@pytest.mark.parametrize("entry", [".", "./"])
+def test_read_config_markdownlint_paths_repo_root_rejected(tmp_path: Path, entry: str) -> None:
+    toml = _VALID_TOML + f'[markdownlint]\npaths = ["{entry}"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    pattern = rf"paths entry '{re.escape(entry)}' must name a file or directory, not the repo root"
+    with pytest.raises(ConfigError, match=pattern):
+        read_config(tmp_path)
+
+
 # -- [ci] section --------------------------------------------------------------
 
 _CI_TOML = (

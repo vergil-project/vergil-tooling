@@ -1369,6 +1369,12 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         if not entry:
             msg = f"{source}: [markdownlint].paths entry '' must name a file or directory"
             raise ConfigError(msg)
+        if PurePosixPath(entry) == PurePosixPath("."):
+            msg = (
+                f"{source}: [markdownlint].paths entry '{entry}' must name a file or directory, "
+                "not the repo root"
+            )
+            raise ConfigError(msg)
         if PurePosixPath(entry).is_absolute() or PureWindowsPath(entry).is_absolute():
             msg = (
                 f"{source}: [markdownlint].paths entry '{entry}' must be repo-relative, "
