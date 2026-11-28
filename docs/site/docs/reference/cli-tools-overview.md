@@ -1998,16 +1998,24 @@ raise no `pre-existing` finding and give exactly one `fix_status` per ID the
 request listed. A summary or location that carries the vrg-ruling marker
 prefix is refused too, so it can go into a `vrg-ruling` item unchanged. On
 success it prints `{"step", "counts", "security", "fix_status"}` as JSON on
-stdout. A refusal names the rule, the finding by ID (or by position when
+stdout, plus `count_normalised` when a coverage count was normalised. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
 never repeats the refused value. It reads the two files and the capture
 record, and writes nothing.
 
 Rule 11 (coverage) checks that the reply's last non-empty line reads
-`Diff read: <read> of <total> lines` with `<read>` equal to `<total>`, the
-request's `diff_lines`, and in a check that the line before it reads
-`Fix diff read: <read> of <total> lines` the same way, against the request's
-`fix_diff_lines`. A short read, a wrong total or a missing line is refused.
+`Diff read: through line <n>`, where `<n>` is the last line number `Read`
+showed the reviewer, and in a check that the line before it reads
+`Fix diff read: through line <n>` the same way, for the fix diff. The count
+`N` is the request's `diff_lines` (`fix_diff_lines` for the fix diff). `<n>`
+must equal `N`, or equal `N+1` only when the patch file (`diff-<step>.patch`,
+or `fix-<step>.patch`, beside the result) ends in a newline, since `Read`
+shows one phantom line past such a patch. A short read, `N+1` on a patch
+without a final newline, `N+2` or more, or a missing or malformed line is
+refused. The old form, `Diff read: <read> of <total> lines`, is accepted for
+one release: `<read>` is judged as `<n>` and `<total>` is never consulted.
+A count accepted as `N+1` is listed in the summary's `count_normalised` key
+(`"Diff read"`, `"Fix diff read"` or `"both"`), which is absent otherwise.
 The request's line counts and any `diff_parts` or `fix_diff_parts` manifest
 are checked as well: a manifest must sum to its count, and is present exactly
 when the count is over 2000 lines.
