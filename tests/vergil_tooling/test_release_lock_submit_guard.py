@@ -52,9 +52,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeClock]:
     yield FakeClock()
 
 
-def _clear(
-    clock: FakeClock, *, wait: bool, reports: list[str] | None = None
-) -> bool:
+def _clear(clock: FakeClock, *, wait: bool, reports: list[str] | None = None) -> bool:
     """Run the guard on the installed fake lock, with the fake clock and a recorded report."""
     return submit_guard.clear(
         REPO,
@@ -252,9 +250,11 @@ def test_wait_deadline_is_the_finalize_deadline(
     monkeypatch: pytest.MonkeyPatch, clock: FakeClock
 ) -> None:
     FakeLock(states=[record()]).install(monkeypatch)
-    with patch.object(finalize_watch, "deadline_secs", return_value=20) as deadline:
-        with pytest.raises(submit_guard.LockWaitTimedOutError):
-            _clear(clock, wait=True)
+    with (
+        patch.object(finalize_watch, "deadline_secs", return_value=20) as deadline,
+        pytest.raises(submit_guard.LockWaitTimedOutError),
+    ):
+        _clear(clock, wait=True)
     deadline.assert_called_once_with()
     assert clock.now == 20
 

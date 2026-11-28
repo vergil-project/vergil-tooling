@@ -135,6 +135,21 @@ again), with two adjustments: when any PR failed to submit it returns at
 least 3 (and 3 in place of a 6), and a tool error from finalize (1, or any
 code finalize does not define) always wins. When no PR opened, a failed
 submit exits 3. A usage error, or a refusal before anything opened, exits 1.
+A release holding the repository's lock exits 7 (:data:`EXIT_LOCKED_BY_RELEASE`):
+nothing is pushed and no PR opened, a status of its own, distinct from 6. Under
+``--wait-for-release`` the wait's deadline exits 6 (:data:`EXIT_HELD_BY_RELEASE`),
+again with nothing pushed; a lock that cannot be read exits 1.
+
+**The release lock** (vergil-tooling#5427, human ruling F17). Before any mode runs,
+and not for ``--dry-run``, submit reads the repository's release lock
+(:func:`vergil_tooling.lib.release_lock.submit_guard.clear`). A lock held by a
+release refuses it, naming the lock's record and how to wait (exit 7). With
+``--wait-for-release`` it polls the lock within the deadline, reporting the
+release's version, stage and health, and, once the lock clears, a push-mode run
+rebases onto a moved ``origin/develop`` and pushes once (exit 6 at the deadline).
+A stale lock is reclaimed by the merge watch's rule, and a lock that cannot be
+read is held, or, if the read fails, exits 1. This reverses the epic's stance that
+CI keeps running on PRs throughout a release, for submit.
 
 **Removed flags** are refused by name before any side effect: ``--finalize``
 (submit always finalizes), ``--no-finalize`` (submit returns once each PR
@@ -572,10 +587,7 @@ def _rebase_onto_develop() -> bool:
         if git.is_ancestor(_ORIGIN_DEVELOP, "HEAD"):
             return False
     except subprocess.CalledProcessError as exc:
-        msg = (
-            "fetching origin and checking it against origin/develop failed: "
-            f"{error_text(exc)}"
-        )
+        msg = f"fetching origin and checking it against origin/develop failed: {error_text(exc)}"
         raise _RebaseError(msg) from exc
     try:
         git.run("rebase", _ORIGIN_DEVELOP)

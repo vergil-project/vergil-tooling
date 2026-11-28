@@ -80,7 +80,10 @@ def clear(
     clock: Callable[[], float] | None = None,
     actor: str | None = None,
 ) -> bool:
-    """Clear *repo*'s release lock for a submit: ``True`` when it waited for it, ``False`` when it was clear.
+    """Clear *repo*'s release lock for a submit.
+
+    Returns ``True`` when it waited for a held lock to clear, ``False`` when the
+    lock was clear.
 
     *wait* is the ``--wait-for-release`` flag. *report* receives the wait's
     progress lines. *sleep* and *clock* (``time.sleep`` and ``time.monotonic``
@@ -133,15 +136,16 @@ def _refusal(repo: str, reading: watch.HeldLock) -> str:
     ]
     state, verdict = reading.state, reading.staleness
     rec = state.record
-    if rec is None:
+    # A verdict exists exactly when the record is readable: an unreadable lock is not judged.
+    if rec is None or verdict is None:
         lines.append(f"release lock: held, unreadable: {state.error}")
     else:
         lines.append("release lock: held")
-        judged = verdict.tracking_issue if verdict is not None else ""
         age = heartbeat_age_secs(rec, now=datetime.now(UTC))
-        lines += status.record_lines(rec, judged_issue=judged, heartbeat_age_secs=age)
-        if verdict is not None:
-            lines.append(f"stale: {'yes' if verdict.stale else 'no'} ({verdict.reason})")
+        lines += status.record_lines(
+            rec, judged_issue=verdict.tracking_issue, heartbeat_age_secs=age
+        )
+        lines.append(f"stale: {'yes' if verdict.stale else 'no'} ({verdict.reason})")
     lines += [
         "Nothing was pushed and no PR was opened.",
         "To wait for the lock to clear instead, re-run with --wait-for-release: it waits "

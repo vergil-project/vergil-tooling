@@ -35,6 +35,8 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _prepare,
     _print_selection,
     _push_branch,
+    _rebase_onto_develop,
+    _RebaseError,
     _recheck_batch,
     _reject_if_cross_repo,
     _reject_if_non_task,
@@ -45,8 +47,6 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _require_ready,
     _require_relay_agrees,
     _require_reported_head,
-    _rebase_onto_develop,
-    _RebaseError,
     _resolve_ready_state,
     _run_gates,
     _run_submit_batch,
@@ -69,6 +69,7 @@ from vergil_tooling.lib import (
     agent_gates,
     epics,
     finalize_watch,
+    git,
     github,
     identity_mode,
     pr_path,
@@ -5830,6 +5831,21 @@ class TestRebaseOntoDevelop:
         assert _git(rebase_clone, "rev-parse", "HEAD") == head
         rebase_state = _git(rebase_clone, "rev-parse", "--git-path", "rebase-merge")
         assert not (rebase_clone / rebase_state).exists()
+
+    def test_a_conflict_whose_abort_also_fails_says_the_worktree_may_be_mid_rebase(
+        self, rebase_clone: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _move_develop(rebase_clone, {"base.txt": "base\n", "fix.txt": "moved\n"})
+        real_run = git.run
+
+        def run(*args: str) -> None:
+            if args == ("rebase", "--abort"):
+                raise subprocess.CalledProcessError(128, ["git", *args], stderr="no rebase")
+            real_run(*args)
+
+        monkeypatch.setattr(git, "run", run)
+        with pytest.raises(_RebaseError, match="may be mid-rebase"):
+            _rebase_onto_develop()
 
     def test_wait_rebases_onto_the_moved_develop_and_pushes_once(
         self,
