@@ -11,7 +11,7 @@ import pytest
 
 from tests.vergil_tooling import trust_stubs
 from vergil_tooling.bin import vrg_ruling
-from vergil_tooling.lib import github, identity_mode, trust
+from vergil_tooling.lib import git, github, identity_mode, trust
 from vergil_tooling.lib.change_fingerprint import change_fingerprint
 from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.rulings import RulingError
@@ -172,6 +172,15 @@ def target_org_spy(monkeypatch: pytest.MonkeyPatch) -> OrgSpy:
 def cli(issue: FakeIssue, target_org_spy: OrgSpy, capsys: pytest.CaptureFixture[str]) -> Cli:
     del issue, target_org_spy
     return Cli(capsys)
+
+
+@pytest.fixture(autouse=True)
+def main_clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The main clone every test sees: a scratch directory, never the real repo's ``build``."""
+    clone = tmp_path / "main-clone"
+    clone.mkdir()
+    monkeypatch.setattr(git, "main_clone_root", lambda: clone)
+    return clone
 
 
 def write_items(tmp_path: Path, items: list[dict[str, Any]], name: str = "items.json") -> str:
@@ -1228,3 +1237,187 @@ def test_typed_request_without_reason_posts_nothing(issue: FakeIssue) -> None:
     with pytest.raises(RulingError, match="needs --reason"):
         vrg_ruling._typed_request(ctx, "merge-review-exemption", None)
     assert issue.posted == []
+
+
+# --- respond marks the open request ------------------------------------------
+
+TASK_LEVELS = ("build", ".vergil-state", "issue-implement", "7")
+OPEN_REQUEST = {
+    "request": 41,
+    "step": "R1",
+    "last": True,
+    "kind": "merge-review",
+    "head": "abc123",
+}
+MARKED = {**OPEN_REQUEST, "reply": 42, "response": 100, "responded": True}
+
+
+def private_levels(clone: Path, *levels: str) -> Path:
+    """Make each of *levels* under *clone* a private (mode 700) directory; return the last."""
+    path = clone
+    for level in levels:
+        path /= level
+        path.mkdir(mode=0o700)
+    return path
+
+
+def merge_review_dir(clone: Path) -> Path:
+    return private_levels(clone, *TASK_LEVELS, "merge-review")
+
+
+def write_open_request(directory: Path, text: bytes) -> Path:
+    path = directory / "open-request.json"
+    path.write_bytes(text)
+    return path
+
+
+def open_request_bytes(data: dict[str, Any]) -> bytes:
+    return json.dumps(data).encode("utf-8")
+
+
+def tree(clone: Path) -> list[Path]:
+    return sorted(clone.rglob("*"))
+
+
+def test_respond_marks_the_open_request_answered(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path
+) -> None:
+    path = write_open_request(merge_review_dir(main_clone), open_request_bytes(OPEN_REQUEST))
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert cli.stdout == "100\n"
+    assert json.loads(path.read_text(encoding="utf-8")) == MARKED
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_respond_rerun_marks_the_landed_response(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path
+) -> None:
+    stale = {**OPEN_REQUEST, "reply": 40, "response": 99, "responded": True}
+    path = write_open_request(merge_review_dir(main_clone), open_request_bytes(stale))
+    issue.comments = [request_comment(41), reply_comment(42), response_comment(43, 41, 42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert cli.stdout == "43\n"
+    assert issue.posted == []
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        **OPEN_REQUEST,
+        "reply": 42,
+        "response": 43,
+        "responded": True,
+    }
+
+
+def test_respond_not_landed_leaves_the_open_request_untouched(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_open_request(merge_review_dir(main_clone), open_request_bytes(OPEN_REQUEST))
+    before = path.read_bytes()
+    issue.comments = [request_comment(41), reply_comment(42)]
+
+    def fail(endpoint: str, _body: object, **_k: object) -> dict[str, Any]:
+        raise github.GitHubAPIError(1, ("gh",), None, "HTTP 502")
+
+    monkeypatch.setattr(github, "post_json_once", fail)
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert "did not land" in cli.stderr
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [(), TASK_LEVELS[:3], TASK_LEVELS, (*TASK_LEVELS, "merge-review")],
+    ids=["no-build", "no-issue-dir", "no-merge-review-dir", "no-open-request-file"],
+)
+def test_respond_without_an_open_request_file_marks_nothing(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path, levels: tuple[str, ...]
+) -> None:
+    private_levels(main_clone, *levels)
+    before = tree(main_clone)
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert cli.stdout == "100\n"
+    assert tree(main_clone) == before
+
+
+def test_respond_leaves_another_requests_open_request_untouched(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path
+) -> None:
+    other = {**OPEN_REQUEST, "request": 99}
+    path = write_open_request(merge_review_dir(main_clone), open_request_bytes(other))
+    before = path.read_bytes()
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 0
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("text", "detail"),
+    [
+        (b"{not json", "is not valid JSON"),
+        (b"\xff", "cannot read"),
+        (b"[41]", "does not hold a JSON object"),
+        (b'{"step": "R1"}', 'no valid "request" comment ID'),
+        (b'{"request": "41"}', 'no valid "request" comment ID'),
+        (b'{"request": true}', 'no valid "request" comment ID'),
+    ],
+)
+def test_respond_malformed_open_request_fails_after_posting(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path, text: bytes, detail: str
+) -> None:
+    path = write_open_request(merge_review_dir(main_clone), text)
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert cli.stdout == "100\n"
+    assert len(issue.posted) == 1
+    assert "the response to request 41 on o/r#7 is posted, but" in cli.stderr
+    assert detail in cli.stderr
+    assert "posts nothing" in cli.stderr
+    assert path.read_bytes() == text
+
+
+def test_respond_merge_review_dir_not_private_exits_1(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path
+) -> None:
+    directory = merge_review_dir(main_clone)
+    directory.chmod(0o755)
+    path = write_open_request(directory, open_request_bytes(OPEN_REQUEST))
+    before = path.read_bytes()
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert cli.stdout == "100\n"
+    assert len(issue.posted) == 1
+    assert "has mode 755" in cli.stderr
+    assert "is posted, but" in cli.stderr
+    assert path.read_bytes() == before
+
+
+def test_respond_main_clone_lookup_failure_names_the_response(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail() -> Path:
+        raise subprocess.CalledProcessError(128, ("git",))
+
+    monkeypatch.setattr(git, "main_clone_root", fail)
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert len(issue.posted) == 1
+    assert "is posted, but" in cli.stderr
+
+
+def test_respond_failed_write_keeps_the_file_and_names_the_response(
+    cli: Cli, issue: FakeIssue, tmp_path: Path, main_clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = merge_review_dir(main_clone)
+    path = write_open_request(directory, open_request_bytes(OPEN_REQUEST))
+    before = path.read_bytes()
+
+    def fail(_src: object, _dst: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vrg_ruling.os, "replace", fail)
+    issue.comments = [request_comment(41), reply_comment(42)]
+    assert cli(*RESPOND, write_items(tmp_path, RESPONSE_ITEMS)) == 1
+    assert "cannot write" in cli.stderr
+    assert "disk full" in cli.stderr
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in directory.iterdir()) == ["open-request.json"]

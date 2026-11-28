@@ -248,7 +248,10 @@ on stderr. `draft` and `respond` run the same checks and fail the same way.
 
 Posts the response to a request and its reply from a response items file,
 and prints the response's comment ID on stdout. The response's marker
-records the request and reply comment IDs.
+records the request and reply comment IDs. Once the response is posted, it
+also marks the request answered in the task's
+`merge-review/open-request.json` (`responded`, `reply` and `response`), when
+the task has one for that request.
 
 It re-runs `read`'s checks first and refuses unless the reply is still the
 latest trusted comment. The one exception is a re-run that finds its own
