@@ -303,7 +303,7 @@ same-repo PR with a trusted author), runs the provenance check, and runs
 the merge-review gates on `origin/develop...HEAD`. The gates apply to an
 agent-involved PR, and a push by an agent identity makes the PR
 agent-involved, so a head an agent pushes is always gated. Only a head
-that passes is pushed. Auto-merge is never touched, so it stays on.
+that passes is pushed. Push mode never changes the PR's auto-merge: it is left as it was, which is off while a release holds the PR, and the state the push reports is the one read from GitHub after it.
 `vrg-finalize-pr` judges no head of an open PR: the path is where every
 new head is judged.
 
