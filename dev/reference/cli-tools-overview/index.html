@@ -21780,16 +21780,33 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tbody>
 </table>
 <h3 id="vrg-release-group">vrg-release-group<a class="headerlink" href="#vrg-release-group" title="Permanent link">&para;</a></h3>
-<p>List an epic's release groups: a batch of tasks of one development epic (or
-a proxy of one) that ship together (epic vergil-project/.github#1672). A
-group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
+<p>Read and change an epic's release groups: a batch of tasks of one development
+epic (or a proxy of one) that ship together (epic vergil-project/.github#1672).
+A group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
 epic's comments, read only from the <code>human</code> and <code>agents</code> roles; a conflict,
 an out-of-order revision, an edited record or a malformed one refuses that
-group, and an outsider's edit of an epic comment refuses the whole epic.
-<code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
-<code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
-and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only: there are no write
-commands yet.</p>
+group, and an outsider's edit of an epic comment refuses the whole epic.</p>
+<ul>
+<li><code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
+  <code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
+  and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only.</li>
+<li><code>set --epic &lt;ref&gt; --group &lt;id&gt; --member &lt;ref&gt; [--member &lt;ref&gt; ...] --reason &lt;text&gt; [--at-batch-stop]</code>
+  posts the group's membership as its next revision (a new group is rev 1).
+  A request the latest record already holds posts nothing and prints
+  <code>G1 rev 3: already recorded</code>, so a retry is safe and needs no reason.</li>
+<li><code>dissolve --epic &lt;ref&gt; --group &lt;id&gt; --reason &lt;text&gt; [--at-batch-stop]</code>
+  posts the group dissolved. A dissolved ID is never reused.</li>
+</ul>
+<p>Every posted record carries its <code>Reason:</code> line. Each incoming task must be
+open and hold nothing (no open PR, no handed-off batch, no batch marker),
+bar, with <code>--at-batch-stop</code>, the marker of the group's own batch. A group is
+frozen while an open member has an open PR or a handed-off batch, and it
+stops for the human once its batch has started, unless <code>--at-batch-stop</code> is
+given. A group on a closed epic is never changed. Run the change from the
+main clone of the members' repo, since batch markers are local. A refusal
+exits 1 and names each problem; a conflict, an edited record or a skipped
+edit names its comments, and the recovery is to read them in the web UI and
+delete the bad one.</p>
 <table>
 <thead>
 <tr>
