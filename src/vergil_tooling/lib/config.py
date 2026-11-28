@@ -1414,9 +1414,13 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     if not isinstance(images, bool):
         msg = f"{source}: [ci].images must be a boolean (got {images!r})"
         raise ConfigError(msg)
+    integration_tests = ci_raw.get("integration-tests", False)
+    if not isinstance(integration_tests, bool):
+        msg = f"{source}: [ci].integration-tests must be a boolean (got {integration_tests!r})"
+        raise ConfigError(msg)
     ci = CiConfig(
         versions=versions,
-        integration_tests=bool(ci_raw.get("integration-tests", False)),
+        integration_tests=integration_tests,
         primary_version=primary_version or "",
         images=images,
     )
