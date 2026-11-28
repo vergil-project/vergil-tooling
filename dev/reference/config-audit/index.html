@@ -19623,6 +19623,11 @@ order:</p>
    the AI agent modes, <code>user</code> and <code>audit</code>, by name, and exits 2. It also
    exits 2 when the identity cannot be resolved, for example when
    <code>VRG_AUTOMATION_APP</code> is set but the token belongs to another App.
+   A human run also reads the login its sync PR is opened as, for the
+   PR body (<code>gh api user</code>). If that login cannot be read, for example
+   because <code>gh</code> is not logged in, the run exits 2 and does not fall back
+   to the job wording. The automation identity reads no login, so this
+   exit-2 case applies only to a human run.
    A run that passes logs the mode it resolved, such as
    <code>identity: human</code> or <code>identity: automation (&lt;slug&gt;[bot])</code>.</li>
 <li><strong>The GitHub side.</strong> The same audit and convergence as <code>apply</code>. For
@@ -19655,7 +19660,9 @@ order:</p>
    unlock sweep arms it. A PR the path refuses to arm fails the run,
    naming the PR and the path's reason.
    An earlier run's sync PR is closed and its branch deleted first,
-   whether or not there is new drift. With no change, no PR is opened.</li>
+   whether or not there is new drift. With no change, no PR is opened.
+   The PR body names who opened it: the repo-config sync job, or, for a
+   hand run, the person's login.</li>
 <li><strong>Wait until merged.</strong> <code>update</code> then watches the PR until it has
    merged. The watch never merges the PR itself: GitHub's auto-merge
    merges it once its checks are green, and a PR whose auto-merge is
@@ -19698,7 +19705,7 @@ to date.</p>
 </tr>
 <tr>
 <td>2</td>
-<td>Something could not be audited or converged: an agent identity, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing</td>
+<td>Something could not be audited or converged: an agent identity, the human's login unreadable, a setting not checked, a failed GitHub write, clone or PR, or a sync PR that did not merge (the error names the PR and the reason). 2 outranks 1. A setting not checked or a failed write opens nothing</td>
 </tr>
 </tbody>
 </table>
