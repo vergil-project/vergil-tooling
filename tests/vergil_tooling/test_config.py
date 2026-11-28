@@ -396,6 +396,56 @@ def test_read_config_markdownlint_ignore_not_a_list(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
+def test_read_config_markdownlint_paths(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\npaths = ["skills", "docs/extra/guide.md"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint == MarkdownlintConfig(
+        ignore=[], paths=["skills", "docs/extra/guide.md"]
+    )
+
+
+def test_read_config_markdownlint_paths_default_empty(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint.paths == []
+
+
+def test_read_config_markdownlint_paths_not_a_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\npaths = "skills"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[markdownlint\]\.paths must be a list of strings"):
+        read_config(tmp_path)
+
+
+def test_read_config_markdownlint_paths_not_strings(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[markdownlint]\npaths = [1]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[markdownlint\]\.paths must be a list of strings"):
+        read_config(tmp_path)
+
+
+def test_read_config_markdownlint_paths_absolute_rejected(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\npaths = ["/etc/docs"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"paths entry '/etc/docs' must be repo-relative"):
+        read_config(tmp_path)
+
+
+def test_read_config_markdownlint_paths_dotdot_rejected(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\npaths = ["skills", "../other/notes"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"paths entry '\.\./other/notes' must not contain"):
+        read_config(tmp_path)
+
+
+def test_read_config_markdownlint_paths_empty_entry_rejected(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\npaths = [""]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"paths entry '' must name a file or directory"):
+        read_config(tmp_path)
+
+
 # -- [ci] section --------------------------------------------------------------
 
 _CI_TOML = (
