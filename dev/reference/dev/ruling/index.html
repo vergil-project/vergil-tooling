@@ -19556,7 +19556,10 @@ on stderr. <code>draft</code> and <code>respond</code> run the same checks and f
 <h2 id="respond">respond<a class="headerlink" href="#respond" title="Permanent link">&para;</a></h2>
 <p>Posts the response to a request and its reply from a response items file,
 and prints the response's comment ID on stdout. The response's marker
-records the request and reply comment IDs.</p>
+records the request and reply comment IDs. Once the response is posted, it
+also marks the request answered in the task's
+<code>merge-review/open-request.json</code> (<code>responded</code>, <code>reply</code> and <code>response</code>), when
+the task has one for that request.</p>
 <p>It re-runs <code>read</code>'s checks first and refuses unless the reply is still the
 latest trusted comment. The one exception is a re-run that finds its own
 well-formed response to that request and reply already landed after the
