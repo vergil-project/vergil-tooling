@@ -2279,7 +2279,11 @@ def test_batch_commits_refuses_an_unreadable_history(
     ("ancestor", "output", "message"),
     [
         (subprocess.CalledProcessError(128, ["git", "merge-base"]), "", "cannot read the PR head"),
-        (True, subprocess.CalledProcessError(128, ["git", "rev-list"]), "cannot read the fix commits"),
+        (
+            True,
+            subprocess.CalledProcessError(128, ["git", "rev-list"]),
+            "cannot read the fix commits",
+        ),
         (True, "not one record", "cannot parse the git rev-list line"),
     ],
     ids=["unknown-head", "unreadable-history", "unparsable-record"],
