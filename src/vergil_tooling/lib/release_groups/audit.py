@@ -10,7 +10,8 @@ members ship together. Blockers are the native blocked-by relationships and the
 org's home, and repairs nothing. It reports a ``split`` (members closed by different merged
 PRs), a ``closed unmerged`` member (no merged PR closes it), a ``rule`` break (an open member
 breaks a group rule, the dependency-path rule above all), an ``edited`` record or skipped
-edit, and an ``unreadable`` log or group. An open member whose merged PR also closed the others
+edit, and an ``unreadable`` log, group or epic (one whose kind or state cannot be
+read). An open member whose merged PR also closed the others
 is drift for the drift-close pass, never a finding. :func:`render_findings` prints them.
 
 A group that cannot be read refuses the whole read, never "no groups": the failure is a
@@ -43,6 +44,7 @@ _READ_ERRORS: tuple[type[Exception], ...] = (
     rules.GroupRuleReadError,
     closers.ClosersReadError,
     PendingReleaseError,
+    epics.AmbiguousEpicCategoryError,
 )
 # The epic kinds a release group may live under: a development epic, or a proxy of one.
 _GROUP_EPIC_KINDS = (epics.DEVELOPMENT_KIND, epics.PROXY_LABEL)
@@ -138,30 +140,45 @@ def group_findings(
         epic_records = epic_audit.list_home_epics(home_slug) if listing is None else listing
         trusted = load_trusted_authors() if authors is None else authors
         findings: list[GroupFinding] = []
-        for head in _open_heads(home_slug, epic_records):
+        heads, findings = _open_heads(home_slug, epic_records)
+        for head in heads:
             findings += _epic_findings(head, trusted)
     return sorted(findings, key=_order)
 
 
-def _open_heads(home: str, listing: Sequence[EpicRecord]) -> list[epics.IssueRef]:
+def _open_heads(
+    home: str, listing: Sequence[EpicRecord]
+) -> tuple[list[epics.IssueRef], list[GroupFinding]]:
     """The open development or proxy chain heads of *home*'s listing, each once, by number.
 
     A continuation resolves to its chain's head, so the head is reached once. The head's own
-    state is read fresh, since the listing may predate a close earlier in the same run.
+    state is read fresh, since the listing may predate a close earlier in the same run. A
+    listed epic whose kind or state cannot be read (chain drift, a head with no single kind,
+    a failed read) becomes an ``unreadable`` finding naming it, and the rest are still read;
+    a missing GitHub token propagates. The findings come back beside the heads.
     """
     owner, _, repo = home.partition("/")
     seen: set[epics.IssueRef] = set()
     heads: list[epics.IssueRef] = []
+    unreadable: list[GroupFinding] = []
     for epic in sorted(listing, key=lambda e: e["number"]):
         if epic["state"] != "OPEN":
             continue
-        head, kind = epics.epic_kind(epics.IssueRef(owner, repo, epic["number"]))
-        if head in seen:
-            continue
-        seen.add(head)
-        if kind in _GROUP_EPIC_KINDS and epics.issue_state(head) == "OPEN":
-            heads.append(head)
-    return heads
+        listed = epics.IssueRef(owner, repo, epic["number"])
+        try:
+            head, kind = epics.epic_kind(listed)
+            if head in seen:
+                continue
+            seen.add(head)
+            if kind in _GROUP_EPIC_KINDS and epics.issue_state(head) == "OPEN":
+                heads.append(head)
+        except github.MissingGitHubTokenError:
+            raise
+        except _READ_ERRORS as exc:
+            cause = error_text(exc)
+            detail = f"cannot read the kind or state of {listed.slug}: {cause}"
+            unreadable.append(GroupFinding(listed, "", "unreadable", detail))
+    return heads, unreadable
 
 
 def _epic_findings(head: epics.IssueRef, authors: TrustedAuthors) -> list[GroupFinding]:

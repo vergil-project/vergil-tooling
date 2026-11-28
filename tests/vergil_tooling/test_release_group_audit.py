@@ -75,10 +75,20 @@ class _World:
     operational: dict[IssueRef, str] = field(default_factory=dict)
     closers: dict[IssueRef, tuple[IssueRef, ...]] = field(default_factory=dict)
     closer_errors: dict[IssueRef, Exception] = field(default_factory=dict)
+    kind_errors: dict[IssueRef, Exception] = field(default_factory=dict)
+    state_errors: dict[IssueRef, Exception] = field(default_factory=dict)
 
     def kind_of(self, epic: IssueRef) -> tuple[IssueRef, str]:
         """An epic's chain head and kind: a development epic of itself, unless stubbed."""
+        if epic in self.kind_errors:
+            raise self.kind_errors[epic]
         return self.kinds.get(epic, (epic, epics.DEVELOPMENT_KIND))
+
+    def state_of(self, ref: IssueRef) -> str:
+        """An issue's state: open, unless stubbed; a stubbed failure is raised."""
+        if ref in self.state_errors:
+            raise self.state_errors[ref]
+        return self.states.get(ref, "OPEN")
 
     def placed_of(self, task: IssueRef) -> TaskEpic:
         """A task's epic: the test epic, unless stubbed."""
@@ -132,9 +142,7 @@ def world() -> Iterator[_World]:
             side_effect=lambda task: list(w.body.get(task, [])),
         ),
         # An issue nobody stubbed is open: the epic and its members are open by default.
-        patch(
-            "vergil_tooling.lib.epics.issue_state", side_effect=lambda r: w.states.get(r, "OPEN")
-        ),
+        patch("vergil_tooling.lib.epics.issue_state", side_effect=w.state_of),
         patch("vergil_tooling.lib.epics.epic_kind", side_effect=w.kind_of),
         patch("vergil_tooling.lib.epics.task_epic", side_effect=w.placed_of),
         patch("vergil_tooling.lib.epics.non_task_kind", return_value=None),
@@ -529,15 +537,48 @@ def test_group_read_failure_is_that_groups_unreadable(world: _World) -> None:
     assert (split.group, split.kind) == ("G2", "split")
 
 
-@pytest.mark.parametrize("where", ["log", "closers"])
+def test_kind_read_failure_names_its_epic_and_the_rest_are_checked(world: _World) -> None:
+    # 41's chain has drifted, so its kind cannot be read. 40 is still checked and splits.
+    drifted = IssueRef("org", "repo", 41)
+    world.kind_errors[drifted] = epics.AmbiguousEpicCategoryError("two kind markers")
+    world.add_group("G1", 1, 1, 2)
+    world.states.update({ref(1): "CLOSED", ref(2): "CLOSED"})
+    world.closers.update({ref(1): (_pr(10),), ref(2): (_pr(11),)})
+    split, unreadable = _scan(_listed(40), _listed(41))
+    assert split.kind == "split"
+    assert (unreadable.epic, unreadable.group, unreadable.kind) == (drifted, "", "unreadable")
+    assert "cannot read the kind or state of org/repo#41" in unreadable.detail
+    assert "two kind markers" in unreadable.detail
+
+
+def test_state_read_failure_names_its_epic_and_the_rest_are_checked(world: _World) -> None:
+    # 41's state cannot be read, so it is not checked as a live group head. 40 still splits.
+    proxy = IssueRef("org", "repo", 41)
+    world.kinds[proxy] = (proxy, epics.PROXY_LABEL)
+    world.state_errors[proxy] = RuntimeError("the state read of org/repo#41 returned nothing")
+    world.add_group("G1", 1, 1, 2)
+    world.states.update({ref(1): "CLOSED", ref(2): "CLOSED"})
+    world.closers.update({ref(1): (_pr(10),), ref(2): (_pr(11),)})
+    split, unreadable = _scan(_listed(40), _listed(41))
+    assert split.kind == "split"
+    assert (unreadable.epic, unreadable.group, unreadable.kind) == (proxy, "", "unreadable")
+    assert "cannot read the kind or state of org/repo#41" in unreadable.detail
+    assert "returned nothing" in unreadable.detail
+
+
+@pytest.mark.parametrize("where", ["log", "closers", "kind", "state"])
 def test_missing_token_propagates(world: _World, where: str) -> None:
     # A missing token is the CLI's configuration fix, never a finding.
     token = github.MissingGitHubTokenError(1, "gh", "", "no token")
     world.add_group("G1", 1, 1)
     if where == "log":
         world.fail[EPIC] = token
-    else:
+    elif where == "closers":
         world.closer_errors[ref(1)] = token
+    elif where == "kind":
+        world.kind_errors[EPIC] = token
+    else:
+        world.state_errors[EPIC] = token
     with pytest.raises(github.MissingGitHubTokenError):
         _scan()
 
