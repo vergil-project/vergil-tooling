@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.managed_worktree import remove_worktree
+from vergil_tooling.lib.release import reload_reminder
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.tracking import close_tracking_issue
 
@@ -167,4 +168,9 @@ def _build_summary(ctx: ReleaseContext) -> str:
         lines.extend(f"- {ref}" for ref in posted)
     else:
         lines.append("- None: the release's PRs close no issues.")
+    if reload_reminder.reload_plugins_enabled(ctx.repo_root):
+        lines.append("")
+        lines.append("### Reload Claude Code")
+        lines.append("")
+        lines.append(reload_reminder.REMINDER)
     return "\n".join(lines)
