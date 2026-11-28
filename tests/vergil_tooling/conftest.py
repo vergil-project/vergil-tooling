@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +40,7 @@ from vergil_tooling.lib import (
     host_pins,
     identity_mode,
     local_settings,
+    progress,
     tooling_release,
     trusted_authors,
 )
@@ -91,45 +91,47 @@ def _hermetic_identity(
 
 _REPO_VERGIL = Path(__file__).resolve().parents[2] / ".vergil"
 
-# The validation run that drives the suite writes its own log and record here
-# while the tests run, so they are not a test's doing.
-_RUNNER_FILE_PREFIX = "vrg-validate"
 
-
-def _vergil_snapshot() -> dict[str, tuple[int, int]]:
-    """Map each entry of the repository's ``.vergil/`` (bar the runner's own) to its stat."""
-    try:
-        entries = list(os.scandir(_REPO_VERGIL))
-    except FileNotFoundError:
-        return {}
-    snapshot: dict[str, tuple[int, int]] = {}
-    for entry in entries:
-        if entry.name.startswith(_RUNNER_FILE_PREFIX):
-            continue
-        try:
-            stat = entry.stat()
-        except FileNotFoundError:  # removed between the listing and the stat
-            continue
-        snapshot[entry.name] = (stat.st_mtime_ns, stat.st_size)
-    return snapshot
+def _resolves_to_repo_vergil(repo_root: Path) -> bool:
+    """Whether a run log rooted at *repo_root* would land in the repository's own ``.vergil/``."""
+    return (repo_root / ".vergil").resolve() == _REPO_VERGIL.resolve()
 
 
 @pytest.fixture(autouse=True)
-def _repo_vergil_untouched() -> Iterator[None]:
-    """Fail a test that creates, changes or removes anything under the repo's ``.vergil/``.
+def _run_log_write_guard(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[list[str]]:
+    """Fail a test whose run log would be written under the repo's own ``.vergil/``.
 
     The directory holds the genuine run logs (release, finalize, submit) that
-    release checks read as evidence, so a test must write its run logs under
-    ``tmp_path``, never under the clone it runs in.
+    release checks read as evidence, so a test must root its run logs at
+    ``tmp_path``, never at the clone it runs in. The guard wraps
+    ``progress.RunLog.__init__``, the write site, and refuses before anything is
+    written. It does not snapshot the directory: other processes (vrg-finalize-pr,
+    vrg-validate) write there legitimately while the suite runs.
+
+    A refusal raises ``AssertionError`` and is also recorded, so a caller that
+    swallows the error still fails the test at teardown.
     """
-    before = _vergil_snapshot()
-    yield
-    after = _vergil_snapshot()
-    changed = sorted(n for n in before.keys() | after.keys() if before.get(n) != after.get(n))
-    assert not changed, (
-        f"the test touched the repository's .vergil/ ({_REPO_VERGIL}): {changed}; "
-        "point its run log at tmp_path"
-    )
+    offenders: list[str] = []
+    original = progress.RunLog.__init__
+
+    def guarded(
+        self: progress.RunLog, command: str, repo_root: Path, *, header: str | None = None
+    ) -> None:
+        if _resolves_to_repo_vergil(Path(repo_root)):
+            path = (Path(repo_root) / ".vergil").resolve()
+            message = (
+                f"{request.node.nodeid}: the test wrote a run log for {command!r} under the "
+                f"repository's .vergil/ ({path}); point its run log at tmp_path"
+            )
+            offenders.append(message)
+            raise AssertionError(message)
+        original(self, command, repo_root, header=header)
+
+    monkeypatch.setattr(progress.RunLog, "__init__", guarded)
+    yield offenders
+    assert not offenders, "; ".join(offenders)
 
 
 # Cleared for every test: the CI job's GitHub Actions environment, and the
