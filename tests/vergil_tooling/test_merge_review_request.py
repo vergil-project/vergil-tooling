@@ -1770,22 +1770,32 @@ BATCH_BODY = "Summary.\n\nCloses #42\nCloses #43\n"
 PR_NUMBER = 7
 
 
+def _head(repo: Path) -> str:
+    """The commit ``HEAD`` names in *repo*: the head a fake PR reports when it is at ``HEAD``."""
+    return _git(repo, "rev-parse", "HEAD")
+
+
 def _pr_node(
     number: int = PR_NUMBER,
     *,
     state: str = "OPEN",
     head: str = "feature",
+    head_oid: str = "f" * 40,
     author: Any = AGENT_BOT,
     fork: str | None = None,
     title: str = "A fix",
 ) -> dict[str, Any]:
-    """A branch lookup's ``PullRequest`` node; a *fork* owner makes it a cross-repo PR."""
+    """A branch lookup's ``PullRequest`` node; a *fork* owner makes it a cross-repo PR.
+
+    *head_oid* is the PR's ``headRefOid``. The default names no commit of the
+    test repository, so a request that reads it must pass the PR's real head.
+    """
     return {
         "number": number,
         "url": f"https://github.com/acme/widget/pull/{number}",
         "title": title,
         "headRefName": head,
-        "headRefOid": "f" * 40,
+        "headRefOid": head_oid,
         "baseRefName": "develop",
         "state": state,
         "createdAt": _CREATED,
@@ -1805,10 +1815,11 @@ def _open_pr(
     nodes: list[dict[str, Any]] | None = None,
     body_author: Any = AGENT_BOT,
     editor: Any = None,
+    head_oid: str = "f" * 40,
 ) -> dict[str, Any]:
     """The PR fake's answer: PR #7's branch lookup nodes, and its item (body by the agent)."""
     return {
-        "nodes": [_pr_node(state=state, head=head)] if nodes is None else nodes,
+        "nodes": [_pr_node(state=state, head=head, head_oid=head_oid)] if nodes is None else nodes,
         "item": _body_item(body, _page([]), author=body_author, editor=editor, kind="PullRequest"),
     }
 
@@ -1832,7 +1843,7 @@ def test_batch_pr_request_carries_every_issues_scope(
     other_comments: dict[int, list[Any]],
 ) -> None:
     first, second = _batch_branch(repo)
-    pr_pages["pr"] = _open_pr()
+    pr_pages["pr"] = _open_pr(head_oid=second)
     task_pages["bodies"] = {43: "Do the other thing.\n"}
     other_comments[43] = [
         _page(
@@ -1862,6 +1873,9 @@ def test_batch_pr_request_carries_every_issues_scope(
         {"sha": second, "subject": "the other issue's change (#43)", "issue": "acme/widget#43"},
     ]
     assert request["batch_commits_path"] == str(directory / "commits-review.patch")
+    # The PR is at the reviewed HEAD, so the fix is empty; its head is the one GitHub reports.
+    assert request["pr_head_sha"] == second
+    assert request["fix_commits"] == []
     # The batch's other issue is in the request's scope, not an open task of the epic.
     assert request["epic_open_tasks"] == []
     patch = (directory / "commits-review.patch").read_text()
@@ -1874,29 +1888,88 @@ def test_batch_pr_request_carries_every_issues_scope(
 def test_batch_pr_request_maps_a_fixup_to_its_issue(
     repo: Path, capsys: Cap, pr_pages: dict[str, Any]
 ) -> None:
-    _batch_branch(repo)
+    _, second = _batch_branch(repo)
     _write(repo, "src/x.py", "x = 3\n")
     fixup = _commit(repo, "fixup! the task's change (#42)")
     _record(repo)
-    pr_pages["pr"] = _open_pr()
+    # The PR was submitted at the batch's second commit; the fixup is the fix.
+    pr_pages["pr"] = _open_pr(head_oid=second)
     request = _built(_argv(repo, "review", "--pr", "https://github.com/Acme/Widget/pull/7"), capsys)
     assert request["batch_commits"][-1] == {
         "sha": fixup,
         "subject": "fixup! the task's change (#42)",
         "issue": ISSUE,
     }
+    assert request["pr_head_sha"] == second
+    assert request["fix_commits"] == [{"sha": fixup, "subject": "fixup! the task's change (#42)"}]
 
 
 @pytest.mark.parametrize("body", ["Ref #42\n", "Closes #42\n", "Closes acme/widget#42\n"])
 def test_single_issue_pr_request_is_unchanged(
     repo: Path, capsys: Cap, pr_pages: dict[str, Any], body: str
 ) -> None:
-    pr_pages["pr"] = _open_pr(body=body)
+    pr_pages["pr"] = _open_pr(body=body, head_oid=_head(repo))
     plain = _built(_argv(repo), capsys)
     with_pr = _built(_argv(repo, "review", "--pr", "7"), capsys)
-    assert set(with_pr) == set(plain)
+    # Only the fix fields are new; a request without --pr carries neither.
+    assert set(plain).isdisjoint({"pr_head_sha", "fix_commits"})
+    assert set(with_pr) == set(plain) | {"pr_head_sha", "fix_commits"}
     assert with_pr["epic_open_tasks"] == plain["epic_open_tasks"]
     assert not (_merge_review_dir(repo) / "commits-review.patch").exists()
+
+
+def test_single_issue_pr_at_head_has_no_fix_commits(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=_head(repo))
+    request = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    assert request["pr_head_sha"] == _head(repo)
+    assert request["fix_commits"] == []
+    assert "batch_issues" not in request
+
+
+def test_single_issue_pr_lists_its_fix_commits_oldest_first(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    pr_head = _head(repo)
+    _fix(repo, "x = 3\n")
+    first = _head(repo)
+    _fix(repo, "x = 4\n")
+    second = _head(repo)
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=pr_head)
+    request = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    assert request["pr_head_sha"] == pr_head
+    assert request["fix_commits"] == [
+        {"sha": first, "subject": "fix"},
+        {"sha": second, "subject": "fix"},
+    ]
+    assert first != second
+
+
+def test_pr_head_not_an_ancestor_gives_null_fix_commits(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    # The PR's head is a commit the branch no longer holds: the branch was rebased since submit.
+    _git(repo, "checkout", "-q", "-b", "rewritten", "develop")
+    _write(repo, "src/y.py", "y = 1\n")
+    rewritten = _commit(repo, "the change, rewritten")
+    _git(repo, "checkout", "-q", "feature")
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=rewritten)
+    request = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    assert request["pr_head_sha"] == rewritten
+    assert request["fix_commits"] is None
+
+
+def test_pr_head_this_clone_lacks_refuses(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    missing = "e" * 40
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=missing)
+    code, out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
+    assert code == 1
+    assert out == ""
+    assert f"cannot read the PR head {missing[:12]}" in err
+    assert not (_merge_review_dir(repo) / "request-review.json").exists()
 
 
 _NOT_MATCHED = (
@@ -1994,7 +2067,7 @@ def test_open_pr_matches_the_same_repo_pr_beside_a_fork_on_the_branch(
 ) -> None:
     _batch_branch(repo)
     fork = _pr_node(8, fork="drive-by", author=OUTSIDER, title=SPAM_TEXT)
-    pr_pages["pr"] = _open_pr(nodes=[fork, _pr_node()])
+    pr_pages["pr"] = _open_pr(nodes=[fork, _pr_node(head_oid=_head(repo))])
     code, out, err = _run(_argv(repo, "review", "--pr", "7"), capsys)
     assert code == 0, err
     request = json.loads(Path(out.strip()).read_text())
@@ -2202,10 +2275,47 @@ def test_batch_commits_refuses_an_unreadable_history(
     assert message in str(exc.value)
 
 
+@pytest.mark.parametrize(
+    ("ancestor", "output", "message"),
+    [
+        (subprocess.CalledProcessError(128, ["git", "merge-base"]), "", "cannot read the PR head"),
+        (True, subprocess.CalledProcessError(128, ["git", "rev-list"]), "cannot read the fix commits"),
+        (True, "not one record", "cannot parse the git rev-list line"),
+    ],
+    ids=["unknown-head", "unreadable-history", "unparsable-record"],
+)
+def test_fix_commits_refuses_a_git_failure(
+    monkeypatch: pytest.MonkeyPatch, ancestor: object, output: object, message: str
+) -> None:
+    def is_ancestor(*args: str) -> bool:
+        if isinstance(ancestor, Exception):
+            raise ancestor
+        return bool(ancestor)
+
+    def read_output(*args: str) -> str:
+        if isinstance(output, Exception):
+            raise output
+        return str(output)
+
+    monkeypatch.setattr("vergil_tooling.lib.git.is_ancestor", is_ancestor)
+    monkeypatch.setattr("vergil_tooling.lib.git.read_output", read_output)
+    with pytest.raises(req.RequestError) as exc:
+        open_pr.fix_commits("a" * 40, "b" * 40)
+    assert message in str(exc.value)
+    assert exc.value.exit_code == 1
+
+
+def test_fix_commits_is_null_when_the_head_is_not_an_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("vergil_tooling.lib.git.is_ancestor", lambda *_args: False)
+    assert open_pr.fix_commits("a" * 40, "b" * 40) is None
+
+
 def _batch_reviewed(repo: Path, capsys: Cap, pr_pages: dict[str, Any]) -> tuple[str, str]:
     """A batch PR's review with one defect, and its fix: ``(review head, result path)``."""
     _batch_branch(repo)
-    pr_pages["pr"] = _open_pr()
+    pr_pages["pr"] = _open_pr(head_oid=_head(repo))
     review = _built(_argv(repo, "review", "--pr", "7"), capsys)
     result = _store_result(repo, "review", [_finding("R1")])
     _write(repo, "src/x.py", "x = 3\n")
@@ -2223,6 +2333,24 @@ def test_batch_pr_check_carries_the_batch(
     assert [entry["issue"] for entry in request["batch_issues"]] == ["acme/widget#43"]
     assert [c["issue"] for c in request["batch_commits"]] == [ISSUE, "acme/widget#43", ISSUE]
     assert request["batch_commits_path"].endswith("commits-check.patch")
+    # The check's fix commits are read from the PR's head as it is now: the fixup is the fix.
+    assert request["pr_head_sha"] == review_head
+    assert [c["subject"] for c in request["fix_commits"]] == ["fixup! the task's change (#42)"]
+
+
+def test_check_of_a_single_issue_pr_lists_the_fix_commits_so_far(
+    repo: Path, capsys: Cap, pr_pages: dict[str, Any]
+) -> None:
+    # The PR stays at the reviewed head (the fix is not pushed to it), so the fix is what follows.
+    pr_pages["pr"] = _open_pr(body="Ref #42\n", head_oid=_head(repo))
+    review = _built(_argv(repo, "review", "--pr", "7"), capsys)
+    result = _store_result(repo, "review", [_finding("R1")])
+    _fix(repo)
+    fixed = _head(repo)
+    argv = [*_check_argv(repo, review["head_sha"], [result], fix=("R1",)), "--pr", "7"]
+    request = _built(argv, capsys)
+    assert request["pr_head_sha"] == review["head_sha"]
+    assert request["fix_commits"] == [{"sha": fixed, "subject": "fix"}]
 
 
 def test_batch_pr_check_refuses_a_dropped_batch(

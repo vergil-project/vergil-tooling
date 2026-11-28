@@ -55,8 +55,19 @@ its subject's trailing `` (#N)`` names) and ``batch_commits_path`` (each
 commit's own patch), and leaves the batch's issues out of
 ``epic_open_tasks``. It refuses a merge commit, a commit that names no issue
 of the PR, and an issue with no commit. A single-issue PR must link the
-``--issue`` and adds nothing to the request. A check refuses batch issues
-other than those its previous step's request carried.
+``--issue``; apart from the fix fields below, its request is the one built
+without ``--pr``. A check refuses batch issues other than those its previous
+step's request carried.
+
+Every ``--pr`` request, single-issue or batch, also says which commits are
+the fix to the open PR: ``pr_head_sha`` is the PR's head commit as GitHub
+reports it, and ``fix_commits`` the commits of ``pr_head_sha..HEAD``, oldest
+first, each ``{"sha", "subject"}`` (empty when ``HEAD`` is the PR's head).
+When ``pr_head_sha`` is no longer an ancestor of ``HEAD`` (the branch was
+rebased since submit), ``fix_commits`` is JSON ``null``, and the reviewer
+judges no commit as a fix. A request without ``--pr`` carries neither field.
+The reviewer judges each fix commit against the fix it was meant to make, as
+the protocol's "A fix to an open PR" sets out.
 
 A check (``check`` or ``check-<k>``) also takes ``--fix-base``, the ``HEAD``
 the previous step judged, refused unless it is the ``head_sha`` of that
@@ -218,11 +229,12 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
         base_sha = span.parent
         change_class = classify_between(span.parent, span.last)
         reviewed_end = span.last
-    batch = (
-        []
+    pr = (
+        None
         if args.pr is None
-        else open_pr.batch_issues(open_pr.parse_pr(args.pr, issue), issue, git.current_branch())
+        else open_pr.read_pr(open_pr.parse_pr(args.pr, issue), issue, git.current_branch())
     )
+    batch = [] if pr is None else pr.batch
     task = req.fetch_task_context(issue, batch)
     design_sources = req.design_source_paths(args.design_source)
     issue_comments = req.fetch_human_comments(issue)
@@ -230,6 +242,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
 
     others = [ref for ref in batch if ref.number != issue.number]
     batch_fields = _batch_fields(others, batch, base_sha, head)
+    fix_fields = None if pr is None else _fix_fields(pr.head_sha, head)
 
     private_dir = ensure_private_dir(git.main_worktree_root(), issue.number)
     check: req.CheckFields | None = None
@@ -273,6 +286,7 @@ def _build(args: argparse.Namespace, issue: IssueRef) -> Path:
             validate_stages=list(record.passed),
             epic_open_tasks=task.epic_open_tasks,
             batch=batch_request,
+            fix=fix_fields,
         ),
         check,
     )
@@ -331,6 +345,11 @@ def _batch_fields(
             }
         )
     return issues, commits
+
+
+def _fix_fields(pr_head_sha: str, head: str) -> req.FixFields:
+    """A ``--pr`` request's fix fields: the PR's head and the commits after it, or ``None``."""
+    return req.FixFields(pr_head_sha=pr_head_sha, commits=open_pr.fix_commits(pr_head_sha, head))
 
 
 def _fix_base(fix_base: str, head: str) -> str:
