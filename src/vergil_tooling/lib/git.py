@@ -292,14 +292,26 @@ def current_branch() -> str:
 
 
 def has_staged_changes() -> bool:
-    """Return True if there are staged changes."""
+    """Return True if there are staged changes.
+
+    ``git diff --cached --quiet`` exits 0 for no staged changes and 1 for
+    staged changes; any other exit (e.g. 128 for an unreadable tree object) is
+    an error and raises ``CalledProcessError`` rather than reading as a silent
+    "staged changes" (the same contract as ``is_ancestor``).
+    """
     args = ("diff", "--cached", "--quiet")
     result = subprocess.run(  # noqa: S603
         ("git", *args),  # noqa: S607
         check=False,
+        text=True,
+        capture_output=True,
         env=_git_env(args),
     )
-    return result.returncode != 0
+    if result.returncode in (0, 1):
+        return result.returncode == 1
+    raise subprocess.CalledProcessError(
+        result.returncode, ("git", *args), output=result.stdout, stderr=result.stderr
+    )
 
 
 def ref_exists(ref: str) -> bool:

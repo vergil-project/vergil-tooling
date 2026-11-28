@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -102,12 +103,23 @@ def main(argv: list[str] | None = None) -> int:
             "succeed.",
         )
 
-    if not args.allow_empty and not git.has_staged_changes():
-        print(
-            "ERROR: no staged changes. Stage files with 'git add' before committing.",
-            file=sys.stderr,
-        )
-        return 1
+    if not args.allow_empty:
+        try:
+            staged = git.has_staged_changes()
+        except subprocess.CalledProcessError as exc:
+            print(
+                "ERROR: could not check for staged changes "
+                f"(git diff --cached --quiet exited {exc.returncode}): "
+                f"{(exc.stderr or '').strip()}",
+                file=sys.stderr,
+            )
+            return 1
+        if not staged:
+            print(
+                "ERROR: no staged changes. Stage files with 'git add' before committing.",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.fixup is not None:
         fixup_args = ["commit", f"--fixup={args.fixup}"]

@@ -117,6 +117,31 @@ def test_main_no_staged_changes(tmp_path: Path) -> None:
     assert result == 1
 
 
+def test_main_refuses_commit_when_staged_check_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error = subprocess.CalledProcessError(
+        128,
+        ("git", "diff", "--cached", "--quiet"),
+        stderr="fatal: unable to read tree abc123\n",
+    )
+    with (
+        _commit_environment(tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_commit.git.has_staged_changes",
+            side_effect=error,
+        ),
+        patch("vergil_tooling.bin.vrg_commit.git.run") as mock_run,
+    ):
+        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
+    assert result == 1
+    mock_run.assert_not_called()
+    err = capsys.readouterr().err
+    assert "could not check for staged changes" in err
+    assert "git diff --cached --quiet exited 128" in err
+    assert "fatal: unable to read tree abc123" in err
+
+
 def test_main_allow_empty_skips_staged_check(tmp_path: Path) -> None:
     git_args: list[tuple[str, ...]] = []
 

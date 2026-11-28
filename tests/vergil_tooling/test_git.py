@@ -202,6 +202,19 @@ def test_has_staged_changes_false() -> None:
         assert git.has_staged_changes() is False
 
 
+def test_has_staged_changes_raises_on_error() -> None:
+    """An unreadable tree (exit 128) is an error, never a silent 'staged changes'."""
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: unable to read tree abc123"
+        )
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            git.has_staged_changes()
+    assert exc_info.value.returncode == 128
+    assert exc_info.value.cmd == ("git", "diff", "--cached", "--quiet")
+    assert "unable to read tree" in exc_info.value.stderr
+
+
 def test_ref_exists_true() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(returncode=0)
