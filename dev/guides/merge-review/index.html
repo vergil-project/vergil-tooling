@@ -19361,8 +19361,14 @@ schemas and the result check. In short:</p>
 <li><strong>The reviewer reads and reports.</strong> Its reply opens with one
   <code>merge-review-result</code> fenced block holding a JSON object, followed by prose
   for the human. The block copies the request's <code>request_id</code>, a fresh random
-  value per request, which ties the result to the request it answers.</li>
-<li><strong>The caller acts only on a checked result.</strong> A result that fails the
+  value per request, which ties the result to the request it answers. It
+  closes with a <code>Diff read: &lt;read&gt; of &lt;total&gt; lines</code> line (and, in a check, a
+  <code>Fix diff read:</code> line before it) that reports how much of the diff it read.
+  A diff over 2000 lines comes in numbered parts, <code>diff_parts</code>, that it reads
+  in full.</li>
+<li><strong>The caller acts only on a checked result.</strong> The result check refuses a
+  reply whose coverage line reads less than the whole diff (rule 11), so a
+  partial read cannot pass. A result that fails the
   check is not acted on in any part: the step is dispatched once more, and a
   second failure stops the run for the human. The prose is never used to
   route anything.</li>

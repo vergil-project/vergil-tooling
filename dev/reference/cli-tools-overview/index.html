@@ -23946,6 +23946,14 @@ stdout. A refusal names the rule, the finding by ID (or by position when
 the ID is bad) and, for a bad character, its code point and offset; it
 never repeats the refused value. It reads the two files and the capture
 record, and writes nothing.</p>
+<p>Rule 11 (coverage) checks that the reply's last non-empty line reads
+<code>Diff read: &lt;read&gt; of &lt;total&gt; lines</code> with <code>&lt;read&gt;</code> equal to <code>&lt;total&gt;</code>, the
+request's <code>diff_lines</code>, and in a check that the line before it reads
+<code>Fix diff read: &lt;read&gt; of &lt;total&gt; lines</code> the same way, against the request's
+<code>fix_diff_lines</code>. A short read, a wrong total or a missing line is refused.
+The request's line counts and any <code>diff_parts</code> or <code>fix_diff_parts</code> manifest
+are checked as well: a manifest must sum to its count, and is present exactly
+when the count is over 2000 lines.</p>
 <table>
 <thead>
 <tr>
@@ -24100,7 +24108,12 @@ into the task's private directory,
 and prints the request's path. It writes <code>request-&lt;step&gt;.json</code>,
 <code>diff-&lt;step&gt;.patch</code> (<code>git diff &lt;base_sha&gt; &lt;head_sha&gt;</code>, where <code>base_sha</code> is
 the merge base of <code>--base</code> and <code>HEAD</code>) and, for a check,
-<code>fix-&lt;step&gt;.patch</code> (<code>git diff &lt;fix_base_sha&gt; &lt;head_sha&gt;</code>). Before it reads
+<code>fix-&lt;step&gt;.patch</code> (<code>git diff &lt;fix_base_sha&gt; &lt;head_sha&gt;</code>). A diff over 2000
+lines is also written in numbered parts, <code>diff-&lt;step&gt;.part-&lt;NN&gt;.patch</code> (and
+<code>fix-&lt;step&gt;.part-&lt;NN&gt;.patch</code> for a fix), listed in the request as
+<code>diff_parts</code> (<code>fix_diff_parts</code>), with each part's line count; the request
+carries <code>diff_lines</code> (and <code>fix_diff_lines</code>) for the reviewer's coverage line.
+Before it reads
 or writes anything, with or without <code>--ensure-dir</code>, it refuses unless the
 current clone's <code>origin</code> is the <code>--issue</code> repository (every push URL names
 it on github.com), naming both repositories. It refuses,
