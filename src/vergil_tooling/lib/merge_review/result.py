@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib.merge_review.schema import (
     CHANGE_CLASSES,
@@ -257,9 +257,7 @@ def _check_coverage(
     lines = [stripped for stripped in (line.rstrip() for line in text.split("\n")) if stripped]
     diff_match = DIFF_READ_RE.fullmatch(lines[-1]) if lines else None
     if diff_match is None:
-        msg = (
-            f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: through line <n>'"
-        )
+        msg = f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: through line <n>'"
         raise ResultError(msg)
     normalised: list[str] = []
     if _judge_read(diff_match, "Diff read", req.diff_lines, "diff", patch_ends_with_newline):
@@ -273,7 +271,12 @@ def _check_coverage(
             )
             raise ResultError(msg)
         if _judge_read(
-            fix_match, "Fix diff read", req.fix_diff_lines, "fix", patch_ends_with_newline
+            fix_match,
+            "Fix diff read",
+            # check_request gives every check an integer fix_diff_lines.
+            cast("int", req.fix_diff_lines),
+            "fix",
+            patch_ends_with_newline,
         ):
             normalised.append("Fix diff read")
     return tuple(normalised)
@@ -282,7 +285,7 @@ def _check_coverage(
 def _judge_read(
     match: re.Match[str],
     label: str,
-    count: int | None,
+    count: int,
     which: str,
     patch_ends_with_newline: Callable[[str], bool] | None,
 ) -> bool:
@@ -293,13 +296,7 @@ def _judge_read(
     ``Read`` shows as a phantom line: *patch_ends_with_newline* is called with
     *which* (``"diff"`` or ``"fix"``) only then. Returns whether the line was
     normalised (N+1 accepted). Anything else is refused.
-
-    A *count* of ``None`` (a check's count missing from the request, which
-    :func:`check_request` already refuses) fails closed.
     """
-    if count is None:
-        msg = f"{_RULE_COVERAGE}: the {label} line cannot be judged: the request has no count"
-        raise ResultError(msg)
     through = match.group(1) if match.group(1) is not None else match.group(2)
     reads = int(through)
     if reads == count:
