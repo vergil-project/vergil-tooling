@@ -249,7 +249,7 @@ one `<kind>`, `<sha>`, `<subject>` line per writer commit) stays until the PR
 merges; then the agent deletes the ledger and removes the empty `<N>/`
 directory. Extracting an issue from a batch (`vrg-pr-workflow batch-extract`)
 removes the issue's whole `issue-implement/<N>/` directory, `merge-review/`
-state and `writer-commits` ledger included, this one included.
+state and `writer-commits` ledger included.
 
 ## Security findings
 
