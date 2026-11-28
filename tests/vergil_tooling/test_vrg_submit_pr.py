@@ -35,6 +35,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     _prepare,
     _print_selection,
     _push_branch,
+    _push_state,
     _rebase_onto_develop,
     _RebaseError,
     _recheck_batch,
@@ -64,9 +65,6 @@ from vergil_tooling.bin.vrg_submit_pr import (
 )
 from vergil_tooling.bin.vrg_submit_pr import (
     _published_pr as _real_published_pr,
-)
-from vergil_tooling.bin.vrg_submit_pr import (
-    _push_state,
 )
 from vergil_tooling.lib import (
     agent_gates,
@@ -5411,7 +5409,9 @@ class TestPushMode:
         ):
             assert main(["--push"]) == 0
         out = capsys.readouterr().out
-        assert f"({_PUSH_PR}); the PR is now open, auto-merge off (held for release 2.1.357)." in out
+        assert (
+            f"({_PUSH_PR}); the PR is now open, auto-merge off (held for release 2.1.357)." in out
+        )
 
     def test_push_mode_names_a_failed_read_of_the_pr_state(
         self, push_worktree: Path, capsys: pytest.CaptureFixture[str]
@@ -5714,7 +5714,12 @@ class TestPushState:
 
     @pytest.mark.parametrize(
         "state",
-        ["merged", "closed", "open, auto-merge on (SQUASH)", "unknown (its state could not be read: x)"],
+        [
+            "merged",
+            "closed",
+            "open, auto-merge on (SQUASH)",
+            "unknown (its state could not be read: x)",
+        ],
     )
     def test_a_state_other_than_auto_merge_off_is_reported_as_read(self, state: str) -> None:
         with patch(_MOD + ".pr_path.describe_state", return_value=state):
