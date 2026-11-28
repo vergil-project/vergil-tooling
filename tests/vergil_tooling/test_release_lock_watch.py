@@ -233,18 +233,26 @@ def test_a_behind_pr_this_clone_cannot_update_reports_its_detail_once_per_run(
     assert watch()(snap(OLD, auto_merge_on=True)) == LockView("free", detail)
 
 
-def test_a_reclaimed_hold_updates_the_pr_before_it_is_read_again(
+def test_a_reclaimed_hold_updates_the_pr_on_the_next_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     update = pr_path.HeldUpdate("updated", PR, detail=PUSHED, old_head=OLD, new_head=NEW)
-    lock = FakeLock(states=[broken()], issue_state="CLOSED", update=update).install(monkeypatch)
+    lock = FakeLock(states=[broken(), None], issue_state="CLOSED", update=update).install(
+        monkeypatch
+    )
+    lock_watch = watch()
 
-    view = watch()(snap(OLD))
+    # The read that reclaims the stale hold ends the hold; it updates nothing and arms nothing.
+    reclaimed = lock_watch(snap(OLD))
 
-    assert view.state == "updated"
-    assert view.detail.startswith("reclaimed the stale release lock of release 2.1.400")
-    assert view.detail.endswith(PUSHED)
+    assert reclaimed.state == "free"
+    assert reclaimed.detail.startswith("reclaimed the stale release lock of release 2.1.400")
     assert len(lock.reclaims) == 1
+    assert lock.updates == []
+    assert lock.arms == []
+
+    # The next read finds the lock free, so it updates the PR.
+    assert lock_watch(snap(OLD)) == LockView("updated", PUSHED)
     assert lock.updates == [PR]
     assert lock.arms == []
 
