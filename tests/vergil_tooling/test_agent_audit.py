@@ -15,11 +15,12 @@ from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin import vrg_agent_audit
-from vergil_tooling.lib import agent_audit, agent_gates, github, pr_path, pr_provenance, trust
+from vergil_tooling.lib import agent_audit, agent_gates, git, github, pr_path, pr_provenance, trust
 from vergil_tooling.lib.agent_gates import GateResult
 from vergil_tooling.lib.pr_path import PRPathError
 from vergil_tooling.lib.release_lock import refs as lock_refs
@@ -1955,3 +1956,69 @@ def test_missing_pull_ref_is_a_read_failure(
     assert _kinds(results) == ["read-failure"]
     assert "refs/pull/11/head" in results[0].findings[0].detail
     assert gh.refs["vergil/agent-audit/develop"] != pr.merge_commit
+
+
+# -- the audit's fetch and its ref-lock race (#5457) -------------------------
+
+_RACE_NEW = "008583f35026556afdb9f1468b7eda56d187e6f9"
+_RACE_OLD = "3111ea2754d0e73fba8aaee3ddd771f07a9f7b89"
+_RACE_LINE = (
+    "error: cannot lock ref 'refs/remotes/origin/main': "
+    f"is at {_RACE_NEW} but expected {_RACE_OLD}\n"
+)
+_FETCH_SHA = "b" * 40
+
+
+def _audit_fetch_fake(
+    fetches: list[subprocess.CompletedProcess[str]],
+) -> tuple[Any, list[tuple[str, ...]]]:
+    """A ``subprocess.run`` stand-in: each ``fetch`` pops the next result; rev-parse gives a sha."""
+    pending = list(fetches)
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(argv))
+        if "fetch" in argv:
+            result = pending.pop(0)
+            if kwargs.get("check") and result.returncode:
+                raise subprocess.CalledProcessError(
+                    result.returncode, argv, output=result.stdout, stderr=result.stderr
+                )
+            return result
+        return subprocess.CompletedProcess(argv, 0, stdout=f"{_FETCH_SHA}\n", stderr="")
+
+    return run, calls
+
+
+def test_audit_fetch_lock_race_is_retried_and_clears(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    race = subprocess.CompletedProcess((), 1, stdout="", stderr=_RACE_LINE)
+    done = subprocess.CompletedProcess((), 0, stdout="", stderr="")
+    fake, calls = _audit_fetch_fake([race, done])
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+    ):
+        assert agent_audit._fetch(tmp_path, "refs/heads/main", "refs/x/main") == _FETCH_SHA
+    assert sum("fetch" in call for call in calls) == 2
+    assert m_sleep.call_count == 1
+    assert "ref-lock race" in capsys.readouterr().err
+
+
+def test_audit_fetch_lock_race_that_persists_raises_audit_error(tmp_path: Path) -> None:
+    race = subprocess.CompletedProcess((), 1, stdout="", stderr=_RACE_LINE)
+    fake, calls = _audit_fetch_fake([race] * (git.LOCK_RACE_RETRIES + 1))
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        pytest.raises(
+            agent_audit.AuditError,
+            match=r"git fetch --no-tags --quiet origin \+refs/heads/main:refs/x/main failed",
+        ),
+    ):
+        agent_audit._fetch(tmp_path, "refs/heads/main", "refs/x/main")
+    assert sum("fetch" in call for call in calls) == git.LOCK_RACE_RETRIES + 1
+    assert m_sleep.call_count == git.LOCK_RACE_RETRIES

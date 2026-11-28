@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -496,3 +497,70 @@ def test_a_malformed_expected_value_is_refused(origin: Origin, expected: str) ->
         refs.update_lock(REPO, _record(), expected=expected)
     with pytest.raises(ValueError, match="not a commit sha"):
         refs.delete_lock(REPO, expected=expected)
+
+
+# -- the release path's fetch and its ref-lock race (#5457) -------------------
+
+_RACE_NEW = "008583f35026556afdb9f1468b7eda56d187e6f9"
+_RACE_OLD = "3111ea2754d0e73fba8aaee3ddd771f07a9f7b89"
+_RACE_LINE = (
+    "error: cannot lock ref 'refs/remotes/origin/main': "
+    f"is at {_RACE_NEW} but expected {_RACE_OLD}\n"
+)
+_FETCH_SHA = "a" * 40
+
+
+def _fetch_fake(
+    fetches: list[subprocess.CompletedProcess[str]],
+) -> tuple[Any, list[tuple[str, ...]]]:
+    """A ``subprocess.run`` stand-in: each ``fetch`` pops the next result; rev-parse gives a sha."""
+    pending = list(fetches)
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(argv))
+        if "fetch" in argv:
+            result = pending.pop(0)
+            if kwargs.get("check") and result.returncode:
+                raise subprocess.CalledProcessError(
+                    result.returncode, argv, output=result.stdout, stderr=result.stderr
+                )
+            return result
+        return subprocess.CompletedProcess(argv, 0, stdout=f"{_FETCH_SHA}\n", stderr="")
+
+    return run, calls
+
+
+def test_release_fetch_lock_race_is_retried_and_clears(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake, calls = _fetch_fake(
+        [subprocess.CompletedProcess((), 1, stdout="", stderr=_RACE_LINE), _ok()]
+    )
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+    ):
+        assert refs.fetch(tmp_path, "refs/heads/main") == _FETCH_SHA
+    assert sum("fetch" in call for call in calls) == 2
+    assert m_sleep.call_count == 1
+    assert "ref-lock race" in capsys.readouterr().err
+
+
+def test_release_fetch_lock_race_that_persists_raises_ref_read_error(tmp_path: Path) -> None:
+    race = subprocess.CompletedProcess((), 1, stdout="", stderr=_RACE_LINE)
+    fake, calls = _fetch_fake([race] * (git.LOCK_RACE_RETRIES + 1))
+    with (
+        patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=fake),
+        patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        pytest.raises(RefReadError, match="fetching refs/heads/main from origin failed"),
+    ):
+        refs.fetch(tmp_path, "refs/heads/main")
+    assert sum("fetch" in call for call in calls) == git.LOCK_RACE_RETRIES + 1
+    assert m_sleep.call_count == git.LOCK_RACE_RETRIES
+
+
+def _ok() -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess((), 0, stdout="", stderr="")
