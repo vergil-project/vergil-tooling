@@ -71,6 +71,10 @@ CLEAN_STDERR = (
 BASE_MOVED_STDERR = (
     "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)\n"
 )
+BASE_MOVED_ENABLE_STDERR = BASE_MOVED_STDERR.replace(
+    "mergePullRequest", "enablePullRequestAutoMerge"
+)
+NOT_OPEN_STDERR = "GraphQL: Pull request is not open (enablePullRequestAutoMerge)\n"
 BATCH_BODY = "## Summary\n\nTwo fixes.\n\nCloses #1\nCloses #2\n"
 
 
@@ -112,6 +116,10 @@ class FakeGitHub:
     state_reads: int = 0
     # How many direct merges GitHub refuses with "Base branch was modified" first.
     base_moved_merges: int = 0
+    # How many enable mutations GitHub refuses with "Base branch was modified" first.
+    base_moved_enables: int = 0
+    # Whether another caller merges the PR at the moment such an enable is refused.
+    merged_on_base_moved: bool = False
 
     def read_json(self, *args: str) -> object:
         assert args[:3] == ("pr", "view", PR), args
@@ -172,6 +180,17 @@ class FakeGitHub:
         assert "enablePullRequestAutoMerge" in query
         self.events.append("enable")
         self.mutations.append(variables)
+        if self.state == "MERGED":
+            raise github.GitHubAPIError(
+                1, ("gh", "api", "graphql"), output="", stderr=NOT_OPEN_STDERR
+            )
+        if self.base_moved_enables:
+            self.base_moved_enables -= 1
+            if self.merged_on_base_moved:
+                self.state = "MERGED"
+            raise github.GitHubAPIError(
+                1, ("gh", "api", "graphql"), output="", stderr=BASE_MOVED_ENABLE_STDERR
+            )
         if self.clean:
             raise github.GitHubAPIError(1, ("gh", "api", "graphql"), output="", stderr=CLEAN_STDERR)
         self.auto_merge = {"mergeMethod": variables["method"]}
@@ -682,6 +701,21 @@ def test_arm_direct_merge_refused_once_for_a_moved_base_merges_on_retry(
     assert result.outcome == "merged"
     assert len(fake.merges) == 2
     assert len(fake.mutations) == 2
+    assert no_wait[0] > 0
+
+
+def test_arm_enable_refused_for_a_moved_base_then_merged_meanwhile_is_a_success(
+    fake: FakeGitHub, gates: Gates, clone: Path, no_wait: list[float]
+) -> None:
+    fake.base_moved_enables = 1
+    fake.merged_on_base_moved = True
+
+    result = arm(PR, clone=clone)
+
+    assert (result.outcome, result.head) == ("merged", HEAD)
+    # The retry reads the PR as merged at its head: no second enable, no merge.
+    assert len(fake.mutations) == 1
+    assert fake.merges == []
     assert no_wait[0] > 0
 
 

@@ -454,11 +454,11 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
     The bound covers the call's retries, and a call past it is stopped and
     not retried: :class:`PRPathError` names it. GitHub's refusal because the
     base branch moved (another PR merged into ``develop`` at that moment) is
-    transient: the enable is read afresh and tried again, up to
-    :data:`BASE_MOVED_ATTEMPTS` tries inside the same bound, each after a
-    pause of :data:`BASE_MOVED_RETRY_SECS`. A PR another caller merged at
-    *head* meanwhile is a success, as the enable reads it back
-    (#5406).
+    transient: the enable is tried again, up to :data:`BASE_MOVED_ATTEMPTS`
+    tries inside the same bound, each after a pause of
+    :data:`BASE_MOVED_RETRY_SECS`. Each retry first reads the PR, and a PR
+    another caller merged at *head* meanwhile is a success, reported as
+    ``merged`` with no further enable or merge (#5406).
     """
     url = pr.snap.url
     try:
@@ -476,8 +476,15 @@ def _enable_bounded(pr: _PR, head: str, method: MergeMethod) -> ArmResult:
 def _enable_retrying_a_moved_base(
     url: str, head: str, method: MergeMethod
 ) -> auto_merge.AutoMergeResult:
-    """The enable, tried again while GitHub refuses it because the base branch moved."""
+    """The enable, tried again while GitHub refuses it because the base branch moved.
+
+    Each retry reads the PR first: merged at *head* by another caller in the
+    meantime, it returns ``merged_now`` and does not enable or merge again.
+    """
     for attempt in range(1, BASE_MOVED_ATTEMPTS + 1):
+        if attempt > 1 and auto_merge.merged_at(url, head):
+            print(f"{url}: merged meanwhile by another caller at {head[:12]}")
+            return auto_merge.AutoMergeResult(merged_now=True)
         try:
             # The path is the one caller of the enable (spec §5.4).
             return auto_merge._enable(url, head=head, method=method)  # noqa: SLF001

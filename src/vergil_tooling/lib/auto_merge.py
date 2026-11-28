@@ -124,6 +124,16 @@ def auto_merge_enabled(pr_url: str) -> bool:
     return _auto_merge_request(pr_url, "reading auto-merge") is not None
 
 
+def merged_at(pr_url: str, head: str) -> bool:
+    """True when *pr_url* is merged with its head at *head*; a failed read raises.
+
+    The one PR path reads this before it tries a refused enable again, so a PR
+    another caller merged in the meantime is a success (vergil-project/vergil-tooling#5406).
+    """
+    pr = _pr_view(pr_url, "state,headRefOid", "reading the PR's state before a retry")
+    return pr.get("state") == "MERGED" and pr.get("headRefOid") == head
+
+
 def _merge_now(pr_url: str, *, head: str, method: MergeMethod) -> None:
     """Merge *pr_url* at *head* with *method*, then confirm it is merged."""
     try:
