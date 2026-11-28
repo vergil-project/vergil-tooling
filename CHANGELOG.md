@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.357] - 2026-11-28
+
+### Bug fixes
+
+- name the hand-run opener in the sync PR body (#5402)
+- the one PR path retries a merge refused because the base branch moved (#5413)
+
+### Documentation
+
+- the one PR path chooses the merge method from the PR (#5393)
+
+### Features
+
+- broken release groups fail the sweep (#5401)
+- the tracking issue records when the release took the lock (#5398) (#5405)
+- the whole-group rule on every PR path (#5415)
+- vrg-release-group set and dissolve (#5416)
+
+### Testing
+
+- stop test_queue_view's graphql patch leaking past its fixture (#5299) (#5395)
+- guard the repo's .vergil/ against test writes and isolate the release tail's run log (#5404)
+- pin the writer-commits ledger's cleanup in batch-extract and report-ready (#5412)
+- guard the run-log write site, not a .vergil/ snapshot (#5409) (#5411)
+
 ## [2.1.356] - 2026-11-28
 
 ### Bug fixes
