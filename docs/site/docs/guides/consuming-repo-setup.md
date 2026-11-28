@@ -235,8 +235,10 @@ Required keys and accepted values:
 | `[ci].versions` | non-empty list of strings | Optional pin. Omit it to follow the version window. Every pinned version must be in the window, and an app may pin only one version; either violation is an error. A pin is an exception: only a language whose window has more than one family must pin, which today is C++ (Clang and GCC). |
 | `[dependencies].vergil` | `vX.Y` | Required. The vergil release line; new repos get the line of the vergil-tooling that created them. |
 
-`[publish]` (`release`, default `false`; `docs`, default `true`; `vrg-release`
-refuses a repo whose `release` is not `true`; `install`, the shell lines the
+`[publish]` (`release`, a boolean, default `false`; `vrg-release`
+refuses a repo whose `release` is not `true`; `docs`, a boolean, default
+`true`; a non-bool `release` or `docs` is an error naming the key, as
+`reload-plugins` is; `install`, the shell lines the
 release's `install` stage runs, with `<VERSION>` and `<MINOR>` expanded to
 the release's `X.Y.Z` and `X.Y`, none by default; its deprecated name
 `consumer-refresh` is still read, with a warning, and setting both is an
