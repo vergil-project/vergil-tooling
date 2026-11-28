@@ -1370,7 +1370,10 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
             msg = f"{source}: [markdownlint].paths entry '' must name a file or directory"
             raise ConfigError(msg)
         if PurePosixPath(entry).is_absolute() or PureWindowsPath(entry).is_absolute():
-            msg = f"{source}: [markdownlint].paths entry '{entry}' must be repo-relative, not absolute"
+            msg = (
+                f"{source}: [markdownlint].paths entry '{entry}' must be repo-relative, "
+                "not absolute"
+            )
             raise ConfigError(msg)
         if ".." in re.split(r"[/\\]", entry):
             msg = f"{source}: [markdownlint].paths entry '{entry}' must not contain '..'"
