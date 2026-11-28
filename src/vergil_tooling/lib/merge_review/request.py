@@ -427,6 +427,27 @@ def design_source_paths(paths: Sequence[str]) -> list[str]:
     return resolved
 
 
+def _patch_checker(directory: Path, step: str) -> Callable[[str], bool]:
+    """Whether an earlier step's patch ends in a newline, for rule 11's ``N+1`` reads.
+
+    The patch is ``diff-<step>.patch`` or ``fix-<step>.patch`` in *directory*,
+    beside the step's result. A file that cannot be read raises
+    :class:`ResultError`.
+    """
+    names = {"diff": diff_file(step), "fix": fix_file(step)}
+
+    def ends_with_newline(which: str) -> bool:
+        path = directory / names[which]
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            msg = f"cannot read the {which} patch file {path}: {exc.strerror}"
+            raise ResultError(msg) from exc
+        return data.endswith(b"\n")
+
+    return ends_with_newline
+
+
 def read_earlier_results(
     private_dir: Path, step: str, result_paths: Sequence[str]
 ) -> list[tuple[str, Result]]:
@@ -436,8 +457,10 @@ def read_earlier_results(
     checked as ``vrg-merge-review-check`` checks it, against
     ``request-<earlier>.json`` in *private_dir*: first its capture record
     (:func:`check_capture`, rule 10), so a result edited after its own
-    step's check is refused, then :func:`parse_result`. Returns
-    ``(absolute path, checked result)`` pairs.
+    step's check is refused, then :func:`parse_result`. The patches beside
+    each result (``diff-<earlier>.patch``, ``fix-<earlier>.patch``) are read
+    only when a coverage line reports ``N+1`` lines, as the check CLI reads
+    them. Returns ``(absolute path, checked result)`` pairs.
     """
     steps = earlier_steps(step)
     if len(result_paths) != len(steps):
@@ -464,7 +487,16 @@ def read_earlier_results(
                 step=earlier,
                 request_id=check_request(request).request_id,
             )
-            checked.append((str(path), parse_result(text, request)))
+            checked.append(
+                (
+                    str(path),
+                    parse_result(
+                        text,
+                        request,
+                        patch_ends_with_newline=_patch_checker(path.parent, earlier),
+                    ),
+                )
+            )
         except ResultError as exc:
             refuse(f"the {earlier} result {path} fails the result check: {exc}")
     return checked
