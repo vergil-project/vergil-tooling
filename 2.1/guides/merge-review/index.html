@@ -1510,6 +1510,8 @@
       
         
       
+        
+      
     
     
     
@@ -1562,6 +1564,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.357/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.357
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19426,10 +19456,14 @@ an absent level with that mode and refuses otherwise. The skill runs
 <code>vrg-merge-review-request --issue &lt;ref&gt; --ensure-dir</code> before every write it
 makes there.</p>
 <p>The directory is working storage and the record a stopped run resumes from.
-Do not edit or delete it while a run is open. <code>issue-implement</code> deletes it
-once <code>report-ready</code> has succeeded. Extracting an issue from a batch
-(<code>vrg-pr-workflow batch-extract</code>) removes the issue's whole
-<code>issue-implement/&lt;N&gt;/</code> directory, this one included.</p>
+Do not edit or delete it while a run is open. Once <code>report-ready</code> has
+succeeded, its cleanup deletes only the <code>merge-review/</code> directory. The
+<code>writer-commits</code> ledger beside it (<code>build/.vergil-state/issue-implement/&lt;N&gt;/writer-commits</code>,
+one <code>&lt;kind&gt;</code>, <code>&lt;sha&gt;</code>, <code>&lt;subject&gt;</code> line per writer commit) stays until the PR
+merges; then the agent deletes the ledger and removes the empty <code>&lt;N&gt;/</code>
+directory. Extracting an issue from a batch (<code>vrg-pr-workflow batch-extract</code>)
+removes the issue's whole <code>issue-implement/&lt;N&gt;/</code> directory, <code>merge-review/</code>
+state and <code>writer-commits</code> ledger included.</p>
 <h2 id="security-findings">Security findings<a class="headerlink" href="#security-findings" title="Permanent link">&para;</a></h2>
 <p>A finding a reviewer marks as security carries no description in the result
 block: its details are only in the reviewer's prose, which the skill copies

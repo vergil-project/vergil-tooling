@@ -1510,6 +1510,8 @@
       
         
       
+        
+      
     
     
     
@@ -1562,6 +1564,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.357/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.357
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -19560,7 +19590,9 @@ refused to agents.</p>
 <li>Creates the PR via <code>gh pr create</code> under the hood, against <code>develop</code>
   only.</li>
 <li>Runs the provenance check, then turns GitHub auto-merge on, pinned to
-  the pushed head: squash for a single-issue PR, rebase for a batch PR.</li>
+  the pushed head. The one PR path works the method out from the PR:
+  squash for a single-issue PR, rebase for a batch PR, a merge commit for
+  a back-merge or a dependency-update PR.</li>
 <li>Always runs <code>vrg-finalize-pr</code> on the PR (see step 5), so it returns
   only once the PR has merged or cannot merge.</li>
 </ul>

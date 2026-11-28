@@ -1510,6 +1510,8 @@
       
         
       
+        
+      
     
     
     
@@ -1562,6 +1564,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.357/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.357
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -21285,7 +21315,7 @@ outright (epic vergil-project/.github#1384).</p>
 table of the selection (no confirmation prompt and no PR-body preview),
 then for each PR the push, <code>gh pr create</code>,
 the provenance check (a violation always fails that PR's submit), and GitHub
-auto-merge turned on, pinned to the pushed head (squash for a single-issue PR, rebase for a batch PR; a PR that can
+auto-merge turned on, pinned to the pushed head (the one PR path works the method out from the PR: squash for a single-issue PR, rebase for a batch PR, a merge commit for a back-merge or a dependency-update PR; a PR that can
 already merge is merged directly). PRs open against <code>develop</code> only, and
 submit never rebases a branch. After the table the PRs open as a
 progress rollup, one stage per PR named after its branch, like
@@ -21437,7 +21467,7 @@ takes <code>--issue</code> as <code>N</code>, <code>#N</code> or <code>owner/rep
   its batch in one rewrite: every other member's marker is rewritten without
   the set (the last one's is removed when fewer than two remain), and each
   issue's whole <code>issue-implement/&lt;N&gt;/</code> directory is removed, its
-  <code>merge-review/</code> state included. It refuses while a <code>security-*.md</code> details
+  <code>merge-review/</code> state and <code>writer-commits</code> ledger included. It refuses while a <code>security-*.md</code> details
   file is under any of those directories. It also refuses, naming the group,
   when the set would split a release group (a member leaving the batch while
   another member of the group stays in it); a group member outside the batch
@@ -21780,16 +21810,33 @@ and the <a href="../../guides/releasing/">Releasing guide</a>.</p>
 </tbody>
 </table>
 <h3 id="vrg-release-group">vrg-release-group<a class="headerlink" href="#vrg-release-group" title="Permanent link">&para;</a></h3>
-<p>List an epic's release groups: a batch of tasks of one development epic (or
-a proxy of one) that ship together (epic vergil-project/.github#1672). A
-group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
+<p>Read and change an epic's release groups: a batch of tasks of one development
+epic (or a proxy of one) that ship together (epic vergil-project/.github#1672).
+A group's membership is the latest <code>release-group &lt;id&gt; rev &lt;n&gt;</code> record in the
 epic's comments, read only from the <code>human</code> and <code>agents</code> roles; a conflict,
 an out-of-order revision, an edited record or a malformed one refuses that
-group, and an outsider's edit of an epic comment refuses the whole epic.
-<code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
-<code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
-and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only: there are no write
-commands yet.</p>
+group, and an outsider's edit of an epic comment refuses the whole epic.</p>
+<ul>
+<li><code>list --epic &lt;owner&gt;/&lt;repo&gt;#&lt;N&gt;</code> prints one line per group,
+  <code>G1 rev 3: &lt;ref&gt; &lt;ref&gt;</code> or <code>G2 rev 2: dissolved</code>; <code>--group &lt;id&gt;</code> narrows it
+  and <code>--json</code> prints <code>{"epic", "groups"}</code>. Read-only.</li>
+<li><code>set --epic &lt;ref&gt; --group &lt;id&gt; --member &lt;ref&gt; [--member &lt;ref&gt; ...] --reason &lt;text&gt; [--at-batch-stop]</code>
+  posts the group's membership as its next revision (a new group is rev 1).
+  A request the latest record already holds posts nothing and prints
+  <code>G1 rev 3: already recorded</code>, so a retry is safe and needs no reason.</li>
+<li><code>dissolve --epic &lt;ref&gt; --group &lt;id&gt; --reason &lt;text&gt; [--at-batch-stop]</code>
+  posts the group dissolved. A dissolved ID is never reused.</li>
+</ul>
+<p>Every posted record carries its <code>Reason:</code> line. Each incoming task must be
+open and hold nothing (no open PR, no handed-off batch, no batch marker),
+bar, with <code>--at-batch-stop</code>, the marker of the group's own batch. A group is
+frozen while an open member has an open PR or a handed-off batch, and it
+stops for the human once its batch has started, unless <code>--at-batch-stop</code> is
+given. A group on a closed epic is never changed. Run the change from the
+main clone of the members' repo, since batch markers are local. A refusal
+exits 1 and names each problem; a conflict, an edited record or a skipped
+edit names its comments, and the recovery is to read them in the web UI and
+delete the bad one.</p>
 <table>
 <thead>
 <tr>
@@ -24248,6 +24295,19 @@ a stop on untrusted content is counted, and only read failures are named),
 and the run exits 1. An org with no <code>[orgs.&lt;org&gt;]</code> stanza in the
 configuration is not a Vergil org: the audit says so on stderr and exits 0
 without sweeping it.</p>
+<p><strong>Release groups.</strong> The audit also checks the live release groups of every open
+development epic and every open proxy epic of the org's home; a closed epic is
+never checked. It prints a <code>Release groups</code> section, one line per finding, when
+there is any: a <code>split</code> (the closed members of a group were closed by different
+merged PRs, both named), a <code>closed unmerged</code> member (no merged PR closes it), a
+<code>rule</code> break by an open member (the group rules, the dependency-path rule above
+all, read from the current <code>Blocked-by:</code> lines), an <code>edited</code> record or comment
+skipped for an outsider's edit, and an <code>unreadable</code> log or group (a read that
+cannot be completed, or a conflict). A group that still has an open member and
+whose closing PR merged with the others is drift for the drift-close pass, not a
+finding. A closed member that shipped is never reported as a rule break. The
+audit repairs nothing, and any finding makes the run exit 1, with or without
+<code>--close</code>.</p>
 <p>The security-records preview is the exception to the carry-on rule for
 skipped content: a <code>security</code> issue whose body is untrusted is reported on
 stderr (metadata only) and on the preview's <code>- untrusted:</code> line, each
