@@ -212,6 +212,23 @@ def existing_issue_dir(main_clone: Path, issue: int) -> Path | None:
     return path
 
 
+def existing_merge_review_dir(main_clone: Path, issue: int) -> Path | None:
+    """Check the levels down to ``merge-review`` without creating any.
+
+    Returns the ``merge-review`` directory, or ``None`` when ``build`` or any
+    level below it is absent. A level that exists must pass the checks of
+    :func:`ensure_private_dir`, or :class:`StateDirError` names it.
+    """
+    issue_dir = existing_issue_dir(main_clone, issue)
+    if issue_dir is None:
+        return None
+    path = issue_dir / LEVELS[-1]
+    if not _exists(path):
+        return None
+    _check_level(path)
+    return path
+
+
 def _check_issue(issue: int) -> None:
     if issue < 1:
         msg = f"issue number must be positive, not {issue}"

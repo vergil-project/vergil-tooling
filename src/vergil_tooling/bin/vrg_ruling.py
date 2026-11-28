@@ -26,8 +26,10 @@ One round on a task issue is a **request** (posted here), the human's
 - ``respond --issue --request --reply --items`` re-runs ``read``'s checks,
   then posts the response, which records the request and reply comment IDs.
   A re-run that finds its own response already landed reports that ID, posts
-  nothing and succeeds. Either way it then deletes the request's draft ref,
-  if one is left.
+  nothing and succeeds. Once the response is posted (or found landed) it marks
+  the request answered in the task's ``merge-review/open-request.json``
+  (``responded``, ``reply`` and ``response``), when the task has one for that
+  request. Either way it then deletes the request's draft ref, if one is left.
 - ``draft-scope --issue --text-file`` pushes a scope change drafted for the
   human, the text alone, to the issue's scope draft ref
   (``refs/vergil/scope-draft/<issue>``) and prints the human's
@@ -47,12 +49,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, identity_mode, trust
+from vergil_tooling.lib.merge_review import state
 from vergil_tooling.lib.change_fingerprint import FingerprintError, change_fingerprint
 from vergil_tooling.lib.cli import cli_main
 from vergil_tooling.lib.rulings import RulingError, comments, draft_ref
@@ -107,6 +112,9 @@ EXIT_FATAL = 4
 #: The base a typed request's change is taken against: the clone's
 #: ``origin/develop``, as last fetched.
 BASE_REF = "origin/develop"
+
+#: The file, in the task's ``merge-review`` directory, that records a request.
+OPEN_REQUEST = "open-request.json"
 
 
 class _Context:
@@ -349,6 +357,7 @@ def _respond(ctx: _Context, request_id: int, reply_id: int, items_path: Path) ->
             file=sys.stderr,
         )
         print(landed)
+        _mark_answered(ctx, request_id, reply_id, landed)
         _after_respond(ctx.repo, ctx.issue, request_id)
         return EXIT_OK
     try:
@@ -365,8 +374,73 @@ def _respond(ctx: _Context, request_id: int, reply_id: int, items_path: Path) ->
         )
         raise RulingError(msg) from exc
     print(comment_id)
+    _mark_answered(ctx, request_id, reply_id, comment_id)
     _after_respond(ctx.repo, ctx.issue, request_id)
     return EXIT_OK
+
+
+def _mark_answered(ctx: _Context, request_id: int, reply_id: int, response_id: int) -> None:
+    """Mark the request answered in the task's ``merge-review/open-request.json``.
+
+    Called once the response has landed. An absent level or file means the task
+    has no merge review for this request, so nothing is done. A file whose
+    ``request`` is another request is left untouched. Otherwise ``reply``,
+    ``response`` and ``responded`` are set, every other key is kept, and the
+    file is rewritten atomically with mode 600. Anything unreadable, malformed
+    or unwritable raises :class:`RulingError`: the response is posted, and a
+    re-run finds it, posts nothing and marks the file.
+    """
+    try:
+        directory = state.existing_merge_review_dir(git.main_clone_root(), ctx.issue)
+    except (subprocess.CalledProcessError, state.StateDirError) as exc:
+        raise _unmarked(ctx, request_id, str(exc)) from exc
+    if directory is None:
+        return
+    path = directory / OPEN_REQUEST
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _unmarked(ctx, request_id, f"cannot read {path}: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise _unmarked(ctx, request_id, f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise _unmarked(ctx, request_id, f"{path} does not hold a JSON object")
+    recorded = data.get("request")
+    if isinstance(recorded, bool) or not isinstance(recorded, int):
+        raise _unmarked(ctx, request_id, f'{path} has no valid "request" comment ID')
+    if recorded != request_id:
+        return
+    data.update(reply=reply_id, response=response_id, responded=True)
+    try:
+        _write_private(path, json.dumps(data, indent=2) + "\n")
+    except OSError as exc:
+        raise _unmarked(ctx, request_id, f"cannot write {path}: {exc}") from exc
+
+
+def _unmarked(ctx: _Context, request_id: int, detail: str) -> RulingError:
+    msg = (
+        f"the response to request {request_id} on {ctx.where} is posted, but the task's"
+        f" {OPEN_REQUEST} could not be marked answered: {detail}. Re-running"
+        " vrg-ruling respond with the same arguments retries it; it posts nothing"
+    )
+    return RulingError(msg)
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Replace *path* with *text* atomically, through a mode 600 temporary file beside it."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _after_respond(repo: str, issue: int, request_id: int) -> None:
