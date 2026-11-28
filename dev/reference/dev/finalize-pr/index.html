@@ -19540,8 +19540,15 @@ spec §5, phase 1). A run has five phases:</p>
 finalize is run by hand only to watch PRs again after a fix to a PR that
 did not merge, or to settle <code>develop</code> after something merged on GitHub
 (<code>--cleanup-only</code>).</p>
-<p>Must be run from the <strong>main worktree</strong>: the cleanup removes worktrees,
-which is unsafe when the calling shell's CWD is inside one.</p>
+<p>It may be launched from a linked worktree of the repo. Finalize then
+resolves the repo's <strong>main clone</strong> (the parent of
+<code>git rev-parse --path-format=absolute --git-common-dir</code>), prints a line on
+stderr saying it is switching to that clone, changes into it, and does all
+its work there. Its cleanup may remove the worktree it was launched from:
+the run keeps the cleanup and, when that worktree is gone at the end,
+prints a stderr line saying it removed the directory the caller launched
+from, so the caller's shell must <code>cd</code> out of it. A launch from outside any
+repo is still an error.</p>
 <h2 id="choosing-the-prs">Choosing the PRs<a class="headerlink" href="#choosing-the-prs" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>vrg-finalize-pr &lt;pr&gt;[,&lt;pr&gt;…]</code>: a comma list of PR numbers or URLs; one
@@ -20180,7 +20187,7 @@ needs that update; a conflict is resolved by rebasing the branch.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>A tool or usage error: a removed or contradictory flag, not run from the main worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree)</td>
+<td>A tool or usage error: a removed or contradictory flag, a main clone that cannot be resolved from a linked worktree, non-TTY stdin or stdout in interactive mode, a watch that could not read a PR, or a settle step other than the validate that failed (closing an issue, the sync and cleanup, a dirty working tree)</td>
 </tr>
 <tr>
 <td>3</td>
