@@ -771,7 +771,9 @@ def test_small_check_carries_no_fix_parts(repo: Path, capsys: Cap) -> None:
 def test_check_refuses_a_short_read_of_the_review_diff(repo: Path, capsys: Cap) -> None:
     _large_change(repo)
     review = _built(_argv(repo), capsys)
-    result = _store_result(repo, "review", [_finding("R1")], coverage="Diff read: through line 2000")
+    result = _store_result(
+        repo, "review", [_finding("R1")], coverage="Diff read: through line 2000"
+    )
     _fix(repo)
     code, out, err = _run(_check_argv(repo, review["head_sha"], [result], fix=("R1",)), capsys)
     assert code == 1

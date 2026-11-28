@@ -1146,7 +1146,9 @@ def test_check_fix_line_n_plus_one_normalised_alone() -> None:
 
 def test_check_both_lines_n_plus_one_normalised() -> None:
     patch = _Patch(ends=True)
-    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    coverage = (
+        f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    )
     checked = parse_result(
         _reply(coverage, "check"), _request("check"), patch_ends_with_newline=patch
     )
@@ -1459,7 +1461,7 @@ def test_cli_short_read_of_a_large_diff_refused(
     assert captured.out == ""
     assert captured.err == (
         "ERROR: rule 11 (coverage): the Diff read line reads through line 2000,"
-        " but the diff has 2500: the whole diff was not read\n"
+        " but the diff has 2500 lines: the whole diff was not read\n"
     )
 
 
@@ -1480,7 +1482,9 @@ def test_cli_short_read_of_a_large_fix_diff_refused(
     text = _reply(coverage, "check")
     assert vrg_merge_review_check.main(_files(tmp_path, text, _large_check())) == 1
     err = capsys.readouterr().err
-    assert err.startswith("ERROR: rule 11 (coverage): the Fix diff read line reads through line 2000")
+    assert err.startswith(
+        "ERROR: rule 11 (coverage): the Fix diff read line reads through line 2000"
+    )
 
 
 def test_cli_full_read_of_a_large_fix_diff_passes(
@@ -1583,7 +1587,9 @@ def test_cli_missing_patch_for_a_phantom_line_is_refused(
 def test_cli_both_counts_normalised_summarised_as_both(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    coverage = f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    coverage = (
+        f"Fix diff read: through line {FIX_LINES + 1}\nDiff read: through line {DIFF_LINES + 1}"
+    )
     args = _files(tmp_path, _reply(coverage, "check"), _request("check"))
     _write_patch(tmp_path, "diff-check.patch", b"\n" * DIFF_LINES)
     _write_patch(tmp_path, "fix-check.patch", b"\n" * FIX_LINES)
