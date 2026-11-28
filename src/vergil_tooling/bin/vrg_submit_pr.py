@@ -1243,10 +1243,8 @@ class _SubmitRun:
             try:
                 state = pr_path.describe_state(pr_url)
             except Exception as read_exc:
-                state = (
-                    f"unknown (its state could not be read: "
-                    f"{type(read_exc).__name__}: {read_exc})"
-                )
+                failure = f"{type(read_exc).__name__}: {read_exc}"
+                state = f"unknown (its state could not be read: {failure})"
             exc.add_note(
                 f"{pr_url} was opened at {sub.expected_head[:12]}; {step} failed; "
                 f"the PR is now {state}."
