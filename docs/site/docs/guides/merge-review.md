@@ -52,9 +52,12 @@ handed off as one PR, epic
 [vergil-project/.github#1019](https://github.com/vergil-project/.github/issues/1019)),
 each issue still gets its own merge review, with `--issue` that issue: its
 rulings, step comments and eligibility line stay on it. The skill reads the
-batch with `vrg-pr-workflow batch-show`, and the review and every check
-take `--base` the previous issue's commit (the batch's `base_sha` for the
-first issue), never `origin/develop`. A fix is committed as
+batch with `vrg-pr-workflow batch-show`. The request builder scopes the review
+and every check to the issue's own commit, with its fixups folded in: the
+diff is that commit's change from its parent, and no later issue's commit is
+in it, before or after a clean rebase. So `--base` is required but is not
+used for a batch member, and the batch's `base_sha` plays no part. A fix is
+committed as
 `vrg-commit --fixup` of the issue's first commit; the review never folds,
 and `issue-implement` folds the issue to one commit once its review has
 closed. `report-ready`'s notes carry each issue's eligibility line, prefixed

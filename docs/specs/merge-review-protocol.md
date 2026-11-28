@@ -122,7 +122,7 @@ The refusal names both repositories.
 | File | Written by | Holds |
 |---|---|---|
 | `request-<step>.json` | `vrg-merge-review-request` | The request. |
-| `diff-<step>.patch` | `vrg-merge-review-request` | `git diff <base_sha> <head_sha>`: the whole branch. |
+| `diff-<step>.patch` | `vrg-merge-review-request` | `git diff <base_sha> <head_sha>`: the whole branch; on a batch member before handoff, `git diff <base_sha> <last>`, its own commit alone ([A batch member](#a-batch-member)). |
 | `fix-<step>.patch` | `vrg-merge-review-request` | A check only: `git diff <fix_base_sha> <head_sha>`, the fix alone. |
 | `commits-<step>.patch` | `vrg-merge-review-request` | A batch PR only: each commit of `<base_sha>..<head_sha>`, oldest first, with its own patch ([A batch PR](#a-batch-pr)). |
 | `result-<step>.md` | The plugin's capture hook | The reviewer's reply, stored byte for byte. |
@@ -173,10 +173,10 @@ The request is a JSON object, `request-<step>.json`. Every step carries:
 | `issue_body` | string | The issue's body as GitHub holds it, as data. The builder fetches it itself. |
 | `issue_comments` | list of objects | The human's unedited comments on the issue, as data, each `{"author": "<login>", "created_at": "<ISO 8601 with time zone>", "body": "..."}`, oldest first; empty when there are none. The builder fetches and filters them itself. |
 | `issue_comments_excluded_edited` | integer | How many of the human's comments the builder left out of `issue_comments` because they had been edited; 0 when none. |
-| `base_sha` | string | The merge base of the base branch and `HEAD`. |
+| `base_sha` | string | The merge base of the base branch and `HEAD`; on a batch member before handoff, the parent of its own commit, read from the branch ([A batch member](#a-batch-member)). |
 | `head_sha` | string | The commit under review. |
 | `worktree` | string | Absolute path of the worktree, for reading surrounding code. |
-| `diff_path` | string | Absolute path of `diff-<step>.patch`. |
+| `diff_path` | string | Absolute path of `diff-<step>.patch`: the change under review, from `base_sha`. |
 | `change_class` | string | `"docs-only"` or `"code"`. |
 | `design_sources` | list of strings | Absolute paths of the design documents the issue's epic lists, such as its spec and plan; empty when there are none. |
 | `validate_stages` | list of strings | The `vrg-validate` stages that passed at `head_sha`. |
@@ -241,6 +241,36 @@ changed file is an addition or edit on the documentation allow-list, and
 `vergil.toml`, an empty change, or any doubt). The repository's own
 allow-list entries are read from `vergil.toml` as committed at `base_sha`,
 never from the working tree.
+
+### A batch member
+
+One issue of a batch (several issues on one branch, one commit each, handed
+off as one PR) before handoff is reviewed as its own change, not as the
+branch. Its request is scoped to its own commit, `<own>`, the one commit
+whose subject ends in its `(#N)` ref, with the `fixup!` commits of that
+commit folded in, the run of them right after it (`<last>`, the run's last
+commit, or `<own>` with no fixup). The builder then sets:
+
+- `base_sha` to the parent of `<own>`, read from the branch. The
+  batch marker's `base_sha` is not used, so a clean rebase onto a moved
+  `origin/develop` changes no issue's request.
+- `diff-<step>.patch` to the change from `base_sha` to `<last>`: this
+  issue's change alone, with no later commit of the batch in it.
+- `change_class` from the files changed between `base_sha` and `<last>`,
+  against the allow-list committed at `base_sha`.
+- `head_sha` to `HEAD`, so a check's `fix_base_sha` and `fix-<step>.patch`
+  are unchanged.
+
+The builder's `--base` is required but is not used for a batch member. It
+refuses, naming the reason, when the batch marker cannot be read, when no
+single own commit ends in the issue's ref, or when a `fixup!` of the issue's
+commit comes after another commit, since it must be folded first. A
+request with no batch marker, or with `--pr`, is built as before.
+
+Only the `--issue`'s own commit is in the diff. The reviewer is not given
+the later issues' commits, so a middle issue's review shows nothing a later
+issue did. Its `issue_body` and `issue_comments` are that issue's scope, as
+for any task.
 
 ### A batch PR
 
