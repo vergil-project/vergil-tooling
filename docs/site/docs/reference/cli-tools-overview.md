@@ -2138,8 +2138,16 @@ for the `--issue`), `batch_commits` (every commit under review as
 commit with its own patch), and leaves the batch's issues out of
 `epic_open_tasks`. It refuses a merge commit, a commit naming no issue of the
 PR, an issue with no commit, and a check whose batch issues differ from its
-previous step's. A single-issue PR must link the `--issue`, and its request
-is the one built without `--pr`. See the protocol's
+previous step's. Every `--pr` request, single-issue or batch, also adds
+`pr_head_sha` (the PR's head commit as GitHub reports it) and `fix_commits`
+(the commits after it, `{"sha", "subject"}`, oldest first; a merge commit in
+that range is refused; `null` when that head is no longer an ancestor of
+`HEAD`, the branch having been rebased, and is the explicit "could not tell"
+value, never an empty list, with how the reviewer handles it defined in
+[vergil-project/vergil-claude-plugin#1509](https://github.com/vergil-project/vergil-claude-plugin/issues/1509)),
+so the reviewer judges each as the fix it was meant to make. A single-issue PR
+must link the `--issue`, and apart from those fields its request is the one
+built without `--pr`. See the protocol's
 [A batch PR](https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/merge-review-protocol.md#a-batch-pr).
 
 Before writing, and on its own with `--ensure-dir`, it checks the private

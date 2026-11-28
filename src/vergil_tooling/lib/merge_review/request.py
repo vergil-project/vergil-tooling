@@ -498,8 +498,22 @@ class BatchFields:
 
 
 @dataclass(frozen=True)
+class FixFields:
+    """The fields every ``--pr`` request adds: which commits are the fix to the open PR.
+
+    ``pr_head_sha`` is ``pr_head_sha``, the PR's head commit as GitHub reports
+    it. ``commits`` is ``fix_commits``: the commits after it up to ``HEAD``,
+    oldest first, each ``{"sha", "subject"}``; ``None`` (JSON ``null``) when
+    the PR head is no longer an ancestor of ``HEAD``, the branch was rebased.
+    """
+
+    pr_head_sha: str
+    commits: list[dict[str, str]] | None
+
+
+@dataclass(frozen=True)
 class RequestFields:
-    """Every field a review's request carries; ``batch`` only on a batch PR."""
+    """Every field a review's request carries; ``batch`` and ``fix`` only with a ``--pr``."""
 
     request_id: str
     step: str
@@ -515,10 +529,11 @@ class RequestFields:
     validate_stages: list[str]
     epic_open_tasks: list[dict[str, str]]
     batch: BatchFields | None = None
+    fix: FixFields | None = None
 
 
 def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str, object]:
-    """The request object, a batch PR's and a check's fields added when given."""
+    """The request object, a batch PR's, a ``--pr``'s and a check's fields added when given."""
     request: dict[str, object] = {
         "schema": REQUEST_SCHEMA,
         "request_id": fields.request_id,
@@ -541,6 +556,9 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
         request["batch_issues"] = fields.batch.issues
         request["batch_commits"] = fields.batch.commits
         request["batch_commits_path"] = fields.batch.commits_path
+    if fields.fix is not None:
+        request["pr_head_sha"] = fields.fix.pr_head_sha
+        request["fix_commits"] = fields.fix.commits
     if check is not None:
         request["fix_base_sha"] = check.fix_base_sha
         request["fix_diff_path"] = check.fix_diff_path
