@@ -308,7 +308,7 @@ the check again when it builds the body (see
 [the planning issue of a docs task](dev/submit-pr.md#the-planning-issue-of-a-docs-task)).
 Any other issue, and a batch, prints no `planning_close`.
 
-The batch hard rules are: 2 to 8 issues, none listed twice, every one in
+The batch hard rules are: 2 to 20 issues, none listed twice, every one in
 this repo, a task (not an epic, archive, queue item or ops issue), not operational, not
 directly blocked by an open deployment task (through a `Blocked-by:` line or a
 native GitHub blocked-by relationship) and opened by a trusted author,
@@ -1999,8 +1999,9 @@ from that commit's parent (the marker's `base_sha` is not used); later
 commits are excluded, and a `fixup!` of it after another commit is refused,
 since it must be folded first. Folded, its fingerprint is the commit's. Otherwise, a fix to an open PR included, it is the change since
 the merge base with `origin/develop`. Submit, the watch and the audit read
-the records back from the trust layer's comment stream, agent role only,
-skipping an edited comment. A re-run that finds the same comment already
+the records back from the trust layer's comment stream, human and agent
+comments alike as `vrg-issue-read` reads them; only an agent-posted comment,
+skipping an edited one, can be a record. A re-run that finds the same comment already
 posted by the agent prints its ID and posts nothing.
 
 | Attribute | Value |
@@ -2287,7 +2288,8 @@ command is run from.
 
 `--epic REF` is a separate read-only mode: it prints one epic's children as
 JSON (`{"epic": <slug>, "containers": <n>, "children": [{repo, number,
-title, state, open_blockers, blocked}, …]}`) and skips the drift audit. A
+title, state, open_blockers, blocked}, …], "groups": [{group, rev, members,
+runnable, blocked_by}, …]}`) and skips the drift audit. A
 bare `#N` resolves against the current repo's epic home, and a
 continuation's ref resolves to its chain's head. `containers` counts the
 containers of the epic's chain, the epic included: 1 for an epic with no
@@ -2306,7 +2308,14 @@ unblocked. The children include the tasks of every
 [proxy epic](../standards/github-issues.md#proxy-epics) the epic's trusted
 `Proxy:` comments name, each with its repo, beside the epic's own. On a proxy
 the JSON gains a `"primary": <slug>` key naming its primary; on any other epic
-the key is absent. `--epic` also checks the links: on a primary, every proxy
+the key is absent. `groups` lists the epic's live release groups in ID order
+(dissolved ones are left out; `[]` when there are none): each one's `group`
+ID, its record's `rev`, its `members` as `owner/repo#N` refs, and `runnable`,
+true iff every blocker of its members that lies outside the group is closed.
+`blocked_by` lists those open outside blockers as sorted `owner/repo#N` refs,
+empty exactly when `runnable` is true; a blocker between two members never
+counts. A group that cannot be read exits 1 with the reason on stderr and no
+JSON. `--epic` also checks the links: on a primary, every proxy
 it names must exist, be a proxy and carry a `Primary:` line naming it; on a
 proxy, its primary must carry the matching `Proxy:` comment. A link that
 disagrees, cannot be parsed or cannot be read exits 1, with the problems on

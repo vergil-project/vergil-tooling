@@ -117,7 +117,7 @@ class FakeGitHub:
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     fake = FakeGitHub()
-    for number in range(10, 20):
+    for number in range(10, 31):
         fake.issues[_ref(number)] = Issue()
     fake.install(monkeypatch)
     monkeypatch.setattr(
@@ -140,7 +140,7 @@ def _refused(issues: list[str], rule: str) -> str:
 
 def test_batch_rule_error_is_a_workflow_error() -> None:
     assert issubclass(BatchRuleError, WorkflowError)
-    assert (MIN_BATCH, MAX_BATCH) == (2, 8)
+    assert (MIN_BATCH, MAX_BATCH) == (2, 20)
 
 
 def test_is_batch() -> None:
@@ -152,9 +152,9 @@ def test_hard_rules_accept_two_same_epic_tasks(world: FakeGitHub) -> None:
     check_hard_rules(["#10", "#11"], repo=REPO)
 
 
-def test_hard_rules_accept_eight_and_a_human_author(world: FakeGitHub) -> None:
+def test_twenty_issues_allowed(world: FakeGitHub) -> None:
     world.issues[_ref(12)].author = {"__typename": "User", "login": HUMAN}
-    check_hard_rules([f"#{n}" for n in range(10, 18)], repo=REPO)
+    check_hard_rules([f"#{n}" for n in range(10, 30)], repo=REPO)
 
 
 def test_hard_rules_accept_the_full_ref_of_this_repo(world: FakeGitHub) -> None:
@@ -163,12 +163,12 @@ def test_hard_rules_accept_the_full_ref_of_this_repo(world: FakeGitHub) -> None:
 
 def test_hard_rules_refuse_one_issue(world: FakeGitHub) -> None:
     message = _refused(["#10"], "batch size")
-    assert "2 to 8 issues, got 1" in message
+    assert "2 to 20 issues, got 1" in message
 
 
-def test_hard_rules_refuse_nine_issues(world: FakeGitHub) -> None:
-    message = _refused([f"#{n}" for n in range(10, 19)], "batch size")
-    assert "got 9" in message
+def test_twenty_one_refused(world: FakeGitHub) -> None:
+    message = _refused([f"#{n}" for n in range(10, 31)], "batch size")
+    assert "2 to 20 issues, got 21" in message
 
 
 def test_hard_rules_refuse_duplicate(world: FakeGitHub) -> None:

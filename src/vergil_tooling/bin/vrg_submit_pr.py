@@ -77,7 +77,7 @@ refused, a local state and relay ref that disagree are refused, and
 origin's tip is held to the recorded head immediately before ``gh pr
 create``. Auto-merge is pinned to that same head (``expectedHeadOid``).
 
-A ``report-ready`` state may hand off a batch: 2 to 8 issues on one branch,
+A ``report-ready`` state may hand off a batch: 2 to 20 issues on one branch,
 one commit per issue (epic vergil-project/.github#1019). Every mode driven by
 such a state runs the per-issue refusals on every issue, writes one
 ``Closes`` line per issue, and re-checks the batch's hard rules and

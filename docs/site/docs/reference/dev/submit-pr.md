@@ -420,7 +420,7 @@ vrg-submit-pr \
 
 ## Batch PRs (one PR closing several issues)
 
-A `report-ready` state can hand off a **batch**: 2 to 8 issues of one epic,
+A `report-ready` state can hand off a **batch**: 2 to 20 issues of one epic,
 implemented on one branch with exactly one commit per issue, in order (epic
 vergil-project/.github#1019). Every mode driven by a ready-state (template,
 relay branch and `--all`/`--select`) submits it as one PR:

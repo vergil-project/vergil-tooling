@@ -31,6 +31,8 @@ from vergil_tooling.lib.epic_audit import (
     RetiredLabels,
 )
 from vergil_tooling.lib.epics import BlockerState, ChildState, IssueRef
+from vergil_tooling.lib.release_groups import audit as group_audit
+from vergil_tooling.lib.release_groups import record as group_record
 from vergil_tooling.lib.security_records import Advisory, SecurityIssue
 from vergil_tooling.lib.trusted_authors import (
     OrgConfig,
@@ -91,6 +93,8 @@ def standing_drain() -> Iterator[MagicMock]:
         patch(f"{_MOD}.epic_audit.proxy_link_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.proxy_closures", return_value=([], [])),
         patch(f"{_MOD}.epic_audit.misplaced_adhoc", return_value=[]),
+        # No epic has a release group, so --epic makes no record read.
+        patch(f"{_MOD}.group_audit.group_status", return_value=[]),
         # No chain is drifted, and every --epic names a one-container epic.
         patch(f"{_MOD}.epic_audit.chain_drift", return_value=[]),
         patch(f"{_MOD}.epic_chain.containers", side_effect=_one_container),
@@ -346,6 +350,72 @@ def test_main_epic_blocker_read_failure_exits_1(
         patch(f"{_MOD}.epic_audit.proxy_link_problems", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_children_with_blockers", side_effect=error),
     ):
+        rc = main(["--epic", "vergil-project/.github#201"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vrg-epic-audit: {error}\n"
+
+
+@contextlib.contextmanager
+def _patch_epic_listing(children: list[ChildState]) -> Generator[None]:
+    """Patch the listing of a one-container epic of the vergil-project home with *children*."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch("vergil_tooling.lib.epics._container_parent", return_value=None),
+        patch(f"{_MOD}.epics._labels", return_value={"epic"}),
+        patch(f"{_MOD}.epics.child_states_with_blockers", return_value=children),
+        patch(f"{_MOD}.epics.blockers_of", return_value=[]),
+    ):
+        yield
+
+
+def test_epic_listing_json_groups(capsys: pytest.CaptureFixture[str]) -> None:
+    # The JSON's "groups" lists each live group, in ID order, with its members,
+    # runnability and open outside blockers as slugs (epic .github#1672, spec §5.3).
+    open_child = ChildState(
+        IssueRef("vergil-project", "vergil-tooling", 5346), "OPEN", "Task", native_blockers=()
+    )
+    member = IssueRef("vergil-project", "vergil-tooling", 5346)
+    other = IssueRef("vergil-project", "vergil-tooling", 5347)
+    outside = IssueRef("other-org", "lib", 131)
+    statuses = [
+        group_audit.GroupStatus("G2", 3, (member,), False, (outside,)),
+        group_audit.GroupStatus("G10", 1, (member, other), True, ()),
+    ]
+    with (
+        _patch_epic_listing([open_child]),
+        patch(f"{_MOD}.group_audit.group_status", return_value=statuses) as group_status,
+    ):
+        rc = main(["--epic", "vergil-project/.github#201"])
+    assert rc == 0
+    assert group_status.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+    payload = json.loads(capsys.readouterr().out)
+    assert list(payload) == ["epic", "containers", "children", "groups"]
+    assert payload["groups"] == [
+        {
+            "group": "G2",
+            "rev": 3,
+            "members": ["vergil-project/vergil-tooling#5346"],
+            "runnable": False,
+            "blocked_by": ["other-org/lib#131"],
+        },
+        {
+            "group": "G10",
+            "rev": 1,
+            "members": ["vergil-project/vergil-tooling#5346", "vergil-project/vergil-tooling#5347"],
+            "runnable": True,
+            "blocked_by": [],
+        },
+    ]
+
+
+def test_epic_listing_unreadable_group_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    # A group that cannot be read fails the whole listing: no JSON, the error on stderr.
+    error = group_record.GroupRecordError(
+        "vergil-project/.github#201: group G3 has a record that cannot be read"
+    )
+    with _patch_epic_listing([]), patch(f"{_MOD}.group_audit.group_status", side_effect=error):
         rc = main(["--epic", "vergil-project/.github#201"])
     assert rc == 1
     captured = capsys.readouterr()

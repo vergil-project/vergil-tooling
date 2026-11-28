@@ -60,6 +60,7 @@ from vergil_tooling.lib.trusted_authors import load_trusted_authors
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from vergil_tooling.lib.release_groups.audit import GroupStatus
     from vergil_tooling.lib.trusted_authors import TrustedAuthors
 
 # A closed-epic-with-open-child violation (issue #2259): the closed epic paired
@@ -2033,6 +2034,7 @@ def render_epic_children(
     *,
     containers: int,
     primary: epics.IssueRef | None = None,
+    groups: Sequence[GroupStatus] = (),
 ) -> str:
     """Machine-readable JSON enumeration of *epic*'s children with their state.
 
@@ -2061,6 +2063,13 @@ def render_epic_children(
     closed that it is blocked by (native and ``Blocked-by:`` alike, sorted),
     and ``blocked``, true iff that list is not empty (#5124). A closed
     child's list is always empty.
+
+    *groups* are the epic's live release groups (:func:`release_groups.audit.group_status`),
+    in ID order. The payload's ``groups`` key, after ``children``, lists each one as
+    ``group`` (its ID), ``rev`` (its record's revision), ``members`` (``owner/repo#N``
+    slugs, in the group's record order), ``runnable`` (true iff every blocker of its
+    members outside the group is closed) and ``blocked_by`` (the open outside blockers'
+    slugs, sorted). It is ``[]`` when no group is given.
     """
     entries: list[tuple[epics.ChildState, tuple[epics.IssueRef, ...] | None]] = [
         (c.child, c.open_blockers) if isinstance(c, ListedChild) else (c, None) for c in children
@@ -2083,6 +2092,16 @@ def render_epic_children(
             entry["blocked"] = bool(blockers)
         rendered.append(entry)
     payload["children"] = rendered
+    payload["groups"] = [
+        {
+            "group": status.group,
+            "rev": status.rev,
+            "members": [ref.slug for ref in status.members],
+            "runnable": status.runnable,
+            "blocked_by": [ref.slug for ref in status.blocked_by],
+        }
+        for status in groups
+    ]
     return json.dumps(payload, indent=2)
 
 

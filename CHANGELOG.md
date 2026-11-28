@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.356] - 2026-11-28
+
+### Bug fixes
+
+- read the human's scope-change comment in submit's record read (#5389)
+
+### Chores
+
+- uv lock --upgrade
+
+### Features
+
+- report group runnability in vrg-epic-audit --epic (#5383)
+- raise the batch ceiling to 20 (#5339)
+- keep a develop PR's closing lines on pr edit (#5343)
+
 ## [2.1.355] - 2026-11-28
 
 ### Chores
