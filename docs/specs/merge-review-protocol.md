@@ -283,12 +283,19 @@ are the fix:
 | Field | Type | Value |
 |---|---|---|
 | `pr_head_sha` | string | The PR's head commit as GitHub reports it (`headRefOid`): the commit the PR was submitted at. |
-| `fix_commits` | list of objects, or `null` | The commits of `<pr_head_sha>..<head_sha>`, oldest first, each `{"sha", "subject"}`; an empty list when `head_sha` is `pr_head_sha`. `null` when `pr_head_sha` is not an ancestor of `head_sha`, which means the branch was rebased since submit: no commit can then be told apart as the fix, so none is guessed. |
+| `fix_commits` | list of objects, or `null` | The commits of `<pr_head_sha>..<head_sha>`, oldest first, each `{"sha", "subject"}`; an empty list when `head_sha` is `pr_head_sha`. `null` when `pr_head_sha` is not an ancestor of `head_sha`, which means the branch was rebased since submit: no commit can then be told apart as the fix, so none is guessed. `null` is the explicit "could not tell" value, never an empty list, which means no fix commits. |
 
 A check's builder reads the PR again, so its `fix_commits` grow with each fix
 added after the PR's head. A request without `--pr` carries neither field.
 A git failure, such as a `pr_head_sha` this clone does not hold, is a
-refusal.
+refusal. So is a merge commit in `<pr_head_sha>..<head_sha>`: a fix to the PR
+adds linear commits.
+
+How the reviewer handles `null` is defined in
+[vergil-project/vergil-claude-plugin#1509](https://github.com/vergil-project/vergil-claude-plugin/issues/1509),
+not here. As that issue defines it, the reviewer judges every commit against
+the issue's after-submit text and the human's rulings, and says it could not
+identify the fix commits.
 
 The reviewer judges each commit listed in `fix_commits` against the fix it was
 meant to make. On a batch PR that is the after-submit text of the issue the
