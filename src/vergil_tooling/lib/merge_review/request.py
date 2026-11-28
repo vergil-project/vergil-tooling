@@ -21,7 +21,7 @@ from vergil_tooling.lib import epic_audit, epic_chain, epics, github, proxies, t
 from vergil_tooling.lib.epics import parse_issue_ref
 from vergil_tooling.lib.merge_review.capture import capture_path, check_capture
 from vergil_tooling.lib.merge_review.result import ResultError, check_request, parse_result
-from vergil_tooling.lib.merge_review.schema import REQUEST_SCHEMA, earlier_steps
+from vergil_tooling.lib.merge_review.schema import MAX_READ_LINES, REQUEST_SCHEMA, earlier_steps
 from vergil_tooling.lib.rulings import RulingError
 from vergil_tooling.lib.rulings.comments import read_stream
 from vergil_tooling.lib.rulings.draft_ref import require_remote_is
@@ -32,7 +32,7 @@ from vergil_tooling.lib.trusted_authors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from vergil_tooling.lib.epics import IssueRef
     from vergil_tooling.lib.merge_review.result import Result
@@ -82,6 +82,48 @@ def fix_file(step: str) -> str:
 def commits_file(step: str) -> str:
     """A batch PR's per-commit patch file name for *step*."""
     return f"commits-{step}.patch"
+
+
+_LINE_RE = re.compile(rb"[^\n]*\n")
+
+
+def split_lines(data: bytes, max_lines: int) -> list[bytes]:
+    """Split *data* on line boundaries into chunks of at most *max_lines* newlines.
+
+    A line is the bytes up to and including a newline. Bytes after the last
+    newline, if any, join the last chunk, so the chunks always concatenate
+    back to *data* exactly, and each chunk's newline count is at most
+    *max_lines*.
+    """
+    if max_lines < 1:
+        msg = "max_lines must be at least 1"
+        raise ValueError(msg)
+    lines = _LINE_RE.findall(data)
+    if not lines:
+        return [data] if data else []
+    chunks = [b"".join(lines[i : i + max_lines]) for i in range(0, len(lines), max_lines)]
+    chunks[-1] += data[sum(len(line) for line in lines) :]
+    return chunks
+
+
+def plan_parts(data: bytes, part_path: Callable[[int], Path]) -> list[tuple[Path, bytes]]:
+    """The numbered parts of a diff *data* of more than :data:`MAX_READ_LINES` lines.
+
+    Each part holds at most :data:`MAX_READ_LINES` lines and is written to
+    ``part_path(number)``, numbered from 1. A diff at or under the limit has
+    no parts, so the result is empty.
+    """
+    if data.count(b"\n") <= MAX_READ_LINES:
+        return []
+    return [
+        (part_path(number), chunk)
+        for number, chunk in enumerate(split_lines(data, MAX_READ_LINES), start=1)
+    ]
+
+
+def part_manifest(parts: Sequence[tuple[Path, bytes]]) -> list[dict[str, object]]:
+    """The request's manifest of *parts*: each ``{"path", "lines"}``, lines being its newlines."""
+    return [{"path": str(path), "lines": chunk.count(b"\n")} for path, chunk in parts]
 
 
 def parse_task_issue(ref: str) -> IssueRef:
@@ -487,10 +529,17 @@ def earlier_finding_ids(
 
 @dataclass(frozen=True)
 class CheckFields:
-    """The fields a check adds to the request."""
+    """The fields a check adds to the request.
+
+    ``fix_diff_lines`` is the newline count of the fix diff, and
+    ``fix_diff_parts`` its manifest, which only a fix diff over
+    :data:`MAX_READ_LINES` lines carries.
+    """
 
     fix_base_sha: str
     fix_diff_path: str
+    fix_diff_lines: int
+    fix_diff_parts: list[dict[str, object]]
     earlier_result_paths: list[str]
     earlier_finding_ids: list[str]
 
@@ -526,7 +575,11 @@ class FixFields:
 
 @dataclass(frozen=True)
 class RequestFields:
-    """Every field a review's request carries; ``batch`` and ``fix`` only with a ``--pr``."""
+    """Every field a review's request carries; ``batch`` and ``fix`` only with a ``--pr``.
+
+    ``diff_parts`` is the manifest of the diff's parts, which only a diff over
+    :data:`MAX_READ_LINES` lines carries.
+    """
 
     request_id: str
     step: str
@@ -537,6 +590,8 @@ class RequestFields:
     head_sha: str
     worktree: str
     diff_path: str
+    diff_lines: int
+    diff_parts: list[dict[str, object]]
     change_class: str
     design_sources: list[str]
     validate_stages: list[str]
@@ -560,11 +615,14 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
         "head_sha": fields.head_sha,
         "worktree": fields.worktree,
         "diff_path": fields.diff_path,
+        "diff_lines": fields.diff_lines,
         "change_class": fields.change_class,
         "design_sources": fields.design_sources,
         "validate_stages": fields.validate_stages,
         "epic_open_tasks": fields.epic_open_tasks,
     }
+    if fields.diff_lines > MAX_READ_LINES:
+        request["diff_parts"] = fields.diff_parts
     if fields.batch is not None:
         request["batch_issues"] = fields.batch.issues
         request["batch_commits"] = fields.batch.commits
@@ -575,6 +633,9 @@ def build_request(fields: RequestFields, check: CheckFields | None) -> dict[str,
     if check is not None:
         request["fix_base_sha"] = check.fix_base_sha
         request["fix_diff_path"] = check.fix_diff_path
+        request["fix_diff_lines"] = check.fix_diff_lines
+        if check.fix_diff_lines > MAX_READ_LINES:
+            request["fix_diff_parts"] = check.fix_diff_parts
         request["earlier_result_paths"] = check.earlier_result_paths
         request["earlier_finding_ids"] = check.earlier_finding_ids
     return request

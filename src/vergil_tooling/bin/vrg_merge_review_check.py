@@ -5,7 +5,14 @@ check of ``docs/specs/merge-review-protocol.md`` on the reviewer's reply,
 stored unchanged in the result file by the plugin's capture hook. It first
 checks the hook's capture record, ``capture-<step>.json`` in the result's
 directory (``<step>`` from the request), and refuses a result whose bytes are
-not the ones the hook captured (rule 10). On success it exits 0 and prints a
+not the ones the hook captured (rule 10). It then checks the coverage line
+(rule 11): the reply's last non-empty line must read
+``Diff read: <read> of <total> lines``, with ``<total>`` the diff's line count
+from the request and ``<read>`` equal to it, so a partial read is refused. In
+a check, the line before it must read ``Fix diff read: <read> of <total>
+lines`` the same way, for the fix diff. A diff over 2000 lines is also listed
+in parts in the request (``diff_parts``, ``fix_diff_parts``), which the check
+verifies sum to the total. On success it exits 0 and prints a
 JSON summary on stdout::
 
     {"step": "review",

@@ -9,10 +9,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from vergil_tooling.bin import vrg_merge_review_check
-from vergil_tooling.lib.merge_review.result import ResultError, parse_result
+from vergil_tooling.lib.merge_review.result import (
+    ResultError,
+    check_request,
+    parse_result,
+)
 from vergil_tooling.lib.merge_review.schema import (
+    MAX_READ_LINES,
     earlier_steps,
     finding_id_re,
+    is_check,
     step_id_prefix,
 )
 
@@ -21,6 +27,11 @@ if TYPE_CHECKING:
 
 REQUEST_ID = "3f2a9c0e5b7d41a8c6e2f0b9d3a7c514"
 SECRET = "hunter2-secret-detail"
+#: The line counts of the small diffs the helpers describe by default.
+DIFF_LINES = 10
+FIX_LINES = 4
+#: A diff longer than one Read returns, so it must be read in parts.
+LARGE = 2500
 
 
 def _request(step: str = "review", **over: Any) -> dict[str, object]:
@@ -29,11 +40,22 @@ def _request(step: str = "review", **over: Any) -> dict[str, object]:
         "request_id": REQUEST_ID,
         "step": step,
         "change_class": "code",
+        "diff_lines": DIFF_LINES,
     }
     if step != "review":
         request["earlier_finding_ids"] = ["R1", "R2"]
+        request["fix_diff_lines"] = FIX_LINES
     request.update(over)
     return request
+
+
+def _parts(total: int, name: str) -> list[dict[str, object]]:
+    """A manifest of *total* lines in parts of at most ``MAX_READ_LINES``, as built."""
+    sizes = [min(MAX_READ_LINES, total - start) for start in range(0, total, MAX_READ_LINES)]
+    return [
+        {"path": f"/private/{name}.part-{number:02d}.patch", "lines": size}
+        for number, size in enumerate(sizes, start=1)
+    ]
 
 
 def _finding(finding_id: object = "R1", **over: Any) -> dict[str, Any]:
@@ -70,18 +92,33 @@ def _check_block(**over: Any) -> dict[str, Any]:
     return _block(**fields)
 
 
-def _wrap(body: str) -> str:
-    return f"```merge-review-result\n{body}\n```\n\nR1: prose for the human.\n"
+def _coverage(
+    step: str = "review",
+    *,
+    diff: tuple[int, int] = (DIFF_LINES, DIFF_LINES),
+    fix: tuple[int, int] = (FIX_LINES, FIX_LINES),
+) -> str:
+    """The reply's closing coverage lines: the fix line before the diff line in a check."""
+    lines = [f"Diff read: {diff[0]} of {diff[1]} lines"]
+    if is_check(step):
+        lines.insert(0, f"Fix diff read: {fix[0]} of {fix[1]} lines")
+    return "\n".join(lines)
+
+
+def _wrap(body: str, step: str = "review", coverage: str | None = None) -> str:
+    """A reply with *body* as its block; *coverage* defaults to a full read for *step*."""
+    tail = _coverage(step) if coverage is None else coverage
+    return f"```merge-review-result\n{body}\n```\n\nR1: prose for the human.\n{tail}\n"
 
 
 def _result(findings: list[Any] | None = None, **over: Any) -> str:
     if findings is not None:
         over["findings"] = findings
-    return _wrap(json.dumps(_block(**over), indent=2))
+    return _render(_block(**over))
 
 
 def _render(block: dict[str, Any]) -> str:
-    return _wrap(json.dumps(block, indent=2))
+    return _wrap(json.dumps(block, indent=2), step=str(block["step"]))
 
 
 def _refused(text: str, request: dict[str, object] | None = None) -> str:
@@ -200,7 +237,12 @@ def test_second_block_in_any_fence_rejected(second: str) -> None:
 
 
 def test_other_fenced_blocks_in_prose_accepted() -> None:
-    text = _result() + "\n```merge-review-results-ish\nx\n```\n```python\ny\n```\n"
+    body = json.dumps(_block(), indent=2)
+    text = (
+        f"```merge-review-result\n{body}\n```\n\n"
+        "```merge-review-results-ish\nx\n```\n```python\ny\n```\n"
+        f"{_coverage()}\n"
+    )
     assert parse_result(text, _request()).step == "review"
 
 
@@ -904,3 +946,283 @@ def test_capture_bad_request_is_refused_before_the_record(
     (tmp_path / "request-review.json").write_text(json.dumps(_request(step="../x")))
     assert vrg_merge_review_check.main(args) == 1
     assert capsys.readouterr().err.startswith("ERROR: the request: step must be")
+
+
+# --- rule 11: coverage ----------------------------------------------------
+
+
+def _large_review(**over: Any) -> dict[str, object]:
+    """A review of a diff of ``LARGE`` lines, which carries its parts; *over* replaces fields."""
+    fields: dict[str, Any] = {
+        "diff_lines": LARGE,
+        "diff_parts": _parts(LARGE, "diff-review"),
+    }
+    fields.update(over)
+    return _request(**fields)
+
+
+def _large_check(**over: Any) -> dict[str, object]:
+    """A check of a ``LARGE``-line diff whose fix diff is ``LARGE`` lines, both in parts."""
+    fields: dict[str, Any] = {
+        "diff_lines": LARGE,
+        "diff_parts": _parts(LARGE, "diff-check"),
+        "fix_diff_lines": LARGE,
+        "fix_diff_parts": _parts(LARGE, "fix-check"),
+    }
+    fields.update(over)
+    return _request("check", **fields)
+
+
+def _bad_request(request: dict[str, object], expected: str) -> None:
+    with pytest.raises(ResultError) as excinfo:
+        check_request(request)
+    message = str(excinfo.value)
+    assert message.startswith("the request: ") and expected in message
+
+
+def test_full_read_of_a_large_diff_accepted() -> None:
+    text = _wrap(json.dumps(_block(), indent=2), coverage=f"Diff read: {LARGE} of {LARGE} lines")
+    assert parse_result(text, _large_review()).step == "review"
+
+
+def test_full_read_of_a_small_diff_accepted_with_trailing_space_and_cr() -> None:
+    line = f"Diff read: {DIFF_LINES} of {DIFF_LINES} lines \r"
+    text = _wrap(json.dumps(_block(), indent=2), coverage=line)
+    assert parse_result(text, _request()).step == "review"
+
+
+@pytest.mark.parametrize(
+    ("coverage", "expected"),
+    [
+        ("Diff read: 2000 of 2500 lines", "reads 2000 of 2500 lines: the whole diff"),
+        ("Diff read: 0 of 2500 lines", "reads 0 of 2500 lines"),
+        ("Diff read: 2500 of 2600 lines", "gives 2600 lines in total, but the diff has 2500"),
+        ("Diff read: 2000 of 2000 lines", "gives 2000 lines in total, but the diff has 2500"),
+        ("", "the last non-empty line must read 'Diff read:"),
+        ("Diff read: 2500 lines", "the last non-empty line must read 'Diff read:"),
+        ("Diff read: +2500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
+        ("Diff read: 02500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
+        ("Diff read: 2500 of 2500 lines.", "the last non-empty line must read 'Diff read:"),
+        ("diff read: 2500 of 2500 lines", "the last non-empty line must read 'Diff read:"),
+        (f"Diff read: {LARGE} of {LARGE} lines\nAfterthought.", "must read 'Diff read:"),
+    ],
+)
+def test_short_missing_or_malformed_diff_read_refused(coverage: str, expected: str) -> None:
+    text = _wrap(json.dumps(_block(), indent=2), coverage=coverage)
+    message = _refused(text, _large_review())
+    assert message.startswith("rule 11 (coverage): ") and expected in message
+
+
+def test_small_short_read_refused() -> None:
+    text = _wrap(json.dumps(_block(), indent=2), coverage="Diff read: 9 of 10 lines")
+    assert "reads 9 of 10 lines" in _refused(text)
+
+
+def test_full_read_of_a_large_fix_diff_accepted() -> None:
+    coverage = f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    checked = parse_result(text, _large_check())
+    assert checked.fix_status == {"R1": "fixed", "R2": "not-fixed"}
+
+
+@pytest.mark.parametrize(
+    ("coverage", "expected"),
+    [
+        (
+            f"Fix diff read: 2000 of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines",
+            "the Fix diff read line reads 2000 of 2500 lines",
+        ),
+        (
+            f"Fix diff read: {LARGE} of 2600 lines\nDiff read: {LARGE} of {LARGE} lines",
+            "gives 2600 lines in total, but the diff has 2500",
+        ),
+        (
+            f"Diff read: {LARGE} of {LARGE} lines",
+            "the non-empty line before the last must read 'Fix diff read:",
+        ),
+        (
+            f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: 2000 of {LARGE} lines",
+            "the Diff read line reads 2000 of 2500 lines",
+        ),
+        (
+            f"Fix diff read: {LARGE} of {LARGE} lines\nafter\nDiff read: {LARGE} of {LARGE} lines",
+            "the non-empty line before the last must read 'Fix diff read:",
+        ),
+        (
+            f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines\nafter",
+            "the last non-empty line must read 'Diff read:",
+        ),
+    ],
+)
+def test_check_short_or_missing_fix_coverage_refused(coverage: str, expected: str) -> None:
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    message = _refused(text, _large_check())
+    assert message.startswith("rule 11 (coverage): ") and expected in message
+
+
+def test_check_small_fix_short_read_refused() -> None:
+    coverage = (
+        f"Fix diff read: 3 of {FIX_LINES} lines\nDiff read: {DIFF_LINES} of {DIFF_LINES} lines"
+    )
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    assert "the Fix diff read line reads 3 of 4 lines" in _refused(text, _request("check"))
+
+
+def test_check_full_small_read_accepted() -> None:
+    assert parse_result(_render(_check_block()), _request("check")).step == "check"
+
+
+def test_check_coverage_must_follow_the_prose_line() -> None:
+    # The lines are read from the bottom: a Fix line above prose is not the one before the last.
+    coverage = f"Fix diff read: {FIX_LINES} of {FIX_LINES} lines\nprose\nDiff read: 10 of 10 lines"
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    message = _refused(text, _request("check"))
+    assert "the non-empty line before the last must read 'Fix diff read:" in message
+
+
+@pytest.mark.parametrize(
+    ("over", "expected"),
+    [
+        ({"drop": ("diff_lines",)}, "diff_lines must be a whole number of lines"),
+        ({"diff_lines": "10"}, "diff_lines must be a whole number of lines"),
+        ({"diff_lines": True}, "diff_lines must be a whole number of lines"),
+        ({"diff_lines": -1}, "diff_lines must be a whole number of lines"),
+        ({"diff_lines": 10.0}, "diff_lines must be a whole number of lines"),
+        ({"diff_lines": LARGE}, "diff_parts must list the parts of a diff over 2000 lines"),
+        ({"diff_lines": 10, "diff_parts": []}, "diff_parts is present, but the diff is not over"),
+        (
+            {"diff_lines": LARGE, "diff_parts": _parts(2000, "diff-review")},
+            "diff_parts lines sum to 2000, not the 2500 lines of the diff",
+        ),
+        (
+            {
+                "diff_lines": LARGE,
+                "diff_parts": [{"path": "/p/1", "lines": 2001}, {"path": "/p/2", "lines": 499}],
+            },
+            "diff_parts entry 1 must hold from 1 to 2000 lines",
+        ),
+        (
+            {
+                "diff_lines": LARGE,
+                "diff_parts": [{"path": "/p/1", "lines": 0}, {"path": "/p/2", "lines": 2500}],
+            },
+            "diff_parts entry 1 must hold from 1 to 2000 lines",
+        ),
+        (
+            {"diff_lines": LARGE, "diff_parts": [{"path": "/p/1", "lines": "2000"}]},
+            "diff_parts entry 1 must hold a path and a line count",
+        ),
+        (
+            {"diff_lines": LARGE, "diff_parts": [{"path": 1, "lines": 2500}]},
+            "diff_parts entry 1 must hold a path and a line count",
+        ),
+        (
+            {"diff_lines": LARGE, "diff_parts": [{"path": "/p/1", "lines": True}]},
+            "diff_parts entry 1 must hold a path and a line count",
+        ),
+        (
+            {"diff_lines": LARGE, "diff_parts": [{"path": "/p/1", "lines": 2500, "x": 1}]},
+            "diff_parts entry 1 must hold exactly path and lines",
+        ),
+        (
+            {"diff_lines": LARGE, "diff_parts": ["/p/1"]},
+            "diff_parts entry 1 must hold exactly path and lines",
+        ),
+        ({"diff_lines": LARGE, "diff_parts": {}}, "must list the parts of a diff over 2000"),
+        ({"diff_lines": LARGE, "diff_parts": []}, "must list the parts of a diff over 2000"),
+    ],
+)
+def test_bad_review_line_count_or_manifest_refused(over: dict[str, Any], expected: str) -> None:
+    drop = over.pop("drop", ())
+    request = _request(**over)
+    for key in drop:
+        del request[key]
+    _bad_request(request, expected)
+
+
+@pytest.mark.parametrize(
+    ("over", "expected"),
+    [
+        ({"fix_diff_lines": None}, "fix_diff_lines must be a whole number of lines"),
+        ({"fix_diff_lines": "4"}, "fix_diff_lines must be a whole number of lines"),
+        ({"fix_diff_lines": -4}, "fix_diff_lines must be a whole number of lines"),
+        ({"fix_diff_lines": LARGE}, "fix_diff_parts must list the parts of a diff over 2000"),
+        (
+            {"fix_diff_lines": 4, "fix_diff_parts": [{"path": "/p/f", "lines": 4}]},
+            "fix_diff_parts is present, but the diff is not over 2000 lines",
+        ),
+        (
+            {
+                "fix_diff_lines": LARGE,
+                "fix_diff_parts": [{"path": "/p/1", "lines": 2000}, {"path": "/p/2", "lines": 400}],
+            },
+            "fix_diff_parts lines sum to 2400, not the 2500 lines of the diff",
+        ),
+        (
+            {
+                "fix_diff_lines": LARGE,
+                "fix_diff_parts": [{"path": "/p/1", "lines": 2500}, {"path": "/p/2", "lines": 0}],
+            },
+            "fix_diff_parts entry 1 must hold from 1 to 2000 lines",
+        ),
+    ],
+)
+def test_bad_check_fix_line_count_or_manifest_refused(over: dict[str, Any], expected: str) -> None:
+    request = _request("check", **over)
+    _bad_request(request, expected)
+
+
+def test_check_without_fix_diff_lines_refused() -> None:
+    request = _request("check")
+    del request["fix_diff_lines"]
+    _bad_request(request, "fix_diff_lines must be a whole number of lines")
+
+
+def test_review_needs_no_fix_diff_lines() -> None:
+    # A review has no fix diff, so its request needs no fix_diff_lines.
+    request = _request()
+    assert check_request(request).fix_diff_lines is None
+
+
+def test_valid_manifests_accepted_by_check_request() -> None:
+    parsed = check_request(_large_check())
+    assert (parsed.diff_lines, parsed.fix_diff_lines) == (LARGE, LARGE)
+    split = [{"path": "/p/1", "lines": 1000}, {"path": "/p/2", "lines": 1500}]
+    assert check_request(_large_review(diff_parts=split)).diff_lines == LARGE
+
+
+def test_cli_short_read_of_a_large_diff_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _wrap(json.dumps(_block(), indent=2), coverage="Diff read: 2000 of 2500 lines")
+    assert vrg_merge_review_check.main(_files(tmp_path, text, _large_review())) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("ERROR: rule 11 (coverage): the Diff read line reads 2000 of")
+
+
+def test_cli_full_read_of_a_large_diff_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _wrap(json.dumps(_block(), indent=2), coverage=f"Diff read: {LARGE} of {LARGE} lines")
+    assert vrg_merge_review_check.main(_files(tmp_path, text, _large_review())) == 0
+    assert json.loads(capsys.readouterr().out)["step"] == "review"
+
+
+def test_cli_short_read_of_a_large_fix_diff_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage = f"Fix diff read: 2000 of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    assert vrg_merge_review_check.main(_files(tmp_path, text, _large_check())) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: rule 11 (coverage): the Fix diff read line reads 2000 of")
+
+
+def test_cli_full_read_of_a_large_fix_diff_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage = f"Fix diff read: {LARGE} of {LARGE} lines\nDiff read: {LARGE} of {LARGE} lines"
+    text = _wrap(json.dumps(_check_block(), indent=2), coverage=coverage)
+    assert vrg_merge_review_check.main(_files(tmp_path, text, _large_check())) == 0
+    assert json.loads(capsys.readouterr().out)["fix_status"] == {"R1": "fixed", "R2": "not-fixed"}

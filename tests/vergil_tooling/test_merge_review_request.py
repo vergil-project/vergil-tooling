@@ -20,6 +20,7 @@ from vergil_tooling.lib.github import GitHubAPIError, MissingGitHubTokenError
 from vergil_tooling.lib.merge_review import open_pr
 from vergil_tooling.lib.merge_review import request as req
 from vergil_tooling.lib.merge_review.result import parse_result
+from vergil_tooling.lib.merge_review.schema import diff_part_file, fix_part_file
 from vergil_tooling.lib.pr_workflow import batch_marker
 from vergil_tooling.lib.progress import StageResult
 from vergil_tooling.lib.proxies import ProxyLinkError
@@ -439,12 +440,25 @@ def _finding(finding_id: str, kind: str = "defect", **over: Any) -> dict[str, An
     return finding
 
 
+def _full_coverage(request: dict[str, Any]) -> str:
+    """The closing coverage lines of a reply that read the whole diff (and a check's fix diff)."""
+    lines = []
+    if "fix_diff_lines" in request:
+        fix = request["fix_diff_lines"]
+        lines.append(f"Fix diff read: {fix} of {fix} lines")
+    diff = request["diff_lines"]
+    lines.append(f"Diff read: {diff} of {diff} lines")
+    return "\n".join(lines)
+
+
 def _store_result(
     repo: Path,
     step: str,
     findings: list[dict[str, Any]],
     fix_status: dict[str, str] | None = None,
+    coverage: str | None = None,
 ) -> str:
+    """Store a reply to *step*'s request; *coverage* defaults to a full read of the diffs."""
     directory = _merge_review_dir(repo)
     request = json.loads((directory / f"request-{step}.json").read_text())
     block: dict[str, Any] = {
@@ -455,8 +469,9 @@ def _store_result(
     }
     if fix_status is not None:
         block["fix_status"] = [{"id": i, "status": s} for i, s in fix_status.items()]
+    tail = _full_coverage(request) if coverage is None else coverage
     path = directory / f"result-{step}.md"
-    path.write_text(f"```merge-review-result\n{json.dumps(block)}\n```\n\nProse.\n")
+    path.write_text(f"```merge-review-result\n{json.dumps(block)}\n```\n\nProse.\n{tail}\n")
     _capture(path, step, request["request_id"])
     return str(path)
 
@@ -662,6 +677,7 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
         "head_sha",
         "worktree",
         "diff_path",
+        "diff_lines",
         "change_class",
         "design_sources",
         "validate_stages",
@@ -685,11 +701,86 @@ def test_review_request_fields(repo: Path, tmp_path: Path, capsys: Cap) -> None:
     assert request["epic_open_tasks"] == [{"ref": "acme/widget#43", "title": "The next task"}]
     assert "+x = 2" in (directory / "diff-review.patch").read_text()
     assert not (directory / "fix-review.patch").exists()
+    # A small diff is read in one call, so it has no parts.
+    whole = (directory / "diff-review.patch").read_bytes()
+    assert request["diff_lines"] == whole.count(b"\n")
+    assert "diff_parts" not in request
+    assert not list(directory.glob("diff-review.part-*"))
 
 
 def test_review_request_ids_are_new_each_time(repo: Path, capsys: Cap) -> None:
     first = _built(_argv(repo), capsys)["request_id"]
     assert _built(_argv(repo), capsys)["request_id"] != first
+
+
+def _large_change(repo: Path, lines: int = 2500) -> None:
+    """Commit a file of *lines* lines, so the branch's diff is longer than one Read returns."""
+    _write(repo, "src/big.py", "".join(f"BIG = {n}\n" for n in range(lines)))
+    _commit(repo, "large")
+    _record(repo)
+
+
+def _assert_parts_of(directory: Path, whole: bytes, parts: list[dict[str, Any]], name: str) -> None:
+    """Each part is numbered from 01, holds its line count, and the parts concatenate to *whole*."""
+    assert [p["path"] for p in parts] == [
+        str(directory / f"{name}.part-{n:02d}.patch") for n in range(1, len(parts) + 1)
+    ]
+    chunks = [Path(p["path"]).read_bytes() for p in parts]
+    assert [p["lines"] for p in parts] == [chunk.count(b"\n") for chunk in chunks]
+    assert all(1 <= p["lines"] <= 2000 for p in parts)
+    assert b"".join(chunks) == whole
+
+
+def test_large_diff_is_written_in_numbered_parts(repo: Path, capsys: Cap) -> None:
+    _large_change(repo)
+    request = _built(_argv(repo), capsys)
+    directory = _merge_review_dir(repo)
+    whole = (directory / "diff-review.patch").read_bytes()
+    total = whole.count(b"\n")
+    assert total > 2000
+    assert request["diff_lines"] == total
+    assert sum(p["lines"] for p in request["diff_parts"]) == total
+    _assert_parts_of(directory, whole, request["diff_parts"], "diff-review")
+
+
+def test_check_request_carries_a_large_fix_diff_in_parts(repo: Path, capsys: Cap) -> None:
+    review = _built(_argv(repo), capsys)
+    result = _store_result(repo, "review", [_finding("R1")])
+    _fix(repo, "".join(f"FIX = {n}\n" for n in range(2500)))
+    request = _built(_check_argv(repo, review["head_sha"], [result], fix=("R1",)), capsys)
+    directory = _merge_review_dir(repo)
+    fix = (directory / "fix-check.patch").read_bytes()
+    assert request["fix_diff_lines"] == fix.count(b"\n") > 2000
+    assert sum(p["lines"] for p in request["fix_diff_parts"]) == request["fix_diff_lines"]
+    _assert_parts_of(directory, fix, request["fix_diff_parts"], "fix-check")
+    # The whole diff is large too, and its parts are carried.
+    assert request["diff_lines"] > 2000
+    assert request["diff_parts"]
+
+
+def test_small_check_carries_no_fix_parts(repo: Path, capsys: Cap) -> None:
+    review_head, result = _reviewed(repo, capsys, [_finding("R1")])
+    request = _built(_check_argv(repo, review_head, [result], fix=("R1",)), capsys)
+    fix = (_merge_review_dir(repo) / "fix-check.patch").read_bytes()
+    assert request["fix_diff_lines"] == fix.count(b"\n") > 0
+    assert "fix_diff_parts" not in request
+    assert "diff_parts" not in request
+    assert not list(_merge_review_dir(repo).glob("fix-check.part-*"))
+
+
+def test_check_refuses_a_short_read_of_the_review_diff(repo: Path, capsys: Cap) -> None:
+    _large_change(repo)
+    review = _built(_argv(repo), capsys)
+    total = review["diff_lines"]
+    result = _store_result(
+        repo, "review", [_finding("R1")], coverage=f"Diff read: 2000 of {total} lines"
+    )
+    _fix(repo)
+    code, out, err = _run(_check_argv(repo, review["head_sha"], [result], fix=("R1",)), capsys)
+    assert code == 1
+    assert out == ""
+    assert "fails the result check: rule 11 (coverage)" in err
+    assert not (_merge_review_dir(repo) / "request-check.json").exists()
 
 
 def test_request_diffs_from_merge_base(repo: Path, capsys: Cap) -> None:
@@ -1474,6 +1565,8 @@ def test_check_request_fields(repo: Path, capsys: Cap) -> None:
     fix = (directory / "fix-check.patch").read_text()
     assert "-x = 2" in fix
     assert "+x = 3" in fix
+    assert request["fix_diff_lines"] == fix.count("\n")
+    assert "fix_diff_parts" not in request
     whole = (directory / "diff-check.patch").read_text()
     assert "-x = 1" in whole
     assert "+x = 3" in whole
@@ -1485,7 +1578,7 @@ def test_check_request_fields(repo: Path, capsys: Cap) -> None:
         "findings": [],
         "fix_status": [{"id": "R1", "status": "fixed"}, {"id": "R2", "status": "fixed"}],
     }
-    reply = f"```merge-review-result\n{json.dumps(block)}\n```\n"
+    reply = f"```merge-review-result\n{json.dumps(block)}\n```\n\n{_full_coverage(request)}\n"
     assert parse_result(reply, request).fix_status == {"R1": "fixed", "R2": "fixed"}
 
 
@@ -1762,6 +1855,49 @@ def test_file_names() -> None:
     assert req.diff_file("review") == "diff-review.patch"
     assert req.fix_file("check") == "fix-check.patch"
     assert req.commits_file("check") == "commits-check.patch"
+    assert diff_part_file("review", 1) == "diff-review.part-01.patch"
+    assert diff_part_file("check-2", 12) == "diff-check-2.part-12.patch"
+    assert fix_part_file("check", 100) == "fix-check.part-100.patch"
+
+
+def test_split_lines_concatenates_back_exactly() -> None:
+    data = b"a\nbb\n\nccc\r\ndd\n\xff\n"
+    for size in range(1, 8):
+        chunks = req.split_lines(data, size)
+        assert b"".join(chunks) == data
+        assert all(1 <= chunk.count(b"\n") <= size for chunk in chunks)
+        assert sum(chunk.count(b"\n") for chunk in chunks) == data.count(b"\n")
+
+
+def test_split_lines_keeps_an_unterminated_tail_in_the_last_chunk() -> None:
+    # The unterminated "c" joins the last chunk, so no chunk is a line without a newline.
+    chunks = req.split_lines(b"a\nb\nc", 1)
+    assert chunks == [b"a\n", b"b\nc"]
+    assert sum(chunk.count(b"\n") for chunk in chunks) == 2
+    assert req.split_lines(b"", 3) == []
+    assert req.split_lines(b"no newline", 3) == [b"no newline"]
+
+
+def test_split_lines_refuses_a_non_positive_size() -> None:
+    with pytest.raises(ValueError, match="max_lines must be at least 1"):
+        req.split_lines(b"a\n", 0)
+
+
+def test_plan_parts_is_empty_at_the_read_limit() -> None:
+    data = b"x\n" * req.MAX_READ_LINES
+    assert req.plan_parts(data, lambda n: Path(f"/p/{n}")) == []
+
+
+def test_plan_parts_numbers_each_part_of_a_large_diff() -> None:
+    data = b"".join(f"line {n}\n".encode() for n in range(1, 2501))
+    parts = req.plan_parts(data, lambda n: Path(f"/p/part-{n:02d}.patch"))
+    assert [path.name for path, _chunk in parts] == ["part-01.patch", "part-02.patch"]
+    assert [chunk.count(b"\n") for _path, chunk in parts] == [2000, 500]
+    assert b"".join(chunk for _path, chunk in parts) == data
+    assert req.part_manifest(parts) == [
+        {"path": "/p/part-01.patch", "lines": 2000},
+        {"path": "/p/part-02.patch", "lines": 500},
+    ]
 
 
 # -- a fix to an open PR -------------------------------------------------------------

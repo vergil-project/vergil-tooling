@@ -27,12 +27,15 @@ from typing import Any
 from vergil_tooling.lib.merge_review.schema import (
     CHANGE_CLASSES,
     CHECK_RESULT_FIELDS,
+    DIFF_READ_RE,
     FINDING_FIELDS,
     FINDING_ID_MAX,
     FINDING_OPTIONAL_FIELDS,
+    FIX_READ_RE,
     FIX_STATUS_FIELDS,
     FIX_STATUSES,
     KINDS,
+    MAX_READ_LINES,
     QUESTIONS,
     REQUEST_ID_RE,
     REQUEST_SCHEMA,
@@ -57,6 +60,7 @@ _RULE_SUMMARY = "rule 6 (summaries)"
 _RULE_LOCATION = "rule 7 (location)"
 _RULE_CHANGE_CLASS = "rule 8 (change class)"
 _RULE_CHECK = "rule 9 (check steps)"
+_RULE_COVERAGE = "rule 11 (coverage)"
 
 #: The opening block: the first content, an exact fence line, then the JSON
 #: up to the first line that is a bare closing fence.
@@ -100,12 +104,17 @@ class Result:
 
 @dataclass(frozen=True)
 class Request:
-    """The request fields the check reads, checked."""
+    """The request fields the check reads, checked.
+
+    ``fix_diff_lines`` is ``None`` in a review, which has no fix diff.
+    """
 
     step: str
     request_id: str
     change_class: str
     earlier_finding_ids: tuple[str, ...]
+    diff_lines: int
+    fix_diff_lines: int | None
 
 
 def parse_result(text: str, request: dict[str, object]) -> Result:
@@ -125,6 +134,7 @@ def parse_result(text: str, request: dict[str, object]) -> Result:
     _check_identity(block, req)
     findings = _check_findings(block["findings"], req)
     fix_status = _check_fix_status(block["fix_status"], req) if is_check(step) else {}
+    _check_coverage(text, req)
     return Result(step, req.request_id, findings, fix_status)
 
 
@@ -152,7 +162,106 @@ def check_request(request: dict[str, object]) -> Request:
     earlier: tuple[str, ...] = ()
     if is_check(step):
         earlier = _check_earlier_ids(request.get("earlier_finding_ids"), step)
-    return Request(step, request_id, change_class, earlier)
+    diff_lines = _check_count(request, "diff_lines")
+    _check_parts(request, "diff_parts", diff_lines)
+    fix_diff_lines: int | None = None
+    if is_check(step):
+        fix_diff_lines = _check_count(request, "fix_diff_lines")
+        _check_parts(request, "fix_diff_parts", fix_diff_lines)
+    return Request(step, request_id, change_class, earlier, diff_lines, fix_diff_lines)
+
+
+def _check_count(request: dict[str, object], key: str) -> int:
+    """A line count the request must carry: a whole number, never a bool or negative."""
+    value = request.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        msg = f"the request: {key} must be a whole number of lines"
+        raise ResultError(msg)
+    return value
+
+
+def _check_parts(request: dict[str, object], key: str, total: int) -> None:
+    """The manifest of a large diff, present exactly when *total* exceeds one Read.
+
+    Each entry is ``{"path", "lines"}`` with ``lines`` from 1 to
+    :data:`MAX_READ_LINES`, and the entries sum to *total*.
+    """
+    if total <= MAX_READ_LINES:
+        if key in request:
+            msg = f"the request: {key} is present, but the diff is not over {MAX_READ_LINES} lines"
+            raise ResultError(msg)
+        return
+    parts = request.get(key)
+    if not isinstance(parts, list) or not parts:
+        msg = f"the request: {key} must list the parts of a diff over {MAX_READ_LINES} lines"
+        raise ResultError(msg)
+    summed = 0
+    for position, part in enumerate(parts, start=1):
+        if not isinstance(part, dict) or set(part) != {"path", "lines"}:
+            msg = f"the request: {key} entry {position} must hold exactly path and lines"
+            raise ResultError(msg)
+        path, lines = part["path"], part["lines"]
+        if not isinstance(path, str) or isinstance(lines, bool) or not isinstance(lines, int):
+            msg = f"the request: {key} entry {position} must hold a path and a line count"
+            raise ResultError(msg)
+        if not 1 <= lines <= MAX_READ_LINES:
+            msg = f"the request: {key} entry {position} must hold from 1 to {MAX_READ_LINES} lines"
+            raise ResultError(msg)
+        summed += lines
+    if summed != total:
+        msg = f"the request: {key} lines sum to {summed}, not the {total} lines of the diff"
+        raise ResultError(msg)
+
+
+def _check_coverage(text: str, req: Request) -> None:
+    """Rule 11: the reply's last non-empty line reports the whole diff as read.
+
+    That line must read ``Diff read: <read> of <total> lines``, with ``<total>``
+    the request's ``diff_lines`` and ``<read>`` equal to it. In a check, the
+    non-empty line before it must read ``Fix diff read: <read> of <total>
+    lines`` the same way, against the request's ``fix_diff_lines``. Trailing
+    whitespace and a CR are stripped before the match.
+    """
+    lines = [stripped for stripped in (line.rstrip() for line in text.split("\n")) if stripped]
+    if not lines or DIFF_READ_RE.fullmatch(lines[-1]) is None:
+        msg = (
+            f"{_RULE_COVERAGE}: the last non-empty line must read 'Diff read: <read> of"
+            " <total> lines'"
+        )
+        raise ResultError(msg)
+    _check_read(lines[-1], DIFF_READ_RE, "Diff read", req.diff_lines)
+    if is_check(req.step):
+        if req.fix_diff_lines is None:  # check_request always sets it for a check
+            msg = f"{_RULE_COVERAGE}: the request carries no fix_diff_lines"
+            raise ResultError(msg)
+        if len(lines) < 2 or FIX_READ_RE.fullmatch(lines[-2]) is None:
+            msg = (
+                f"{_RULE_COVERAGE}: the non-empty line before the last must read"
+                " 'Fix diff read: <read> of <total> lines'"
+            )
+            raise ResultError(msg)
+        _check_read(lines[-2], FIX_READ_RE, "Fix diff read", req.fix_diff_lines)
+
+
+def _check_read(line: str, pattern: re.Pattern[str], label: str, total: int) -> None:
+    """Refuse a coverage *line* whose total is not *total*, or that reads less than all of it."""
+    match = pattern.fullmatch(line)
+    if match is None:
+        msg = f"{_RULE_COVERAGE}: the {label} line is malformed"
+        raise ResultError(msg)
+    read, stated = int(match.group(1)), int(match.group(2))
+    if stated != total:
+        msg = (
+            f"{_RULE_COVERAGE}: the {label} line gives {stated} lines in total,"
+            f" but the diff has {total}"
+        )
+        raise ResultError(msg)
+    if read != total:
+        msg = (
+            f"{_RULE_COVERAGE}: the {label} line reads {read} of {total} lines:"
+            " the whole diff was not read"
+        )
+        raise ResultError(msg)
 
 
 def _check_earlier_ids(raw: object, step: str) -> tuple[str, ...]:
