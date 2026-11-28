@@ -16714,6 +16714,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#release-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#epic-categories" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -19569,6 +19580,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#release-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#epic-categories" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -20002,7 +20024,9 @@ rejected</strong>: the daily sweep attaches every orphan to its home's intake ep
   document why in the PR description. A batch PR (2 to 20 issues of
   one epic, one commit per issue; see
   <a href="../../guides/git-workflow/">Git Workflow</a>) is the tooled form of this: it
-  closes each of its issues with its own <code>Closes</code> line.</li>
+  closes each of its issues with its own <code>Closes</code> line. Batches are the
+  unit of release, and a <a href="#release-groups">release group</a> (tasks that must
+  ship in one PR) is always held whole within its batch.</li>
 </ul>
 <h2 id="acceptance-criteria">Acceptance criteria<a class="headerlink" href="#acceptance-criteria" title="Permanent link">&para;</a></h2>
 <p>Every issue must specify acceptance criteria if they are not intuitively
@@ -20247,6 +20271,40 @@ filing-time guard enforces this; <code>vrg-epic-audit</code> reports an open ad-
 that looks misplaced (a <code>Logbook:</code> title, or a body naming an epic in another
 org) for a human to rule on. A task ruled standalone gets a trusted comment
 with the line <code>Standalone-confirmed</code>, and the audit stops reporting it.</p>
+<h3 id="release-groups">Release groups<a class="headerlink" href="#release-groups" title="Permanent link">&para;</a></h3>
+<p>A <strong>release group</strong> is a set of tasks of one development epic (or of one
+<a href="#proxy-epics">proxy epic</a>) that must ship in one PR. The rules for batching
+them are in <a href="../../guides/git-workflow/">Git Workflow</a>. A task in no group is
+standalone. A group is recorded on the epic, and nothing about it is ever
+written into a task body, so the record is the only source of membership:</p>
+<ul>
+<li>The record is a trusted comment on the epic, posted only by
+  <a href="../../reference/cli-tools-overview/#vrg-release-group"><code>vrg-release-group</code></a>.
+  Its first line is <code>release-group G1 rev 3: &lt;ref&gt; &lt;ref&gt; &lt;ref&gt;</code>: a full
+  snapshot of the members in build order, where the latest, highest
+  revision wins. A mandatory <code>Reason:</code> line follows it.</li>
+<li>A group on a proxy epic is recorded on the proxy.</li>
+<li>Group IDs are per epic and are never reused, a dissolved group's included.</li>
+<li>A record edited after posting, two records at one revision, or an
+  out-of-order revision is refused (the tools fail closed). The human deletes
+  the bad comment in the web UI.</li>
+</ul>
+<p>Every change goes through <code>vrg-release-group</code> (<code>list</code>, <code>set</code> and <code>dissolve</code>),
+and every change needs a reason but no approval. Membership is open until the
+group's batch starts. After that, a change stops for the human, and at a batch
+stop it is made with <code>--at-batch-stop</code>. The group is frozen from <code>report-ready</code>
+until its PR merges or is closed. A group ends only by a recorded dissolve.</p>
+<p>Moving a grouped task is restricted. <code>vrg-epic-move</code> and <code>vrg-intake-route</code>
+refuse to move a member of a group, and <code>vrg-gh issue transfer</code> refuses to
+transfer one, naming the group, until a recorded change has removed it from
+the group. A split of a grouped task (say, 13 into 13a and 13b) is one
+recorded change: the sub-tasks are added and the original is removed, with its
+reason. The sub-tasks of a grouped task ship in the one batch.</p>
+<p>Detection is reported, never repaired. <code>vrg-epic-audit</code> reports a
+<code>Release groups</code> section (split, closed unmerged, rule, edited, unreadable)
+and exits 1 on any finding. The daily sweep (<code>vrg-epic-audit --close</code>) checks
+the groups of every open development and proxy epic. <code>vrg-release</code> runs no
+group check of its own.</p>
 <h3 id="epic-categories">Epic categories<a class="headerlink" href="#epic-categories" title="Permanent link">&para;</a></h3>
 <p>Every epic falls in one of four <strong>categories</strong>, and carries that category's
 label, so one label filter in the GitHub UI shows each category:</p>
