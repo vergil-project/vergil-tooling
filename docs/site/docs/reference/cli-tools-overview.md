@@ -2287,7 +2287,8 @@ command is run from.
 
 `--epic REF` is a separate read-only mode: it prints one epic's children as
 JSON (`{"epic": <slug>, "containers": <n>, "children": [{repo, number,
-title, state, open_blockers, blocked}, …]}`) and skips the drift audit. A
+title, state, open_blockers, blocked}, …], "groups": [{group, rev, members,
+runnable, blocked_by}, …]}`) and skips the drift audit. A
 bare `#N` resolves against the current repo's epic home, and a
 continuation's ref resolves to its chain's head. `containers` counts the
 containers of the epic's chain, the epic included: 1 for an epic with no
@@ -2306,7 +2307,14 @@ unblocked. The children include the tasks of every
 [proxy epic](../standards/github-issues.md#proxy-epics) the epic's trusted
 `Proxy:` comments name, each with its repo, beside the epic's own. On a proxy
 the JSON gains a `"primary": <slug>` key naming its primary; on any other epic
-the key is absent. `--epic` also checks the links: on a primary, every proxy
+the key is absent. `groups` lists the epic's live release groups in ID order
+(dissolved ones are left out; `[]` when there are none): each one's `group`
+ID, its record's `rev`, its `members` as `owner/repo#N` refs, and `runnable`,
+true iff every blocker of its members that lies outside the group is closed.
+`blocked_by` lists those open outside blockers as sorted `owner/repo#N` refs,
+empty exactly when `runnable` is true; a blocker between two members never
+counts. A group that cannot be read exits 1 with the reason on stderr and no
+JSON. `--epic` also checks the links: on a primary, every proxy
 it names must exist, be a proxy and carry a `Primary:` line naming it; on a
 proxy, its primary must carry the matching `Proxy:` comment. A link that
 disagrees, cannot be parsed or cannot be read exits 1, with the problems on

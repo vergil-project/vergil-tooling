@@ -24,6 +24,8 @@ from vergil_tooling.lib import (
     trust,
 )
 from vergil_tooling.lib.cli import cli_main
+from vergil_tooling.lib.release_groups import audit as group_audit
+from vergil_tooling.lib.release_groups import record as group_record
 from vergil_tooling.lib.trusted_authors import (
     GITHUB_ACTIONS_ENV,
     TrustedAuthorsNotConfiguredError,
@@ -145,6 +147,11 @@ def _epic_listing(epic: epics.IssueRef) -> int:
     full, gives no link (spec §5.2 of epic vergil-project/.github#1467): the
     stop goes to stderr, metadata only, and no JSON is printed.
 
+    The JSON's ``groups`` key lists the epic's live release groups, each with
+    whether it is runnable and its open outside blockers (epic
+    vergil-project/.github#1672, spec §5.3). A group that cannot be read fails
+    the listing with exit 1: the error goes to stderr and no JSON is printed.
+
     Each open child carries its open blockers and a ``blocked`` flag (#5124).
     An open child's body that is not trusted or cannot be read in full, or a
     native blocked-by list that cannot be read in full, fails the listing the
@@ -175,6 +182,7 @@ def _epic_listing(epic: epics.IssueRef) -> int:
         children = epic_audit.epic_children_with_blockers(epic)
         with github.target_org(epic.owner):
             primary = proxies.primary_of(epic) if proxies.is_proxy_ref(epic) else None
+        groups = group_audit.group_status(epic)
     except proxies.ProxyLinkError as exc:
         print(f"vrg-epic-audit: proxy link drift: {exc}", file=sys.stderr)
         return 1
@@ -185,10 +193,15 @@ def _epic_listing(epic: epics.IssueRef) -> int:
         trust.UntrustedContentError,
         trust.TrustReadError,
         epics.NativeBlockersReadError,
+        group_record.GroupRecordError,
     ) as exc:
         print(f"vrg-epic-audit: {exc}", file=sys.stderr)
         return 1
-    print(epic_audit.render_epic_children(epic, children, containers=len(chain), primary=primary))
+    print(
+        epic_audit.render_epic_children(
+            epic, children, containers=len(chain), primary=primary, groups=groups
+        )
+    )
     return 0
 
 
