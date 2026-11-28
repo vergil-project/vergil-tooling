@@ -3,8 +3,9 @@
 ``vrg-submit-pr`` opens each PR with auto-merge on, and GitHub merges it once
 its required checks pass. :func:`watch` waits on a batch of such PRs, polling
 each until it reaches a terminal :data:`Outcome` or the batch deadline
-(:func:`deadline_secs`) passes. It holds no lock and changes nothing locally;
-the settle phase that follows is the caller's.
+(:func:`deadline_secs`) passes. It holds no lock; its only change is bringing a
+PR that a release held up to date, from its own worktree (the lock rule below,
+vergil-tooling#5414). The settle phase that follows is the caller's.
 
 The watch never merges a PR and never turns auto-merge on or off itself
 (epic vergil-project/.github#1664, spec §5): it watches and reports. An
@@ -28,6 +29,13 @@ judge auto-merge off, and the answer (a :class:`LockView`) decides:
 - **Held but unreadable:** reported as ``held by an unreadable release
   lock (<error>)``, polled every :data:`BROKEN_WATCH_POLL_SECS`, never
   reclaimed: only ``vrg-release-lock break`` clears it.
+- **A PR behind develop with no lock held** (vergil-tooling#5414): the
+  first read with no lock held brings it up to date once, whether or not
+  this watch saw it held (:func:`vergil_tooling.lib.pr_path.update_held_pr`). A
+  rebase onto ``origin/develop`` that is pushed leaves the PR pending
+  (``rebased onto develop and pushed; CI re-running``), its checks read on
+  the next poll, which re-arms it if auto-merge is off. A rebase that
+  conflicts ends it ``failed: conflict``, and nothing is pushed.
 
 So auto-merge off never ends a PR: there is no ``failed: auto-merge off``.
 A PR still pending at the deadline while the lock holds it ends
@@ -200,8 +208,11 @@ EXIT_HELD_BY_RELEASE = 6
 #: ``free``: no lock held, the PR armed or just re-armed. ``held``: a live
 #: release holds it. ``broken``: a broken or heartbeat-stale release holds it.
 #: ``unreadable``: a lock is held that cannot be read. ``refused``: no lock
-#: held, and the one PR path refused to re-arm the PR.
-LockState = Literal["free", "held", "broken", "unreadable", "refused"]
+#: held, and the one PR path refused to re-arm the PR. ``updated``: no lock
+#: held, and the PR, behind ``develop`` when its hold ended, was rebased and
+#: pushed (pending while CI re-runs). ``conflicted``: no lock held, and that
+#: rebase conflicted, so the PR cannot merge as it stands.
+LockState = Literal["free", "held", "broken", "unreadable", "refused", "updated", "conflicted"]
 _HELD_STATES = frozenset({"held", "broken", "unreadable"})
 _SLOW_STATES = frozenset({"broken", "unreadable"})
 
@@ -936,6 +947,11 @@ def _judge(snap: Snapshot, watched: _Watched, *, now: float, lock: LockRule) -> 
     if view.state == "refused":
         detail = f"the one PR path refused to re-arm it: {view.detail}"
         return _result(snap, "failed: refused", detail, watched)
+    if view.state == "conflicted":
+        return _result(snap, "failed: conflict", view.detail, watched)
+    if view.state == "updated":
+        # This snapshot's checks are the old head's: the next read judges the new head.
+        return None
     checks = check_failures(snap, watched.required)
     if checks.failed:
         detail = f"required check failed: {', '.join(checks.failed)}"
@@ -980,6 +996,8 @@ def _pending_checks(snap: Snapshot, required: frozenset[str] | None) -> int:
 def _pending_state(snap: Snapshot, watched: _Watched) -> str:
     """The status table's state for *snap*'s PR while it is still pending."""
     if watched.lock.held:
+        return watched.lock.detail
+    if watched.lock.state == "updated":
         return watched.lock.detail
     if watched.cancel.names:
         return f"checks cancelled ({len(watched.cancel.names)}), awaiting a re-run"

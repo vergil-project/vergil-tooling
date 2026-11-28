@@ -103,6 +103,18 @@ fails them. It never touches auto-merge, so the PR stays armed throughout.
 :func:`open_develop_pr_url` is the lookup the tooling's other pushes make
 first: ``vrg-reword`` routes a push to an open PR's branch through
 :func:`push_to_open_pr`, and report-ready refuses one.
+
+:func:`update_held_pr` brings a PR that a release lock held up to date (the
+merge watch calls it on a free read, at most once per head until a hold is
+read again; vergil-tooling#5414). A PR
+whose head is behind ``origin/develop`` cannot pass its
+``version / version-bump`` check, since the release's bump PR moved
+``develop`` on. Its update runs only from the PR's own worktree (the
+branch checked out at exactly the PR's head, clean): it fetches, rebases
+the branch onto ``origin/develop``, and pushes the rebased head through
+:func:`push_to_open_pr` with the lease on the old head. A conflict aborts
+the rebase and is returned for the human. A PR that is behind but cannot be
+updated from this clone is reported, never guessed at, and left as it is.
 """
 
 from __future__ import annotations
@@ -863,3 +875,165 @@ def push_to_open_pr(branch: str, *, head: str, lease: str | None) -> PushResult:
         msg = f"{url}: pushing {head[:12]} to {branch} failed: {error_text(exc)}"
         raise PRPathError(msg) from exc
     return PushResult(pushed=True, pr_url=url, detail=f"pushed {head[:12]} to {branch}")
+
+
+#: The remote-tracking ref of ``develop``, which a held PR is rebased onto.
+_ORIGIN_DEVELOP = f"refs/remotes/origin/{_DEVELOP}"
+
+#: What :func:`update_held_pr` did with a PR a release lock held. ``current``: its head
+#: already contains ``origin/develop``, nothing was done. ``not_updated``: nothing was done,
+#: and *detail* says why (the path does not accept the PR, or it is behind and this clone
+#: cannot update it, or no clone can be read here). ``updated``: rebased onto
+#: ``origin/develop`` and pushed, from *old_head* to *new_head*. ``conflicted``: the rebase
+#: conflicts; it was aborted, the branch is unchanged, and *detail* names the files.
+HeldUpdateOutcome = Literal["current", "not_updated", "updated", "conflicted"]
+
+
+@dataclass(frozen=True)
+class HeldUpdate:
+    """What :func:`update_held_pr` did with *pr_url*; see :data:`HeldUpdateOutcome`."""
+
+    outcome: HeldUpdateOutcome
+    pr_url: str
+    detail: str = ""
+    old_head: str = ""
+    new_head: str = ""
+
+
+def _git(clone: Path, *args: str) -> str:
+    return git.read_output("-C", str(clone), *args)
+
+
+def _fetch_develop_and_head(clone: Path, head: str) -> None:
+    """Fetch ``develop`` and the PR's *head* into *clone*, moving no other remote-tracking ref."""
+    _git(
+        clone,
+        "fetch",
+        "--no-write-fetch-head",
+        "origin",
+        f"+refs/heads/{_DEVELOP}:{_ORIGIN_DEVELOP}",
+        head,
+    )
+    _git(clone, "cat-file", "-e", f"{head}^{{commit}}")
+
+
+def _behind_reason(clone: Path, branch: str, head: str) -> str:
+    """Why *clone* cannot update the behind PR *branch* at *head*, ``""`` when it can.
+
+    It can only when *branch* is checked out at exactly *head*, with a clean tree.
+    """
+    checked_out = _git(clone, "rev-parse", "--abbrev-ref", "HEAD")
+    if checked_out != branch:
+        return f"this clone has {checked_out!r} checked out, not {branch}"
+    at = _git(clone, "rev-parse", "HEAD")
+    if at != head:
+        return f"{branch} is at {at[:12]} in this clone, not the PR's head {head[:12]}"
+    if _git(clone, "status", "--porcelain"):
+        return "this clone's tree has uncommitted changes"
+    return ""
+
+
+def _unmerged_paths(clone: Path) -> list[str]:
+    """The paths a rebase left unmerged, NUL-separated from git."""
+    listed = _git(clone, "diff", "--name-only", "--diff-filter=U", "-z")
+    return [path for path in listed.split("\0") if path]
+
+
+def _rebase_in_progress(clone: Path) -> bool:
+    """Whether *clone* has a rebase in progress (git's own state directories)."""
+    return any(
+        (clone / _git(clone, "rev-parse", "--git-path", name)).exists()
+        for name in ("rebase-merge", "rebase-apply")
+    )
+
+
+def _rebase_onto_develop(clone: Path, url: str, branch: str, head: str) -> HeldUpdate:
+    """Rebase *branch* at *head* onto ``origin/develop`` and push it with the lease on *head*.
+
+    A conflict aborts the rebase and is returned as ``conflicted``. Any other
+    failure raises :class:`PRPathError`, after an abort of a rebase in progress.
+    A rebased head the push path refuses raises too, with its detail.
+    """
+    try:
+        _git(clone, "rebase", _ORIGIN_DEVELOP)
+    except subprocess.CalledProcessError as exc:
+        conflicts = _unmerged_paths(clone)
+        if _rebase_in_progress(clone):
+            _git(clone, "rebase", "--abort")
+        if not conflicts:
+            msg = f"{url}: rebasing {branch} onto {_DEVELOP} failed: {error_text(exc)}"
+            raise PRPathError(msg) from exc
+        detail = (
+            f"the rebase of {branch} onto {_DEVELOP} conflicts in {', '.join(conflicts)}; "
+            f"it was aborted and the branch is unchanged at {head[:12]}. A human resolves the "
+            "conflict, then pushes it with vrg-submit-pr --push --force-with-lease"
+        )
+        return HeldUpdate("conflicted", url, detail=detail, old_head=head)
+    new = _git(clone, "rev-parse", "--verify", "HEAD^{commit}")
+    pushed = push_to_open_pr(branch, head=new, lease=head)
+    if not pushed.pushed:
+        msg = f"{url}: the rebased head {new[:12]} was not pushed: {pushed.detail}"
+        raise PRPathError(msg)
+    detail = f"rebased onto {_DEVELOP} and pushed {new[:12]} (was {head[:12]}); CI re-running"
+    return HeldUpdate("updated", url, detail=detail, old_head=head, new_head=new)
+
+
+def update_held_pr(pr_url: str) -> HeldUpdate:
+    """Bring *pr_url*, a PR a release lock held, up to ``origin/develop``; see the module docstring.
+
+    Run from the PR's own worktree, the current clone (:func:`_here`). When
+    that clone or its origin cannot be read (the directory is not a git
+    clone, or its origin is not a GitHub repository), nothing is read or
+    changed and the result is ``not_updated``, saying why and what to do, so
+    a caller run from anywhere else is not failed. The PR
+    is read and judged by :func:`_refusal`; a PR the path does not accept is
+    ``not_updated``. Its head is fetched with ``develop`` and tested with
+    ``git merge-base --is-ancestor``: a head that contains ``origin/develop``
+    is ``current``. A head behind it is rebased and pushed only when this
+    clone has that branch checked out at exactly that head with a clean tree;
+    otherwise it is ``not_updated``, with the reason and what to do. The
+    clone's origin must be the PR's repository, else ``not_updated``.
+
+    A step that cannot be completed once the clone exists (a read, a fetch,
+    the rebase, its abort, the push's own refusal) raises :class:`PRPathError`,
+    naming the PR.
+    """
+    try:
+        clone, origin = _here()
+    except PRPathError as exc:
+        detail = (
+            f"not updated: the current clone or its origin cannot be read here ({exc}); if the "
+            f"PR is behind {_DEVELOP}, update it from its own worktree: rebase its branch onto "
+            f"origin/{_DEVELOP}, then vrg-submit-pr --push --force-with-lease"
+        )
+        return HeldUpdate("not_updated", pr_url, detail=detail)
+    repo, _number = _repo_and_number(pr_url)
+    if origin.lower() != repo.lower():
+        detail = (
+            f"not updated: its base cannot be checked from this clone of {origin}; run from a "
+            f"clone of {repo} to bring it up to date"
+        )
+        return HeldUpdate("not_updated", pr_url, detail=detail)
+    pr = _read(pr_url)
+    url = pr.snap.url
+    reason = _refusal(pr)
+    if reason is not None:
+        detail = f"not updated: the one PR path does not accept it: {reason}"
+        return HeldUpdate("not_updated", url, detail=detail)
+    head, branch = pr.snap.head, cast("str", pr.branch)
+    try:
+        _fetch_develop_and_head(clone, head)
+        if git.is_ancestor(_ORIGIN_DEVELOP, head, repo=clone):
+            return HeldUpdate("current", url)
+        why = _behind_reason(clone, branch, head)
+        if why:
+            detail = (
+                f"behind {_DEVELOP} and not updated from this clone: {why}; update it from its "
+                f"worktree: rebase {branch} onto origin/{_DEVELOP}, then vrg-submit-pr --push "
+                "--force-with-lease"
+            )
+            return HeldUpdate("not_updated", url, detail=detail)
+        return _rebase_onto_develop(clone, url, branch, head)
+    except subprocess.CalledProcessError as exc:
+        msg = f"{url}: bringing the held PR up to date failed: {error_text(exc)}"
+        raise PRPathError(msg) from exc

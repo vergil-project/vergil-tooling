@@ -70,7 +70,9 @@ class FakeLock:
     unreadable, the string its error) or an exception (the read fails).
     *arm_outcome* is what ``pr_path.arm`` returns, or an exception it raises.
     *reclaimed* is whether a reclaim wins; a won reclaim frees the lock for
-    every later read.
+    every later read. *update* is what ``pr_path.update_held_pr`` returns, or an
+    exception it raises, or a list of those, one per call (the last repeats, as
+    *states* does); the default is ``current`` (up to date, nothing done).
     """
 
     states: list[object] = field(default_factory=lambda: [None])
@@ -80,18 +82,33 @@ class FakeLock:
     pr_state: str = "open, auto-merge off"
     reclaimed: bool = True
     reclaim_error: Exception | None = None
+    update: pr_path.HeldUpdate | Exception | list[pr_path.HeldUpdate | Exception] | None = None
     reads: list[str] = field(default_factory=list)
     arms: list[str] = field(default_factory=list)
     reclaims: list[tuple[str, str]] = field(default_factory=list)
     issue_reads: list[str] = field(default_factory=list)
+    updates: list[str] = field(default_factory=list)
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeLock:
         monkeypatch.setattr(refs, "read_lock", self.read_lock)
         monkeypatch.setattr(stale, "_issue_state", self.read_issue)
         monkeypatch.setattr(reclaim, "reclaim_if_stale", self.reclaim_if_stale)
         monkeypatch.setattr(pr_path, "arm", self.arm)
+        monkeypatch.setattr(pr_path, "update_held_pr", self.update_held_pr)
         monkeypatch.setattr(pr_path, "describe_state", lambda _url: self.pr_state)
         return self
+
+    def update_held_pr(self, pr_url: str) -> pr_path.HeldUpdate:
+        self.updates.append(pr_url)
+        update: object = self.update
+        if isinstance(update, list):
+            update = update.pop(0) if len(update) > 1 else update[0]
+        if isinstance(update, Exception):
+            raise update
+        if update is None:
+            return pr_path.HeldUpdate("current", pr_url)
+        assert isinstance(update, pr_path.HeldUpdate)
+        return update
 
     def read_lock(self, repo: str) -> LockState:
         self.reads.append(repo)

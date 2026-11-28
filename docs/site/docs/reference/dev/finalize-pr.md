@@ -181,14 +181,37 @@ is waiting on:
   held by that release, with its health, and the watch polls every five
   minutes. A lock that is stale (its tracking issue is closed, or it names
   none and its heartbeat is old) is reclaimed, and the reclaim's re-arm
-  sweep re-arms the PRs it held. A broken release whose tracking issue is
-  open is the human's to finish: the watch says why it is not reclaimed.
+  sweep re-arms the PRs it held. The reclaim ends the hold: the read that
+  reclaims it reports the PR as free and updates nothing, and the next read,
+  which finds the lock free, brings the PR up to date (see below). A broken
+  release whose tracking issue is open is the human's to finish: the watch
+  says why it is not reclaimed.
 - **A lock that cannot be read:** the PR shows as
   `held by an unreadable release lock (<error>)`, polled every five
   minutes, and never reclaimed: only `vrg-release-lock break` clears it.
 - **No lock held, and the PR unarmed:** the watch re-arms it through the
   one PR path, the one way it turns auto-merge on. A re-arm the path
   refuses ends the PR as *failed: refused*.
+- **A PR behind `develop` with no lock held:** a release's bump PR moves
+  `develop` on, and a PR the release held still carries the old version,
+  so its version check fails until it is rebased. So the first read with no
+  lock held brings each open PR behind `develop` up to date, whether or not
+  this watch saw it held (so a run that starts after the release is done
+  updates it too), through the one PR path. It judges each PR once per head:
+  a PR found current or not updatable at its head is not judged again while
+  that head stays, and a read that finds the lock held forgets those
+  judgments, so the next free read judges the PR again: the PR's branch is rebased onto
+  `origin/develop` and pushed with the lease on its old head, and
+  auto-merge stays on. That runs only from the PR's own worktree (the
+  clone with its branch checked out at the PR's head and a clean tree).
+  From anywhere else (a directory that is no git clone, or a clone whose
+  `origin` is not GitHub) the watch cannot update the PR, so it reports that
+  and says to update it from its worktree if it is behind; it does not guess,
+  and the watch does not fail on it. A pushed rebase shows as
+  `rebased onto develop and pushed <sha> (was <sha>); CI re-running`, and
+  the PR stays pending until the next read, which re-arms it if auto-merge
+  is off. A rebase that conflicts is aborted, pushes nothing, and ends the
+  PR as *failed: conflict*. A PR that is up to date is left alone.
 
 The watch may reclaim a stale lock, but never takes or breaks one.
 
